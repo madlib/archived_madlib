@@ -36,24 +36,26 @@ class MatrixAggState {
 public:
     MatrixAggState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
-
-        rebind(static_cast<uint64_t>(mStorage[0]),
-            static_cast<uint64_t>(mStorage[1]));
+        rebind(static_cast<uint64_t>(mStorage[0]), static_cast<uint64_t>(mStorage[1]));
     }
 
     operator AnyType() const {
         return mStorage;
     }
 
-    void initialize(uint64_t inNumRows) {
-        rebind(inNumRows, 0);
+    void initialize(const Allocator& inAllocator, uint64_t inNumRows) {
+        // Allocate the storage for 1 column
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inNumRows, 1));
+        rebind(inNumRows, 1);
         numRows = inNumRows;
+        numCols = 0;
     }
 
     typename HandleTraits<Handle>::MatrixTransparentHandleMap::ColXpr
     newColumn(const Allocator& inAllocator) {
         uint64_t numColsReserved = utils::nextPowerOfTwo(
-            static_cast<uint16_t>(numCols));
+            static_cast<uint64_t>(numCols));
 
         if (numColsReserved <= numCols) {
             if (numColsReserved == 0)
@@ -61,18 +63,25 @@ public:
             else
                 numColsReserved *= 2;
 
-            MatrixAggState oldSelf = *this;
+            // Shallow copy to save the references
+            MatrixAggState oldSelf(*this);
+
+            // Allocate new storage
             mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
                 dbal::DoZero, dbal::ThrowBadAlloc>(
                     arraySize(numRows, numColsReserved));
             rebind(numRows, numColsReserved);
+
+            // Copy from old storage to new storage
             numRows = oldSelf.numRows;
             numCols = oldSelf.numCols;
             matrix.leftCols(static_cast<Index>(numCols)) =
                 oldSelf.matrix.leftCols(static_cast<Index>(numCols));
         }
 
+        // Not necessary for numCols = 0
         rebind(numRows, numCols + 1);
+
         return matrix.col(static_cast<Index>(numCols++));
     }
 
@@ -119,7 +128,7 @@ matrix_agg_transition::run(AnyType& args) {
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
 
     if (state.numCols == 0)
-        state.initialize(x.size());
+        state.initialize(*this, x.size());
     else if (x.size() != state.matrix.rows()
         || state.numRows != static_cast<uint64_t>(state.matrix.rows())
         || state.numCols != static_cast<uint64_t>(state.matrix.cols()))

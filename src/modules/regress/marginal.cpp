@@ -251,6 +251,7 @@ margins_linregr_int_transition::run(AnyType &args) {
 
     // Now do the transition step
     state.numRows++;
+
     // compute marginal effects and delta using 1st and 2nd derivatives
     state.marginal_effects += J_trans * beta;
     state.delta += J_trans;

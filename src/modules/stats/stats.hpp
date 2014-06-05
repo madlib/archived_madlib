@@ -16,3 +16,4 @@
 #include "marginal_cox.hpp"
 #include "robust_variance_coxph.hpp"
 #include "clustered_variance_coxph.hpp"
+#include "coxph_improved.hpp"

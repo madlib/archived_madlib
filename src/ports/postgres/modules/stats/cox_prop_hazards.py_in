@@ -27,6 +27,7 @@ from utilities.control import IterationController2S
 version_wrapper = __mad_version()
 madvec = version_wrapper.select_vecfunc()
 
+# ------------------------------------------------------------
 
 def coxph_help_message(schema_madlib, message, **kwargs):
     """ Help message for Cox Proportional Hazards
@@ -154,144 +155,516 @@ SELECT * FROM sample_cox;
         help_string = "No such option. Use {schema_madlib}.coxph_train()"
 
     return help_string.format(schema_madlib=schema_madlib)
-# ---------------------------------------------------------------------------
 
+# ------------------------------------------------------------
 
-def coxph(schema_madlib, source_table, output_table, dependent_varname,
-          independent_varname, right_censoring_status, strata,
-          optimizer_params, *args, **kwargs):
+def coxph(
+        schema_madlib,
+        source_table,
+        output_table,
+        dependent_varname,
+        independent_varname,
+        right_censoring_status,
+        strata,
+        optimizer_params,
+        *args,
+        **kwargs):
     """ Cox proportional hazards regression training function
-    @brief Cox proportional hazards regression, with stratification
-           support.
+    @brief Cox proportional hazards regression, with
+    stratification support.
 
     Args:
         @param schema_madlib - MADlib schema name
         @param source_table - A string, the data table name
         @param output_table - A string, the result table name
-        @param dependent_varname - A string, the survival time column
-            name or a valid expression
-        @param independent_varname - A string, the covariates in array
-            formats. It is a valid expression.
-        @param right_censoring_status - A string, a column name or a
-            valid expression that has boolean values. Whether the row
-            of data is censored. Default is 'TRUE'.
-        @param strata - A string, column names seprated by commas. The
-            columns used for stratification. Default is None.
-        @param optimizer_params - A string, which contains key=value
-            pairs separated by commas. Default values: max_iter=20,
-            optimizer='newton', tolerance=1e-4.
+        @param dependent_varname - A string, the survival time
+        column name or a valid expression
+        @param independent_varname - A string, the covariates in
+        array formats. It is a valid expression.
+        @param right_censoring_status - A string, a column name
+        or a valid expression that has boolean values. Whether
+        the row of data is censored. Default is 'TRUE'.
+        @param strata - A string, column names seprated by
+        commas. The columns used for stratification. Default is
+        None.
+        @param optimizer_params - A string, which contains
+        key=value pairs separated by commas. Default values:
+        max_iter=20, optimizer='newton', tolerance=1e-4.
 
     Returns:
-        A table named by output_table, which contains the following
-        columns:
-        * coef - An array of double precision values, fitting coefs
-        * std_err - An array of double precision values, standard erros
-            of coef
+        A table named by output_table, which contains the
+        following columns:
+        * coef - An array of double precision values, fitting
+        coefs
+        * std_err - An array of double precision values,
+        standard erros of coef
         * z - An array of double precision values, z statistics
         * p - An array of double precision values, p value
     """
-    old_msg_level = plpy.execute("""
-                                 SELECT setting FROM pg_settings
-                                 WHERE name='client_min_messages'
-                                 """)[0]['setting']
-    plpy.execute("set client_min_messages to error")
+    old_msg_level = plpy.execute(
+            """
+            select setting from pg_settings
+            where name='client_min_messages'
+            """)[0]['setting']
+    plpy.execute("set client_min_messages to warning")
 
-    all_arguments = {'schema_madlib': schema_madlib,
-                     'source_table': source_table,
-                     'output_table': output_table,
-                     'dependent_varname': dependent_varname,
-                     'independent_varname': independent_varname,
-                     'right_censoring_status': right_censoring_status,
-                     'strata': strata
-                     }
+    all_arguments = {
+            'schema_madlib'          : schema_madlib,
+            'source_table'           : source_table,
+            'output_table'           : output_table,
+            'dependent_varname'      : dependent_varname,
+            'independent_varname'    : independent_varname,
+            'right_censoring_status' : right_censoring_status,
+            'strata'                 : strata
+            }
     _validate_params(**all_arguments)
+    indepColumn = __check_args(schema_madlib, source_table,
+            independent_varname, dependent_varname,
+            right_censoring_status)
 
-    max_iter, optimizer, tolerance = _extract_params(schema_madlib,
-                                                     optimizer_params)
+    (max_iter, optimizer, tolerance, array_agg_size,
+            sample_size) = _extract_params(schema_madlib, optimizer_params)
 
-    if strata is None:
-        theIteration, madlib_iterative_alg = compute_coxph(
-            schema_madlib, source_table, independent_varname,
-            dependent_varname, right_censoring_status, optimizer,
-            max_iter, tolerance)
+    # Number of features
+    m = plpy.execute(
+            """
+            select array_upper({independent_varname}, 1)
+            as m from {source_table} limit 1
+            """.format(
+                independent_varname = independent_varname,
+                source_table        = source_table))[0]['m']
+
+    # Use the quick split to re-distribute the data
+    # construct a list of other columns
+    other_cols = [right_censoring_status]
+    new_source_table, index, dep, indep, status, n_processed, n_skipped, real_distid = quick_split(
+        schema_madlib, source_table, dependent_varname, m,
+            independent_varname, right_censoring_status, strata,
+            array_agg_size, sample_size, True)
+    if n_processed > 0:
+        compute_coxph(schema_madlib, new_source_table, output_table,
+            index, dep, indep, m, status, strata, optimizer,
+            max_iter, tolerance, real_distid)
+        plpy.execute('drop table if exists ' + new_source_table)
     else:
-        theIteration, madlib_iterative_alg = compute_coxph_strata(
-            schema_madlib, source_table, independent_varname,
-            dependent_varname, right_censoring_status, strata,
-            optimizer, max_iter, tolerance)
+        plpy.execute(
+                """
+                create table {output_table} (
+                    coef           DOUBLE PRECISION[],
+                    loglikelihood  DOUBLE PRECISION,
+                    std_err        DOUBLE PRECISION[],
+                    z_stats        DOUBLE PRECISION[],
+                    p_values       DOUBLE PRECISION[],
+                    hessian        DOUBLE PRECISION[],
+                    num_iterations INTEGER
+                );
+                """.format(output_table=output_table))
+        plpy.execute(
+                """
+                insert into {output_table} values
+                    (NULL, NULL, NULL, NULL, NULL, NULL, 1);
+                """.format(output_table=output_table))
 
-    total_rows = plpy.execute(""" SELECT count(*) as cnt FROM {0}""".format(
-                              source_table))[0]["cnt"]
-
-    # plpy.info("Creating output table")
-    # we have to put num_processed in output_table first since result can only
-    # be extracted via SQL. Fetching it in Python fails since fetching two-dim
-    # array (in this case 'hessian') is not supported.
-    plpy.execute(""" CREATE TABLE {output_table} AS
-                    SELECT (result).*,
-                           ({total_rows} - (result).num_processed)
-                                    as num_missing_rows_skipped,
-                           {theIteration} AS num_iterations
-                    FROM (
-                        SELECT
-                            {schema_madlib}.internal_coxph_result(_state)
-                                AS result
-                        FROM {madlib_iterative_alg}
-                        WHERE _iteration = {theIteration}
-                    ) subq
-                """.format(schema_madlib=schema_madlib,
-                           output_table=output_table,
-                           theIteration=theIteration,
-                           madlib_iterative_alg=madlib_iterative_alg,
-                           total_rows=total_rows))
-
-    # plpy.info("Fetching result")
-    result = plpy.execute("""SELECT num_processed, num_missing_rows_skipped
-                             FROM {output_table}
-                          """.format(output_table=output_table))[0]
-
-    if not result["num_processed"]:
-        ## when no rows have been processed by the aggregate, then a NULL
-        ## result is returned. We need to capture that to ensure correct value
-        ## for num_processed
-        result["num_processed"] = 0
-        result["num_missing_rows_skipped"] = total_rows
-
-    # plpy.info("Removing rows processed column out of output table since we "
-    #           "place it in summary table")
-    plpy.execute("""ALTER TABLE {output_table}
-                        DROP num_processed,
-                        DROP num_missing_rows_skipped
-                 """.format(output_table=output_table))
-
-    if not all_arguments['right_censoring_status']:
-        all_arguments['right_censoring_status'] = 'NULL'
-    else:
-        all_arguments['right_censoring_status'] = "'" + all_arguments['right_censoring_status'] + "'"
-    all_arguments['strata'] = "'" + all_arguments['strata'] + "'" if all_arguments['strata'] else 'NULL'
-
-    # plpy.info("Creating summary table")
+    # the summary table
     plpy.execute(
-        """
-        CREATE TABLE {output_table}_summary AS
-            SELECT
-              'coxph'::varchar                     as method,
-              '{source_table}'::VARCHAR            as source_table,
-              '{output_table}'::VARCHAR            as out_table,
-              '{dependent_varname}'::VARCHAR       as dependent_varname,
-              '{independent_varname}'::VARCHAR     as independent_varname,
-              {right_censoring_status}::VARCHAR    as right_censoring_status,
-              {strata}::VARCHAR                    as strata,
-              {num_processed}::INTEGER             as num_processed,
-              {num_missing_rows_skipped}::INTEGER  as num_missing_rows_skipped
-        """.format(num_processed=result["num_processed"],
-                   num_missing_rows_skipped=result["num_missing_rows_skipped"],
-                   **all_arguments))
+            """
+            create table {output_table}_summary as
+                select
+                    'coxph'::varchar  as method,
+                    '{source_table}'::varchar as source_table,
+                    '{output_table}'::varchar as out_table,
+                    '{dependent_varname}'::varchar as dependent_varname,
+                    '{independent_varname}'::varchar as independent_varname,
+                    {right_censoring_status}::varchar as right_censoring_status,
+                    {strata}::varchar as strata,
+                    {n_processed}::integer as num_processed,
+                    {n_skipped}::integer as num_missing_rows_skipped;
+            """.format(
+                source_table        = source_table,
+                output_table        = output_table,
+                dependent_varname   = dependent_varname,
+                independent_varname = independent_varname,
+                right_censoring_status = ("NULL::text" if right_censoring_status is None
+                    else "'" + right_censoring_status + "'"),
+                strata = ("NULL::text" if strata is None
+                    else "'" + strata + "'"),
+                n_processed = n_processed,
+                n_skipped   = n_skipped))
 
     plpy.execute("set client_min_messages to " + old_msg_level)
-    return None
-# ----------------------------------------------------------------------
 
+    return None
+
+# ------------------------------------------------------------
+
+def _list_to_string(lst):
+    return "array[" + ",".join([str(v) for v in lst]) + "]"
+
+# ------------------------------------------------------------
+
+def _get_seg_number():
+    """ Find out how many primary segments
+    Might be useful for partition data.
+    """
+    m4_changequote(`<!', `!>')
+    m4_ifdef(<!__POSTGRESQL__!>, <!return 1!>, <!
+    return plpy.execute(
+            """
+            select count(*) from gp_segment_configuration
+            where content >= 0 and role = 'p'
+            """)[0]['count']!>)
+    m4_changequote(<!`!>, <!'!>)
+
+# ------------------------------------------------------------
+
+def compute_coxph(
+        schema_madlib,
+        source_table,
+        output_table,
+        index, # big rows index
+        dep,   # dependent variable
+        indep, # independent variable
+        m,     # number of features
+        status,
+        strata,
+        optimizer,
+        max_iter,
+        precision,
+        real_distid):
+    """ Use the old sequential algorithm to solve coxph
+
+    @brief Run ordered aggregate on the re-distributed data.
+    Each row of the table contains many original rows of the
+    original data table in inverse order.
+    """
+    if max_iter < 1:
+        plpy.error("Number of iterations must be positive")
+
+    if optimizer not in ['newton']:
+        plpy.error("Unknown optimizer requested. Must be 'newton'")
+
+    # FIXME starting from random values or 0 ?
+    coef = [0 for i in range(m)]
+    L = float('-inf')
+
+    # $1 - previous coef
+    # the data is already sorted desc
+    if strata is None:
+        sql= """
+            select
+                (f).*
+            from (
+                select {schema_madlib}.coxph_improved_step(
+                    {indep}, {dep}, {status}, $1
+                    order by {index}
+                ) as f
+                from {source_table}
+                group by {real_distid}  -- to avoid gathering data before aggregating
+            ) s
+        """
+    else:
+        sql = """
+            select
+                (f).*
+            from
+            (
+                select
+                    {schema_madlib}.coxph_improved_strata_step_outer(inner_state) as f
+                from (
+                    select
+                        {schema_madlib}.coxph_improved_strata_step_inner(
+                            {indep}, {dep}, {status}, $1
+                            order by {index}
+                        ) as inner_state
+                    from {source_table}
+                    group by {strata}
+                ) t1
+            ) t2
+        """
+    sql = sql.format(
+        schema_madlib = schema_madlib,
+        dep           = dep,
+        indep         = indep,
+        status        = status,
+        source_table  = source_table,
+        real_distid   = real_distid,
+        index         = index,
+        strata        = strata)
+    sql_plan = plpy.prepare(sql, [ "double precision[]" ])
+
+    n_iter = 0
+    while True:
+        n_iter += 1
+        # The result contains coef, L, d2L
+        result = plpy.execute(sql_plan, [coef])[0]
+
+        prev_L = L
+        L = result['l']
+        coef = result['coef']
+
+        if abs(L - prev_L) < precision or n_iter > max_iter:
+            # Compute std_err, t_stats, p_value
+            m4_ifdef(`__HAWQ__',
+            `coef_l_d2l = __unique_string() + "_coef_l_d2l"
+
+            plpy.execute("""
+                create temp table {coef_l_d2l} as
+                select {coef}::float8[] as coef, {l}::float8 as l,
+                    {d2l}::float8[] as d2l, {n_iter}::integer as n_iter
+                """.format(
+                        coef_l_d2l=coef_l_d2l,
+                        coef=_list_to_string(coef),
+                        l=L,
+                        d2l=_list_to_string(result["d2l"]),
+                        n_iter=n_iter))
+
+            plpy.execute("""
+                create table {output_table} as
+                   select (f).*
+                   from (
+                       select {schema_madlib}.compute_coxph_result(
+                           coef,
+                           l,
+                           d2l, n_iter
+                       ) as f
+                       from {coef_l_d2l}
+                   ) s;
+                """.format(coef_l_d2l=coef_l_d2l, schema_madlib=schema_madlib, output_table=output_table))
+
+            plpy.execute("drop table if exists " + coef_l_d2l)
+            ',
+
+            `plpy.execute(
+                    """
+                    create table {output_table} as
+                        select (f).*
+                        from (
+                            select {schema_madlib}.compute_coxph_result(
+                                {coef},
+                                {L},
+                                {d2L}, {n_iter}
+                            ) as f
+                        ) s;
+                    """.format(
+                        output_table  = output_table,
+                        schema_madlib = schema_madlib,
+                        coef          = _list_to_string(coef),
+                        L             = L,
+                        d2L           = _list_to_string(result["d2l"]),
+                        n_iter        = n_iter))
+            ')
+
+            return None
+
+# ------------------------------------------------------------
+
+# The new quick method. Used by PLANET algorithm for
+# decision tree. Since it has been successfully applied
+# onto an algorithm, no reason that we could not use it.
+def quick_split(
+        schema_madlib,
+        source_table,
+        split_col,
+        num_features,
+        indep,
+        status,
+        strata,
+        array_agg_size,
+        sample_size,
+        reverse=True,
+        split_col_alias=''):
+    """ Quickly find the splits of the split_col
+    so that we can evenly cut the data without sorting
+
+    @brief We want to cut the table to n even pieces, and at
+    the same time keep split_col sorted. For example, in ARIMA,
+    we need to partition the data into multiple chunks while
+    each chunk contains consecutive time series. In CoxPH, we
+    need to do the same thing. This step proves to be
+    time-consuming becuase sorting (row_number over (order by
+    ...)) is really slow.
+
+    The solution is to work on a random sample of the original
+    data instead of the whole data set.
+
+    @param source_table The data table
+    @param split_col    Find the cuts of this column
+    @param num_features The number of features
+    @param indep        The indepent variables
+    """
+    # Need the total number of records
+    n_rows = plpy.execute(
+            "select count(*) from {source_table}".format(
+                source_table=source_table))[0]['count']
+
+    # It might be cubersome to deal with NULL values in C++,
+    # since a matrix of independent variables is passed into C++.
+    filter_null = """
+        {split_col} is not NULL and
+        {schema_madlib}.array_contains_null({indep}) is False and
+        {indep} is not NULL and
+        ({status}) is not NULL
+    """.format(schema_madlib=schema_madlib,
+        split_col=split_col,
+        indep=indep, status=status)
+
+    # Number of rows to be processed
+    n_processed = plpy.execute(
+            "select count(*) from {source_table} where {filter_null}".format(
+                source_table=source_table, filter_null=filter_null))[0]['count']
+    n_skipped = n_rows - n_processed
+
+    if n_processed == 0:
+        return ('', 1, '', '',
+                '', n_processed, n_skipped, '')
+
+    #Rewrite the num_splits
+    n_rows_in_chunk = array_agg_size / num_features
+    num_splits = (1 if n_rows < n_rows_in_chunk
+            else n_rows / n_rows_in_chunk)
+
+    # So that we could compute the percentage of the sample
+    # We sample a few more values to make sure we can get enough
+    # samples, otherwise the number of samples might be smaller
+    # than sample_size.
+    percentage = sample_size / n_rows + 0.01
+    n_per_seg = int(sample_size / _get_seg_number()) + 1
+
+    output_table = __unique_string() + '_redist'
+
+    # compute the break points
+    # Use a fixed number of rows of sample to approximate the
+    # break points.
+    # Each bin will have approximate the same number of records.
+    splits = plpy.execute(
+            """
+            select
+                {schema_madlib}._compute_splits(
+                    {split_col}, {n_per_seg}, {num_splits})
+                    as splits
+            from {source_table}
+            where random() <= {percentage} and {filter_null}
+            """.format(
+                schema_madlib = schema_madlib,
+                split_col     = split_col,
+                n_per_seg     = n_per_seg,
+                num_splits    = num_splits,
+                source_table  = source_table,
+                filter_null   = filter_null,
+                percentage    = percentage))[0]['splits']
+
+    # Since the array of break points is not big
+    # we load it into memory.
+    splits_str = ('NULL::DOUBLE PRECISION[]' if splits is None
+            else "array[" + ",".join(str(split)
+                for split in splits) + "]")
+
+    # Use the same convention as _redistribute_data
+    # ie. hard code dep, and indep as column names
+    # NOTE: CoxPH will process the data in a reversed order. Thus
+    # the latest data points will be grouped into the group 0.
+    indep_name = __unique_string() + '_indep' # avoid name conflicts
+    distid = __unique_string() + '_distid'
+    if split_col_alias == "":
+        split_col_alias = __unique_string() + '_split_alias'
+    status_name = __unique_string() + '_status'
+    order_str = 'desc' if reverse else ''
+
+    # Each big rows may contain different number of original small rows
+    # since the quick split is approximate. But this is perfectly fine.
+    if strata is None:
+        real_distid = __unique_string() + '_real_distid'
+        plpy.execute("""
+            create table {output_table} as
+            select
+                0 as {real_distid},   -- to ensure that all chunks are stored in the same segment
+                {distid},
+                array_agg({split_col_alias} order by {split_col_alias} {order_str},
+                        {status_name}) as {split_col_alias},
+                array_agg({status_name} order by {split_col_alias} {order_str},
+                        {status_name}) as {status_name},
+                {schema_madlib}.matrix_agg({indep_name} order by {split_col_alias} {order_str},
+                        {status_name}) as {indep_name}
+            from
+            (
+                select
+                    {schema_madlib}._compute_grpid(
+                        {splits}, {split_col}, {reverse})
+                    as {distid},
+                    {split_col} as {split_col_alias},
+                    {indep} as {indep_name},
+                    ({status})::INTEGER as {status_name}
+                from
+                    {source_table}
+                where {filter_null}
+            ) table_split
+            group by {distid}
+            m4_ifdef(`__POSTGRESQL__', `', `distributed by ({real_distid})');
+            """.format(
+                output_table       = output_table,
+                schema_madlib      = schema_madlib,
+                distid             = distid,
+                splits             = splits_str,
+                reverse            = 'true' if reverse else 'false',
+                split_col_alias    = split_col_alias,
+                split_col          = split_col,
+                indep              = indep,
+                indep_name         = indep_name,
+                status_name        = status_name,
+                status             = status,
+                filter_null        = filter_null,
+                source_table       = source_table,
+                order_str          = order_str,
+                real_distid        = real_distid))
+        return (output_table, distid, split_col_alias, indep_name, status_name, n_processed, n_skipped, real_distid)
+    else:
+        plpy.execute("""
+            create table {output_table} as
+            select
+                {strata},
+                {distid},
+                array_agg({split_col_alias} order by {split_col_alias} {order_str},
+                        {status_name}) as {split_col_alias},
+                array_agg({status_name} order by {split_col_alias} {order_str},
+                        {status_name}) as {status_name},
+                {schema_madlib}.matrix_agg({indep_name} order by {split_col_alias} {order_str},
+                        {status_name}) as {indep_name}
+            from
+            (
+                select
+                    {strata},
+                    {schema_madlib}._compute_grpid(
+                        {splits}, {split_col}, {reverse})
+                    as {distid},
+                    {split_col} as {split_col_alias},
+                    {indep} as {indep_name},
+                    ({status})::INTEGER as {status_name}
+                from
+                    {source_table}
+                where {filter_null}
+            ) table_split
+            group by {distid}, {strata}
+            -- ensure that all chunks belonging to the same strata go to the same segment
+            m4_ifdef(`__POSTGRESQL__', `', `distributed by ({strata})')
+            """.format(
+                output_table       = output_table,
+                schema_madlib      = schema_madlib,
+                distid             = distid,
+                splits             = splits_str,
+                reverse            = 'true' if reverse else 'false',
+                split_col_alias    = split_col_alias,
+                split_col          = split_col,
+                indep              = indep,
+                indep_name         = indep_name,
+                status_name        = status_name,
+                status             = status,
+                strata             = strata,
+                filter_null        = filter_null,
+                source_table       = source_table,
+                order_str          = order_str))
+        return (output_table, distid, split_col_alias, indep_name, status_name, n_processed, n_skipped, '')
+
+# ----------------------------------------------------------------------
 
 def _validate_params(schema_madlib, source_table, output_table,
                      dependent_varname, independent_varname,
@@ -315,8 +688,8 @@ def _validate_params(schema_madlib, source_table, output_table,
     Throws:
         "Cox error" if any argument is invalid
     """
-    _assert(source_table is not None and table_exists(source_table),
-            "Cox error: Source data table does not exist!")
+    # _assert(source_table is not None and table_exists(source_table),
+    #         "Cox error: Source data table does not exist!")
 
     _assert(not table_exists(output_table),
             "Cox error: Output table {0}"
@@ -333,8 +706,8 @@ def _validate_params(schema_madlib, source_table, output_table,
                 "ARIMA error: {1} columns do not exist in {0}!"
                 .format(source_table, strata_cols))
     return None
-# ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
 
 def _extract_params(schema_madlib, optimizer_params):
     """ Extract optimizer control parameter or set the default values
@@ -352,12 +725,15 @@ def _extract_params(schema_madlib, optimizer_params):
         "Cox error" - If the parameter is unsupported or the value is
         not valid.
     """
-    allowed_params = set(["max_iter", "optimizer", "tolerance"])
-    name_value = dict(max_iter=100, optimizer="newton", tolerance=1e-8)
+    allowed_params = set(["max_iter", "optimizer", "tolerance",
+        "array_agg_size", "sample_size"])
+    name_value = dict(max_iter=100, optimizer="newton", tolerance=1e-8,
+            array_agg_size=10000000, sample_size=1000000)
 
     if optimizer_params is None or len(optimizer_params) == 0:
         return (name_value['max_iter'], name_value['optimizer'],
-                name_value['tolerance'])
+                name_value['tolerance'], name_value['array_agg_size'],
+                name_value['sample_size'])
 
     for s in preprocess_optimizer_params(optimizer_params):
         items = s.split("=")
@@ -375,6 +751,18 @@ def _extract_params(schema_madlib, optimizer_params):
                 to see the allowed parameters.
                 """.format(param_name=param_name,
                            schema_madlib=schema_madlib))
+
+        if param_name == "array_agg_size":
+            try:
+                name_value["array_agg_size"] = int(param_value)
+            except:
+                plpy.error("Cox error: array_agg_size must be an integer value!")
+
+        if param_name == "sample_size":
+            try:
+                name_value["sample_size"] = int(param_value)
+            except:
+                plpy.error("Cox error: sample_size must be an integer value!")
 
         if param_name == "max_iter":
             try:
@@ -400,8 +788,16 @@ def _extract_params(schema_madlib, optimizer_params):
     if name_value["tolerance"] < 0:
         plpy.error("Cox error: tolerance cannot be smaller than 0!")
 
+    if name_value["array_agg_size"] <= 0:
+        plpy.error("Cox error: array_agg_size must be positive!")
+
+    if name_value["sample_size"] <= 0:
+        plpy.error("Cox error: sample_size must be positive!")
+
     return (name_value['max_iter'], name_value['optimizer'],
-            name_value['tolerance'])
+            name_value['tolerance'], name_value['array_agg_size'],
+            name_value['sample_size'])
+
 # ----------------------------------------------------------------------
 
 
@@ -437,258 +833,6 @@ def __check_args(schema_madlib, tbl_source, col_ind_var, col_dep_var, col_status
                 outstr_array.append(each_col)
         col_ind_var_new = 'array[%s]' % (','.join(outstr_array))
     return col_ind_var_new
-# ----------------------------------------------------------------------
-
-
-def __runIterativeAlg(stateType, initialState, source, updateExpr,
-                      terminateExpr, resultExpr, maxNumIterations,
-                      cyclesPerIteration=1, updateExprOuter='',
-                      updateExprInner='', strata='', *args, **kwargs):
-    """
-    Driver for an iterative algorithm
-
-    A general driver function for most iterative algorithms: The state between
-    iterations is kept in a variable of type <tt>stateType</tt>, which is
-    initialized with <tt><em>initialState</em></tt>. During each iteration, the
-    SQL statement <tt>updateSQL</tt> is executed in the database. Afterwards,
-    the SQL query <tt>updateSQL</tt> decides whether the algorithm terminates.
-
-    @param stateType SQL type of the state between iterations
-    @param initialState The initial value of the SQL state variable
-    @param source The source relation
-    @param updateExpr SQL expression that returns the new state of type
-        <tt>stateType</tt>. The expression may use the replacement fields
-        <tt>"{state}"</tt>, <tt>"{iteration}"</tt>, and
-        <tt>"{sourceAlias}"</tt>. Source alias is an alias for the source
-        relation <tt><em>source</em></tt>.
-    @param terminateExpr SQL expression that returns whether the algorithm should
-        terminate. The expression may use the replacement fields
-        <tt>"{oldState}"</tt>, <tt>"{newState}"</tt>, and
-        <tt>"{iteration}"</tt>. It must return a BOOLEAN value.
-    @param resultExpr The SQL query to extract the result
-    @param maxNumIterations Maximum number of iterations. Algorithm will then
-        terminate even when <tt>terminateExpr</tt> does not evaluate to \c true
-    @param cyclesPerIteration Number of aggregate function calls per iteration.
-    """
-    rel_args = __unique_string()
-    rel_state = __unique_string()
-
-    plpy.execute("""
-        CREATE TEMP TABLE {rel_args} AS
-        SELECT
-            {maxNumIterations} AS maxNumIterations,
-            {cyclesPerIteration} AS cyclesPerIteration
-        """.format(rel_args=rel_args, maxNumIterations=maxNumIterations,
-            cyclesPerIteration=cyclesPerIteration))
-
-    # updateExpr is used to branch b/w stratified cox and normal cox
-    if updateExpr.strip() != '':
-        updateSQL = """
-            SELECT
-                {updateExpr}
-            FROM (
-                m4_ifdef(`__HAWQ__',
-                `SELECT {resultExpr} AS result',
-                `SELECT {resultExpr} AS result FROM {rel_state}
-                WHERE _iteration = {{iteration}}')
-            ) st,
-            {{source}} as src
-            """.format(updateExpr=updateExpr, resultExpr=resultExpr,
-                       rel_state=rel_state)
-    else:
-        updateSQL = """
-            SELECT
-                {updateExprOuter}
-            FROM (
-                SELECT {updateExprInner} AS inner_state
-                FROM (
-                    m4_ifdef(`__HAWQ__',
-                    `SELECT {resultExpr} AS result',
-                    `SELECT {resultExpr} AS result
-                    FROM {rel_state}
-                    WHERE _iteration = {{iteration}}')
-                ) s1,
-                {{source}} as src
-                GROUP BY {strata}
-            ) s2
-            """.format(updateExprOuter=updateExprOuter, strata=strata,
-                       updateExprInner=updateExprInner, resultExpr=resultExpr,
-                       rel_state=rel_state)
-
-    terminateSQL = terminateExpr
-    checkForNullStateSQL = '_state_current IS NULL'
-
-    iterationCtrl = IterationController2S(
-        rel_args = rel_args,
-        rel_state = rel_state,
-        stateType = "double precision[]",
-        initialize_state = True,
-        **kwargs)
-
-    with iterationCtrl as it:
-        it.iteration = 0
-        while True:
-            it.update(
-                updateSQL.format(
-                source=source,
-                state=m4_ifdef(`__HAWQ__', `"{{__state__}}"', `"(_state)"'),
-                oldCoef="(result).coef",
-                iteration=it.iteration))
-
-            if it.test(checkForNullStateSQL) or \
-                    (it.iteration > cyclesPerIteration and \
-                        (it.iteration >= cyclesPerIteration * maxNumIterations or \
-                            it.test(terminateSQL.format(
-                                iteration=it.iteration,
-                                cyclesPerIteration=cyclesPerIteration)))):
-                break
-
-    # Note: We do not drop the temporary table
-    return (iterationCtrl.iteration, rel_state)
-# ----------------------------------------------------------------------
-
-
-def compute_coxph(schema_madlib, source, indepColumn,
-                  depColumn, status, optimizer,
-                  maxNumIterations, precision,
-                  *args, **kwargs):
-    """
-    Compute cox survival regression coefficients
-
-    This method serves as an interface to different optimization algorithms.
-    By default, iteratively reweighted least squares is used, but for data with
-    a lot of columns the conjugate-gradient method might perform better.
-
-    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
-    @param source Name of relation containing the training data
-    @param indepColumn Name of independent column in training data
-    @param depColumn Name of dependant column which captures time of death
-    @param status Right censoring support for cox
-    @param optimizer Name of the optimizer. 'newton': newton method
-    @param maxNumIterations Maximum number of iterations
-    @param precision Terminate if two consecutive iterations have a difference
-           in the log-likelihood of less than <tt>precision</tt>. In other
-           words, we terminate if the objective function value has converged.
-           This convergence criterion can be disabled by specifying a negative
-           value.
-    @param kwargs We allow the caller to specify additional arguments (all of
-           which will be ignored though). The purpose of this is to allow the
-           caller to unpack a dictionary whose element set is a superset of
-           the required arguments by this function.
-
-    @return array with coefficients in case of convergence, otherwise None
-    """
-
-    indepColumn = __check_args(schema_madlib, source, indepColumn, depColumn, status)
-    if maxNumIterations < 1:
-        plpy.error("Number of iterations must be positive")
-
-    if optimizer not in ['newton']:
-        plpy.error("Unknown optimizer requested. Must be 'newton'")
-
-    return __runIterativeAlg(
-        stateType="double precision[]",
-        initialState="NULL",
-        source=source,
-        updateExpr="""
-            {schema_madlib}.coxph_step(
-                ({indepColumn})::double precision[],
-                ({depColumn})::double precision,
-                ({status})::boolean,
-                {{oldCoef}}::double precision[]
-                ORDER BY {depColumn} DESC
-            )
-            """.format(schema_madlib=schema_madlib,
-                       indepColumn=indepColumn,
-                       depColumn=depColumn,
-                       status=status),
-        terminateExpr="""
-            {schema_madlib}.internal_coxph_step_distance(
-                _state_current, _state_previous
-            ) < {precision}
-            """.format(schema_madlib=schema_madlib, precision=precision),
-        resultExpr="""
-            {schema_madlib}.internal_coxph_result({{state}})
-            """.format(schema_madlib=schema_madlib),
-        maxNumIterations=maxNumIterations)
-# ----------------------------------------------------------------------
-
-
-def compute_coxph_strata(schema_madlib, source, indepColumn,
-                         depColumn, status, strata, optimizer,
-                         maxNumIterations, precision,
-                         *args, **kwargs):
-    """
-    Compute cox survival regression coefficients
-
-    This method serves as an interface to different optimization algorithms.
-    By default, iteratively reweighted least squares is used, but for data with
-    a lot of columns the conjugate-gradient method might perform better.
-
-    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
-    @param source Name of relation containing the training data
-    @param indepColumn Name of independent column in training data
-    @param depColumn Name of dependant column which captures time of death
-    @param status Right censoring support for cox
-    @param strata - A string, column name seprated by commas. The
-            columns used for stratification. Default is None.
-    @param optimizer Name of the optimizer. 'newton': newton method
-    @param maxNumIterations Maximum number of iterations
-    @param precision Terminate if two consecutive iterations have a difference
-           in the log-likelihood of less than <tt>precision</tt>. In other
-           words, we terminate if the objective function value has converged.
-           This convergence criterion can be disabled by specifying a negative
-           value.
-    @param kwargs We allow the caller to specify additional arguments (all of
-           which will be ignored though). The purpose of this is to allow the
-           caller to unpack a dictionary whose element set is a superset of
-           the required arguments by this function.
-
-    @return array with coefficients in case of convergence, otherwise None
-    """
-    if strata is None:
-        return compute_coxph(schema_madlib, source, indepColumn,
-                             depColumn, status, optimizer,
-                             maxNumIterations, precision)
-
-    indepColumn = __check_args(schema_madlib, source, indepColumn, depColumn, status)
-    if maxNumIterations < 1:
-        plpy.error("Number of iterations must be positive")
-
-    if optimizer not in ['newton']:
-        plpy.error("Unknown optimizer requested. Must be 'newton'")
-
-    terminateExpr = """
-            {schema_madlib}.internal_coxph_step_distance(
-                _state_current, _state_previous
-            ) < {precision}
-            """.format(schema_madlib=schema_madlib, precision=precision)
-
-    resultExpr = "{schema_madlib}.internal_coxph_result({{state}})".format(
-                    schema_madlib=schema_madlib)
-
-    updateExprOuter = """{schema_madlib}.coxph_strata_step_outer(inner_state)
-                      """.format(schema_madlib=schema_madlib)
-
-    updateExprInner = """
-            {schema_madlib}.coxph_strata_step_inner(
-                ({indepColumn})::double precision[],
-                ({depColumn})::double precision,
-                ({status})::boolean,
-                {{oldCoef}}::double precision[]
-                ORDER BY {depColumn} DESC
-            )
-            """.format(schema_madlib=schema_madlib,
-                       indepColumn=indepColumn, depColumn=depColumn,
-                       status=status)
-
-    return __runIterativeAlg(
-        stateType="double precision[]", initialState="NULL",
-        source=source, updateExpr='', terminateExpr=terminateExpr,
-        resultExpr=resultExpr, maxNumIterations=maxNumIterations,
-        updateExprOuter=updateExprOuter, updateExprInner=updateExprInner,
-        strata=strata)
-
 
 # -----------------------------------------------------------------------
 # ZPH functionality
