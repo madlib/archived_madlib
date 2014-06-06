@@ -1,3 +1,4 @@
+# utf-8
 """
 @file margins_common.py_in
 
@@ -373,7 +374,19 @@ class MarginalEffectsBuilder(object):
             else:
                 # whole term is identifier (may include quotes)
                 identifier = t[0]
-            identifier = identifier.strip()
+            if not (identifier.startswith('"') and identifier.endswith('"')):
+                if not re.match(r'^\w+$', identifier):
+                    raise ValueError("Invalid identifier '{0}' in x_design. Quote "
+                                     "an identifier with non-alphanumeric "
+                                     "characters using double-quotes.".
+                                     format(identifier))
+                identifier = identifier.lower()
+                # if identifier is not quoted then always keep a lower-case copy
+                # (i.e. identifier is case-insensitive)
+            else:
+                # if identifier is quoted then we keep the case intact, but
+                # strip the double-quotes at the two ends.
+                identifier = identifier.strip(' "')
         else:
             raise ValueError("Invalid string '{0}' in x_design".format(str(term_str)))
 
@@ -385,16 +398,15 @@ class MarginalEffectsBuilder(object):
             else:
                 return ContinuousTerm(identifier, index)
         else:
-            curr_term = TermBase(identifier)
             try:
-                term_index = self.inverse_basis_terms[curr_term]
+                term_index = self.inverse_basis_terms[TermBase(identifier)]
                 output_term = self.basis_terms[term_index]
             except (KeyError, ValueError):
                 raise ValueError(
                     "Invalid input in x_design. Interaction term '{0}' "
                     "contains variable '{1}' not defined as a "
                     "basis variable.".
-                    format(str(term_str), str(curr_term)))
+                    format(str(term_str), str(identifier)))
             return output_term
     # --------------------------------------------------------------------------
 
@@ -682,7 +694,7 @@ class MarginalEffectsBuilder(object):
             for outer in actual_indices:
                 derivative_matrix_str_list.append(
                     ['1' if outer==inner else '0'
-                      for inner in sorted(self.basis_terms.keys())])
+                     for inner in sorted(self.basis_terms.keys())])
         else:
             for index, curr_basis in zip(actual_indices, actual_basis):
                 if discrete and isinstance(curr_basis, IndicatorTerm):
@@ -906,18 +918,20 @@ class MarginsTestCase(unittest.TestCase):
     def test_x_design1(self):
         xd = '1, 2, 1*2, "1^2", 5, 6, 1^1*2^2*5^4, 5^2, "1^2"*5'
         int_obj = MarginalEffectsBuilder(xd)
-        self.assertEqual([i.identifier for i in int_obj.basis_terms.values()], ['1', '2', '"1^2"', '5', '6'])
+        self.assertEqual([i.identifier for i in int_obj.basis_terms.values()], ['1', '2', '1^2', '5', '6'])
         self.assertEqual(int_obj.indicator_terms, {})
         self.assertEqual(int_obj.reference_terms, {})
         self.assertEqual(int_obj.contains_indicators(), False)
         self.assertEqual(int_obj.contains_interaction(), True)
+        self.assertEqual(str(int_obj.interaction_terms),
+                         '{8: 5^2, 9: 1^2 * 5, 3: 1 * 2, 7: 1 * 2^2 * 5^4}')
 
     def test_x_design2(self):
-        xd = '1, i.2.color, 1*2, 5, 1^1*2^2*  5^4, 6, 5^2'
+        xd = '1, i."red".color, 1*red, 5, 1^1*red^2*  5^4, 6, 5^2'
         basis_terms_dict = {}
         for ind, var in zip((1, 4, 6), ('1', '5', '6')):
             basis_terms_dict[ind] = ContinuousTerm(var, ind)
-        basis_terms_dict[2] = IndicatorTerm('2', 2, 'color', False)
+        basis_terms_dict[2] = IndicatorTerm('red', 2, 'color', False)
         int_obj = MarginalEffectsBuilder(xd)
         self.assertEqual(int_obj.basis_terms, basis_terms_dict)
         self.assertEqual(int_obj.indicator_terms, {'color': [basis_terms_dict[2]]})
@@ -941,16 +955,16 @@ class MarginsTestCase(unittest.TestCase):
                          "x[4]^4 + B[7] * x[4]^2")
 
     def test_x_design3(self):
-        xd = 'i."1*2".color, 2, 3'
+        xd = 'i."1*2".color, Age, 3, "1*2"*age'
         int_obj = MarginalEffectsBuilder(xd)
-        # self.assertEqual(int_obj.basis_terms,
-        #                  dict(zip([1, 2, 3],
-        #                           [ContinuousTerm(str(i), i) for i in [1, 2, 3]])))
-        # self.assertEqual(int_obj.interaction_terms, dict())
-        # self.assertEqual(int_obj.indicator_terms, dict())
-        # self.assertEqual(int_obj.reference_terms, dict())
+        self.assertEqual(int_obj.basis_terms,
+                         {1: ContinuousTerm('1*2', 1),
+                          2: ContinuousTerm('age', 2),
+                          3: ContinuousTerm('3', 3)})
+        self.assertEqual(int_obj.indicator_terms, {'color': [IndicatorTerm('1*2', 1, 'color')]})
+        self.assertEqual(int_obj.reference_terms, dict())
 
-    def test_x_design4(self):
+    def test_x_design_failures(self):
         xd = '1, 2, 1*5, 1*2^2, 5.color, i.6'
         # 5.color is invalid input
         self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
@@ -958,8 +972,18 @@ class MarginsTestCase(unittest.TestCase):
         # age not defined as basis
         self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
         xd = '1, test.2.color, 1*age, 1*2^2, i.6'
+        # invalid prefix "test"
+        self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
+        xd = '1, test.2.color, 1*"age", 1*2^2, i.6'
         # age not defined as basis
         self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
+        xd = '1, i.2.color, 1*"Age", 1*age^2, i.6'
+        # age not defined as basis
+        self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
+        xd = '1, i.red.color, age$, 1*red^2, i.6'
+        # age$ not quoted
+        self.assertRaises(ValueError, MarginalEffectsBuilder, xd)
+        # test = MarginalEffectsBuilder(xd)
 
     def test_x_design5(self):
         xd = '1, i.2, 1*i.2.color, 1^1*2^2*3^4'
