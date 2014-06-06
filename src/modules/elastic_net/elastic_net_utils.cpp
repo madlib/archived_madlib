@@ -57,7 +57,7 @@ AnyType __elastic_net_binomial_prob::run (AnyType& args)
 // ------------------------------------------------------------------------
 
 /**
-   @brief Compute std::log-likelihood for one data point ion binomial models
+   @brief Compute std::log-likelihood for one data point in binomial models
 */
 AnyType __elastic_net_binomial_loglikelihood::run (AnyType& args)
 {

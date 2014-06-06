@@ -25,8 +25,10 @@ class BinomialIgd
                                   MappedColumnVector& x, double y);
     static void merge_intercept (IgdState<MutableArrayHandle<double> >& state1,
                                  IgdState<ArrayHandle<double> >& state2);
+    static void update_loglikelihood(IgdState<MutableArrayHandle<double> >& state,
+                                     MappedColumnVector& x, double y);
     static void update_intercept_final (IgdState<MutableArrayHandle<double> >& state);
-    
+
 };
 
 // ------------------------------------------------------------------------
@@ -73,7 +75,7 @@ inline void BinomialIgd::update_intercept (IgdState<MutableArrayHandle<double> >
         u = - 1. / (1. + std::exp(r));
     else
         u = 1. / (1. + std::exp(-r));
-    
+
     state.intercept -= state.stepsize * u;
 }
 
@@ -91,6 +93,21 @@ inline void BinomialIgd::merge_intercept  (IgdState<MutableArrayHandle<double> >
         static_cast<double>(totalNumRows);
 }
 
+// ------------------------------------------------------------------------
+
+/**
+   @brief Compute log-likelihood for one data point in binomial models
+*/
+inline void BinomialIgd::update_loglikelihood(
+        IgdState<MutableArrayHandle<double> >& state,
+        MappedColumnVector& x, double y) {
+
+    double r = state.intercept + sparse_dot(state.coef, x);
+    if (y > 0)
+        state.loglikelihood += std::log(1 + std::exp(-r));
+    else
+        state.loglikelihood +=  std::log(1 + std::exp(r));
+}
 // ------------------------------------------------------------------------
 
 inline void BinomialIgd::update_intercept_final (IgdState<MutableArrayHandle<double> >& state)
@@ -165,7 +182,7 @@ __binomial_igd_result::run (AnyType& args)
 {
     return Igd<BinomialIgd>::igd_result(args);
 }
- 
-} // namespace elastic_net 
+
+} // namespace elastic_net
 } // namespace modules
 } // namespace madlib

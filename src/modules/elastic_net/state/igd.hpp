@@ -71,13 +71,13 @@ class IgdState
      */
     static inline uint32_t arraySize (const uint32_t inDimension)
     {
-        return 13 + 3 * inDimension;
+        return 14 + 3 * inDimension;
     }
 
   protected:
     void rebind ()
     {
-        dimension.rebind(&mStorage[0]); 
+        dimension.rebind(&mStorage[0]);
         stepsize.rebind(&mStorage[1]);
         lambda.rebind(&mStorage[2]);
         alpha.rebind(&mStorage[3]);
@@ -93,6 +93,8 @@ class IgdState
         theta.rebind(&mStorage[11 + 2 * dimension], dimension);
         threshold.rebind(&mStorage[11 + 3 * dimension]);
         step_decay.rebind(&mStorage[12 + 3 * dimension]);
+        loglikelihood.rebind(&mStorage[13 + 3 * dimension]);
+
     }
 
     Handle mStorage;
@@ -114,6 +116,7 @@ class IgdState
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap theta; // used for mirror truncation
     typename HandleTraits<Handle>::ReferenceToDouble threshold; // used for remove tiny values
     typename HandleTraits<Handle>::ReferenceToDouble step_decay; // decay of step size
+    typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;  // loglk for previous iteration
 };
 
 }

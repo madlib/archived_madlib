@@ -23,10 +23,14 @@ class GaussianIgd
                                   MappedColumnVector& x, double y);
     static void update_intercept (IgdState<MutableArrayHandle<double> >& state,
                                   MappedColumnVector& x, double y);
+    // update the loglikelihood
+    static void update_loglikelihood (
+        IgdState<MutableArrayHandle<double> >& state,
+        MappedColumnVector& x, double y);
     static void merge_intercept (IgdState<MutableArrayHandle<double> >& state1,
                                  IgdState<ArrayHandle<double> >& state2);
     static void update_intercept_final (IgdState<MutableArrayHandle<double> >& state);
-    
+
 };
 
 // ------------------------------------------------------------------------
@@ -45,45 +49,61 @@ inline void GaussianIgd::init_intercept (IgdState<MutableArrayHandle<double> >& 
 
 // ------------------------------------------------------------------------
 
-inline void GaussianIgd::compute_gradient (ColumnVector& gradient,
-                                           IgdState<MutableArrayHandle<double> >& state,
-                                           MappedColumnVector& x, double y)
+inline void GaussianIgd::compute_gradient (
+    ColumnVector& gradient,
+    IgdState<MutableArrayHandle<double> >& state,
+    MappedColumnVector& x, double y)
 {
     double wx = sparse_dot(state.coef, x) + state.intercept;
     double r = wx - y;
-    
+
     gradient = r * (x - state.xmean) + (1 - state.alpha) * state.lambda
-        * state.coef;         
+        * state.coef;
 }
 
 // ------------------------------------------------------------------------
 
-inline void GaussianIgd::update_intercept (IgdState<MutableArrayHandle<double> >& state,
-                                           MappedColumnVector& x, double y)
+inline void GaussianIgd::update_intercept (
+    IgdState<MutableArrayHandle<double> >& state,
+    MappedColumnVector& x, double y)
 {
     // avoid unused parameter warning,
     // actually does absolutely nothing
     (void)x;
     (void)y;
-    
+
     state.intercept = state.ymean - sparse_dot(state.coef, state.xmean);
+}
+// ------------------------------------------------------------------------
+
+/**
+   @brief Compute log-likelihood for one data point in gaussian models
+*/
+inline void GaussianIgd::update_loglikelihood (
+        IgdState<MutableArrayHandle<double> >& state,
+        MappedColumnVector& x, double y) {
+    state.loglikelihood += pow(y - state.intercept - sparse_dot(state.coef, x), 2);
 }
 
 // ------------------------------------------------------------------------
 
+
 // do nothing
-inline void GaussianIgd::merge_intercept  (IgdState<MutableArrayHandle<double> >& state1,
-                                           IgdState<ArrayHandle<double> >& state2)
+inline void GaussianIgd::merge_intercept  (
+    IgdState<MutableArrayHandle<double> >& state1,
+    IgdState<ArrayHandle<double> >& state2)
 {
-    // avoid unused parameter warning,
-    // actually does absolutely nothing
+    // Avoid unused parameter warning, the function does nothing
+    // This function is included here since the igd optimizer uses this function
+    // for the binomial case.
     (void)state1;
     (void)state2;
 }
 
 // ------------------------------------------------------------------------
 
-inline void GaussianIgd::update_intercept_final (IgdState<MutableArrayHandle<double> >& state)
+inline void GaussianIgd::update_intercept_final (
+    IgdState<MutableArrayHandle<double> >& state)
 {
     state.intercept = state.ymean - sparse_dot(state.coef, state.xmean);
 }
@@ -153,7 +173,7 @@ __gaussian_igd_result::run (AnyType& args)
 {
     return Igd<GaussianIgd>::igd_result(args);
 }
- 
-} // namespace elastic_net 
+
+} // namespace elastic_net
 } // namespace modules
 } // namespace madlib

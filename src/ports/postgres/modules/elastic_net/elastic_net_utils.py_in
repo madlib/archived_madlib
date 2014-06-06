@@ -60,27 +60,27 @@ def __process_warmup_lambdas(lambdas, lambda_value):
     for i in range(len(elm)):
         elm[i] = float(elm[i])
 
-    if elm[len(elm)-1] != lambda_value:
+    if elm[len(elm) - 1] != lambda_value:
         plpy.error("""
                    Elastic Net error: The last element of warmup_lambdas must
                    be equal to the lambda value that you want to compute !
                    """)
 
     if len(elm) > 1:
-        for i in range(len(elm)-1):
-            if elm[i] <= elm[i+1]:
+        for i in range(len(elm) - 1):
+            if elm[i] <= elm[i + 1]:
                 plpy.error("""
                            Elastic Net error: The given warm-up array must be
                            in a strict descent order.
                            """)
 
     return elm
-
 # ========================================================================
 
-def __generate_warmup_lambda_sequence (tbl_used, col_ind_var, col_dep_var,
-                                       dimension, row_num, lambda_value,
-                                       alpha, num_steps, sq):
+
+def __generate_warmup_lambda_sequence(tbl_used, col_ind_var, col_dep_var,
+                                      dimension, row_num, lambda_value,
+                                      alpha, num_steps, sq):
     """
     Compute lambda sequence, when warmup is True and warmup_lambdas are
     not given
@@ -118,8 +118,8 @@ def __generate_warmup_lambda_sequence (tbl_used, col_ind_var, col_dep_var,
         seq.append(0)
 
     return seq
-
 # ========================================================================
+
 
 def __compute_average_sq(**args):
     """
@@ -129,33 +129,31 @@ def __compute_average_sq(**args):
     sq = [1] * args["dimension"]
     if args["normalization"] is False:
         for i in range(args["dimension"]):
-            sq[i] = (args["x_scales"]["std"][i])**2 + (args["x_scales"]["mean"][i])**2
+            sq[i] = (args["x_scales"]["std"][i]) ** 2 + (args["x_scales"]["mean"][i]) ** 2
 
     return sq
-
 # ========================================================================
 
-def __compute_log_likelihood (coef, coef_str, intercept, **args):
+
+def __compute_log_likelihood(coef, intercept, **args):
     """
     Compute the log-likelihood at the end of calculation
     """
-    if args["family"] == "gaussian": # linear models
+    if args["family"] == "gaussian":  # linear models
         loss = plpy.execute(
             """
             select
                 avg(({col_dep_var_new} - {schema_madlib}.elastic_net_gaussian_predict(
-                                                                    '{coefficients}'::double precision[],
-                                                                    {intercept}::double precision,
-                                                                    {col_ind_var_new}))^2) / 2.
-                    as loss
+                   '{coefficients}'::double precision[],
+                   {intercept}::double precision,
+                   {col_ind_var_new}))^2) / 2.
+                as loss
             from
                 {tbl_used}
-            """.format(coefficients = coef_str,
-                       intercept = intercept,
+            """.format(coefficients=_array_to_string(coef),
+                       intercept=intercept,
                        **args))[0]["loss"]
-
-
-    elif args["family"] == "binomial": # logistic models
+    elif args["family"] == "binomial":  # logistic models
         loss = plpy.execute(
             """
             select
@@ -166,27 +164,26 @@ def __compute_log_likelihood (coef, coef_str, intercept, **args):
                                     {col_ind_var_new}))
                     as loss
             from {tbl_used}
-            """.format(coefficients = coef_str,
-                       intercept = intercept,
+            """.format(coefficients=_array_to_string(coef),
+                       intercept=intercept,
                        **args))[0]["loss"]
+    module_1 = sum(x * x for x in coef)
+    module_2 = sum(abs(x) for x in coef)
 
-    module_1 = sum(x*x for x in coef)
-    module_2 = sum(map(abs, coef))
-
-    log_likelihood = -(loss + args["lambda_value"] * ((1 - args["alpha"]) \
-                        * module_1 / 2. + args["alpha"] * module_2))
-
+    log_likelihood = -(loss + args["lambda_value"] *
+                       ((1 - args["alpha"]) *
+                        module_1 / 2. + args["alpha"] * module_2))
     return log_likelihood
-
 # ========================================================================
+
 
 def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
                                 tbl_result, lambda_value, alpha,
                                 normalization, max_iter, tolerance):
     if (tbl_source is None or col_ind_var is None or col_dep_var is None
-        or tbl_result is None or lambda_value is None or alpha is None
-        or normalization is None or len(tbl_source) == 0 or len(col_ind_var) == 0
-        or len(col_dep_var) == 0 or len(tbl_result) == 0):
+            or tbl_result is None or lambda_value is None or alpha is None
+            or normalization is None or len(tbl_source) == 0 or len(col_ind_var) == 0
+            or len(col_dep_var) == 0 or len(tbl_result) == 0):
         plpy.error("Elastic Net error: You have unsupported NULL/empty value(s) in the arguments!")
 
     #     plpy.error("Elastic Net error: Data table " + tbl_source + " does not exist!")
@@ -222,21 +219,21 @@ def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
         plpy.error("Elastic Net error: tolerance must be positive!")
 
     return None
+# ========================================================================
 
-## ========================================================================
 
-def __compute_data_scales (args):
-    args["x_scales"] = __utils_ind_var_scales(tbl_data = args["tbl_source"], col_ind_var = args["col_ind_var"],
-                                              dimension = args["dimension"], schema_madlib = args["schema_madlib"])
+def __compute_data_scales(args):
+    args["x_scales"] = __utils_ind_var_scales(tbl_data=args["tbl_source"], col_ind_var=args["col_ind_var"],
+                                              dimension=args["dimension"], schema_madlib=args["schema_madlib"])
 
     if args["family"] == "binomial":
-        args["y_scale"] = dict(mean = 0, std = 1)
+        args["y_scale"] = dict(mean=0, std=1)
     else:
-        args["y_scale"] = __utils_dep_var_scale (tbl_data = args["tbl_source"], col_dep_var = args["col_dep_var"])
+        args["y_scale"] = __utils_dep_var_scale(tbl_data=args["tbl_source"], col_dep_var=args["col_dep_var"])
 
     args["xmean_str"] = _array_to_string(args["x_scales"]["mean"])
+# ========================================================================
 
-## ========================================================================
 
 def __normalize_data(args):
     """
@@ -247,24 +244,24 @@ def __normalize_data(args):
     """
     __compute_data_scales(args)
 
-    y_decenter = True if args["family"] == "gaussian" else False;
+    y_decenter = True if args["family"] == "gaussian" else False
 
-    __utils_normalize_data(y_decenter = y_decenter,
-                           tbl_data = args["tbl_source"],
-                           col_ind_var = args["col_ind_var"],
-                           col_dep_var = args["col_dep_var"],
-                           tbl_data_scaled = args["tbl_data_scaled"],
-                           col_ind_var_norm_new = args["col_ind_var_norm_new"],
-                           col_dep_var_norm_new = args["col_dep_var_norm_new"],
-                           schema_madlib = args["schema_madlib"],
-                           x_mean_str = args["xmean_str"],
-                           x_std_str = _array_to_string(args["x_scales"]["std"]),
-                           y_mean = args["y_scale"]["mean"],
-                           y_std = args["y_scale"]["std"])
+    __utils_normalize_data(y_decenter=y_decenter,
+                           tbl_data=args["tbl_source"],
+                           col_ind_var=args["col_ind_var"],
+                           col_dep_var=args["col_dep_var"],
+                           tbl_data_scaled=args["tbl_data_scaled"],
+                           col_ind_var_norm_new=args["col_ind_var_norm_new"],
+                           col_dep_var_norm_new=args["col_dep_var_norm_new"],
+                           schema_madlib=args["schema_madlib"],
+                           x_mean_str=args["xmean_str"],
+                           x_std_str=_array_to_string(args["x_scales"]["std"]),
+                           y_mean=args["y_scale"]["mean"],
+                           y_std=args["y_scale"]["std"])
 
     return None
+# ========================================================================
 
-## ========================================================================
 
 def __tbl_dimension_rownum(tbl_source, col_ind_var):
     """
@@ -274,18 +271,18 @@ def __tbl_dimension_rownum(tbl_source, col_ind_var):
     dimension = plpy.execute("""
                              select array_upper({col_ind_var},1) as dimension
                              from {tbl_source} limit 1
-                             """.format(tbl_source = tbl_source,
-                                        col_ind_var = col_ind_var))[0]["dimension"]
+                             """.format(tbl_source=tbl_source,
+                                        col_ind_var=col_ind_var))[0]["dimension"]
     # total row number of data source table
     row_num = plpy.execute("""
                            select count(*) from {tbl_source}
-                           """.format(tbl_source = tbl_source))[0]["count"]
+                           """.format(tbl_source=tbl_source))[0]["count"]
 
     return (dimension, row_num)
-
 # ========================================================================
 
-def __compute_means (**args):
+
+def __compute_means(**args):
     """
     Compute the averages of dependent (y) and independent (x) variables
     """
@@ -295,12 +292,11 @@ def __compute_means (**args):
         return (xmean_str, ymean)
     else:
         return (args["xmean_str"], args["y_scale"]["mean"])
-
 # ========================================================================
 
-## ========================================================================
 
 class IterationControllerNoTableDrop (IterationController2S):
+
     """
     IterationController but without table dropping
 
@@ -308,33 +304,37 @@ class IterationControllerNoTableDrop (IterationController2S):
     where dropping tables in a loop would use up all the locks
     and get "out of memory" error
     """
-    ## ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
 
     def __init__(self, rel_args, rel_state, stateType,
-                 temporaryTables = True,
-                 truncAfterIteration = False,
-                 schema_madlib = "MADLIB_SCHEMA_MISSING",
-                 verbose = False,
+                 temporaryTables=True,
+                 truncAfterIteration=False,
+                 schema_madlib="MADLIB_SCHEMA_MISSING",
+                 verbose=False,
                  **kwargs):
         # Need to call super class's init method to initialize
         # member fields
-        IterationController.__init__(self, rel_args, rel_state, stateType,
-                                     temporaryTables, truncAfterIteration,
-                                     schema_madlib, verbose, **kwargs)
+        super(IterationControllerNoTableDrop, self).__init__(
+            self, rel_args, rel_state, stateType, temporaryTables,
+            truncAfterIteration, schema_madlib, verbose, **kwargs)
         # self.kwargs["rel_state"] = "pg_temp" + rel_state, but for testing
         # the existence of a table, schema name should be used together
-        self.state_exists = plpy.execute("select count(*) from information_schema.tables where table_name = '{0}' and table_schema = 'pg_temp'".format(rel_state))[0]['count'] == 1
+        self.state_exists = plpy.execute(
+            "select count(*) from information_schema.tables "
+            "where table_name = '{0}' and table_schema = 'pg_temp'".
+            format(rel_state))[0]['count'] == 1
         # The current total row number of rel_state table
         if self.state_exists:
-            self.state_row_num = plpy.execute("select count(*) from {rel_state}".format(**self.kwargs))[0]["count"]
+            self.state_row_num = plpy.execute("select count(*) from {rel_state}".
+                                              format(**self.kwargs))[0]["count"]
 
-    ## ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
 
     def update(self, newState):
         """
         Update state of calculation.
         """
-        newState = newState.format(iteration = self.iteration, **self.kwargs)
+        newState = newState.format(iteration=self.iteration, **self.kwargs)
         self.iteration += 1
         if self.state_exists and self.iteration <= self.state_row_num:
             # If the rel_state table already exists, and
@@ -344,8 +344,8 @@ class IterationControllerNoTableDrop (IterationController2S):
             self.runSQL("""
                 update {rel_state} set _state = ({newState})
                 where _iteration = {iteration}
-            """.format(iteration = self.iteration,
-                       newState = newState,
+            """.format(iteration=self.iteration,
+                       newState=newState,
                        **self.kwargs))
         else:
             # rel_state table is newly created, and
@@ -355,11 +355,10 @@ class IterationControllerNoTableDrop (IterationController2S):
                     SELECT
                         {iteration},
                         ({newState})
-            """.format(iteration = self.iteration,
-                       newState = newState,
+            """.format(iteration=self.iteration,
+                       newState=newState,
                        **self.kwargs))
-
-    ## ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
 
     def __enter__(self):
         """
@@ -368,25 +367,26 @@ class IterationControllerNoTableDrop (IterationController2S):
         """
         if self.state_exists is False:
             # create rel_state table when it does not already exist
-            IterationController.__enter__(self)
+            super(IterationControllerNoTableDrop, self).__enter__(self)
         self.inWith = True
         return self
-
 # ------------------------------------------------------------------------
 
+
 class IterationControllerTableAppend (IterationControllerNoTableDrop):
+
     def __init__(self, rel_args, rel_state, stateType,
-                 temporaryTables = True,
-                 truncAfterIteration = False,
-                 schema_madlib = "MADLIB_SCHEMA_MISSING",
-                 verbose = False,
+                 temporaryTables=True,
+                 truncAfterIteration=False,
+                 schema_madlib="MADLIB_SCHEMA_MISSING",
+                 verbose=False,
                  **kwargs):
         self.kwargs = kwargs
         self.kwargs.update(
-            rel_args = rel_args,
-            rel_state = rel_state,
-            stateType = stateType.format(schema_madlib = schema_madlib),
-            schema_madlib = schema_madlib)
+            rel_args=rel_args,
+            rel_state=rel_state,
+            stateType=stateType.format(schema_madlib=schema_madlib),
+            schema_madlib=schema_madlib)
         self.temporaryTables = temporaryTables
         self.truncAfterIteration = truncAfterIteration
         self.verbose = verbose
@@ -398,20 +398,19 @@ class IterationControllerTableAppend (IterationControllerNoTableDrop):
                                          from information_schema.tables
                                          where table_name = '{rel_state}'
                                          """.format(**self.kwargs))[0]['count'] == 1
-
-    ## ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
 
     def update(self, newState):
         """
         Update state of calculation.
         """
-        newState = newState.format(iteration = self.iteration, **self.kwargs)
+        newState = newState.format(iteration=self.iteration, **self.kwargs)
         self.iteration += 1
         self.runSQL("""
                     INSERT INTO {rel_state}
                     SELECT
                         {iteration},
                         ({newState})
-                    """.format(iteration = self.iteration,
-                               newState = newState,
+                    """.format(iteration=self.iteration,
+                               newState=newState,
                                **self.kwargs))

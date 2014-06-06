@@ -4,6 +4,7 @@
 #include "state/fista.hpp"
 #include "elastic_net_optimizer_fista.hpp"
 #include "share/shared_utils.hpp"
+#include <math.h>       /* pow */
 
 namespace madlib {
 namespace modules {
@@ -15,42 +16,59 @@ namespace elastic_net {
 class GaussianFista
 {
   public:
-    static void initialize (FistaState<MutableArrayHandle<double> >& state, AnyType& args);
-    static void get_y (double& y, AnyType& args);
-    static void normal_transition (FistaState<MutableArrayHandle<double> >& state,
+    static void initialize(FistaState<MutableArrayHandle<double> >& state);
+    static void get_y(double& y, AnyType& args);
+    static void normal_transition(FistaState<MutableArrayHandle<double> >& state,
                                    MappedColumnVector& x, double y);
-    static void active_transition (FistaState<MutableArrayHandle<double> >& state,
+    static void active_transition(FistaState<MutableArrayHandle<double> >& state,
                                    MappedColumnVector& x, double y);
 
     // update the backtracking coef
-    static void update_b_intercept (FistaState<MutableArrayHandle<double> >& state);
+    static void update_b_intercept(FistaState<MutableArrayHandle<double> >& state);
+
+    // update the loglikelihood
+    static void update_loglikelihood(
+        FistaState<MutableArrayHandle<double> >& state,
+        MappedColumnVector& x, double y);
 
     // update the proxy coef
-    static void update_y_intercept (FistaState<MutableArrayHandle<double> >& state,
+    static void update_y_intercept(FistaState<MutableArrayHandle<double> >& state,
                                     double old_tk);
 
-    static void update_y_intercept_final (FistaState<MutableArrayHandle<double> >& state);
+    static void update_y_intercept_final(FistaState<MutableArrayHandle<double> >& state);
 
-    static void merge_intercept (FistaState<MutableArrayHandle<double> >& state1,
+    static void merge_intercept(FistaState<MutableArrayHandle<double> >& state1,
                                  FistaState<ArrayHandle<double> >& state2);
 
   private:
-    static void backtracking_transition (FistaState<MutableArrayHandle<double> >& state,
+    static void backtracking_transition(FistaState<MutableArrayHandle<double> >& state,
                                          MappedColumnVector& x, double y);
 };
 
 // ------------------------------------------------------------------------
 
-inline void GaussianFista::update_y_intercept_final (FistaState<MutableArrayHandle<double> >& state)
+inline void GaussianFista::update_y_intercept_final (
+    FistaState<MutableArrayHandle<double> >& state)
 {
     state.gradient_intercept = state.gradient_intercept / state.totalRows;
+}
+// -----------------------------------------------------------------------------
+
+/**
+   @brief Compute log-likelihood for one data point in gaussian models
+*/
+inline void GaussianFista::update_loglikelihood (
+        FistaState<MutableArrayHandle<double> >& state,
+        MappedColumnVector& x, double y) {
+    state.loglikelihood += pow(y - state.intercept - sparse_dot(state.coef, x), 2);
 }
 
 // ------------------------------------------------------------------------
 
-inline void GaussianFista::merge_intercept (FistaState<MutableArrayHandle<double> >& state1,
-                                            FistaState<ArrayHandle<double> >& state2)
-{
+inline void GaussianFista::merge_intercept(
+        FistaState<MutableArrayHandle<double> >& state1,
+        FistaState<ArrayHandle<double> >& state2) {
+
     state1.gradient_intercept += state2.gradient_intercept;
 }
 
@@ -79,13 +97,13 @@ inline void GaussianFista::update_y_intercept (FistaState<MutableArrayHandle<dou
 
 // ------------------------------------------------------------------------
 // initialize state values for the first iteration only
-inline void GaussianFista::initialize (FistaState<MutableArrayHandle<double> >& state, AnyType& args)
+inline void GaussianFista::initialize (FistaState<MutableArrayHandle<double> >& state)
 {
-    (void)args;
     state.coef.setZero();
     state.coef_y.setZero();
     state.intercept = 0;
     state.intercept_y = 0;
+    state.loglikelihood = 0;
 }
 
 // ------------------------------------------------------------------------
@@ -96,7 +114,7 @@ inline void GaussianFista::backtracking_transition (FistaState<MutableArrayHandl
     // during backtracking, always use b_coef and b_intercept
     double r = y - state.b_intercept - sparse_dot(state.b_coef, x);
     state.fn += r * r * 0.5;
-    
+
     // Qfn only need to be calculated once in each backtracking
     if (state.backtracking == 1)
     {
@@ -121,7 +139,7 @@ inline void GaussianFista::normal_transition (FistaState<MutableArrayHandle<doub
         // update gradient
         state.gradient_intercept += - r;
     }
-    else 
+    else
         backtracking_transition(state, x, y);
 }
 
@@ -140,7 +158,7 @@ inline void GaussianFista::active_transition (FistaState<MutableArrayHandle<doub
                 state.gradient(i) += - x(i) * r;
 
         state.gradient_intercept += - r;
-    } else 
+    } else
         backtracking_transition(state, x, y);
 }
 
@@ -197,7 +215,7 @@ AnyType __gaussian_fista_state_diff::run (AnyType& args)
  */
 AnyType __gaussian_fista_result::run (AnyType& args)
 {
-    return Fista<GaussianFista>::fista_result(args); 
+    return Fista<GaussianFista>::fista_result(args);
 }
 
 }

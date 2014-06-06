@@ -15,45 +15,62 @@ namespace elastic_net {
 class BinomialFista
 {
   public:
-    static void initialize (FistaState<MutableArrayHandle<double> >& state, AnyType& args);
-    static void get_y (double& y, AnyType& args);
-    static void normal_transition (FistaState<MutableArrayHandle<double> >& state,
-                                   MappedColumnVector& x, double y);
-    static void active_transition (FistaState<MutableArrayHandle<double> >& state,
-                                   MappedColumnVector& x, double y);
+    static void initialize(FistaState<MutableArrayHandle<double> >& state);
+    static void get_y(double& y, AnyType& args);
+    static void normal_transition(FistaState<MutableArrayHandle<double> >& state,
+                                  MappedColumnVector& x, double y);
+    static void active_transition(FistaState<MutableArrayHandle<double> >& state,
+                                  MappedColumnVector& x, double y);
 
-    static void update_b_intercept (FistaState<MutableArrayHandle<double> >& state);
-    static void update_y_intercept (FistaState<MutableArrayHandle<double> >& state,
-                             double old_tk);
-    static void update_y_intercept_final (FistaState<MutableArrayHandle<double> >& state);
+    static void update_b_intercept(FistaState<MutableArrayHandle<double> >& state);
+    static void update_loglikelihood(FistaState<MutableArrayHandle<double> >& state,
+                                     MappedColumnVector& x, double y);
 
-    static void merge_intercept (FistaState<MutableArrayHandle<double> >& state1,
-                                 FistaState<ArrayHandle<double> >& state2);
+    static void update_y_intercept(FistaState<MutableArrayHandle<double> >& state,
+                                   double old_tk);
+    static void update_y_intercept_final(FistaState<MutableArrayHandle<double> >& state);
+
+    static void merge_intercept(FistaState<MutableArrayHandle<double> >& state1,
+                                FistaState<ArrayHandle<double> >& state2);
   private:
-    static void backtracking_transition (FistaState<MutableArrayHandle<double> >& state,
-                                         MappedColumnVector& x, double y);
+    static void backtracking_transition(FistaState<MutableArrayHandle<double> >& state,
+                                        MappedColumnVector& x, double y);
 };
 
 // ------------------------------------------------------------------------
 
-inline void BinomialFista::update_y_intercept_final (FistaState<MutableArrayHandle<double> >& state)
+inline void BinomialFista::update_y_intercept_final(FistaState<MutableArrayHandle<double> >& state)
 {
     state.gradient_intercept = state.gradient_intercept / state.totalRows;
+}
+// -----------------------------------------------------------------------------
+
+/**
+   @brief Compute log-likelihood for one data point in binomial models
+*/
+inline void BinomialFista::update_loglikelihood(
+        FistaState<MutableArrayHandle<double> >& state,
+        MappedColumnVector& x, double y) {
+
+    double r = state.intercept + sparse_dot(state.coef, x);
+    if (y > 0)
+        state.loglikelihood += std::log(1 + std::exp(-r));
+    else
+        state.loglikelihood +=  std::log(1 + std::exp(r));
 }
 
 // ------------------------------------------------------------------------
 
-inline void BinomialFista::merge_intercept (FistaState<MutableArrayHandle<double> >& state1,
-                                            FistaState<ArrayHandle<double> >& state2)
-{
+inline void BinomialFista::merge_intercept(
+        FistaState<MutableArrayHandle<double> >& state1,
+        FistaState<ArrayHandle<double> >& state2) {
     state1.gradient_intercept += state2.gradient_intercept;
 }
 
 // ------------------------------------------------------------------------
 
-inline void BinomialFista::initialize (FistaState<MutableArrayHandle<double> >& state, AnyType& args)
+inline void BinomialFista::initialize(FistaState<MutableArrayHandle<double> >& state)
 {
-    (void)args;
     state.coef.setZero();
     state.coef_y.setZero();
     state.intercept = 0;
@@ -62,26 +79,26 @@ inline void BinomialFista::initialize (FistaState<MutableArrayHandle<double> >& 
 
 // ------------------------------------------------------------------------
 // extract dependent variable from args
-inline void BinomialFista::get_y (double& y, AnyType& args)
+inline void BinomialFista::get_y(double& y, AnyType& args)
 {
     y = args[2].getAs<bool>() ? 1. : -1.;
 }
 
 // ------------------------------------------------------------------------
 
-inline void BinomialFista::normal_transition (FistaState<MutableArrayHandle<double> >& state,
+inline void BinomialFista::normal_transition(FistaState<MutableArrayHandle<double> >& state,
                                               MappedColumnVector& x, double y)
 {
     if (state.backtracking == 0)
     {
         double r = state.intercept_y + sparse_dot(state.coef_y, x);
         double u;
-        
+
         if (y > 0)
             u = - 1. / (1. + std::exp(r));
         else
             u = 1. / (1. + std::exp(-r));
-        
+
         for (uint32_t i = 0; i < state.dimension; i++)
             state.gradient(i) += x(i) * u;
 
@@ -94,19 +111,19 @@ inline void BinomialFista::normal_transition (FistaState<MutableArrayHandle<doub
 
 // ------------------------------------------------------------------------
 
-inline void BinomialFista::active_transition (FistaState<MutableArrayHandle<double> >& state,
+inline void BinomialFista::active_transition(FistaState<MutableArrayHandle<double> >& state,
                                               MappedColumnVector& x, double y)
 {
     if (state.backtracking == 0) // Compute gradient for active set
     {
         double r = state.intercept_y + sparse_dot(state.coef_y, x);
         double u;
-        
+
         if (y > 0)
             u = - 1. / (1. + std::exp(r));
         else
             u = 1. / (1. + std::exp(-r));
-        
+
         for (uint32_t i = 0; i < state.dimension; i++)
             if (state.coef_y(i) != 0)
                 state.gradient(i) += x(i) * u;
@@ -120,7 +137,7 @@ inline void BinomialFista::active_transition (FistaState<MutableArrayHandle<doub
 
 // ------------------------------------------------------------------------
 
-inline void BinomialFista::backtracking_transition (FistaState<MutableArrayHandle<double> >& state,
+inline void BinomialFista::backtracking_transition(FistaState<MutableArrayHandle<double> >& state,
                                                     MappedColumnVector& x, double y)
 {
     // during backtracking, always use b_coef and b_intercept
@@ -211,7 +228,7 @@ AnyType __binomial_fista_state_diff::run (AnyType& args)
  */
 AnyType __binomial_fista_result::run (AnyType& args)
 {
-    return Fista<BinomialFista>::fista_result(args); 
+    return Fista<BinomialFista>::fista_result(args);
 }
 
 }

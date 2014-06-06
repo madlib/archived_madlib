@@ -65,20 +65,17 @@ AnyType Fista<Model>::fista_transition (AnyType& args, const Allocator& inAlloca
     double lambda = args[4].getAs<double>();
 
     // initialize the state if working on the first tuple
-    if (state.numRows == 0)
-    {
-        if (!args[3].isNull())
-        {
+    if (state.numRows == 0) {
+        if (!args[3].isNull()) {
             FistaState<ArrayHandle<double> > pre_state = args[3];
             state.allocate(inAllocator, pre_state.dimension);
             state = pre_state;
         }
-        else
-        {
+        else {
             double alpha = args[5].getAs<double>();
             uint32_t dimension = args[6].getAs<uint32_t>();
             int totalRows = args[7].getAs<int>();
-            
+
             state.allocate(inAllocator, dimension);
             state.alpha = alpha;
             state.totalRows = totalRows;
@@ -88,39 +85,34 @@ AnyType Fista<Model>::fista_transition (AnyType& args, const Allocator& inAlloca
             state.eta = args[9].getAs<double>();
             state.lambda = lambda;
 
-            //dev/ --------------------------------------------------------
             // how to adaptively update stepsize
             srand48 (time(NULL));
             state.stepsize_sum = 0;
             state.iter = 0;
-            //dev/ --------------------------------------------------------
 
             // whether to use active-set method
             // 1 is yes, 0 is no
             state.use_active_set = args[10].getAs<int>();
 
-            Model::initialize(state, args);
-            
+            Model::initialize(state);
+
             state.stepsize = state.max_stepsize;
 
             state.random_stepsize = args[12].getAs<int>();
         }
 
-        if (state.backtracking == 0)
-        {
+        if (state.backtracking == 0) {
             state.gradient.setZero();
             state.gradient_intercept = 0;
         }
-        else
-        {
+        else {
             state.fn = 0;
             if (state.backtracking == 1) state.Qfn = 0;
         }
 
         // lambda is changing if warm-up is used
         // so needs to update it everytime
-        if (state.lambda != lambda)
-        {
+        if (state.lambda != lambda) {
             // restore initial conditions
             state.lambda = lambda;
             state.tk = 1;
@@ -128,6 +120,7 @@ AnyType Fista<Model>::fista_transition (AnyType& args, const Allocator& inAlloca
             state.stepsize_sum = 0;
             state.iter = 0;
             state.backtracking = 0;
+            state.loglikelihood = 0;
             state.coef_y = state.coef;
             state.intercept_y = state.intercept;
         }
@@ -147,6 +140,7 @@ AnyType Fista<Model>::fista_transition (AnyType& args, const Allocator& inAlloca
     else
         Model::normal_transition(state, x, y);
 
+    Model::update_loglikelihood(state, x, y);
     state.numRows++;
 
     return state;
@@ -169,26 +163,26 @@ AnyType Fista<Model>::fista_merge (AnyType& args)
         return state1;
 
     if (state1.backtracking == 0) {
-        if (state1.use_active_set == 1 && state1.is_active == 1)
-        {
+        if (state1.use_active_set == 1 && state1.is_active == 1) {
             for (uint32_t i = 0; i < state1.dimension; i++)
                 if (state1.coef_y(i) != 0)
                     state1.gradient(i) += state2.gradient(i);
         }
-        else
+        else {
             state1.gradient += state2.gradient;
+        }
 
         Model::merge_intercept(state1, state2);
     }
-    else
-    {
+    else {
         state1.fn += state2.fn;
 
         // Qfn only need to be calculated once in each backtracking
         if (state1.backtracking == 1)
             state1.Qfn += state2.Qfn;
     }
-    
+
+    state1.loglikelihood += state2.loglikelihood;
     state1.numRows += state2.numRows;
 
     return state1;
@@ -203,20 +197,11 @@ template <class Model>
 AnyType Fista<Model>::fista_final (AnyType& args)
 {
     FistaState<MutableArrayHandle<double> > state = args[0];
-   
+
     // Aggregates that haven't seen any data just return Null
     if (state.numRows == 0) return Null();
 
-    // std::ofstream of;
-    // of.open("/Users/qianh1/workspace/tests/feature_ElasticNet/stepsize.txt", std::ios::app);
-    // of << "stepsize = " << state.stepsize
-    //    << ", backtracking = " << state.backtracking
-    //    << ", is_active = " << state.is_active
-    //    << std::endl;
-    // of.close();
-    
-    if (state.backtracking == 0) 
-    {
+    if (state.backtracking == 0) {
         state.gradient = state.gradient / state.totalRows;
         double la = state.lambda * (1 - state.alpha);
         for (uint32_t i = 0; i < state.dimension; i++)
@@ -225,11 +210,9 @@ AnyType Fista<Model>::fista_final (AnyType& args)
 
         Model::update_y_intercept_final(state);
 
-        //dev/ --------------------------------------------------------
         // How to adaptively update stepsize
         // set the initial value for backtracking stepsize
-        if (state.random_stepsize == 1)
-        {
+        if (state.random_stepsize == 1) {
             double stepsize_avg;
             if (state.iter == 0) stepsize_avg = 0;
             else stepsize_avg = state.stepsize_sum / state.iter;
@@ -237,29 +220,25 @@ AnyType Fista<Model>::fista_final (AnyType& args)
             double p = 1. / (1 + exp(0.5 * (log(state.stepsize/state.max_stepsize) - stepsize_avg) / log(state.eta)));
             double r = drand48();
 
-            // there is a non-zero probability to increase stepsize
+            // there is a non-zero probability of stepsize increasing
             if (r < p)
                 state.stepsize = state.stepsize * state.eta;
 
             //if (state.is_active == 0) state.stepsize = state.stepsize * state.eta;
         }
-        
-        //dev/ -------------------------------------------------------- 
-        
+
         double effective_lambda = state.lambda * state.alpha * state.stepsize;
         //if (state.is_active == 1) effective_lambda *= 1.1;
-        proxy(state.coef_y, state.gradient, state.b_coef, 
+        proxy(state.coef_y, state.gradient, state.b_coef,
               state.stepsize, effective_lambda);
         Model::update_b_intercept(state);
-
         state.backtracking = 1; // will do backtracking
     }
-    else
-    {
+    else {
         // finish computing fn and Qfn if needed
         state.fn = state.fn / state.totalRows + 0.5 * state.lambda * (1 - state.alpha)
             * sparse_dot(state.b_coef, state.b_coef);
-        
+
         if (state.backtracking == 1)
             state.Qfn = state.Qfn / state.totalRows + 0.5 * state.lambda * (1 - state.alpha)
                 * sparse_dot(state.coef_y, state.coef_y);
@@ -268,15 +247,15 @@ AnyType Fista<Model>::fista_final (AnyType& args)
         double extra_Q = sparse_dot(r, state.gradient) + 0.5 * sparse_dot(r, r) / state.stepsize;
         if (state.gradient_intercept != 0)
             extra_Q += - 0.5 * state.gradient_intercept * state.gradient_intercept * state.stepsize;
-     
 
-        // In some case, the algo will be trapped into a single running pass
-        // and the state.backtracking will be increased forever until the algo
-        // exits after the max_iter is reached. This is only found with HAWQ.
-        // The possible reason is the precision loss of double values when
-        // passing between Python and C. The first part in the following if
-        // condition is added to solve the problem.
-        if (state.backtracking >= 3 || state.fn <= state.Qfn + extra_Q) { // use last backtracking coef
+        // In some case, the algo will be trapped into a single running pass and
+        // the state.backtracking will be increased forever until the algo exits
+        // after the max_iter is reached. This is only found with HAWQ. The
+        // possible reason is the precision loss of double values when passing
+        // between Python and C. The first part in the following if condition is
+        // added to solve the problem.
+        if (state.backtracking >= 3 || state.fn <= state.Qfn + extra_Q) {
+            // use last backtracking coef
             // update tk
             double old_tk = state.tk;
             state.tk = 0.5 * (1 + sqrt(1 + 4 * old_tk * old_tk));
@@ -286,40 +265,43 @@ AnyType Fista<Model>::fista_final (AnyType& args)
                 / state.tk;
             Model::update_y_intercept(state, old_tk);
 
-            // this must behind Model::update_y_intercept,
-            // because in binomial case, state.intercept is
-            // the old value
+             // update 'coef' after updating 'y_intercept', since in binomial case,
+            // state.intercept is the old value
             state.coef = state.b_coef;
             state.intercept = state.b_intercept;
-            
+
+
             state.backtracking = 0; // stop backtracking
 
-            //dev/ --------------------------------------------------------
-            // how to adaptively update stepsize
-            if (state.random_stepsize == 1)
-            {
+            // adaptively update stepsize
+            if (state.random_stepsize == 1) {
                 state.stepsize_sum += log(state.stepsize) - log(state.max_stepsize);
                 state.iter++;
             }
-            // std::ofstream of;
-            // of.open("/Users/qianh1/workspace/tests/feature_ElasticNet/stepsize.txt", std::ios::app);
-            // of << "Proceed, stepsize = " << state.stepsize << std::endl;
-            // of.close();
-            //dev/ --------------------------------------------------------
         }
-        else
-        {
+        else {
             state.stepsize = state.stepsize / state.eta;
             double effective_lambda = state.lambda * state.alpha * state.stepsize;
             //if (state.is_active == 1) effective_lambda *= 1.1;
-            proxy(state.coef_y, state.gradient, state.b_coef, 
+            proxy(state.coef_y, state.gradient, state.b_coef,
                   state.stepsize, effective_lambda);
             Model::update_b_intercept(state);
-            
             state.backtracking++;
         }
     }
-    
+
+    // compute the final loglikelihood value from the accumulated loss value
+    double loss_value;
+    loss_value = state.loglikelihood / (state.numRows * 2);
+    double sum_sqr_coef = 0;
+    double sum_abs_coef = 0;
+    for (uint32_t i = 0; i < state.dimension; i++){
+        sum_sqr_coef += state.coef(i) * state.coef(i);
+        sum_abs_coef += std::abs(state.coef(i));
+    }
+    state.loglikelihood = -(loss_value + state.lambda *
+                                ((1 - state.alpha) * sum_sqr_coef / 2 +
+                                 state.alpha * sum_abs_coef));
     return state;
 }
 
@@ -331,31 +313,40 @@ AnyType Fista<Model>::fista_final (AnyType& args)
 template <class Model>
 AnyType Fista<Model>::fista_state_diff (AnyType& args)
 {
-    FistaState<ArrayHandle<double> > state1 = args[0];
-    FistaState<ArrayHandle<double> > state2 = args[1];
+    FistaState<ArrayHandle<double> > state1 = args[0];  // previous iteration
+    FistaState<ArrayHandle<double> > state2 = args[1];  // current iteration
 
-    // during backtracking, do not comprae the coefficients
+    // during backtracking, do not compare the coefficients
     // of two consecutive states
     if (state2.backtracking > 0) return 1e12;
-    
-    double diff_sum = 0;
-    double diff, tmp;
-    uint32_t n = state1.coef.rows();
-    for (uint32_t i = 0; i < n; i++)
-    {
-        diff = std::abs(state1.coef(i) - state2.coef(i));
-        tmp = std::abs(state2.coef(i));
-        if (tmp != 0) diff /= tmp;
-        diff_sum += diff;
-    }
 
-    // deal with intercept
-    diff = std::abs(state1.intercept - state2.intercept);
-    tmp = std::abs(state2.intercept);
-    if (tmp != 0) diff /= tmp;
-    diff_sum += diff;
-    
-    return diff_sum / (n + 1);
+    // double diff_sum = 0;
+    // double diff, tmp;
+    // uint32_t n = state1.coef.rows();
+    // for (uint32_t i = 0; i < n; i++)
+    // {
+    //     diff = std::abs(state1.coef(i) - state2.coef(i));
+    //     tmp = std::abs(state2.coef(i));
+    //     if (tmp != 0) diff /= tmp;
+    //     diff_sum += diff;
+    // }
+
+    // // deal with intercept
+    // diff = std::abs(state1.intercept - state2.intercept);
+    // tmp = std::abs(state2.intercept);
+    // if (tmp != 0) diff /= tmp;
+    // diff_sum += diff;
+
+    // return diff_sum / (n + 1);
+    double diff = std::abs(std::abs(state1.loglikelihood) - std::abs(state2.loglikelihood));
+    // std::ofstream of;
+    // of.open("/Users/iyerr3/Work/work_tmp/elastic_net_debug/loglikelihood.txt", std::ios::app);
+    // of << "log 1 = " << state1.loglikelihood
+    //    << ", log 2 = " << state2.loglikelihood
+    //    << ", diff = " << diff
+    //    << std::endl;
+    // of.close();
+    return diff;
 }
 
 // ------------------------------------------------------------------------
@@ -368,7 +359,7 @@ AnyType Fista<Model>::fista_result (AnyType& args)
 {
     FistaState<ArrayHandle<double> > state = args[0];
     AnyType tuple;
-    
+
     tuple << static_cast<double>(state.intercept)
           << state.coef
           << static_cast<double>(state.lambda);

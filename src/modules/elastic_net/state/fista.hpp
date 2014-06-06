@@ -23,7 +23,7 @@ template <class Handle>
 class FistaState
 {
     template <class OtherHandle> friend class FistaState;
-    
+
   public:
     FistaState (const AnyType& inArray):
         mStorage(inArray.getAs<Handle>())
@@ -48,11 +48,8 @@ class FistaState
     inline void allocate (const Allocator& inAllocator,
                           uint32_t inDimension)
     {
-        mStorage = inAllocator.allocateArray<double,
-                                             dbal::AggregateContext,
-                                             dbal::DoZero,
-                                             dbal::ThrowBadAlloc>(
-                                                 arraySize(inDimension));
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inDimension));
         dimension.rebind(&mStorage[0]);
         dimension = inDimension;
         rebind();
@@ -74,7 +71,7 @@ class FistaState
     */
     static inline uint32_t arraySize (const uint32_t inDimension)
     {
-        return 21 + 4 * inDimension;
+        return 22 + 4 * inDimension;
     }
 
   protected:
@@ -107,6 +104,7 @@ class FistaState
         gradient_intercept.rebind(&mStorage[18 + 4 * dimension]);
         random_stepsize.rebind(&mStorage[19 + 4 * dimension]);
         backtracking.rebind(&mStorage[20 + 4 * dimension]);
+        loglikelihood.rebind(&mStorage[21 + 4 * dimension]);
     }
 
     Handle mStorage;
@@ -115,7 +113,7 @@ class FistaState
     typename HandleTraits<Handle>::ReferenceToUInt32 dimension;
     typename HandleTraits<Handle>::ReferenceToDouble lambda;
     typename HandleTraits<Handle>::ReferenceToDouble alpha;
-    typename HandleTraits<Handle>::ReferenceToDouble stepsize;
+    typename HandleTraits<Handle>::ReferenceToUInt32 is_active; // is active-set being used now?
     typename HandleTraits<Handle>::ReferenceToUInt64 totalRows;
     typename HandleTraits<Handle>::ReferenceToDouble intercept;
     typename HandleTraits<Handle>::ReferenceToDouble intercept_y;
@@ -126,19 +124,20 @@ class FistaState
     typename HandleTraits<Handle>::ReferenceToDouble tk;
     typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap gradient;
-    typename HandleTraits<Handle>::ReferenceToUInt32 backtracking; // is backtracking now?
     typename HandleTraits<Handle>::ReferenceToDouble max_stepsize;
     typename HandleTraits<Handle>::ReferenceToDouble eta;
-    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap b_coef; // backtracking coef
-    typename HandleTraits<Handle>::ReferenceToDouble b_intercept; // backtracking intercept
     typename HandleTraits<Handle>::ReferenceToDouble fn; // store the function value in backtracking
     typename HandleTraits<Handle>::ReferenceToDouble Qfn; // the Q function value in backtracking
+    typename HandleTraits<Handle>::ReferenceToDouble stepsize;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap b_coef; // backtracking coef
+    typename HandleTraits<Handle>::ReferenceToDouble b_intercept; // backtracking intercept
     typename HandleTraits<Handle>::ReferenceToUInt32 use_active_set; // whether to use active set method
     typename HandleTraits<Handle>::ReferenceToUInt32 iter; // how many effective iteration run
     typename HandleTraits<Handle>::ReferenceToDouble stepsize_sum; // sum of step size so far
-    typename HandleTraits<Handle>::ReferenceToUInt32 is_active; // is using active-set now?
     typename HandleTraits<Handle>::ReferenceToDouble gradient_intercept; // gradient element for intercept
     typename HandleTraits<Handle>::ReferenceToUInt32 random_stepsize;
+    typename HandleTraits<Handle>::ReferenceToUInt32 backtracking; // is backtracking now?
+    typename HandleTraits<Handle>::ReferenceToDouble loglikelihood;  // loglk for previous iteration
 };
 
 }
