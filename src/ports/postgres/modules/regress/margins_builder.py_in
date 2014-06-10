@@ -15,20 +15,36 @@ from itertools import chain
 from collections import namedtuple
 import operator
 
+# import plpy
 # =============================================================================
 
 CONSTANT = "constant"
 TermBase = namedtuple("TermBase", ["identifier"])
 
 
-def term_to_string(self):
+def _eq(self, other):
+    return self.identifier.strip(' "') == other.identifier.strip(' "')
+
+
+def _ne(self, other):
+    return self.identifier.strip(' "') != other.identifier.strip(' "')
+
+
+def _hash(self):
+    return hash(self.identifier.strip(' "'))
+
+
+def _term_to_string(self):
     """
     Return string representation of a term
     """
     return str(self.identifier)
 
-TermBase.__str__ = term_to_string
-TermBase.__repr__ = term_to_string
+TermBase.__str__ = _term_to_string
+TermBase.__repr__ = _term_to_string
+TermBase.__eq__ = _eq
+TermBase.__ne__ = _ne
+TermBase.__hash__ = _hash
 
 
 class ContinuousTerm(TermBase):
@@ -268,12 +284,12 @@ class MarginalEffectsBuilder(object):
                 @param list_value: list. List of indices of the basis terms
                                         to include in the subset
         """
-        basis_identifier_dict = self.get_all_basis_identifiers()
         list_value = map(str, list_value)
-        if not all(i in basis_identifier_dict.keys() for i in list_value):
+        if not all(TermBase(i) in self.inverse_basis_terms for i in list_value):
             raise ValueError("Margins Error: Subset basis contains identifier not present in basis term")
         try:
-            self._subset_basis = [int(basis_identifier_dict[i]) for i in list_value]
+            self._subset_basis = [int(self.inverse_basis_terms[TermBase(i)])
+                                  for i in list_value]
         except TypeError:
             raise TypeError("Margins Error: Invalid marginal vars argument ({0})".
                             format(str(list_value)))
@@ -378,15 +394,15 @@ class MarginalEffectsBuilder(object):
                 if not re.match(r'^\w+$', identifier):
                     raise ValueError("Invalid identifier '{0}' in x_design. Quote "
                                      "an identifier with non-alphanumeric "
-                                     "characters using double-quotes.".
+                                     "characters using double quotes.".
                                      format(identifier))
                 identifier = identifier.lower()
                 # if identifier is not quoted then always keep a lower-case copy
                 # (i.e. identifier is case-insensitive)
-            else:
-                # if identifier is quoted then we keep the case intact, but
-                # strip the double-quotes at the two ends.
-                identifier = identifier.strip(' "')
+            # else:
+            #     # if identifier is quoted then we keep the case intact, but
+            #     # strip the double-quotes at the two ends.
+            #     identifier = identifier.strip(' "')
         else:
             raise ValueError("Invalid string '{0}' in x_design".format(str(term_str)))
 
@@ -431,8 +447,12 @@ class MarginalEffectsBuilder(object):
         # split string by '*'; eg: '1^2 * 2^2' would give two elements,
         #                          'age^2' would give 1 element
         # ensure quoted strings are not split
-        prod_reg = re.compile('".*?"|[^\*]+')
-        product_terms = [i.strip() for i in prod_reg.findall(interaction_str.strip())]
+        # prod_reg = re.compile('".*?"|[^\*]+')
+        # product_terms = [i.strip() for i in prod_reg.findall(interaction_str.strip())]
+        product_reg = re.compile(r'((?:[^\*"]|"[^"]*")+)')
+        product_terms = [i.strip() for i in
+                         product_reg.split(interaction_str)[1::2]]
+
         if not product_terms:
             raise ValueError("Not able to process interaction term: {0}".
                              format(interaction_str))
@@ -445,9 +465,13 @@ class MarginalEffectsBuilder(object):
 
         interaction_term = InteractionTerm(index)
         for each_term in product_terms:
-            power_reg = re.compile('".*?"|[^\^]+')
-            each_term_split = [i.strip()
-                               for i in power_reg.findall(each_term.strip())]
+            # power_reg = re.compile('".*?"|[^\^]+')
+            # each_term_split = [i.strip()
+            #                    for i in power_reg.findall(each_term.strip())]
+            power_reg = re.compile(r'((?:[^\^"]|"[^"]*")+)')
+            each_term_split = [i.strip() for i in
+                               power_reg.split(each_term.strip())[1::2]]
+
             if len(each_term_split) > 2:
                 raise ValueError("Invalid interaction term {0}".format(each_term))
             basis_term = self._get_term_from_str(each_term_split[0])
@@ -493,7 +517,7 @@ class MarginalEffectsBuilder(object):
                 i.5*i.4.gender*i.3.color, age, age^2, i.5*age,
                 i.5*age^2, height"
 
-            # all terms in () are objects with the indentifier string inside
+            # all terms in () are objects with the identifier string inside
             self.basis_terms = {1: (1), 2: (2), 3: (3), 4: (4), 5: (5),
                                 11: (age), 15: (height)},
             self.interaction_terms = {(6): {(5):1, (2):1}, (7): {(5): 1, 3: 1},
@@ -514,9 +538,9 @@ class MarginalEffectsBuilder(object):
                              format(str(self.design_str)))
 
         # read a comma-separated string quoted using '"'
-        comma_reg = re.compile('".*?"|[^\,]+')
-        design_terms = [i.strip() for i in comma_reg.findall(self.design_str)]
-
+        # comma_reg = re.compile('\s*".*?"|[^\,]+')
+        comma_reg = re.compile(r'((?:[^,"]|"[^"]*")+)')
+        design_terms = [i.strip() for i in comma_reg.split(self.design_str)[1::2]]
         interaction_term_strings = {}
         interaction_term_reg = re.compile('".*?"|[\*\^]')
         for index, each_term in enumerate(design_terms):
@@ -625,7 +649,8 @@ class MarginalEffectsBuilder(object):
 
     def get_sorted_basis_identifiers(self):
         """ Return all identifiers sorted by the index in basis terms """
-        return [val.identifier for key, val in sorted(self.basis_terms.items(), key=operator.itemgetter(0))]
+        return [val.identifier for key, val in
+                sorted(self.basis_terms.items(), key=operator.itemgetter(0))]
 
     def get_all_basis_identifiers(self):
         return dict([(val.identifier, key) for key, val in self.basis_terms.items()])
@@ -818,6 +843,7 @@ from itertools import izip_longest
 class MarginsTestCase(unittest.TestCase):
 
     def setUp(self):
+        pass
         self.maxDiff = None
         self.xd = ("ir.1.color, i.2.color, i.3.color, i.is_female, i.degree,"
                    "degree * 2, i.degree.degree * i.3.color, "
@@ -901,8 +927,8 @@ class MarginsTestCase(unittest.TestCase):
         int_obj1.add_base_term(ContinuousTerm('b', 2), 4)
         int_obj1.add_base_term(ContinuousTerm('c', 3), 2)
         int_obj1.constant_term = 5
-        self.assertEqual(str(int_obj1), 'c^2 * a * b^4 * 5')
-        self.assertEqual(int_obj1.str_using_indices(None), 'c^2 * a * b^4 * 5')
+        self.assertEqual(str(int_obj1), 'a * c^2 * b^4 * 5')
+        self.assertEqual(int_obj1.str_using_indices(None), 'a * c^2 * b^4 * 5')
         self.assertEqual(int_obj1.str_using_indices('x', False),
                          'x[1] * x[2]^4 * x[3]^2 * 5')
 
@@ -918,20 +944,21 @@ class MarginsTestCase(unittest.TestCase):
     def test_x_design1(self):
         xd = '1, 2, 1*2, "1^2", 5, 6, 1^1*2^2*5^4, 5^2, "1^2"*5'
         int_obj = MarginalEffectsBuilder(xd)
-        self.assertEqual([i.identifier for i in int_obj.basis_terms.values()], ['1', '2', '1^2', '5', '6'])
+        self.assertEqual([i.identifier for i in int_obj.basis_terms.values()],
+                         ['1', '2', '"1^2"', '5', '6'])
         self.assertEqual(int_obj.indicator_terms, {})
         self.assertEqual(int_obj.reference_terms, {})
         self.assertEqual(int_obj.contains_indicators(), False)
         self.assertEqual(int_obj.contains_interaction(), True)
         self.assertEqual(str(int_obj.interaction_terms),
-                         '{8: 5^2, 9: 1^2 * 5, 3: 1 * 2, 7: 1 * 2^2 * 5^4}')
+                         '{8: 5^2, 9: 5 * "1^2", 3: 1 * 2, 7: 1 * 2^2 * 5^4}')
 
     def test_x_design2(self):
         xd = '1, i."red".color, 1*red, 5, 1^1*red^2*  5^4, 6, 5^2'
         basis_terms_dict = {}
         for ind, var in zip((1, 4, 6), ('1', '5', '6')):
             basis_terms_dict[ind] = ContinuousTerm(var, ind)
-        basis_terms_dict[2] = IndicatorTerm('red', 2, 'color', False)
+        basis_terms_dict[2] = IndicatorTerm('"red"', 2, 'color', False)
         int_obj = MarginalEffectsBuilder(xd)
         self.assertEqual(int_obj.basis_terms, basis_terms_dict)
         self.assertEqual(int_obj.indicator_terms, {'color': [basis_terms_dict[2]]})
@@ -1009,7 +1036,7 @@ class MarginsTestCase(unittest.TestCase):
         self.assertEqual(str(self.int_obj.interaction_terms),
                          "{6: 2 * degree, 7: 3 * degree, "
                          "8: is_female * degree, 9: is_female * 2 * degree, "
-                         "10: is_female * degree * 3, 12: age^2, "
+                         "10: is_female * 3 * degree, 12: age^2, "
                          "13: age * degree, 14: age^2 * degree}")
         self.assertEqual(str(self.int_obj.get_interaction_terms_containing(basis_terms[2])),
                          "{9: is_female * 2 * degree, 6: 2 * degree}")

@@ -17,6 +17,7 @@ from utilities.utilities import py_list_to_sql_string
 from utilities.control import MinWarning
 
 from margins_builder import MarginalEffectsBuilder
+from margins_builder import TermBase
 
 import re
 #------------------------------------------------------------------------------
@@ -41,7 +42,7 @@ def margins(schema_madlib, model_table, out_table, x_design=None,
     Returns:
         None
     """
-    with MinWarning('error'):
+    with MinWarning('warning'):
         # 1) validate all arguments
         margins_validate_model_table(model_table)
         if model_table:
@@ -310,27 +311,27 @@ def _parse_marginal_vars(marginal_var_str):
         marginal_var_str = marginal_var_str[5:]
     marginal_var_str = marginal_var_str.strip(" {}[]")
     marginal_var_list = []
-    try:
-        reg = re.compile('".*?"|[^\,]+')
-        all_elem = reg.findall(marginal_var_str.strip())
-        for each_str in all_elem:
-            each_str = each_str.strip()
-            if not (each_str.startswith('"') and each_str.endswith('"')):
-                if not re.match(r'^\w+$', each_str):
-                    raise ValueError("Invalid identifier '{0}' in marginal_vars.".
-                                     format(each_str))
-                each_str = each_str.lower()
-                # if each_str is not quoted then always keep a lower-case copy
-                # (i.e. each_str is case-insensitive)
-            else:
-                # if each_str is quoted then we keep the case intact, but
-                # strip the double-quotes.
-                each_str = each_str.strip('"')
-            marginal_var_list.append(each_str)
-    except Exception as e:
-        plpy.warning(str(e))
-        raise ValueError("Margins error: Invalid input for marginal vars: {0}".
-                         format(marginal_var_str))
+    # reg = re.compile('".*?"|[^\,]+')
+    # all_elem = reg.findall(marginal_var_str.strip())
+    comma_reg = re.compile(r'((?:[^,"]|"[^"]*")+)')
+    all_elem = [i.strip() for i in
+                    comma_reg.split(marginal_var_str.strip())[1::2]]
+    for each_str in all_elem:
+        each_str = each_str.strip()
+        if not (each_str.startswith('"') and each_str.endswith('"')):
+            if not re.match(r'^\w+$', each_str):
+                raise ValueError("Invalid identifier '{0}' in marginal_var. "
+                                 "Quote an identifier with non-alphanumeric "
+                                 "characters using double quotes.".
+                                 format(each_str))
+            each_str = each_str.lower()
+            # if each_str is not quoted then always keep a lower-case copy
+            # (i.e. each_str is case-insensitive)
+        # else:
+        #     # if each_str is quoted then we keep the case intact, but
+        #     # strip the double-quotes.
+        #     each_str = each_str.strip('"')
+        marginal_var_list.append(each_str)
     return marginal_var_list
 #------------------------------------------------------------------------------
 
@@ -402,15 +403,14 @@ def _get_parser(coef, x_design, marginal_vars=None):
             "not same as number of independent variables ({1})".
             format(x_design_parser.n_total_terms, n_indep))
 
-    basis_identifiers = x_design_parser.get_all_basis_identifiers()
     if marginal_vars:
         # basis terms are not necessarily continguous
         # example: basis_terms = [1, 2, 3, 5, 8, 11]
         # If all variables are needed in output then
         #   marginal_var_list would be [1, 2, 3, 4, 5, 6] (max value would be len(basis_terms))
         marginal_var_list = _parse_marginal_vars(marginal_vars)
-
-        _assert(all(x in basis_identifiers.keys() for x in marginal_var_list),
+        _assert(all(TermBase(x) in x_design_parser.inverse_basis_terms
+                    for x in marginal_var_list),
                 "Margins error: marginal_vars argument contains values not "
                 "present as a basis variable in x_design")
     else:
@@ -464,8 +464,6 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
     # subset_basis contains indices for a 1-base array
     if not x_design_parser.subset_basis:
         raise ValueError("Invalid marginal variables selected.")
-
-    plpy.info("----------> " + str(x_design_parser.subset_basis))
 
     # 3) Create a matrix representing the 2nd partial derivative
     #  (1st order wrt x and 2nd order wrt \beta). For categorical, this is
@@ -529,7 +527,6 @@ def margins_linregr(schema_madlib, model_table, out_table, source_table,
                    grouping_str2=grouping_str2,
                    using_str=using_str,
                    join_str=join_str)
-    plpy.info(execute_string)
     plpy.execute(execute_string)
 
 
