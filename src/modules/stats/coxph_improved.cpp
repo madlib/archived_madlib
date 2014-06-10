@@ -33,12 +33,13 @@ using namespace std;
  *
  */
 AnyType stateToResult(
-    const Allocator &inAllocator,
-    const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef,
+    const Allocator &inAllocator, const ColumnVector &inCoef,
     const ColumnVector &diagonal_of_inverse_of_hessian,
     double logLikelihood, const Matrix &inHessian,
-    int nIter) {
-
+    int nIter, const ColumnVector &stds)
+{
+   MutableNativeColumnVector coef(
+        inAllocator.allocateArray<double>(inCoef.size()));
     MutableNativeColumnVector std_err(
         inAllocator.allocateArray<double>(inCoef.size()));
     MutableNativeColumnVector waldZStats(
@@ -47,8 +48,9 @@ AnyType stateToResult(
         inAllocator.allocateArray<double>(inCoef.size()));
 
     for (Index i = 0; i < inCoef.size(); ++i) {
-        std_err(i) = std::sqrt(diagonal_of_inverse_of_hessian(i));
-        waldZStats(i) = inCoef(i) / std_err(i);
+        coef(i) = inCoef(i) / stds(i);
+        std_err(i) = std::sqrt(diagonal_of_inverse_of_hessian(i)) / stds(i);
+        waldZStats(i) = coef(i) / std_err(i);
         waldPValues(i) = 2. * prob::cdf( prob::normal(),
                                          -std::abs(waldZStats(i)));
     }
@@ -57,10 +59,13 @@ AnyType stateToResult(
     // We need to convert diagonal matrix to full-matrix before output
     Matrix full_hessian = inHessian + inHessian.transpose();
     full_hessian.diagonal() /= 2;
+    for (Index i = 0; i < inCoef.size(); ++i)
+        for (Index j = 0; j < inCoef.size(); ++j)
+            full_hessian(i,j) *= stds(i) * stds(j);
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << inCoef << logLikelihood << std_err << waldZStats << waldPValues
+    tuple << coef << logLikelihood << std_err << waldZStats << waldPValues
           << full_hessian << nIter;
     return tuple;
 }
@@ -175,6 +180,7 @@ AnyType compute_coxph_result::run(AnyType &args) {
     double L = args[1].getAs<double>();
     MappedColumnVector d2L = args[2].getAs<MappedColumnVector>();
     int nIter = args[3].getAs<int>();
+    MappedColumnVector stds = args[4].getAs<MappedColumnVector>();
 
     int m = coef.size();
     Matrix hessian = d2L;
@@ -185,7 +191,7 @@ AnyType compute_coxph_result::run(AnyType &args) {
 
     return stateToResult(*this, coef,
                          decomposition.pseudoInverse().diagonal(),
-                         L, hessian, nIter);
+                         L, hessian, nIter, stds);
 }
 
 // ------------------------------------------------------------
@@ -201,6 +207,7 @@ AnyType coxph_improved_step_transition::run(AnyType& args)
     // status is converted to int in the python code
     ArrayHandle<int32_t> status = args[3].getAs<ArrayHandle<int32_t> >();
     MappedColumnVector coef = args[4].getAs<MappedColumnVector>();
+    MappedColumnVector max_coef = args[5].getAs<MappedColumnVector>();
     MappedMatrix xx = args[1].getAs<MappedMatrix>();
 
     // The following check was added with MADLIB-138.
@@ -209,6 +216,7 @@ AnyType coxph_improved_step_transition::run(AnyType& args)
 
     if (state.numRows == 0) {
         state.initialize(*this, static_cast<uint16_t>(coef.size()), coef.data());
+        for (size_t i = 0; i < state.widthOfX; i++) state.max_coef(i) = max_coef(i);
     }
 
     for (int i = 0; i < xx.cols(); i++)
@@ -252,6 +260,7 @@ AnyType coxph_improved_step_transition::run(AnyType& args)
         state.V += x * trans(x) * exp_coef_x;
         state.y_previous = y[i];
         if (status[i] == 1) {
+            state.tdeath += 1;
             state.grad += x;
             state.logLikelihood += std::log(exp_coef_x);
         }
@@ -296,11 +305,25 @@ AnyType coxph_improved_step_final::run(AnyType& args)
     //state.coef += state.hessian.inverse()*state.grad;
     state.coef += inverse_of_hessian * state.grad;
 
+    // Limit the values of coef if necessary
+    if (state.max_coef(0) > -1) { // iterations use max_coef
+        for (size_t i = 0; i < state.widthOfX; i++)
+            if (state.coef(i) > state.max_coef(i))
+                state.coef(i) = state.max_coef(i);
+            else if (state.coef(i) < - state.max_coef(i))
+                state.coef(i) = - state.max_coef(i);
+    } else {
+        // first iteration computes max_coef
+        for (size_t i = 0; i < state.widthOfX; i++)
+            state.max_coef(i) = 20 * sqrt(state.hessian(i,i) / state.tdeath);
+    }
+
     // Return all coefficients etc. in a tuple
     AnyType tuple;
     tuple << state.coef
         << static_cast<double>(state.logLikelihood)
-        << MappedColumnVector(state.hessian.data(), state.hessian.rows() * state.hessian.cols()); // Python doesn't support 2d array
+        << MappedColumnVector(state.hessian.data(), state.hessian.rows() * state.hessian.cols()) // Python doesn't support 2d array
+        << state.max_coef;
     return tuple;
 }
 
@@ -327,14 +350,121 @@ AnyType coxph_improved_strata_step_final::run(AnyType& args)
     //state.coef += state.hessian.inverse()*state.grad;
     state.coef += inverse_of_hessian * state.grad;
 
+    // Limit the values of coef if necessary
+    if (state.max_coef(0) > 0) { // iterations use max_coef
+        for (size_t i = 0; i < state.widthOfX; i++)
+            if (state.coef(i) > state.max_coef(i))
+                state.coef(i) = state.max_coef(i);
+            else if (state.coef(i) < - state.max_coef(i))
+                state.coef(i) = - state.max_coef(i);
+    } else {
+        // first iteration computes max_coef
+        for (size_t i = 0; i < state.widthOfX; i++)
+            state.max_coef(i) = 20 * sqrt(state.hessian(i,i) / state.tdeath);
+    }
+
     // Return all coefficients etc. in a tuple
     AnyType tuple;
     tuple << state.coef
         << static_cast<double>(state.logLikelihood)
-        << MappedColumnVector(state.hessian.data(), state.hessian.rows() * state.hessian.cols()); // Python doesn't support 2d array
+        << MappedColumnVector(state.hessian.data(), state.hessian.rows() * state.hessian.cols()) // Python doesn't support 2d array
+        << state.max_coef;
     return tuple;
 }
 
+// ------------------------------------------------------------
+
+AnyType array_avg_transition::run(AnyType& args)
+{
+    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    bool use_abs = args[2].getAs<bool>();
+    MutableArrayHandle<double> state = NULL;
+    if(args[0].isNull())
+        state = allocateArray<double, dbal::AggregateContext, dbal::DoZero, dbal::ThrowBadAlloc>(x.size() + 1);
+    else
+        state = args[0].getAs<MutableArrayHandle<double> >();
+
+    state[0] += 1;
+    if (use_abs)
+        for (size_t i = 1; i <= x.size(); i++)
+            state[i] += fabs(x(i-1));
+    else
+        for (size_t i = 1; i <= x.size(); i++)
+            state[i] += x(i-1);
+
+    return state;
 }
+
+// ------------------------------------------------------------
+
+AnyType array_avg_merge::run(AnyType& args)
+{
+    if (args[0].isNull())
+        return args[1];
+    if (args[1].isNull())
+        return args[0];
+
+    MutableArrayHandle<double> left = args[0].getAs<MutableArrayHandle<double> >();
+    ArrayHandle<double> right = args[1].getAs<ArrayHandle<double> >();
+    for (size_t i = 0; i < left.size(); i++)
+        left[i] += right[i];
+
+    return left;
 }
+
+// ------------------------------------------------------------
+
+AnyType array_avg_final::run(AnyType& args)
+{
+    if(args[0].isNull())
+        return args[0];
+    ArrayHandle<double> state = args[0].getAs<ArrayHandle<double> >();
+    MutableArrayHandle<double> avg = allocateArray<double>(state.size() - 1);
+    for (size_t i = 0; i < avg.size(); i++)
+        avg[i] = state[i+1] / state[0];
+    return avg;
 }
+
+// ------------------------------------------------------------
+
+AnyType array_element_min::run(AnyType &args) {
+    if(args[0].isNull())
+        return args[1];
+    if(args[1].isNull())
+        return args[0];
+
+    MutableMappedColumnVector state = args[0].getAs<MutableMappedColumnVector>();
+    MappedColumnVector array = args[1].getAs<MappedColumnVector>();
+
+    if(state.size() != array.size())
+        throw std::runtime_error("The dimension mismatch.");
+
+    for(int i = 0; i < state.size(); i++)
+        state(i) = min(state(i), array(i));
+
+    return state;
+}
+
+// ------------------------------------------------------------
+
+AnyType array_element_max::run(AnyType &args) {
+    if(args[0].isNull())
+        return args[1];
+    if(args[1].isNull())
+        return args[0];
+
+    MutableMappedColumnVector state = args[0].getAs<MutableMappedColumnVector>();
+    MappedColumnVector array = args[1].getAs<MappedColumnVector>();
+
+    if(state.size() != array.size())
+        throw std::runtime_error("The dimension mismatch.");
+
+    for(int i = 0; i < state.size(); i++)
+        state(i) = max(state(i), array(i));
+
+    return state;
+}
+
+} // namespace stats
+} // namespace modules
+} // namespace madlib

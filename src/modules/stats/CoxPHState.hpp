@@ -93,6 +93,7 @@ class CoxPHState {
     inline void reset() {
         numRows = 0;
         S = 0;
+        tdeath = 0;
         y_previous = 0;
         multiplier = 0;
         H.fill(0);
@@ -105,7 +106,7 @@ class CoxPHState {
 
   private:
     static inline size_t arraySize(const uint16_t inWidthOfX) {
-        return 6 + 3 * inWidthOfX + 2 * inWidthOfX * inWidthOfX;
+        return 7 + 4 * inWidthOfX + 2 * inWidthOfX * inWidthOfX;
     }
 
     void rebind(uint16_t inWidthOfX) {
@@ -125,6 +126,8 @@ class CoxPHState {
                  inWidthOfX, inWidthOfX);
         hessian.rebind(&mStorage[6+3*inWidthOfX+inWidthOfX*inWidthOfX],
                        inWidthOfX, inWidthOfX);
+        max_coef.rebind(&mStorage[6 + 3 * inWidthOfX + 2 * inWidthOfX * inWidthOfX], inWidthOfX);
+        tdeath.rebind(&mStorage[6 + 4 * inWidthOfX + 2 * inWidthOfX * inWidthOfX]);
     }
 
     Handle mStorage;
@@ -142,6 +145,8 @@ class CoxPHState {
     typename HandleTraits<Handle>::ReferenceToDouble logLikelihood;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap V;
     typename HandleTraits<Handle>::MatrixTransparentHandleMap hessian;
+    typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap max_coef;
+    typename HandleTraits<Handle>::ReferenceToDouble tdeath;
 };
 
 

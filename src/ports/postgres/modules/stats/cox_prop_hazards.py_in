@@ -21,6 +21,8 @@ from utilities.utilities import _assert
 from utilities.validate_args import columns_exist_in_table
 from utilities.utilities import __mad_version
 from utilities.control import IterationController2S
+from convex.utils_regularization import __utils_ind_var_scales
+import random
 
 # ----------------------------------------------------------------------
 
@@ -237,14 +239,14 @@ def coxph(
     # Use the quick split to re-distribute the data
     # construct a list of other columns
     other_cols = [right_censoring_status]
-    new_source_table, index, dep, indep, status, n_processed, n_skipped, real_distid = quick_split(
+    new_source_table, index, dep, indep, status, n_processed, n_skipped, real_distid, std_str = quick_split(
         schema_madlib, source_table, dependent_varname, m,
             independent_varname, right_censoring_status, strata,
             array_agg_size, sample_size, True)
     if n_processed > 0:
         compute_coxph(schema_madlib, new_source_table, output_table,
             index, dep, indep, m, status, strata, optimizer,
-            max_iter, tolerance, real_distid)
+            max_iter, tolerance, real_distid, std_str)
         plpy.execute('drop table if exists ' + new_source_table)
     else:
         plpy.execute(
@@ -330,7 +332,7 @@ def compute_coxph(
         optimizer,
         max_iter,
         precision,
-        real_distid):
+        real_distid, std_str):
     """ Use the old sequential algorithm to solve coxph
 
     @brief Run ordered aggregate on the re-distributed data.
@@ -348,6 +350,9 @@ def compute_coxph(
     L = float('-inf')
 
     # $1 - previous coef
+    # $2 - coef limit, when it an array of all 0 (during 1-th iteration),
+    # we compute the limit, and return it to Python. And then in the following
+    # iterations, we use the limit.
     # the data is already sorted desc
     if strata is None:
         sql= """
@@ -355,7 +360,7 @@ def compute_coxph(
                 (f).*
             from (
                 select {schema_madlib}.coxph_improved_step(
-                    {indep}, {dep}, {status}, $1
+                    {indep}, {dep}, {status}, $1, $2
                     order by {index}
                 ) as f
                 from {source_table}
@@ -373,7 +378,7 @@ def compute_coxph(
                 from (
                     select
                         {schema_madlib}.coxph_improved_strata_step_inner(
-                            {indep}, {dep}, {status}, $1
+                            {indep}, {dep}, {status}, $1, $2
                             order by {index}
                         ) as inner_state
                     from {source_table}
@@ -390,19 +395,27 @@ def compute_coxph(
         real_distid   = real_distid,
         index         = index,
         strata        = strata)
-    sql_plan = plpy.prepare(sql, [ "double precision[]" ])
+    sql_plan = plpy.prepare(sql, [ "double precision[]", "double precision[]" ])
 
+    old_coef = coef
+    halving = False
     n_iter = 0
+    max_coef = [-1] * m # limit of coefficients
     while True:
         n_iter += 1
         # The result contains coef, L, d2L
-        result = plpy.execute(sql_plan, [coef])[0]
+        result = plpy.execute(sql_plan, [coef, max_coef])[0]
 
         prev_L = L
         L = result['l']
-        coef = result['coef']
+        new_coef = result['coef']
 
-        if abs(L - prev_L) < precision or n_iter > max_iter:
+        if n_iter == 1:
+            max_coef = result['max_coef']
+
+        if (abs(1 - L/prev_L) <= precision or n_iter > max_iter) and not halving:
+            old_coef = coef
+            coef = new_coef
             # Compute std_err, t_stats, p_value
             m4_ifdef(`__HAWQ__',
             `coef_l_d2l = __unique_string() + "_coef_l_d2l"
@@ -425,11 +438,12 @@ def compute_coxph(
                        select {schema_madlib}.compute_coxph_result(
                            coef,
                            l,
-                           d2l, n_iter
+                           d2l, n_iter, {std_str}
                        ) as f
                        from {coef_l_d2l}
                    ) s;
-                """.format(coef_l_d2l=coef_l_d2l, schema_madlib=schema_madlib, output_table=output_table))
+                """.format(coef_l_d2l=coef_l_d2l, schema_madlib=schema_madlib, output_table=output_table,
+                    std_str=std_str))
 
             plpy.execute("drop table if exists " + coef_l_d2l)
             ',
@@ -442,7 +456,7 @@ def compute_coxph(
                             select {schema_madlib}.compute_coxph_result(
                                 {coef},
                                 {L},
-                                {d2L}, {n_iter}
+                                {d2L}, {n_iter}, {std_str}
                             ) as f
                         ) s;
                     """.format(
@@ -451,10 +465,18 @@ def compute_coxph(
                         coef          = _list_to_string(coef),
                         L             = L,
                         d2L           = _list_to_string(result["d2l"]),
+                        std_str       = std_str,
                         n_iter        = n_iter))
             ')
 
             return None
+        if L < prev_L:
+            halving = True
+            coef = map(lambda i: (coef[i] + old_coef[i]) / 2, range(m))
+        else:
+            halving = False
+            old_coef = coef
+            coef = new_coef
 
 # ------------------------------------------------------------
 
@@ -516,7 +538,7 @@ def quick_split(
 
     if n_processed == 0:
         return ('', 1, '', '',
-                '', n_processed, n_skipped, '')
+                '', n_processed, n_skipped, '', '')
 
     #Rewrite the num_splits
     n_rows_in_chunk = array_agg_size / num_features
@@ -531,6 +553,30 @@ def quick_split(
     n_per_seg = int(sample_size / _get_seg_number()) + 1
 
     output_table = __unique_string() + '_redist'
+
+    # nomalize the data to avoid possible overflow
+    x_mean = plpy.execute(
+            """
+            select {schema_madlib}.array_avg({indep}, false) as xmean from {source_table}
+            where {filter_null}
+            """.format(
+                schema_madlib = schema_madlib,
+                indep         = indep,
+                source_table  = source_table,
+                filter_null   = filter_null))[0]['xmean']
+    mean_str = "array[" + ",".join(str(v) for v in x_mean) + "]"
+    scales = plpy.execute(
+            """
+            select {schema_madlib}.array_avg(
+                {schema_madlib}.array_sub({indep}::float8[], {mean}::float8[]), true) as scale
+            from {source_table} where {filter_null}
+            """.format(
+                schema_madlib = schema_madlib,
+                indep         = indep,
+                mean          = mean_str,
+                source_table  = source_table,
+                filter_null   = filter_null))[0]['scale']
+    scale_str = "array[" + ",".join(str(v) if v != 0 else "1" for v in scales) + "]"
 
     # compute the break points
     # Use a fixed number of rows of sample to approximate the
@@ -583,8 +629,11 @@ def quick_split(
                         {status_name}) as {split_col_alias},
                 array_agg({status_name} order by {split_col_alias} {order_str},
                         {status_name}) as {status_name},
-                {schema_madlib}.matrix_agg({indep_name} order by {split_col_alias} {order_str},
-                        {status_name}) as {indep_name}
+                {schema_madlib}.matrix_agg(
+                        {schema_madlib}.utils_normalize_data(
+                            {indep_name}, {mean_str}, {scale_str}
+                        )
+                    order by {split_col_alias} {order_str}, {status_name}) as {indep_name}
             from
             (
                 select
@@ -615,8 +664,11 @@ def quick_split(
                 filter_null        = filter_null,
                 source_table       = source_table,
                 order_str          = order_str,
+                mean_str           = mean_str,
+                scale_str          = scale_str,
                 real_distid        = real_distid))
-        return (output_table, distid, split_col_alias, indep_name, status_name, n_processed, n_skipped, real_distid)
+        return (output_table, distid, split_col_alias, indep_name, status_name,
+                n_processed, n_skipped, real_distid, scale_str)
     else:
         plpy.execute("""
             create table {output_table} as
@@ -627,8 +679,11 @@ def quick_split(
                         {status_name}) as {split_col_alias},
                 array_agg({status_name} order by {split_col_alias} {order_str},
                         {status_name}) as {status_name},
-                {schema_madlib}.matrix_agg({indep_name} order by {split_col_alias} {order_str},
-                        {status_name}) as {indep_name}
+                {schema_madlib}.matrix_agg(
+                        {schema_madlib}.utils_normalize_data(
+                            {indep_name}, {mean_str}, {scale_str}
+                        )
+                    order by {split_col_alias} {order_str}, {status_name}) as {indep_name}
             from
             (
                 select
@@ -661,8 +716,11 @@ def quick_split(
                 strata             = strata,
                 filter_null        = filter_null,
                 source_table       = source_table,
+                mean_str           = mean_str,
+                scale_str          = scale_str,
                 order_str          = order_str))
-        return (output_table, distid, split_col_alias, indep_name, status_name, n_processed, n_skipped, '')
+        return (output_table, distid, split_col_alias, indep_name, status_name,
+                n_processed, n_skipped, '', scale_str)
 
 # ----------------------------------------------------------------------
 
