@@ -209,13 +209,10 @@ struct TypeTraits<uint16_t> : public TypeTraitsBase<uint16_t> {
 };
 
 template <>
-struct TypeTraits<bool> {
-    typedef bool value_type;
+struct TypeTraits<bool> : public TypeTraitsBase<bool> {
+    enum { oid = BOOLOID };
+    enum { alignment = 1 };
 
-    WITH_OID( BOOLOID );
-    WITH_TYPE_CLASS( dbal::SimpleType );
-    WITH_MUTABILITY( dbal::Immutable );
-    WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( BoolGetDatum(value) );
     WITH_TO_CXX_CONVERSION( DatumGetBool(value) );
 };

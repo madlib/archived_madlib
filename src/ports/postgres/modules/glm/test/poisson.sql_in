@@ -1,0 +1,161 @@
+CREATE TABLE warpbreaks(
+    id      serial,
+    breaks  integer,
+    wool    char(1),
+    tension char(1),
+    g       char(1)
+);
+
+INSERT INTO warpbreaks(breaks, wool, tension, g) VALUES
+(26, 'A', 'L', '1'),
+(30, 'A', 'L', '1'),
+(54, 'A', 'L', '1'),
+(25, 'A', 'L', '1'),
+(70, 'A', 'L', '1'),
+(52, 'A', 'L', '1'),
+(51, 'A', 'L', '1'),
+(26, 'A', 'L', '1'),
+(67, 'A', 'L', '1'),
+(18, 'A', 'M', '1'),
+(21, 'A', 'M', '1'),
+(29, 'A', 'M', '1'),
+(17, 'A', 'M', '1'),
+(12, 'A', 'M', '1'),
+(18, 'A', 'M', '1'),
+(35, 'A', 'M', '1'),
+(30, 'A', 'M', '1'),
+(36, 'A', 'M', '1'),
+(36, 'A', 'H', '0'),
+(21, 'A', 'H', '0'),
+(24, 'A', 'H', '0'),
+(18, 'A', 'H', '0'),
+(10, 'A', 'H', '0'),
+(43, 'A', 'H', '0'),
+(28, 'A', 'H', '0'),
+(15, 'A', 'H', '0'),
+(26, 'A', 'H', '0'),
+(27, 'B', 'L', '0'),
+(14, 'B', 'L', '0'),
+(29, 'B', 'L', '0'),
+(19, 'B', 'L', '0'),
+(29, 'B', 'L', '0'),
+(31, 'B', 'L', '0'),
+(41, 'B', 'L', '0'),
+(20, 'B', 'L', '1'),
+(44, 'B', 'L', '1'),
+(42, 'B', 'M', '1'),
+(26, 'B', 'M', '1'),
+(19, 'B', 'M', '1'),
+(16, 'B', 'M', '1'),
+(39, 'B', 'M', '1'),
+(28, 'B', 'M', '1'),
+(21, 'B', 'M', '1'),
+(39, 'B', 'M', '1'),
+(29, 'B', 'M', '1'),
+(20, 'B', 'H', '1'),
+(21, 'B', 'H', '1'),
+(24, 'B', 'H', '1'),
+(17, 'B', 'H', '1'),
+(13, 'B', 'H', '1'),
+(15, 'B', 'H', '1'),
+(15, 'B', 'H', '1'),
+(16, 'B', 'H', '1'),
+(28, 'B', 'H', '1');
+
+SELECT create_dummy_coding('warpbreaks', 'warpbreaks_dummy', 'wool,tension');
+
+-- all assertion answers from R:
+
+--------------------------------------------------------------------------
+-- sqrt
+-- glm(breaks~wool+tension, family=poisson(link=sqrt), data=warpbreaks)
+SELECT glm('warpbreaks_dummy',
+           'glm_model_sqrt',
+           'breaks',
+           'ARRAY[1.0,"wool_B","tension_M", "tension_H"]',
+           'family=poisson, link=sqrt');
+
+SELECT
+    assert(relative_error(ARRAY[6.2620,-0.5059,-0.8545,-1.3644],      coef)            < 1e-4, 'wrong coef'),
+    assert(relative_error(-243.6731,                                  log_likelihood)  < 1e-4, 'wrong log_likelihood'),
+    assert(relative_error(ARRAY[0.136083,0.136083,0.166667,0.166667], std_err)         < 1e-4, 'wrong std_err'),
+    assert(relative_error(ARRAY[46.016,-3.717,-5.127,-8.186],         z_stats)         < 1e-4, 'wrong z_stats'),
+    assert(relative_error(0.000201,                                   norm1(p_values)) < 1e-2, 'wrong p_values')
+FROM glm_model_sqrt;
+
+
+--------------------------------------------------------------------------
+-- identity
+-- glm(breaks~wool+tension, family=poisson(link=identity),data=warpbreaks)
+SELECT glm('warpbreaks_dummy',
+           'glm_model_identity',
+           'breaks',
+           'ARRAY[1.0,"wool_B","tension_M", "tension_H"]',
+           'family=poisson, link=identity');
+
+SELECT
+    assert(relative_error(ARRAY[38.440,-4.877,-9.173,-14.385], coef)            < 1e-4, 'wrong coef'),
+    assert(relative_error(-244.6806,                           log_likelihood)  < 1e-4, 'wrong log_likelihood'),
+    assert(relative_error(ARRAY[1.600,1.413,1.8626,1.78255],   std_err)         < 1e-4, 'wrong std_err'),
+    assert(relative_error(ARRAY[24.025,-3.452,-4.925,-8.070],  z_stats)         < 1e-4, 'wrong z_stats'),
+    assert(relative_error(0.00055682,                          norm1(p_values)) < 1e-2, 'wrong p_values')
+FROM glm_model_identity;
+
+--------------------------------------------------------------------------
+-- grouping
+-- by(warpbreaks, warpbreaks[,"wool"], function(x) glm(breaks~tension, data=x, family=poisson))
+SELECT glm('warpbreaks_dummy',
+           'glm_model_grp',
+           'breaks',
+           'ARRAY[1.0,"tension_M", "tension_H"]',
+           'family=poisson, link=log',
+           'wool',
+           'max_iter=100,optimizer=irls,tolerance=1e-6',
+           TRUE);
+
+SELECT
+    assert(relative_error(ARRAY[3.7967,-0.6187,-0.5958],  coef)           < 1e-4, 'wrong coef'),
+    assert(relative_error(-129.496,                       log_likelihood) < 1e-4, 'wrong log_likelihood'),
+    assert(relative_error(ARRAY[0.04994,0.08440,0.08378], std_err)        < 1e-4, 'wrong std_err'),
+    assert(relative_error(ARRAY[76.030,-7.330,- 7.112],   z_stats)        < 1e-4, 'wrong z_stats'),
+    assert(norm1(                                         p_values)       < 1e-4, 'wrong p_values')
+FROM glm_model_grp
+WHERE wool = 'A';
+
+-- 2 grouping columns
+SELECT glm('warpbreaks_dummy',
+           'glm_model_grp_2',
+           'breaks',
+           'ARRAY[1.0,"tension_M", "tension_H"]',
+           'family=poisson, link=log',
+           'wool,g');
+
+--------------------------------------------------------------------------
+-- log (default canonical link function)
+-- glm(breaks~wool+tension, family=poisson,data=warpbreaks)
+SELECT glm('warpbreaks_dummy',
+           'glm_model',
+           'breaks',
+           'ARRAY[1.0,"wool_B","tension_M", "tension_H"]',
+           'family=poisson');
+
+SELECT assert(
+        relative_error(ARRAY[3.6920,-0.2060,-0.3213,-0.5185],  coef)           < 1e-4 AND
+        relative_error(-242.528,                               log_likelihood) < 1e-4 AND
+        relative_error(ARRAY[0.04541,0.05157,0.06027,0.06396], std_err)        < 1e-4 AND
+        relative_error(ARRAY[81.302,-3.994,-5.332,-8.107],     z_stats)        < 1e-4 AND
+        relative_error(ARRAY[2e-16,6.49e-5,9.73e-8,5.21e-16],  p_values)       < 1e-4
+        , 'wrong results')
+FROM glm_model;
+
+-- prediction
+SELECT
+    assert(relative_error(array_agg(breaks), array_agg(prediction)) < .4, 'prediction error')
+FROM (
+    SELECT
+        breaks,
+        exp(array_dot(coef,
+                      ARRAY[1.0,"wool_B","tension_M", "tension_H"]::float8[]
+                      )) as prediction
+    FROM glm_model, warpbreaks_dummy
+) subq;

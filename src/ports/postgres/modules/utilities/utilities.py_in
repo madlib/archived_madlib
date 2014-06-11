@@ -310,11 +310,11 @@ def madlib_version(schema_madlib):
 # ========================================================================
 
 
-def preprocess_optimizer_params(optimizer_params):
+def preprocess_keyvalue_params(input_params):
     """
-    Parse the optimizer_params string and split it
+    Parse the input_params string and split it
 
-    @param optimizer_params: string, Comma-separated list of parameters
+    @param input_params: string, Comma-separated list of parameters
         The parameter can be any key = value, where
             key is a string of alphanumeric character
             value is either and
@@ -336,39 +336,36 @@ def preprocess_optimizer_params(optimizer_params):
                                        #    optionally quoted by double quotes
                     )
                 )""", re.VERBOSE)
-    return [m.group(1) for m in pattern.finditer(optimizer_params)]
+    return [m.group(1) for m in pattern.finditer(input_params)]
 # ========================================================================
 
 
-def extract_optimizer_param(optimizer_params,
-                            optimizer_param_types,
-                            default_values=None):
-    """ Extract optimizer control parameter or set the default values
+def extract_keyvalue_params(input_params,
+                           input_param_types,
+                           default_values=None):
+    """ Extract key value pairs from input parameters or set the default values
 
     Args:
-        @param optimizer_params: string, Format of
-                    'max_iter=..., optimizer=..., precision=...'. The order
+        @param input_params: string, Format of
+                    'key1=value1, key2=value2,...'. The order
                     does not matter. If a parameter is missing, then the default
-                    value is used. If optimizer_params is None or '',
+                    value is used. If input_params is None or '',
                     then all default values are returned.
                     This function also validates the values of these parameters.
-        @param optimizer_param_types: dict, The type of each allowed parameter
+        @param input_param_types: dict, The type of each allowed parameter
                                             name. Currently supports one of
                                             (int, float, str, list)
         @param default_values: dict, Default values for each allowed parameter.
 
     Returns:
-        Dict. Dictionary of optimizer parameter values with key as parameter name
+        Dict. Dictionary of input parameter values with key as parameter name
         and value as the parameter value
 
     Throws:
         plpy.error - If the parameter is unsupported or the value is
         not valid.
     """
-    # allowed_params = set(["max_iter", "max_num_iterations", "optimizer", "precision"])
-    # parameter_dict = {'max_iter': 20, 'optimizer': "irls", 'precision': 0.0001}
-
-    if not optimizer_params:
+    if not input_params:
         return default_values if default_values is not None else {}
 
     if default_values:
@@ -376,21 +373,20 @@ def extract_optimizer_param(optimizer_params,
     else:
         parameter_dict = {}
 
-    for s in preprocess_optimizer_params(optimizer_params):
+    for s in preprocess_keyvalue_params(input_params):
         items = s.split("=")
         if (len(items) != 2):
-            # plpy.error("Mlogit error: Optimizer parameter list has incorrect format")
-            raise KeyError("Optimizer parameter list has incorrect format")
+            raise KeyError("Input parameter list has incorrect format")
 
         param_name = items[0].strip(" \"").lower()
         param_value = items[1].strip(" \"").lower()
         if not param_name or param_name in ('none', 'null'):
-            plpy.error("Invalid optimizer param name: {0} ".format(str(param_name)))
+            plpy.error("Invalid input param name: {0} ".format(str(param_name)))
         if not param_value or param_value in ('none', 'null'):
-            plpy.error("Invalid optimizer param value: {0} ".format(str(param_value)))
+            plpy.error("Invalid input param value: {0} ".format(str(param_value)))
 
         try:
-            param_type = optimizer_param_types[param_name]
+            param_type = input_param_types[param_name]
         except KeyError:
             raise KeyError("Invalid input: {0} is not a valid parameter ".
                            format(param_name))
@@ -489,32 +485,32 @@ class UtilitiesTestCase(unittest.TestCase):
         pass
 
     def test_preprocess_optimizer(self):
-        self.assertEqual(preprocess_optimizer_params(self.optimizer_params1),
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params1),
                          ['max_iter=10', 'optimizer="irls"', 'precision=1e-4'])
-        self.assertEqual(preprocess_optimizer_params(self.optimizer_params2),
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params2),
                          ['max_iter=2.01', 'optimizer=newton-irls', 'precision=1e-5'])
-        self.assertEqual(preprocess_optimizer_params(self.optimizer_params3),
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params3),
                          ['max_iter=10', 'lambda={1,2,3,4}'])
-        self.assertEqual(preprocess_optimizer_params(self.optimizer_params4),
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params4),
                          ['max_iter=10', 'optimizer="irls"', 'precision=0.02', 'lambda={1,2,3,4}'])
 
     def test_extract_optimizers(self):
         self.assertEqual({'max_iter': 10, 'optimizer': "irls", 'precision': 0.0001},
-                         extract_optimizer_param(self.optimizer_params1, self.optimizer_types))
+                         extract_keyvalue_params(self.optimizer_params1, self.optimizer_types))
         self.assertEqual({'max_iter': 10, 'lambda': ['1', '2', '3', '4']},
-                         extract_optimizer_param(self.optimizer_params3, self.optimizer_types))
+                         extract_keyvalue_params(self.optimizer_params3, self.optimizer_types))
         self.assertEqual({'max_iter': 10, 'optimizer': "irls", 'precision': 0.02,
                           'lambda': ['1', '2', '3', '4']},
-                         extract_optimizer_param(self.optimizer_params4, self.optimizer_types))
+                         extract_keyvalue_params(self.optimizer_params4, self.optimizer_types))
         self.assertRaises(ValueError,
-                          extract_optimizer_param, self.optimizer_params2, self.optimizer_types)
+                          extract_keyvalue_params, self.optimizer_params2, self.optimizer_types)
 
     def test_split_delimited_string(self):
-        self.assertEqual(['a', 'b', 'c'], split_delimited_str('a,    b, c', quote='|'))
-        self.assertEqual(['a', '|b, c|'], split_delimited_str('a,    |b, c|', quote='|'))
-        self.assertEqual(['a', '"b, c"'], split_delimited_str('a, "b, c"'))
-        self.assertEqual(['"a^5,6"', 'b', 'c'], split_delimited_str('"a^5,6",    b, c', quote='"'))
-        self.assertEqual(['"a\"^5,6"', 'b', 'c'], split_delimited_str('"a\"^5,6",    b, c', quote='"'))
+        self.assertEqual(['a', 'b', 'c'], split_quoted_delimited_str('a,    b, c', quote='|'))
+        self.assertEqual(['a', '|b, c|'], split_quoted_delimited_str('a,    |b, c|', quote='|'))
+        self.assertEqual(['a', '"b, c"'], split_quoted_delimited_str('a, "b, c"'))
+        self.assertEqual(['"a^5,6"', 'b', 'c'], split_quoted_delimited_str('"a^5,6",    b, c', quote='"'))
+        self.assertEqual(['"a\"^5,6"', 'b', 'c'], split_quoted_delimited_str('"a\"^5,6",    b, c', quote='"'))
 
 
 if __name__ == '__main__':

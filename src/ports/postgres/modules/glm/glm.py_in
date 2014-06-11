@@ -1,0 +1,546 @@
+# coding=utf-8
+
+"""
+@file glm.py_in
+
+@brief Generalized Linear Models: Driver functions
+
+@namespace glm
+
+@brief Generalized Linear Models: Driver functions
+"""
+import plpy
+from utilities.in_mem_group_control import GroupIterationController
+from utilities.utilities import __unique_string
+from utilities.validate_args import table_exists
+from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import __explicit_bool_to_text
+from utilities.utilities import _string_to_array
+from utilities.utilities import __mad_version
+from utilities.utilities import extract_keyvalue_params
+from utilities.validate_args import input_tbl_valid
+from utilities.validate_args import output_tbl_valid
+from utilities.validate_args import cols_in_tbl_valid
+from collections import defaultdict
+
+# ========================================================================
+
+
+def __compute_glm(schema_madlib, rel_args, rel_state, rel_source,
+                      dep_col, ind_col, family, link, grouping_col,
+                      grouping_str, col_grp_iteration, col_grp_state, verbose, **kwargs):
+    """
+    Compute Generalized Linear Model coefficients
+
+    This method serves as an interface to different optimization algorithms.
+    By default, iteratively reweighted least squares is used.
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @param rel_args Stores parameters that are needed by optimizers:
+                        max_iter and tolerance
+    @param rel_state Store the iteration states
+    @param rel_source Name of relation containing the training data
+    @param dep_col Name of dependent column in training data
+    @param ind_col Name of independent column in training data (of type
+                   DOUBLE PRECISION[])
+    @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
+                     reweighted least squares
+    @param grouping_col String of comma delimited group-by columns
+    @param grouping_str string of comma delimited group-by columns (casted)
+    @param kwargs We allow the caller to specify additional arguments (all of
+           which will be ignored though). The purpose of this is to allow the
+           caller to unpack a dictionary whose element set is a superset of
+           the required arguments by this function.
+
+    @return Number of iterations that has been run
+    """
+
+    iterationCtrl = GroupIterationController(
+        rel_args=rel_args,
+        rel_state=rel_state,
+        stateType=schema_madlib + ".bytea8",
+        verbose=verbose,
+        schema_madlib=schema_madlib,  # Identifiers start here
+        rel_source=rel_source,
+        ind_col=ind_col,
+        dep_col=dep_col,
+        family=family,
+        link=link,
+        grouping_col=grouping_col,
+        grouping_str=grouping_str,
+        col_grp_iteration=col_grp_iteration,
+        col_grp_state=col_grp_state)
+
+    with iterationCtrl as it:
+        it.iteration = 0
+        while True:
+            it.update(
+                """
+                {schema_madlib}.__glm_{family}_{link}_agg(
+                    ({dep_col})::double precision,
+                    ({ind_col})::double precision[],
+                    {rel_state}.{col_grp_state})
+                """)
+            if it.test(
+                    """
+                    {iteration} >= _args.max_iter
+                    OR {schema_madlib}.__glm_loglik_diff(
+                        _state_previous, _state_current) < _args.tolerance
+                    """):
+                break
+    return iterationCtrl.iteration
+
+# ========================================================================
+
+
+def glm(schema_madlib, source_table, model_table, dependent_varname, independent_varname,
+    family_params=None, grouping_col=None, optim_params=None,verbose=False, **kwargs):
+
+    """
+    Train Genralized Linear Model
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @param source_table Name of relation containing the training data
+    @param model_table Name of relation where model will be outputted
+    @param dependent_varname Name of dependent column in training data
+    @param independent_varname Name of independent column in training data (of type
+                   DOUBLE PRECISION[])
+    @param family_params Distribution of dependent variable
+    @param grouping_col String of comma delimited group-by columns
+    @param optim_params Parameters for optimizer
+    @param kwargs We allow the caller to specify additional arguments (all of
+           which will be ignored though). The purpose of this is to allow the
+           caller to unpack a dictionary whose element set is a superset of
+           the required arguments by this function.
+
+    @return A composite value which is __glm_result defined in glm.sql_in
+    """
+    __glm_validate_args(schema_madlib, source_table, model_table, dependent_varname,
+        independent_varname, grouping_col)
+
+    family_params_dict = __extract_family_params(schema_madlib, family_params)
+    optim_params_dict = __extract_optim_params(schema_madlib, optim_params)
+
+    return __glm_compute(
+        schema_madlib, source_table, model_table, dependent_varname,
+        independent_varname, grouping_col, family_params_dict,
+        optim_params_dict, verbose=verbose, **kwargs)
+
+# ========================================================================
+
+
+def __glm_validate_args(schema_madlib, tbl_source, tbl_output, dep_col,
+        ind_col, grouping_col):
+    """
+    Validate the arguments
+    """
+    input_tbl_valid(tbl_source, 'GLM')
+
+    output_tbl_valid(tbl_output, 'GLM')
+
+    if dep_col is None or dep_col.strip() == '':
+        plpy.error("GLM error: Invalid dependent column name!")
+
+    if ind_col is None or ind_col.strip() == '':
+        plpy.error("GLM error: Invalid independent column name!")
+
+    if grouping_col:
+        cols_in_tbl_valid(tbl_source, _string_to_array(grouping_col), 'GLM')
+        intersect = frozenset(_string_to_array(grouping_col)).intersection(
+                frozenset(('coef', 'log_likelihood', 'std_err', 'z_stats',
+                           'p_values', 'odds_ratios', 'condition_no',
+                           'num_processed', 'num_missing_rows_skipped',
+                           'variance_covariance')))
+        if len(intersect) > 0:
+            plpy.error("GLM error: Conflicted grouping column name.\n"
+                       "Predefined name(s) {0} are not allow!".format(
+                            ', '.join(intersect)))
+
+    return None
+
+# ========================================================================
+
+def __extract_family_params(schema_madlib, family_params):
+    family_params_types = dict(family=str,link=str)
+    family_params_dict = extract_keyvalue_params(family_params,
+                                                 family_params_types)
+    # we use the first element as the default link function for the family
+    family_link = dict(poisson=["log","identity","sqrt"])
+    name_value = {}
+    for k, v in family_params_dict.iteritems():
+        if k == "family":
+            if v not in family_link.keys():
+                plpy.error("GLM error: {param_value} is not a valid "
+                           "family!".format(param_value=v))
+
+    if "family" not in family_params_dict.keys():
+        plpy.error("GLM error: Required parameter family is missing!")
+    if "link" in family_params_dict.keys():
+        if family_params_dict["link"] not in family_link[family_params_dict["family"]]:
+            plpy.error("GLM error: Invalid link function {link_func} for "
+                "family {family}!".format(link_func=family_params_dict["link"],
+                                          family=family_params_dict["family"]))
+    else:
+        # default link function
+        family_params_dict["link"] = family_link[family_params_dict["family"]][0]
+
+    return family_params_dict
+
+# ========================================================================
+
+def __extract_optim_params(schema_madlib, optim_params):
+    optim_params_defaults = dict(max_iter=100, optimizer='irls', tolerance=1e-6)
+    optim_params_types = dict(max_iter=int, optimizer=str, tolerance=float)
+    optim_params_dict = extract_keyvalue_params(optim_params,
+                                                optim_params_types,
+                                                optim_params_defaults)
+    if optim_params_dict["max_iter"] <= 0:
+        plpy.error("GLM error: max_iter must be positive!")
+
+    if optim_params_dict["optimizer"] != "irls":
+        plpy.error("GLM error: optimizer must be irls!")
+
+    if optim_params_dict["tolerance"] <= 0:
+        plpy.error("GLM error; tolerane must be positive!")
+
+    return optim_params_dict
+
+# ========================================================================
+
+
+def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
+        grouping_col, family_params, optim_params, verbose=False, **kwargs):
+    """
+    Create an output table (drop if exists) that contains the Generalized Linear Model
+    """
+    old_msg_level = plpy.execute("""
+        SELECT setting FROM pg_settings
+        WHERE name='client_min_messages'
+        """)[0]['setting']
+    if verbose:
+       plpy.execute("SET client_min_messages TO info")
+    else:
+       plpy.execute("SET client_min_messages TO warning")
+
+    args = {'schema_madlib': schema_madlib,
+            'tbl_source': tbl_source,
+            'tbl_output': tbl_output,
+            'dep_col': dep_col,
+            'ind_col': ind_col,
+            'tbl_glm_args': __unique_string(),
+            'tbl_glm_state': __unique_string(),
+            'col_grp_iteration': __unique_string(),
+            'col_grp_state': __unique_string(),
+            'irls': "__glm_result"}
+
+    args.update(optim_params)
+    args.update(family_params)
+
+    plpy.execute("select {schema_madlib}.create_schema_pg_temp()".format(**args))
+    plpy.execute(
+        """
+        DROP TABLE IF EXISTS pg_temp.{tbl_glm_args};
+        CREATE TABLE pg_temp.{tbl_glm_args} AS
+        SELECT
+            {max_iter} AS max_iter,
+            {tolerance} AS tolerance
+        """.format(**args))
+
+    # return an array of dict
+    # each dict has two elements: iteration number, and grouping value array
+    if grouping_col:
+        grouping_list = __explicit_bool_to_text(
+            tbl_source, _string_to_array(grouping_col), schema_madlib)
+        for i in range(len(grouping_list)):
+            grouping_list[i] += "::text"
+        grouping_str = ','.join(grouping_list)
+    else:
+        grouping_col = None
+        grouping_str = "NULL"
+
+    iteration_run = __compute_glm(schema_madlib, args["tbl_glm_args"],
+                                      args["tbl_glm_state"], tbl_source,
+                                      dep_col, ind_col,
+                                      args["family"], args["link"],
+                                      grouping_col=grouping_col,
+                                      grouping_str=grouping_str,
+                                      col_grp_iteration=args["col_grp_iteration"],
+                                      col_grp_state=args["col_grp_state"],
+                                      verbose=verbose)
+
+    # output table
+    grouping_str1 = "" if grouping_col is None else grouping_col + ","
+    grouping_str2 = "1 = 1" if grouping_col is None else grouping_col
+    using_str = "" if grouping_str1 == "" else "using (" + grouping_col + ")"
+    join_str = "," if grouping_str1 == "" else "join "
+
+    plpy.execute(
+        """
+        DROP TABLE IF EXISTS {tbl_output};
+        CREATE TABLE {tbl_output} AS
+        SELECT
+            {grouping_str1}
+            (result).coef AS coef,
+            (result).loglik AS log_likelihood,
+            (result).std_err AS std_err,
+            (result).z_stats AS z_stats,
+            (result).p_values AS p_values,
+            (CASE WHEN result IS NULL THEN 0
+             ELSE (result).num_rows_processed
+             END)::bigint AS num_rows_processed,
+            (CASE WHEN result IS NULL THEN num_rows
+             ELSE num_rows - (result).num_rows_processed
+             END)::bigint AS num_rows_skipped,
+            {col_grp_iteration}::integer AS iteration
+        FROM
+        (
+            SELECT
+                {col_grp_iteration}, {grouping_str1} result, num_rows
+            FROM
+            (
+                (
+                    SELECT
+                        {grouping_str1}
+                        {schema_madlib}.__glm_result({col_grp_state}) AS result,
+                        {col_grp_iteration}
+                    FROM
+                        {tbl_glm_state}
+                ) t
+                JOIN
+                (
+                    SELECT
+                        {grouping_str1}
+                        max({col_grp_iteration}) AS {col_grp_iteration}
+                    FROM {tbl_glm_state}
+                    GROUP BY {grouping_str2}
+                ) s
+                USING ({grouping_str1} {col_grp_iteration})
+            ) q1
+            {join_str}
+            (
+                SELECT
+                    {grouping_str1}
+                    count(*) AS num_rows
+                FROM {tbl_source}
+                GROUP BY {grouping_str2}
+            ) q2
+            {using_str}
+        ) q3
+        """.format(grouping_str1=grouping_str1,
+                   grouping_str2=grouping_str2,
+                   iteration_run=iteration_run,
+                   using_str=using_str,
+                   join_str=join_str,
+                   **args))
+
+    # summary table
+    failed_groups = plpy.execute("""
+        SELECT count(*) AS num_failed_groups
+        FROM {tbl_output}
+        WHERE coef IS NULL
+        """.format(**args))[0]
+    all_groups = plpy.execute("""
+        SELECT count(*) AS num_all_groups
+        FROM {tbl_output}
+        """.format(**args))[0]
+    total_rows = plpy.execute("""
+        SELECT
+            sum(num_rows_processed) AS total_rows_processed,
+            sum(num_rows_skipped) AS total_rows_skipped
+        FROM {tbl_output}
+        """.format(tbl_output=tbl_output))[0]
+
+    args.update(failed_groups)
+    args.update(all_groups)
+    args.update(total_rows)
+
+    plpy.execute("""
+        CREATE TABLE {tbl_output}_summary AS
+        SELECT
+            'glm'::varchar                      AS method,
+            '{tbl_source}'::varchar             AS source_table,
+            '{tbl_output}'::varchar             AS out_table,
+            '{dep_col}'::varchar                AS dependent_varname,
+            '{ind_col}'::varchar                AS independent_varname,
+            'family={family}, ' ||
+            'link={link}'::varchar              AS family_params,
+            {g_str}::text                       AS grouping_col,
+            'optimizer={optimizer}, ' ||
+            'max_iter={max_iter}, '   ||
+            'tolerance={tolerance}'::varchar    AS optimizer_params,
+            {num_all_groups}::integer           AS num_all_groups,
+            {num_failed_groups}::integer        AS num_failed_groups,
+            {total_rows_processed}::bigint      AS total_rows_processed,
+            {total_rows_skipped}::bigint        AS total_rows_skipped
+        """.format(g_str="'" + grouping_col + "'" if grouping_col else "NULL",
+                   **args))
+
+    # clean up
+    plpy.execute("""
+        DROP TABLE IF EXISTS pg_temp.{tbl_glm_args};
+        DROP TABLE IF EXISTS pg_temp.{tbl_glm_state}
+        """.format(**args))
+    plpy.execute("SET client_min_messages TO " + old_msg_level)
+
+    return None
+
+
+# ========================================================================
+
+def glm_help_msg(schema_madlib, message, **kwargs):
+    """ Help message for logistic regression
+
+    @param message A string, the help message indicator
+
+    Returns:
+      A string, contains the help message
+    """
+    if not message:
+
+        help_string = """
+----------------------------------------------------------------
+                        SUMMARY
+----------------------------------------------------------------
+Poisson regression assumes the dependent variable has a Poisson distribution,
+and assumes the logarithm of its expected value can be modeled by a
+linear combination of unknown parameters.
+
+
+For more details on function usage:
+    SELECT {schema_madlib}.glm('usage')
+
+For a small example on using the function:
+    SELECT {schema_madlib}.glm('example')
+        """
+    elif message in ['usage', 'help', '?']:
+
+        help_string = """
+------------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------------
+SELECT {schema_madlib}.glm(
+    source_table,        -- name of input table
+    model_table,         -- name of model table
+    dependent_varname,   -- name of dependent variable
+    independent_varname, -- names of independent variables
+    family_params,       -- parameters for family distribution and link function
+    grouping_col,        -- optional, default NULL, names of columns to group-by
+    optimi_params,       -- optional, parameters for optimizer
+    verbose              -- optional, default FALSE, whether to print debug info
+);
+
+------------------------------------------------------------------
+                        OUTPUT
+------------------------------------------------------------------
+The output table ('out_table' above) has the following columns:
+    <...>                                    -- grouping columns
+    'coef'               double precision[], -- vector of coefficients
+    'log_likelihood'     double precision,   -- log likelihood
+    'std_err'            double precision[], -- vector of standard errors
+    'z_stats'            double precision[], -- vector of z-statistics
+    'p_values'           double precision[], -- vector of p-values
+    'num_rows_processed' bigint,             -- numbers of rows processed
+    'num_rows_skipped'   bigint,             -- numbers of rows skipped
+    'num_iterations'     integer             -- number of iterations run
+
+A summary table named <out_table>_summary is also created at the same time, which has:
+    method               varchar, -- modeling method name ('glm')
+    source_table         varchar, -- the data source table name
+    model_table          varchar, -- the output table name
+    dependent_varname    varchar, -- the dependent variable
+    independent_varname  varchar, -- the independent variable
+    family_params        varchar, -- family distribution and link function
+    grouping_col         varchar  -- grouping columns used in the regression
+    optimizer_params     varchar, -- 'optimizer=...,max_iter=...,tolerance=...'
+    num_all_groups       integer, -- how many groups
+    num_failed_groups    integer, -- how many groups' fitting processes failed
+    total_rows_processed bigint,  -- total numbers of rows processed
+    total_rows_skipped   bigint,  -- total numbers of rows skipped
+        """
+    elif message in ['example', 'examples']:
+
+        help_string = """
+CREATE TABLE warpbreaks(
+    id      serial,
+    breaks  integer,
+    wool    char(1),
+    tension char(1)
+);
+INSERT INTO warpbreaks(breaks, wool, tension) VALUES
+(26, 'A', 'L'),
+(30, 'A', 'L'),
+(54, 'A', 'L'),
+(25, 'A', 'L'),
+(70, 'A', 'L'),
+(52, 'A', 'L'),
+(51, 'A', 'L'),
+(26, 'A', 'L'),
+(67, 'A', 'L'),
+(18, 'A', 'M'),
+(21, 'A', 'M'),
+(29, 'A', 'M'),
+(17, 'A', 'M'),
+(12, 'A', 'M'),
+(18, 'A', 'M'),
+(35, 'A', 'M'),
+(30, 'A', 'M'),
+(36, 'A', 'M'),
+(36, 'A', 'H'),
+(21, 'A', 'H'),
+(24, 'A', 'H'),
+(18, 'A', 'H'),
+(10, 'A', 'H'),
+(43, 'A', 'H'),
+(28, 'A', 'H'),
+(15, 'A', 'H'),
+(26, 'A', 'H'),
+(27, 'B', 'L'),
+(14, 'B', 'L'),
+(29, 'B', 'L'),
+(19, 'B', 'L'),
+(29, 'B', 'L'),
+(31, 'B', 'L'),
+(41, 'B', 'L'),
+(20, 'B', 'L'),
+(44, 'B', 'L'),
+(42, 'B', 'M'),
+(26, 'B', 'M'),
+(19, 'B', 'M'),
+(16, 'B', 'M'),
+(39, 'B', 'M'),
+(28, 'B', 'M'),
+(21, 'B', 'M'),
+(39, 'B', 'M'),
+(29, 'B', 'M'),
+(20, 'B', 'H'),
+(21, 'B', 'H'),
+(24, 'B', 'H'),
+(17, 'B', 'H'),
+(13, 'B', 'H'),
+(15, 'B', 'H'),
+(15, 'B', 'H'),
+(16, 'B', 'H'),
+(28, 'B', 'H');
+
+SELECT create_dummy_coding('warpbreaks', 'warpbreaks_dummy', 'wool,tension');
+
+-- Drop output tables before calling the function
+DROP TABLE IF EXISTS glm_model;
+DROP TABLE IF EXISTS glm_model_summary;
+
+SELECT glm('warpbreaks_dummy',
+           'glm_model',
+           'breaks',
+           'ARRAY[1.0,"wool_B","tension_M", "tension_H"]',
+           'family=poisson, link=log',
+            NULL,
+           'max_iter=100,optimizer=irls,tolerance=1e-6',
+            true);
+
+SELECT * from glm_model;
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.glm('help')"
+
+    return help_string.format(schema_madlib=schema_madlib)

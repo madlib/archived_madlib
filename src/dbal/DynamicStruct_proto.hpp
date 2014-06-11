@@ -208,21 +208,22 @@ template <class T, bool IsMutable>
 struct DynamicStructType;
 
 #define MADLIB_DYNAMIC_STRUCT_TYPEDEFS \
+    enum { isMutable = Base::isMutable }; \
     typedef typename Base::Init_type Init_type; \
     typedef typename Base::ByteStream_type ByteStream_type; \
     typedef typename Base::Storage_type Storage_type; \
-    typedef typename DynamicStructType<double, Base::isMutable>::type double_type; \
-    typedef typename DynamicStructType<float, Base::isMutable>::type float_type; \
-    typedef typename DynamicStructType<uint64_t, Base::isMutable>::type uint64_type; \
-    typedef typename DynamicStructType<int64_t, Base::isMutable>::type int64_type; \
-    typedef typename DynamicStructType<uint32_t, Base::isMutable>::type uint32_type; \
-    typedef typename DynamicStructType<int32_t, Base::isMutable>::type int32_type; \
-    typedef typename DynamicStructType<uint16_t, Base::isMutable>::type uint16_type; \
-    typedef typename DynamicStructType<int16_t, Base::isMutable>::type int16_type; \
-    typedef typename DynamicStructType<ColumnVector, Base::isMutable>::type \
+    typedef typename DynamicStructType<bool, isMutable>::type bool_type; \
+    typedef typename DynamicStructType<double, isMutable>::type double_type; \
+    typedef typename DynamicStructType<float, isMutable>::type float_type; \
+    typedef typename DynamicStructType<uint64_t, isMutable>::type uint64_type; \
+    typedef typename DynamicStructType<int64_t, isMutable>::type int64_type; \
+    typedef typename DynamicStructType<uint32_t, isMutable>::type uint32_type; \
+    typedef typename DynamicStructType<int32_t, isMutable>::type int32_type; \
+    typedef typename DynamicStructType<uint16_t, isMutable>::type uint16_type; \
+    typedef typename DynamicStructType<int16_t, isMutable>::type int16_type; \
+    typedef typename DynamicStructType<ColumnVector, isMutable>::type \
         ColumnVector_type; \
-    typedef typename DynamicStructType<Matrix, Base::isMutable>::type Matrix_type; \
-    enum { isMutable = Base::isMutable }
+    typedef typename DynamicStructType<Matrix, isMutable>::type Matrix_type
 
 
 } // namespace dbal

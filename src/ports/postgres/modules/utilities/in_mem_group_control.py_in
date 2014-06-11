@@ -1,0 +1,298 @@
+"""
+@file in_mem_group_control.py_in
+
+@brief in-memory grouping controller classes
+"""
+
+import plpy
+from control import MinWarning
+from utilities import __mad_version
+from utilities import __unique_string as _unique_string
+
+class GroupIterationController:
+    """
+    @brief Abstraction for implementing in-memory iteration controller for
+    SQL aggregate with STYPE=madlib.bytea8 (e.g. DynamicStruct) in PL/Python
+
+    This class encapsulates handling of the inter-iteration state. The design
+    goal is to avoid any conversion between backend-native types and those of
+    procedureal languages like PL/Python. Therefore, the expectation is that
+
+    *** all "template" parameters are passed as PL/Python arguments ***,
+
+    whereas non-template arguments are provided in an argument table. Here,
+    "template" arguments are those parameters that cannot be SQL parameters,
+
+    *** such as function, table and column names ***.
+
+    The inter-state iteration table contains:
+    - <tt>_grouping_cols <em>text</em></tt>
+        - List of columns that are provided as grouping arguments
+    - <tt>_iteration <em>integer</em></tt> - The 0-based iteration number
+    - <tt>_state <em>self.kwargs.stateType</em></tt>
+        - The state (after iteration \c <tt>_iteration</tt>)
+    - and the actual grouping columns typed and named as in source table
+    """
+
+    def __init__(self, rel_args, rel_state, stateType,
+            temporaryTables = True,
+            schema_madlib = "MADLIB_SCHEMA_MISSING",
+            verbose = False,
+            grouping_str = "NULL",
+            col_grp_iteration="_iteration",
+            col_grp_state="_state",
+            **kwargs):
+        self.temporaryTables = temporaryTables
+        self.verbose = verbose
+        self.inWith = False
+        self.iteration = -1
+        self.is_group_null = True if kwargs["grouping_col"] is None else False
+        self.kwargs = kwargs
+        self.kwargs.update(
+            unqualified_rel_state=rel_state,
+            rel_args=('pg_temp.' if temporaryTables else '') + rel_args,
+            rel_state=rel_state,
+            stateType=stateType.format(schema_madlib=schema_madlib),
+            schema_madlib=schema_madlib,
+            grouping_str=grouping_str,
+            col_grp_null=_unique_string(),
+            col_grp_key=_unique_string(),
+            col_grp_iteration=col_grp_iteration,
+            col_grp_state=col_grp_state,
+            grouping_col="NULL" if kwargs["grouping_col"] is None \
+                    else kwargs["grouping_col"],
+            )
+
+        self.new_states = {}
+        self.old_states = {}
+        self.finished_states = {}
+        self.failed_grp_keys = []
+
+
+    def __enter__(self):
+        with MinWarning('warning'):
+            ############################
+            # create state table
+            # currently assuming that groups is passed as a valid array
+            group_col = ("NULL::integer as {col_grp_null}" if self.is_group_null \
+                        else "{grouping_col}").format(**self.kwargs)
+            groupby_str = ("{col_grp_null}" if self.is_group_null \
+                        else "{grouping_col}").format(**self.kwargs)
+            plpy.execute("""
+                DROP TABLE IF EXISTS {rel_state};
+                CREATE {temp} TABLE {unqualified_rel_state} AS (
+                    SELECT
+                        array_to_string(ARRAY[{grouping_str}],
+                                        ',') AS {col_grp_key},
+                        0::integer AS {col_grp_iteration},
+                        NULL::{stateType} AS {col_grp_state},
+                        {group_col}
+                    FROM {rel_source}
+                    GROUP BY {groupby_str}
+                );
+                """.format(group_col=group_col, groupby_str=groupby_str,
+                           temp='TEMPORARY' if self.temporaryTables else '',
+                           **self.kwargs))
+
+            ############################
+            # checking null in group values
+            # We cannot allow NULL due to array_to_string cannot handle it well.
+            if not self.is_group_null:
+                null_test = " OR ".join([g.strip() + " is NULL" for g in
+                            self.kwargs['grouping_col'].split(",")])
+                null_count = plpy.execute("""
+                    SELECT count(*) FROM {rel_state} WHERE {null_test}
+                    """.format(null_test=null_test, **self.kwargs))[0]['count']
+                if null_count != 0:
+                    plpy.error("Grouping error: at least one of the grouping "
+                               "columns contains NULL values! Please filter "
+                               "out those NULL values.")
+
+            ############################
+            # initialize states
+            ret_states = plpy.execute("SELECT * FROM {rel_state}".format(**self.kwargs))
+            for state in ret_states:
+                self.new_states[state[self.kwargs['col_grp_key']]] = None
+
+            ############################
+            # add the grouping join key
+            if not self.is_group_null:
+                # make a copy of the state table and add join attributes
+                converted_source_table = _unique_string()
+                plpy.execute("""
+                    CREATE TEMP TABLE {converted_source_table} AS
+                    SELECT
+                        *,
+                        array_to_string(ARRAY[{grouping_str}],
+                                        ',') AS {col_grp_key}
+                    FROM {rel_source}
+                    """.format(converted_source_table=converted_source_table,
+                               **self.kwargs))
+                self.kwargs.update(rel_source=converted_source_table)
+
+        self.inWith = True
+        return self
+
+
+    def __exit__(self, type, value, tb):
+        self.inWith = False
+
+        insert_plan = plpy.prepare("""
+            INSERT INTO {rel_state}
+            SELECT
+                {col_grp_key},
+                {iteration},
+                {col_grp_state},
+                {grouping_col}
+            FROM
+                (
+                    SELECT {grouping_col}, {col_grp_key}
+                    FROM {rel_state}
+                ) AS _src
+            JOIN
+                (
+                    SELECT
+                        unnest($1) AS {col_grp_key},
+                        unnest($2) AS {col_grp_state}
+                ) AS _rel_state
+            USING ({col_grp_key})
+            """.format(iteration=self.iteration, **self.kwargs),
+            ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)])
+
+        plpy.execute(insert_plan, [self.finished_states.keys(),
+                                   self.finished_states.values()])
+
+        plpy.execute(insert_plan, [self.failed_grp_keys, [None]])
+
+        if not self.is_group_null:
+            plpy.execute('DROP TABLE IF EXISTS ' + self.kwargs['rel_source'])
+
+
+    def test(self, condition):
+        """
+        Evaluate the given expression for all in-progress groups.
+        Move groups with expression as True from self.new_states to
+        self.finished_states. The expression may depend on the current
+        inter-iteration state and all arguments
+
+        @param condition SQL boolean expression. The
+            following names are defined and can be used in the condition:
+            - \c _args  - The (single-row) argument table
+            - \c _state - In memory inter-iteration state
+        @return True if \c expression in all non-failed groups is True,
+                otherwise False
+        """
+        condition = condition.format(iteration=self.iteration, **self.kwargs)
+        eval_plan = plpy.prepare("""
+            SELECT
+                CAST(({condition}) AS BOOLEAN) AS _expression,
+                {col_grp_key}
+            FROM
+                {rel_args} AS _args
+            LEFT OUTER JOIN (
+                    (
+                        SELECT
+                            unnest($1) AS {col_grp_key},
+                            unnest($2) AS _state_previous
+                    ) sub1
+                JOIN
+                    (
+                        SELECT
+                            unnest($3) AS {col_grp_key},
+                            unnest($4) AS _state_current
+                    ) sub2
+                USING ({col_grp_key})
+            ) AS subq1
+            ON TRUE
+            """.format(condition=condition, **self.kwargs),
+            ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)] * 2)
+
+        ret_tuples = plpy.execute(eval_plan,
+                                  [self.old_states.keys(),
+                                   self.old_states.values(),
+                                   self.new_states.keys(),
+                                   self.new_states.values()])
+
+        if ret_tuples.nrows() == 0:
+            plpy.error("Unexpected error caused by no states in state table")
+
+        self.old_states = {}
+        for t in ret_tuples:
+            if t['_expression']:
+                k = t[self.kwargs['col_grp_key']]
+                self.finished_states[k] = self.new_states[k]
+                del self.new_states[k]
+
+        return len(self.new_states) == 0
+
+
+    def update(self, newState, **updateKwargs):
+        """
+        Update the inter-iteration state
+
+        @param newState SQL expression of (or returning) type
+            <tt>stateType.kwargs.stateType</tt>. The
+            following names are defined and can be used in the condition:
+            - \c _args  - The (single-row) argument table
+            - \c _state - In memory inter-iteration state
+            .
+            Note that <tt>{iteration}</tt> will still be the current iteration.
+            For instance, it could be used in the expression as a WHERE
+            condition: <tt>[...] WHERE _state._iteration = {iteration}</tt>
+
+        This updates the current inter-iteration state to the result of
+        evaluating \c newState. If <tt>self.truncAfterIteration</tt> is true,
+        this will replace the old state, otherwise the history of all old states
+        is kept.
+        """
+        newState = newState.format(**self.kwargs)
+        self.iteration = self.iteration + 1
+
+        groupby_str = "GROUP BY {grouping_col}, {col_grp_key}".format(
+                **self.kwargs) if not self.is_group_null else ""
+        using_str = "USING ({col_grp_key})".format(
+                **self.kwargs) if not self.is_group_null else "ON TRUE"
+
+        update_plan = plpy.prepare(
+            """
+            SELECT
+                {_grp_key} AS {col_grp_key},
+                {grouping_col} {as_string},
+                {iteration} AS {col_grp_iteration},
+                ({newState}) AS {col_grp_state}
+            FROM
+                {rel_args} AS _args
+            LEFT OUTER JOIN
+                {rel_source} AS _src
+            ON TRUE
+            JOIN
+                (
+                    SELECT
+                        unnest($1) AS {col_grp_key},
+                        unnest($2) AS {col_grp_state}
+                ) AS {rel_state}
+            {using_str}
+            {groupby_str}
+            """.format(
+                iteration=self.iteration,
+                groupby_str=groupby_str,
+                using_str=using_str,
+                as_string='AS _grp' if self.is_group_null else '',
+                _grp_key="array_to_string(ARRAY[{grouping_str}], "
+                         "',')".format(**self.kwargs) if self.is_group_null \
+                        else self.kwargs['col_grp_key'],
+                newState = newState,
+                **self.kwargs),
+            ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)])
+
+        res_tuples = plpy.execute(update_plan, [self.new_states.keys(),
+                                                self.new_states.values()])
+
+        self.old_states = self.new_states
+        self.new_states = {}
+        for t in res_tuples:
+            if t[self.kwargs['col_grp_state']] is None:
+                self.failed_grp_keys.append(t[self.kwargs['col_grp_key']])
+            else:
+                self.new_states[t[self.kwargs['col_grp_key']]] = \
+                        t[self.kwargs['col_grp_state']]
