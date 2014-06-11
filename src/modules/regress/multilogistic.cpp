@@ -87,8 +87,18 @@ public:
         uint16_t inWidthOfX,
         uint16_t inNumCategories, uint16_t inRefCategory) {
 
+        size_t state_size = arraySize(inWidthOfX, inNumCategories);
+        // GPDB limits the single array size to be 1GB, which means that the size
+        // of a double array cannot be large than 134217727 because
+        // (134217727 * 8) / (1024 * 1024) = 1023. And solve 
+        // state_size = x^2 + 2^x + 6 <= 134217727 will give x <= 11584.
+        if(state_size > 134217727)
+            throw std::domain_error(
+                "The product of number of independent variables and number of "
+                 "categories cannot be larger than 11584.");
+
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
-            dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(inWidthOfX, inNumCategories));
+            dbal::DoZero, dbal::ThrowBadAlloc>(state_size);
         rebind(inWidthOfX, inNumCategories);
         widthOfX = inWidthOfX;
         numCategories = inNumCategories;
