@@ -511,7 +511,7 @@ BEGIN
         RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
     END IF;
     IF (k > 32767) THEN
-        RAISE EXCEPTION 'Kmeans Error:
+        RAISE EXCEPTION 'Kmeans Error: Number of clusters exceeded maximum limit
         Number of clusters k must be <= 32767 (for results to be returned in a
         reasonable amount of time).';
     END IF;
@@ -522,7 +522,7 @@ BEGIN
         RAISE EXCEPTION 'Number of centroids is greater than number of points.';
     END IF;
     IF (k < num_centroids) THEN
-        RAISE WARNING 'Kmeans Warning:
+        RAISE WARNING 'Kmeans Warning: Number of initial centroids more than requested clusters.
         Number of clusters k is less than number of supplied initial centroids.
         Number of final clusters will equal number of supplied initial centroids.';
     END IF;
@@ -538,12 +538,12 @@ BEGIN
             GROUP BY length, lower) t $sql$
     INTO array_dim;
     IF (array_upper(array_dim, 1) > 1) THEN
-        RAISE EXCEPTION 'Kmeans error:
-        The input table contains arrays (evaluated from expr_point) of different dimensions.';
+        RAISE EXCEPTION 'Kmeans error: Feature column has arrays of different dimensions.
+        The input table contains arrays (evaluated from ''expr_point'') of different dimensions.';
     END IF;
     IF (initial_centroids is not NULL) THEN
         IF (array_upper(initial_centroids, 2) != array_dim[1]) THEN
-            RAISE EXCEPTION 'Kmeans error:
+            RAISE EXCEPTION 'Kmeans error: mismatched dimensionality between initial centroids and feature array
             The input table contains arrays (evaluated from expr_point) of
             dimension (%) which is not same as dimension of
             provided initial centroid (%).',
@@ -611,12 +611,12 @@ BEGIN
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
 
     IF (array_upper(initial_centroids,1) IS NULL) THEN
-    RAISE EXCEPTION 'No valid initial centroids given.';
+    RAISE EXCEPTION 'Kmeans error: No valid initial centroids given.';
     END IF;
 
     centroids := ARRAY(SELECT unnest(initial_centroids));
     IF (SELECT MADLIB_SCHEMA.svec_elsum(centroids)) >= 'Infinity'::float THEN
-        RAISE EXCEPTION 'At least one initial centroid has non-finite values.';
+        RAISE EXCEPTION 'Kmeans error: At least one initial centroid has non-finite values.';
     END IF;
 
     -- init_size := (SELECT array_upper(initial_centroids[1], 1));
@@ -634,31 +634,31 @@ BEGIN
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
         FROM pg_proc WHERE oid = proc_fn_dist) THEN
-        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+        RAISE EXCEPTION 'Kmeans error: Distance function has wrong signature or is not a simple function.';
     END IF;
     proc_agg_centroid := agg_centroid || '(DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION[]'::regtype OR proisagg = FALSE
         FROM pg_proc WHERE oid = proc_agg_centroid) THEN
-        RAISE EXCEPTION 'Mean aggregate has wrong signature or is not an aggregate.';
+        RAISE EXCEPTION 'Kmeans error: Mean aggregate has wrong signature or is not an aggregate.';
     END IF;
     IF (min_frac_reassigned < 0) OR (min_frac_reassigned > 1) THEN
-        RAISE EXCEPTION 'Convergence threshold is not a valid value (must be a fraction between 0 and 1).';
+        RAISE EXCEPTION 'Kmeans error: Invalid convergence threshold (must be a fraction between 0 and 1).';
     END IF;
     IF (max_num_iterations < 0) THEN
-        RAISE EXCEPTION 'Number of iterations must be a non-negative integer.';
+        RAISE EXCEPTION 'Kmeans error: Number of iterations must be a non-negative integer.';
     END IF;
 
     -- Extra parameter check added so that ERROR output is more user-readable (doesn't include Python traceback)
     k := array_upper(initial_centroids,1);
     IF (k <= 0) THEN
-        RAISE EXCEPTION 'Number of clusters k must be a positive integer.';
+        RAISE EXCEPTION 'Kmeans error: Number of clusters k must be a positive integer.';
     END IF;
     IF (k > 32767) THEN
-    RAISE EXCEPTION 'Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
+        RAISE EXCEPTION 'Kmeans error: Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
     END IF;
     EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points ;
     IF (num_points < k) THEN
-    RAISE EXCEPTION 'Number of centroids is greater than number of points.';
+        RAISE EXCEPTION 'Kmeans error: Number of centroids is greater than number of points.';
     END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data
@@ -826,7 +826,7 @@ BEGIN
     proc_fn_dist := fn_dist || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
         FROM pg_proc WHERE oid = proc_fn_dist) THEN
-        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+        RAISE EXCEPTION 'Kmeans error: Distance function has wrong signature or is not a simple function.';
     END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data
@@ -1312,7 +1312,8 @@ BEGIN
     RETURN rel_source_filtered;
     EXCEPTION
         WHEN undefined_function THEN
-        RAISE EXCEPTION 'Point coordinates (%) are not a valid type
+        RAISE EXCEPTION 'Kmeans error: Invalid type for point coordinates.
+                        Point coordinates (%) are not a valid type
                         (SVEC, FLOAT[], or INTEGER[]).', expr_point;
 END
 $$
@@ -1495,7 +1496,7 @@ DECLARE
     rel_filtered VARCHAR;
 BEGIN
     IF (array_upper(centroids,1) IS NULL) THEN
-    RAISE EXCEPTION 'No valid centroids given.';
+    RAISE EXCEPTION 'Kmeans error: No valid centroids given.';
     END IF;
 
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
@@ -1509,7 +1510,7 @@ BEGIN
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
         FROM pg_proc WHERE oid = proc_fn_dist) THEN
-        RAISE EXCEPTION 'Distance function has wrong signature or is not a simple function.';
+        RAISE EXCEPTION 'Kmeans error: Distance function has wrong signature or is not a simple function.';
     END IF;
 
     RETURN MADLIB_SCHEMA.internal_execute_using_silhouette_args($sql$
