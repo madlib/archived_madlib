@@ -69,17 +69,10 @@ LinearSVM<Model, Tuple>::gradientInPlace(
         const dependent_variable_type       &y,
         const double                        &stepsize) {
     double wx = dot(model, x);
-    // dberr << "\nmodel: " << trans(model) << std::endl;
     if (1. - wx * y > 0.) {
         double c = -y; // minus for "-loglik"
         model -= stepsize * c * x;
     } else { }
-    // dberr << "\nmodel: " << trans(model)
-    //     << ", x: " << trans(x)
-    //     << ", y: " << y
-    //     << ", eta: " << stepsize
-    //     << ", 1 - wx * y: " << 1. - wx * y
-    //     << std::endl;
 }
 
 template <class Model, class Tuple>

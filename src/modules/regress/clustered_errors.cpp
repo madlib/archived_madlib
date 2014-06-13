@@ -31,6 +31,10 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
                                            const MappedColumnVector&,
                                            const double& y))
 {
+    // Early return because of an exception has been "thrown" 
+    // (actually "warning") in the previous invocations
+    if (args[0].isNull())
+        return Null();
     MutableClusteredState state = args[0].getAs<MutableByteString>();
 
    if (args[1].isNull() || args[2].isNull()) {
@@ -58,11 +62,16 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
 
     // const MappedColumnVector& x = args[2].getAs<MappedColumnVector>();
 
-    if (!std::isfinite(y))
-        throw std::domain_error("Dependent variables are not finite.");
-    else if (x.size() > std::numeric_limits<uint16_t>::max())
-        throw std::domain_error("Number of independent variables cannot be "
-                                "larger than 65535.");
+    if (!std::isfinite(y)) {
+        //throw std::domain_error("Dependent variables are not finite.");
+        warning("Dependent variables are not finite.");
+        return Null();
+    } else if (x.size() > std::numeric_limits<uint16_t>::max()) {
+        //throw std::domain_error("Number of independent variables cannot be "
+        //                        "larger than 65535.");
+        warning("Number of independent variables cannot be larger than 65535.");
+        return Null();
+    }
 
     if (state.numRows == 0) {
         if(regressionType == "mlog")
@@ -89,16 +98,17 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
         } else {
             const MappedColumnVector& coef = args[3].getAs<MappedColumnVector>();
             state.coef = coef;
-            //elog(INFO, "widthOfX:%i", static_cast<int>(state.widthOfX));
-            //elog(INFO, "size of x:%i", static_cast<int>(x.size()));
         }
         state.meat_half.setZero();
     }
 
     // dimension check
-    if (state.widthOfX != static_cast<uint16_t>(x.size() * (state.numCategories-1)))
-        throw std::runtime_error("Inconsistent numbers of independent "
-                                 "variables.");
+    if (state.widthOfX != static_cast<uint16_t>(x.size() * (state.numCategories-1))) {
+        //throw std::runtime_error("Inconsistent numbers of independent "
+        //                         "variables.");
+        warning("Inconsistent numbers of independent variables.");
+        return Null();
+    }
     state.numRows++;
     (*func)(state, x, y);
     return state.storage();
@@ -109,6 +119,10 @@ AnyType __clustered_common_transition (AnyType& args, string regressionType,
 // function used by linear and logistic merges
 AnyType __clustered_common_merge (AnyType& args)
 {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if(args[0].isNull() || args[1].isNull())
+        return Null();
     MutableClusteredState state1 = args[0].getAs<MutableByteString>();
     IClusteredState state2 = args[1].getAs<ByteString>();
 
@@ -129,12 +143,14 @@ AnyType __clustered_common_merge (AnyType& args)
 // function used by linear and logistic finals
 AnyType __clustered_common_final (AnyType& args)
 {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull())
+        return Null(); 
     IClusteredState state = args[0].getAs<ByteString>();
-
     if (state.numRows == 0) return Null();
 
     Allocator& allocator = defaultAllocator();
-
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
         state.bread, EigenvaluesOnly, ComputePseudoInverse);
 
@@ -187,8 +203,6 @@ AnyType clustered_compute_stats (AnyType& args,
     int mcluster = args[3].getAs<int>();
     int numRows = args[4].getAs<int>();
     int k =  coef.size();
-    //elog(INFO, "Stats coef size:%i", static_cast<int>(coef.size()));
-    //elog(INFO, "Stats k:%i", static_cast<int>(k));
     Matrix bread(k,k);
     Matrix meat(k,k);
     int count = 0;
@@ -199,11 +213,13 @@ AnyType clustered_compute_stats (AnyType& args,
             meat(i,j) = meatvec(count);
             bread(i,j) = breadvec(count);
             count++;
-            //elog(INFO, "meat, bread: %i, %i, %f, %f", static_cast<int>(i),  static_cast<int>(j),  static_cast<float>(meat(i,j)),  static_cast<float>(bread(i,j)));
         }
 
-    if (mcluster == 1)
-        throw std::domain_error ("Clustered variance error: Number of clusters cannot be smaller than 2!");
+    if (mcluster == 1) {
+        //throw std::domain_error ("Clustered variance error: Number of clusters cannot be smaller than 2!");
+        warning("Clustered variance error: Number of clusters cannot be smaller than 2!");
+        return Null();
+    }
     double dfc = (mcluster / (mcluster - 1.)) * ((numRows - 1.) / (numRows - k));
 
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
@@ -378,7 +394,6 @@ AnyType clustered_log_compute_stats::run (AnyType& args)
 void __mlogistic_trans_compute (MutableClusteredState& state,
                                const MappedColumnVector& x, const double& y)
 {
-	const bool debug = false;
 	int numCategories = state.numCategories -1;
 	ColumnVector yVec(numCategories);
     yVec.fill(0);
@@ -399,8 +414,6 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
     for the data point being processed.
     Casting the coefficients into a matrix makes the calculation simple.
     */
-    if(debug)
-	    elog(INFO, "Starting mlog compute function");
     Matrix coef = state.coef;
     coef.resize(numCategories, state.widthOfX/numCategories);
 
@@ -418,8 +431,6 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
     ColumnVector t2 = t1.array().exp();
     double t3 = 1 + t2.sum();
     ColumnVector pi = t2/t3;
-    if(debug)
-		elog(INFO, "Computing gradient");
     //The gradient matrix has numCatergories rows and widthOfX columns
     Matrix grad = -yVec * x.transpose() + pi * x.transpose();
     //We cast the gradient into a vector to make the math easier.
@@ -428,9 +439,8 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
     {
 		state.meat_half(0,i) += grad(i);
 	}
-	if(debug)
-		elog(INFO, "Computing Hessian");
-	 // Compute the 'a' matrix.
+
+	// Compute the 'a' matrix.
     Matrix a(numCategories,numCategories);
     Matrix piDiag = pi.asDiagonal();
     a = pi * pi.transpose() - piDiag;
@@ -446,8 +456,7 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
     Matrix cv_x = x;
     Matrix XXTrans = trans(cv_x);
     XXTrans = cv_x * XXTrans;
-	if(debug)
-		elog(INFO, "Computing outer product");
+
     //Eigen doesn't supported outer-products for matrices, so we have to do our own.
     //This operation is also known as a tensor-product.
     for (int i1 = 0; i1 < (state.widthOfX/numCategories); i1++){
@@ -458,25 +467,14 @@ void __mlogistic_trans_compute (MutableClusteredState& state,
             X_transp_AX.block(rowOffset, colOffset, numCategories,  numCategories) = XXTrans(i1, i2) * a;
         }
     }
-    if(debug)
-    {
-		for (int i1 = 0; i1 < (state.widthOfX); i1++){
-			 for (int i2 = 0; i2 < (state.widthOfX); i2++){
-				elog(INFO, "%i, %i, %f: ", i1,i2,X_transp_AX(i1,i2));
-			}
-		}
-		elog(INFO, "adding Hessian to state");
-	}
+
     state.bread += -1*X_transp_AX;
-    if(debug)
-	    elog(INFO, "mlog transition finishing");
 }
 
 // ------------------------------------------------------------------------
 
 AnyType __clustered_err_mlog_transition::run (AnyType& args)
 {
-	//elog(INFO, "mlog Transition step is running");
     return __clustered_common_transition(args, "mlog", __mlogistic_trans_compute);
 }
 
@@ -484,7 +482,6 @@ AnyType __clustered_err_mlog_transition::run (AnyType& args)
 
 AnyType __clustered_err_mlog_merge::run (AnyType& args)
 {
-	//elog(INFO, "mlog merge step is running");
     return __clustered_common_merge(args);
 }
 
@@ -492,7 +489,6 @@ AnyType __clustered_err_mlog_merge::run (AnyType& args)
 
 AnyType __clustered_err_mlog_final::run (AnyType& args)
 {
-	//elog(INFO, "mlog final step is running");
     return __clustered_common_final(args);
 }
 
@@ -500,7 +496,6 @@ AnyType __clustered_err_mlog_final::run (AnyType& args)
 
 AnyType clustered_mlog_compute_stats::run (AnyType& args)
 {
-	//elog(INFO, "mlog compute stats is running");
     return clustered_compute_stats(args,  __compute_z_stats, true);
 }
 

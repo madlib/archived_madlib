@@ -224,17 +224,18 @@ logregr_cg_step_transition::run(AnyType &args) {
 
     // The following check was added with MADLIB-138.
     if (!dbal::eigen_integration::isfinite(x)) {
-        throw std::domain_error("Design matrix is not finite.");
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
         state.status = TERMINATED;
         return state;
     }
 
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
-            // throw std::domain_error("Number of independent variables cannot be "
-            // "larger than 65535.");
-            dberr << "Number of independent variables cannot be "
-                "larger than 65535." << std::endl;
+            //throw std::domain_error(
+            //    "Number of independent variables cannot be "
+            //    "larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
             state.status = TERMINATED;
             return state;
         }
@@ -358,25 +359,18 @@ logregr_cg_step_final::run(AnyType &args) {
         * state.dir;
 
     if(!state.coef.is_finite()){
-        // throw NoSolutionFoundException("Over- or underflow in "
-        //     "conjugate-gradient step, while updating coefficients. Input data "
-        //     "is likely of poor numerical condition.");
-        dberr << "Over- or underflow in"
-            "conjugate-gradient step, while updating coefficients."
-            "Input data is likely of poor numerical condition."
-              << std::endl;
+        //throw NoSolutionFoundException(
+        //    "Over- or underflow in conjugate-gradient step, while updating "
+        //    "coefficients. Input data is likely of poor numerical condition.");
+        warning("Over- or underflow in conjugate-gradient step, while updating "
+              "coefficients. Input data is likely of poor numerical condition.");
         state.status = TERMINATED;
         return state;
     }
 
-
     state.iteration++;
     return state;
 }
-
-
-
-
 
 /**
  * @brief Return the difference in log-likelihood between two states
@@ -566,18 +560,17 @@ AnyType logregr_irls_step_transition::run(AnyType &args) {
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite()){
-        // throw std::domain_error("Design matrix is not finite.");
-        dberr << "Design matrix is not finite." << std::endl;
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
         state.status = TERMINATED;
         return state;
     }
 
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
-            // throw std::domain_error("Number of independent variables cannot be "
-            // "larger than 65535.");
-            dberr << "Number of independent variables cannot be "
-                "larger than 65535." << std::endl;
+            //throw std::domain_error(
+            //    "Number of independent variables cannot be larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
             state.status = TERMINATED;
             return state;
         }
@@ -661,12 +654,11 @@ AnyType logregr_irls_step_final::run(AnyType &args) {
     // LAPACK will run into an infinite loop if pinv() is called for non-finite
     // matrices. We extend the check also to the dependent variables.
     if (!state.X_transp_AX.is_finite() || !state.X_transp_Az.is_finite()){
-        // throw NoSolutionFoundException("Over- or underflow in intermediate "
-        // "calulation. Input data is likely of poor numerical condition.");
-        dberr   << "Over- or underflow in intermediate"
-            " calulation. Input data is likely of poor"
-            " numerical condition."
-                << std::endl;
+        //throw NoSolutionFoundException(
+        //    "Over- or underflow in intermediate calulation. Input data is "
+        //    "likely of poor numerical condition.");
+        warning("Over- or underflow in intermediate calulation. Input data is "
+              "likely of poor numerical condition.");
         state.status = TERMINATED;
         return state;
     }
@@ -679,13 +671,11 @@ AnyType logregr_irls_step_final::run(AnyType &args) {
 
     state.coef.noalias() = inverse_of_X_transp_AX * state.X_transp_Az;
     if(!state.coef.is_finite()){
-        // throw NoSolutionFoundException("Over- or underflow in Newton step, "
-        //     "while updating coefficients. Input data is likely of poor "
-        //     "numerical condition.");
-        dberr   << "Overflow or underflow in"
-            " Newton step. while updating coefficients."
-            " Input data is likely of poor numerical condition."
-                << std::endl;
+        //throw NoSolutionFoundException(
+        //    "Over- or underflow in Newton step, while updating coefficients. "
+        //    "Input data is likely of poor numerical condition.");
+        warning("Over- or underflow in Newton step, while updating coefficients."
+              "Input data is likely of poor numerical condition.");
         state.status = TERMINATED;
         return state;
     }
@@ -893,8 +883,8 @@ logregr_igd_step_transition::run(AnyType &args) {
 
     // The following check was added with MADLIB-138.
     if (!x.is_finite()){
-        // throw std::domain_error("Design matrix is not finite.");
-        dberr << "Design matrix is not finite." << std::endl;
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
         state.status = TERMINATED;
         return state;
     }
@@ -903,10 +893,9 @@ logregr_igd_step_transition::run(AnyType &args) {
     // row.
     if (state.numRows == 0) {
         if (x.size() > std::numeric_limits<uint16_t>::max()){
-            // throw std::domain_error("Number of independent variables cannot be "
-            // "larger than 65535.");
-            dberr << "Number of independent variables cannot be"
-                " larger than 65535." << std::endl;
+            //throw std::domain_error(
+            //    "Number of independent variables cannot be larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
             state.status = TERMINATED;
             return state;
         }
@@ -978,12 +967,11 @@ logregr_igd_step_final::run(AnyType &args) {
     LogRegrIGDTransitionState<MutableArrayHandle<double> > state = args[0];
 
     if(!state.coef.is_finite()){
-        // throw NoSolutionFoundException("Overflow or underflow in "
-        // "incremental-gradient iteration. Input data is likely of poor "
-        // "numerical condition.");
-        dberr << "Overflow or underflow in"
-            " incremental-gradient iteration. Input data is likely of poor"
-            " numerical condition." << std::endl;
+        //throw NoSolutionFoundException(
+        //    "Overflow or underflow in incremental-gradient iteration. Input "
+        //    "data is likely of poor numerical condition.");
+        warning("Overflow or underflow in incremental-gradient iteration. Input"
+              "data is likely of poor numerical condition.");
         state.status = TERMINATED;
         return state;
     }
@@ -1190,22 +1178,17 @@ class RobustLogRegrTransitionState {
      * - 3 + 2 * widthOfX * widthOfX + widthOfX: grad (intermediate value for gradient)
      */
     void rebind(uint16_t inWidthOfX) {
-
         iteration.rebind(&mStorage[0]);
         widthOfX.rebind(&mStorage[1]);
         coef.rebind(&mStorage[2], inWidthOfX);
         numRows.rebind(&mStorage[2 + inWidthOfX]);
         X_transp_AX.rebind(&mStorage[3 + inWidthOfX], inWidthOfX, inWidthOfX);
         meat.rebind(&mStorage[3 + inWidthOfX * inWidthOfX + inWidthOfX], inWidthOfX, inWidthOfX);
-
     }
 
     Handle mStorage;
 
   public:
-
-
-
     typename HandleTraits<Handle>::ReferenceToUInt32 iteration;
     typename HandleTraits<Handle>::ReferenceToUInt16 widthOfX;
     typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap coef;
@@ -1245,8 +1228,8 @@ AnyType robuststateToResult(
 
         stdErr(i) = std::sqrt(diagonal_of_varianceMat(i));
         waldZStats(i) = inCoef(i) / stdErr(i);
-        waldPValues(i) = 2. * prob::cdf( prob::normal(),
-                                         -std::abs(waldZStats(i)));
+        waldPValues(i) = 2. * prob::cdf(
+            prob::normal(), -std::abs(waldZStats(i)));
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
@@ -1261,6 +1244,10 @@ AnyType robuststateToResult(
  */
 AnyType
 robust_logregr_step_transition::run(AnyType &args) {
+    // Early return because of an exception has been "thrown" 
+    // (actually "warning") in the previous invocations
+    if(args[0].isNull())
+        return Null();
     RobustLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
     if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     double y = args[1].getAs<bool>() ? 1. : -1.;
@@ -1273,18 +1260,22 @@ robust_logregr_step_transition::run(AnyType &args) {
     } catch (const ArrayWithNullException &e) {
         return args[0];
     }
-
     MappedColumnVector coef = args[3].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
-    if (!dbal::eigen_integration::isfinite(x))
-        throw std::domain_error("Design matrix is not finite.");
+    if (!dbal::eigen_integration::isfinite(x)) {
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
+        return Null();
+    }
 
     if (state.numRows == 0) {
-
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                                    "larger than 65535.");
+        if (x.size() > std::numeric_limits<uint16_t>::max()) {
+            //throw std::domain_error("Number of independent variables cannot be "
+            //                        "larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
+            return Null();
+        }
 
         state.initialize(*this, static_cast<uint16_t>(x.size()));
         state.coef = coef; //Copy this into the state for later
@@ -1313,6 +1304,10 @@ robust_logregr_step_transition::run(AnyType &args) {
  */
 AnyType
 robust_logregr_step_merge_states::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if(args[0].isNull() || args[1].isNull())
+        return Null();
 
     RobustLogRegrTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     RobustLogRegrTransitionState<ArrayHandle<double> > stateRight = args[1];
@@ -1333,6 +1328,10 @@ robust_logregr_step_merge_states::run(AnyType &args) {
  */
 AnyType
 robust_logregr_step_final::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull())
+        return Null(); 
     // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
     RobustLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
@@ -1517,8 +1516,7 @@ AnyType marginalstateToResult(
     const ColumnVector &inCoef,
     const ColumnVector &diagonal_of_variance_matrix,
     const double inmarginal_effects_per_observation,
-    const double numRows
-                              ) {
+    const double numRows) {
 
     MutableNativeColumnVector marginal_effects(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -1539,8 +1537,8 @@ AnyType marginalstateToResult(
 
         // P-values only make sense if numRows > coef.size()
         if (numRows > inCoef.size())
-            pValues(i) = 2. * prob::cdf( prob::normal(),
-                                         -std::abs(tStats(i)));
+            pValues(i) = 2. * prob::cdf(
+                prob::normal(), -std::abs(tStats(i)));
     }
 
     // Return all coefficients, standard errors, etc. in a tuple
@@ -1560,6 +1558,10 @@ AnyType marginalstateToResult(
  */
 AnyType
 marginal_logregr_step_transition::run(AnyType &args) {
+    // Early return because of an exception has been "thrown" 
+    // (actually "warning") in the previous invocations
+    if (args[0].isNull())
+        return Null();
     MarginalLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
     if (args[1].isNull() || args[2].isNull()) { return args[0]; }
     MappedColumnVector x;
@@ -1575,13 +1577,19 @@ marginal_logregr_step_transition::run(AnyType &args) {
     MappedColumnVector coef = args[3].getAs<MappedColumnVector>();
 
     // The following check was added with MADLIB-138.
-    if (!dbal::eigen_integration::isfinite(x))
-        throw std::domain_error("Design matrix is not finite.");
+    if (!dbal::eigen_integration::isfinite(x)) {
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
+        return Null();
+    }
 
     if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                                    "larger than 65535.");
+        if (x.size() > std::numeric_limits<uint16_t>::max()) {
+            //throw std::domain_error("Number of independent variables cannot be "
+            //                        "larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
+            return Null();
+        }
         state.initialize(*this, static_cast<uint16_t>(x.size()));
         state.coef = coef; //Copy this into the state for later
     }
@@ -1616,6 +1624,10 @@ marginal_logregr_step_transition::run(AnyType &args) {
  */
 AnyType
 marginal_logregr_step_merge_states::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if(args[0].isNull() || args[1].isNull())
+        return Null();
 
     MarginalLogRegrTransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     MarginalLogRegrTransitionState<ArrayHandle<double> > stateRight = args[1];
@@ -1636,6 +1648,10 @@ marginal_logregr_step_merge_states::run(AnyType &args) {
  */
 AnyType
 marginal_logregr_step_final::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull())
+        return Null(); 
 
     // We request a mutable object.
     // Depending on the backend, this might perform a deep copy.

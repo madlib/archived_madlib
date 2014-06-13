@@ -28,10 +28,6 @@ using dbal::NoSolutionFoundException;
 
 namespace regress {
 
-// FIXME this enum should be accessed by all modules that may need grouping
-// valid status values
-enum { IN_PROCESS, COMPLETED, TERMINATED, NULL_EMPTY };
-
 inline double logistic(double x) {
     return 1. / (1. + std::exp(-x));
 }
@@ -213,6 +209,10 @@ class MarginsLinregrInteractionState {
  */
 AnyType
 margins_linregr_int_transition::run(AnyType &args) {
+    // Early return because of an exception has been "thrown" 
+    // (actually "warning") in the previous invocations
+    if (args[0].isNull())
+        return Null();
     MarginsLinregrInteractionState<MutableArrayHandle<double> > state = args[0];
     if (args[1].isNull() || args[2].isNull() ||
             args[3].isNull() || args[4].isNull()) {
@@ -229,8 +229,11 @@ margins_linregr_int_transition::run(AnyType &args) {
     }
 
     // The following check was added with MADLIB-138.
-    if (!dbal::eigen_integration::isfinite(x))
-        throw std::domain_error("Design matrix is not finite.");
+    if (!dbal::eigen_integration::isfinite(x)) {
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
+        return Null();
+     }
 
     MappedColumnVector beta = args[2].getAs<MappedColumnVector>();
 
@@ -239,9 +242,12 @@ margins_linregr_int_transition::run(AnyType &args) {
                                 // we only require J^T in our equations
 
     if (state.numRows == 0) {
-        if (x.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                                    "larger than 65535.");
+        if (x.size() > std::numeric_limits<uint16_t>::max()) {
+            //throw std::domain_error("Number of independent variables cannot be "
+            //                        "larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
+            return Null();
+        }
         state.initialize(*this,
                          static_cast<uint16_t>(beta.size()),
                          static_cast<uint16_t>(J_trans.rows()));
@@ -264,6 +270,10 @@ margins_linregr_int_transition::run(AnyType &args) {
  */
 AnyType
 margins_linregr_int_merge::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull() || args[1].isNull())
+        return Null();
     MarginsLinregrInteractionState<MutableArrayHandle<double> > stateLeft = args[0];
     MarginsLinregrInteractionState<ArrayHandle<double> > stateRight = args[1];
     // We first handle the trivial case where this function is called with one
@@ -283,6 +293,10 @@ margins_linregr_int_merge::run(AnyType &args) {
  */
 AnyType
 margins_linregr_int_final::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull())
+        return Null();
     // We request a mutable object.
     // Depending on the backend, this might perform a deep copy.
     MarginsLinregrInteractionState<ArrayHandle<double> > state = args[0];
@@ -451,6 +465,10 @@ class MarginsLogregrInteractionState {
  */
 AnyType
 margins_logregr_int_transition::run(AnyType &args) {
+    // Early return because of an exception has been "thrown" 
+    // (actually "warning") in the previous invocations
+    if (args[0].isNull())
+        return Null();
     MarginsLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
     if (args[1].isNull() || args[2].isNull() ||
             args[3].isNull() || args[4].isNull()) {
@@ -466,8 +484,11 @@ margins_logregr_int_transition::run(AnyType &args) {
     }
 
     // The following check was added with MADLIB-138.
-    if (!dbal::eigen_integration::isfinite(f))
-        throw std::domain_error("Design matrix is not finite.");
+    if (!dbal::eigen_integration::isfinite(f)) {
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
+        return Null();
+    }
 
     // beta is the coefficient vector from logistic regression
     MappedColumnVector beta = args[2].getAs<MappedColumnVector>();
@@ -502,15 +523,20 @@ margins_logregr_int_transition::run(AnyType &args) {
             MappedColumnVector xx = args[6].getAs<MappedColumnVector>();
             categorical_indices.rebind(xx.memoryHandle(), xx.size());
         } catch (const ArrayWithNullException &e) {
-             throw std::runtime_error("The categorical indices contain NULL values");
+             //throw std::runtime_error("The categorical indices contain NULL values");
+             warning("The categorical indices contain NULL values");
+             return Null();
         }
         numCategoricalVars = categorical_indices.size();
     }
 
     if (state.numRows == 0) {
-        if (f.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                                    "larger than 65535.");
+        if (f.size() > std::numeric_limits<uint16_t>::max()) {
+            //throw std::domain_error("Number of independent variables cannot be "
+            //                        "larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
+            return Null();
+        }
         std::vector<uint16_t> tmp_cat_basis_indices;
         if (numCategoricalVars > 0){
             // find which of the variables in basis_indices are categorical
@@ -614,6 +640,10 @@ margins_logregr_int_transition::run(AnyType &args) {
  */
 AnyType
 margins_logregr_int_merge::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull() || args[1].isNull())
+        return Null();
     MarginsLogregrInteractionState<MutableArrayHandle<double> > stateLeft = args[0];
     MarginsLogregrInteractionState<ArrayHandle<double> > stateRight = args[1];
     // We first handle the trivial case where this function is called with one
@@ -633,6 +663,10 @@ margins_logregr_int_merge::run(AnyType &args) {
  */
 AnyType
 margins_logregr_int_final::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull())
+        return Null();
     // We request a mutable object.
     // Depending on the backend, this might perform a deep copy.
     MarginsLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
@@ -831,6 +865,10 @@ reindex(Index outer, Index inner, Index block) { return outer * block + inner; }
  */
 AnyType
 margins_mlogregr_int_transition::run(AnyType &args) {
+    // Early return because of an exception has been "thrown" 
+    // (actually "warning") in the previous invocations
+    if (args[0].isNull())
+        return Null();
     MarginsMLogregrInteractionState<MutableArrayHandle<double> > state = args[0];
     if (args[1].isNull() || args[2].isNull() || args[3].isNull() ||
         args[4].isNull()) {
@@ -848,8 +886,11 @@ margins_mlogregr_int_transition::run(AnyType &args) {
     }
 
     // The following check was added with MADLIB-138.
-    if (!dbal::eigen_integration::isfinite(f))
-        throw std::domain_error("Design matrix is not finite.");
+    if (!dbal::eigen_integration::isfinite(f)) { 
+        //throw std::domain_error("Design matrix is not finite.");
+        warning("Design matrix is not finite.");
+        return Null();
+    }
 
     // coefficients are arranged in a matrix
     MappedMatrix beta = args[2].getAs<MappedMatrix>();  // beta: N x (L - 1)
@@ -884,15 +925,20 @@ margins_mlogregr_int_transition::run(AnyType &args) {
             MappedColumnVector xx = args[6].getAs<MappedColumnVector>();
             categorical_indices.rebind(xx.memoryHandle(), xx.size());
         } catch (const ArrayWithNullException &e) {
-             throw std::runtime_error("The categorical indices contain NULL values");
+             //throw std::runtime_error("The categorical indices contain NULL values");
+             warning("The categorical indices contain NULL values");
+             return Null();
         }
         numCategoricalVars = categorical_indices.size();
     }
 
     if (state.numRows == 0) {
-        if (f.size() > std::numeric_limits<uint16_t>::max())
-            throw std::domain_error("Number of independent variables cannot be "
-                                    "larger than 65535.");
+        if (f.size() > std::numeric_limits<uint16_t>::max()) {
+            //throw std::domain_error("Number of independent variables cannot be "
+            //                        "larger than 65535.");
+            warning("Number of independent variables cannot be larger than 65535.");
+            return Null();
+        }
         std::vector<uint16_t> tmp_cat_basis_indices;
         if (numCategoricalVars > 0){
             // find which of the variables in basis_indices are categorical
@@ -1055,7 +1101,10 @@ margins_mlogregr_int_transition::run(AnyType &args) {
  */
 AnyType
 margins_mlogregr_int_merge::run(AnyType &args) {
-
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull() || args[1].isNull())
+        return Null();
     MarginsMLogregrInteractionState<MutableArrayHandle<double> > stateLeft = args[0];
     MarginsMLogregrInteractionState<ArrayHandle<double> > stateRight = args[1];
     // We first handle the trivial case where this function is called with one
@@ -1075,6 +1124,10 @@ margins_mlogregr_int_merge::run(AnyType &args) {
  */
 AnyType
 margins_mlogregr_int_final::run(AnyType &args) {
+    // In case the aggregator should be terminated because
+    // an exception has been "thrown" in the transition function
+    if (args[0].isNull())
+        return Null();
     // We request a mutable object.
     // Depending on the backend, this might perform a deep copy.
     MarginsMLogregrInteractionState<MutableArrayHandle<double> > state = args[0];

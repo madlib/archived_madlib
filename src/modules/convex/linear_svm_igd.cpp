@@ -92,8 +92,6 @@ linear_svm_igd_transition::run(AnyType &args) {
     LinearSVMLossAlgorithm::transition(state, tuple);
     state.algo.numRows ++;
 
-    // dberr << "incrModel: " << state.algo.incrModel << std::endl;
-
     return state;
 }
 
@@ -134,9 +132,6 @@ linear_svm_igd_final::run(AnyType &args) {
 
     // finalizing
     LinearSVMIGDAlgorithm::final(state);
-    // LinearSVMLossAlgorithm::final(state); // empty function call causes a warning
-
-    // dberr << "loss: " << state.algo.loss << std::endl;
 
     return state;
 }

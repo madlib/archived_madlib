@@ -230,16 +230,27 @@ namespace dbconnector {
 
 namespace postgres {
 
+#if defined(DEBUG) 
 extern std::ostream dbout;
 extern std::ostream dberr;
-
+#endif
 } // namespace postgres
 
 } // namespace dbconnector
 
+#if defined(DEBUG)
 // Import MADlib global variables into madlib namespace
 using dbconnector::postgres::dbout;
 using dbconnector::postgres::dberr;
+#endif
+
+// A wrapper function added as a workaround to fix MADLIB-769
+// To support grouping, we cannot throw an exception because
+// it will exit the process. Instead, we print a message and 
+// set an internal status in the state variable in the C++ code.
+inline void warning(std::string msg){
+    elog(WARNING, "%s", msg.c_str());
+}
 
 } // namespace madlib
 

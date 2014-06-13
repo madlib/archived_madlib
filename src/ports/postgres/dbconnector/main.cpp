@@ -26,11 +26,14 @@ bool AnyType::sLazyConversionToDatum = false;
 namespace {
 
 // No need to export these names to other translation units.
+#if defined(DEBUG)
 OutputStreamBuffer<INFO, utils::MallocAllocator> gOutStreamBuffer;
 OutputStreamBuffer<WARNING, utils::MallocAllocator> gErrStreamBuffer;
+#endif
 
 }
 
+#if defined(DEBUG)
 /**
  * @brief Informational output stream
  */
@@ -40,7 +43,7 @@ std::ostream dbout(&gOutStreamBuffer);
  * @brief Warning and non-fatal error output stream
  */
 std::ostream dberr(&gErrStreamBuffer);
-
+#endif
 } // namespace postgres
 
 } // namespace dbconnector

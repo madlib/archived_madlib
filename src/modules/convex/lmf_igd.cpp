@@ -146,9 +146,6 @@ lmf_igd_final::run(AnyType &args) {
     // LMFLossAlgorithm::final(state); // empty function call causes a warning
     state.computeRMSE();
 
-    // for stepsize tuning
-    dberr << "RMSE: " << state.task.RMSE << std::endl;
-
     return state;
 }
 
