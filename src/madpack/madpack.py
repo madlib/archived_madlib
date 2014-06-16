@@ -205,11 +205,13 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
             maddir_madpack = maddir + "/ports/" + portid + "/" + dbver + "/madpack"
         else:
             maddir_madpack = maddir + "/madpack"
+        maddir_ext_py = maddir + "/lib/python"
 
         m4args = ['m4',
                   '-P',
                   '-DMADLIB_SCHEMA=' + schema,
                   '-DPLPYTHON_LIBDIR=' + maddir_mod_py,
+                  '-DEXT_PYTHON_LIBDIR=' + maddir_ext_py,
                   '-DMODULE_PATHNAME=' + maddir_lib,
                   '-DMODULE_NAME=' + module,
                   '-I' + maddir_madpack,

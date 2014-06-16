@@ -1,0 +1,315 @@
+/* ------------------------------------------------------------------------
+ * @file table_to_pmml.sql_in
+ *
+ * @brief Convert model table from MADlib to PMML
+ * @date June 2014
+ *
+ * @sa PMML Export module description \ref grp_pmml.
+ *
+ *//* -------------------------------------------------------------------*/
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_pmml
+
+<div class="toc"><b>Contents</b><ul>
+<li class="level1"><a href="#function">PMML Export Function</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#background">Background</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul></div>
+
+@brief Provides an XML-based standard to describe and exchange models
+produced by data mining and machine learning algorithms.
+
+
+\warning <em>This MADlib module is still in early stage development. There may
+be some issues that will be addressed in a future version. Interface and
+implementation is subject to change.</em>
+
+
+@anchor function
+@par PMML Export Function
+The PMML export function in MADlib has the following syntax:
+<pre class="syntax">
+pmml ( model_table,
+       name_spec
+     )
+</pre>
+\b Arguments
+<DL class="arglist">
+  <DT>model_table</DT>
+  <DD>VARCHAR. The name of the table containing the model.</DD>
+
+  <DT>name_spec (optinal)</DT>
+  <DD>VARCHAR or VARCHAR[]. Names to be used in the Data Dictionary of the PMML.
+    See pmml() for detailed explanation.</DD>
+</DL>
+
+\b Output
+  <DD>XML. The output of this function is a standard PMML document, some
+    examples of which are covered in the next section.</DD>
+</DL>
+
+<DD>@note In PostgreSQL, users may be required to install their database
+with XML support in order to use this function.</DD>
+
+
+@anchor examples
+@examp
+-# Create the training data table.
+<pre class="example">
+CREATE TABLE patients( id integer NOT NULL,
+                       second_attack integer,
+                       treatment integer,
+                       trait_anxiety integer);
+INSERT INTO patients(id, second_attack, treatment, trait_anxiety) VALUES
+( 1, 1, 1, 70),
+( 3, 1, 1, 50),
+( 5, 1, 0, 40),
+( 7, 1, 0, 75),
+( 9, 1, 0, 70),
+(11, 0, 1, 65),
+(13, 0, 1, 45),
+(15, 0, 1, 40),
+(17, 0, 0, 55),
+(19, 0, 0, 50),
+( 2, 1, 1, 80),
+( 4, 1, 0, 60),
+( 6, 1, 0, 65),
+( 8, 1, 0, 80),
+(10, 1, 0, 60),
+(12, 0, 1, 50),
+(14, 0, 1, 35),
+(16, 0, 1, 50),
+(18, 0, 0, 45),
+(20, 0, 0, 60);
+</pre>
+-# Train a regression model using logregr_train().
+<pre class="example">
+SELECT madlib.logregr_train(
+        'patients',
+        'patients_logregr',
+        'second_attack',
+        'ARRAY[1, treatment, trait_anxiety]');
+</pre>
+-# View the PMML export for this model.
+<pre class="example">
+SELECT madlib.pmml('patients_logregr');
+</pre>
+Result:
+<pre class="result">
+ <?xml version="1.0" standalone="yes"?>
+ <PMML version="4.0" xmlns="http://www.dmg.org/PMML-4_0">
+   <Header copyright="Copyright (c) 2014 gpadmin">
+     <Extension extender="MADlib" name="user" value="gpadmin"/>
+     <Application name="MADlib" version="1.5dev"/>
+     <Timestamp>
+       2014-06-13 17:30:14.527899 PDT
+     </Timestamp>
+   </Header>
+   <DataDictionary numberOfFields="4">
+     <DataField dataType="boolean" name="second_attack" optype="categorical"/>
+     <DataField dataType="double" name="1" optype="continuous"/>
+     <DataField dataType="double" name="treatment" optype="continuous"/>
+     <DataField dataType="double" name="trait_anxiety" optype="continuous"/>
+   </DataDictionary>
+   <RegressionModel functionName="classification" normalizationMethod="softmax">
+     <MiningSchema>
+       <MiningField name="second_attack" usageType="predicted"/>
+       <MiningField name="1"/>
+       <MiningField name="treatment"/>
+       <MiningField name="trait_anxiety"/>
+     </MiningSchema>
+     <RegressionTable intercept="0.0" targetCategory="True">
+       <NumericPredictor coefficient="-6.36346994178" name="1"/>
+       <NumericPredictor coefficient="-1.02410605239" name="treatment"/>
+       <NumericPredictor coefficient="0.119044916669" name="trait_anxiety"/>
+     </RegressionTable>
+     <RegressionTable intercept="0.0" targetCategory="False"/>
+   </RegressionModel>
+ </PMML>
+</pre>
+
+Alternatively, the above can also be invoked as below if we need custom names
+for fields in the Data Dictionary:
+<pre class="example">
+SELECT madlib.pmml('patients_logregr',
+                   'out_attack~1+in_trait_anxiety+in_treatment');
+</pre>
+
+Here is another example when we have grouping columns in the model table. For the
+same dataset as above,
+
+-# Train a different regression model with 'treatment' as the grouping column.
+<pre class="example">
+SELECT madlib.logregr_train(
+        'patients',
+        'patients_logregr_grouping',
+        'second_attack',
+        'ARRAY[1, trait_anxiety]',
+        'treatment');
+</pre>
+-# View the PMML export for this model.
+<pre class="example">
+SELECT madlib.pmml('patients_logregr_grouping',
+                   ARRAY['second_attack','1','in_trait_anxiety']);
+</pre>
+Result:
+<pre class="result">
+<?xml version="1.0" standalone="yes"?>
+ <PMML version="4.0" xmlns="http://www.dmg.org/PMML-4_0">
+   <Header copyright="Copyright (c) 2014 gpadmin">
+     <Extension extender="MADlib" name="user" value="gpadmin"/>
+     <Application name="MADlib" version="1.5dev"/>
+     <Timestamp>
+       2014-06-13 17:37:55.786307 PDT
+     </Timestamp>
+   </Header>
+   <DataDictionary numberOfFields="4">
+     <DataField dataType="boolean" name="second_attack" optype="categorical"/>
+     <DataField dataType="double" name="1" optype="continuous"/>
+     <DataField dataType="double" name="in_trait_anxiety" optype="continuous"/>
+     <DataField dataType="string" name="treatment" optype="categorical"/>
+   </DataDictionary>
+   <MiningModel functionName="classification">
+     <MiningSchema>
+       <MiningField name="second_attack" usageType="predicted"/>
+       <MiningField name="1"/>
+       <MiningField name="in_trait_anxiety"/>
+       <MiningField name="treatment"/>
+     </MiningSchema>
+     <Segmentation multipleModelMethod="selectFirst">
+       <Segment>
+         <SimplePredicate field="treatment" operator="equal" value="1"/>
+         <RegressionModel functionName="classification" normalizationMethod="softmax">
+           <MiningSchema>
+             <MiningField name="second_attack" usageType="predicted"/>
+             <MiningField name="1"/>
+             <MiningField name="in_trait_anxiety"/>
+           </MiningSchema>
+           <RegressionTable intercept="0.0" targetCategory="True">
+             <NumericPredictor coefficient="-8.02068430057" name="1"/>
+             <NumericPredictor coefficient="0.130090428526" name="in_trait_anxiety"/>
+           </RegressionTable>
+           <RegressionTable intercept="0.0" targetCategory="False"/>
+         </RegressionModel>
+       </Segment>
+       <Segment>
+         <SimplePredicate field="treatment" operator="equal" value="0"/>
+         <RegressionModel functionName="classification" normalizationMethod="softmax">
+           <MiningSchema>
+             <MiningField name="second_attack" usageType="predicted"/>
+             <MiningField name="1"/>
+             <MiningField name="in_trait_anxiety"/>
+           </MiningSchema>
+           <RegressionTable intercept="0.0" targetCategory="True">
+             <NumericPredictor coefficient="-5.75043192191" name="1"/>
+             <NumericPredictor coefficient="0.108282446319" name="in_trait_anxiety"/>
+           </RegressionTable>
+           <RegressionTable intercept="0.0" targetCategory="False"/>
+         </RegressionModel>
+       </Segment>
+     </Segmentation>
+   </MiningModel>
+ </PMML>
+</pre>
+
+\b Note: We currently support PMML export only for Linear Regression and
+Logistic Regression.
+
+
+@anchor background
+@par Background
+The Predictive Model Markup Language (PMML) is an XML-based file format that
+provides a way for applications to describe and exchange models produced by
+data mining and machine learning algorithms. A PMML file comprises of the
+following components:
+- Header: Contains general information of the model such as copyright
+information, model description etc.
+- Data Dictionary: Contains definitions of fields used in the model.
+- Data Transformations: Contains transformations for mapping user data into
+a form that can be used by the mining model.
+- Model: Contains definitions of the data mining model, which includes
+attributes such as the model name, function name, algorithm name etc.
+- Mining Schema: Contains specific information for the fields used in
+the model which includes the name, usage type etc.
+- Targets: Allows for post-processing of the predicted value.
+- Output: Allows for naming of output fields expected from the model.
+
+Currently, MADlib follows v4.0 PMML standard. For more details about PMML, see
+http://www.dmg.org/v4-0-1/GeneralStructure.html
+
+
+@anchor related
+@par Related Topics
+
+File table_to_pmml.sql_in documenting the pmml export functions.
+
+\ref grp_logreg
+
+\ref grp_linreg
+
+*/
+
+
+/**
+ * @brief Given the model constructed from a data mining algorithm,
+ * this function converts the model into PMML format.
+ *
+ * @param model_table Model table which contains the output of a training algorithm.
+ *
+ * @return An XML document corresponding to the PMML of the input model.
+ *
+ * The names in the Data Dictionary are generated based on the names
+ * used in the model table.
+ * If the fields are represented as either an array of expressions without
+ * concatenation, the names in the Data Dictionary will match the source table.
+ * If the field is an array of FLOAT8 values, then the names in the Data
+ * Dictionary will be indexed using the array name, like 'ind[1]', 'ind[2]' etc.
+ * In all other cases, the names will simply be 'x[1]', 'x[2]' and so on.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pmml(
+    model_table varchar
+) RETURNS xml AS $$
+PythonFunction(pmml, table_to_pmml, table_to_pmml)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+/**
+ * @brief Given the model constructed from a data mining algorithm,
+ * this function converts the model into PMML format.
+ *
+ * @param model_table Model table which contains the output of a training algorithm.
+ * @param name_spec Names to be used in the Data Dictionary, given as
+ * a string containing an expression such as 'y ~ x1 + x2 + x3'.
+ *
+ * @return An XML document corresponding to the PMML of the input model.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pmml(
+    model_table varchar
+    , name_spec varchar
+) RETURNS xml AS $$
+PythonFunction(pmml, table_to_pmml, table_to_pmml)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+/**
+ * @brief Given the model constructed from a data mining algorithm,
+ * this function converts the model into PMML format.
+ *
+ * @param model_table Model table which contains the output of a training algorithm.
+ * @param name_spec Names to be used in the Data Dictionary given as
+ * an array of strings, such as ARRAY['y', 'x1', 'x2', ...].
+ *
+ * @return An XML document corresponding to the PMML of the input model.
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pmml(
+    model_table varchar
+    , name_spec varchar[]
+) RETURNS xml AS $$
+PythonFunction(pmml, table_to_pmml, table_to_pmml)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+

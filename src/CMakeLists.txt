@@ -63,29 +63,25 @@ if(NOT EIGEN_TAR_SOURCE)
     set(EIGEN_TAR_SOURCE ${EIGEN_URL})
 endif (NOT EIGEN_TAR_SOURCE)
 
-# -- Paths for madpack third-party components (those that are used by multiple
-#    ports) --------------------------------------------------------------------
+# We always download PyXB (unless it is already present in
+# ${CMAKE_CURRENT_BINARY_DIR}/third_party/downloads). It is also possible to
+# specify an alternative path to the PyXB tarball:
+# -DPYXB_TAR_SOURCE=/path/to/PyXB-x.x.x.tar.gz
 
-# For in-house testing, we might want to change the base URL to something local
-# "-DPYPI_BASE_URL=http://test.local/projects"
-set(PYPI_BASE_URL "http://pypi.python.org/packages/source" CACHE STRING
-    "Base URL for projects from the Python Package Index. May be overridden for testing purposes.")
+set(PYXB_VERSION "1.2.3")
+set(PYXB_TAR_MD5 e7e15abb99f686939ef4c4bead4f05e3)
 
-set(PYGRESQL_TAR_VERSION "4.0")
-set(PYGRESQL_TAR_MD5 1aca50e59ff4cc56abe9452a9a49c5ff)
+set(PYXB_TAR "PyXB-${PYXB_VERSION}.tar.gz")
+set(PYXB_URL "${SOURCEFORGE_BASE_URL}/pyxb/files/${PYXB_TAR}")
 
-set(PYGRESQL_TAR "PyGreSQL-${PYGRESQL_TAR_VERSION}.tar.gz")
-set(PYGRESQL_URL "${PYPI_BASE_URL}/P/PyGreSQL/${PYGRESQL_TAR}")
-
-if(NOT PYGRESQL_TAR_SOURCE)
-    find_file(PYGRESQL_TAR_SOURCE ${PYGRESQL_TAR}
+if(NOT PYXB_TAR_SOURCE)
+    find_file(PYXB_TAR_SOURCE ${PYXB_TAR}
         PATHS ${MAD_THIRD_PARTY}/downloads)
-endif(NOT PYGRESQL_TAR_SOURCE)
+endif(NOT PYXB_TAR_SOURCE)
 
-if(NOT PYGRESQL_TAR_SOURCE)
-    set(PYGRESQL_TAR_SOURCE ${PYGRESQL_URL})
-endif (NOT PYGRESQL_TAR_SOURCE)
-
+if(NOT PYXB_TAR_SOURCE)
+    set(PYXB_TAR_SOURCE ${PYXB_URL})
+endif (NOT PYXB_TAR_SOURCE)
 
 # -- Local definitions (filenames, paths, etc.) --------------------------------
 
@@ -99,8 +95,6 @@ set(MAD_MODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/modules)
 # In other words: Be careful when you make changes. You have been warned. Don't
 # try this at home.
 # ==============================================================================
-
-
 
 # -- Third-party dependencies: Find or download Boost --------------------------
 
@@ -151,6 +145,32 @@ ExternalProject_Add(EP_eigen
 )
 
 include_directories(SYSTEM ${MAD_THIRD_PARTY}/src/EP_eigen)
+
+
+# -- Third-party dependencies: Download the Python libraries ---
+
+find_package(PythonInterp REQUIRED)
+
+set(BUILD_PYTHON_LIBDIR "${CMAKE_BINARY_DIR}/src/lib/python")
+
+ExternalProject_Add(EP_pyxb
+    PREFIX ${MAD_THIRD_PARTY}
+    DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
+    URL ${PYXB_TAR_SOURCE}
+    URL_MD5 ${PYXB_TAR_MD5}
+    PATCH_COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/PyXB.sh"
+    CONFIGURE_COMMAND ""
+    SOURCE_DIR ${MAD_THIRD_PARTY}/src/EP_pyxb
+    BUILD_COMMAND ""
+    BUILD_IN_SOURCE 1
+    INSTALL_COMMAND ${PYTHON_EXECUTABLE} setup.py install --install-lib ${BUILD_PYTHON_LIBDIR}
+)
+
+install(DIRECTORY ${BUILD_PYTHON_LIBDIR}
+    DESTINATION lib
+    COMPONENT core
+    FILES_MATCHING PATTERN "*.py"
+)
 
 
 # -- Macros to be used by ports ------------------------------------------------

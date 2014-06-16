@@ -1,0 +1,196 @@
+---------------------------------------------------------------------------
+-- logregr
+---------------------------------------------------------------------------
+CREATE TABLE patients (
+    id integer NOT NULL,
+    second_attack integer,
+    treatment integer,
+    trait_anxiety integer,
+    g1 char(1),
+    g2 char(1)
+);
+
+INSERT INTO patients(ID, second_attack, treatment, trait_anxiety, g1, g2) VALUES
+( 1, 1, 1, 70, 'A', 'x'),
+( 2, 1, 1, 80, 'A', 'y'),
+( 3, 1, 1, 50, 'A', 'y'),
+( 4, 1, 0, 60, 'A', 'y'),
+( 5, 1, 0, 40, 'A', 'y'),
+( 6, 1, 0, 65, 'A', 'x'),
+( 7, 1, 0, 75, 'A', 'x'),
+( 8, 1, 0, 80, 'B', 'x'),
+( 9, 1, 0, 70, 'A', 'x'),
+(10, 1, 0, 60, 'A', 'z'),
+(11, 0, 1, 65, 'A', 'z'),
+(12, 0, 1, 50, 'B', 'y'),
+(13, 0, 1, 45, 'A', 'y'),
+(14, 0, 1, 35, 'A', 'z'),
+(15, 0, 1, 40, 'A', 'z'),
+(16, 0, 1, 50, 'A', 'z'),
+(17, 0, 0, 55, 'B', 'z'),
+(18, 0, 0, 45, 'B', 'z'),
+(19, 0, 0, 50, 'B', 'z'),
+(20, 0, 0, 60, 'B', 'z');
+
+SELECT logregr_train(
+    'patients',
+    'no_grouping',
+    'second_attack',
+    'ARRAY[1, treatment, trait_anxiety]',
+    NULL,
+    20,
+    'irls'
+);
+
+SELECT logregr_train(
+    'patients',
+    'simple_grouping',
+    'second_attack',
+    'ARRAY[1, treatment, trait_anxiety]',
+    'g1',
+    20,
+    'irls'
+);
+
+
+SELECT logregr_train(
+    'patients',
+    'complex_grouping',
+    'second_attack',
+    'ARRAY[1, "treatment", trait_anxiety]', -- test double quote
+    'g1, g2',
+    20,
+    'irls'
+);
+
+
+SELECT pmml('no_grouping');
+SELECT pmml('simple_grouping');
+SELECT pmml('complex_grouping');
+
+-- test simple column
+CREATE TABLE pmml_logregr_example AS
+SELECT second_attack AS y, ARRAY[1, treatment, trait_anxiety] AS "x_A"
+FROM patients;
+
+SELECT logregr_train('pmml_logregr_example', 'example_pmml', 'y', '"x_A"');
+SELECT pmml('example_pmml');
+
+---------------------------------------------------------------------------
+-- linregr
+---------------------------------------------------------------------------
+CREATE TABLE houses (
+    id SERIAL NOT NULL,
+    tax INTEGER,
+    bedroom REAL,
+    bath REAL,
+    price INTEGER,
+    size INTEGER,
+    lot INTEGER,
+    g1 CHAR(1),
+    g2 CHAR(1)
+);
+
+INSERT INTO houses(tax, bedroom, bath, price, size, lot, g1, g2) VALUES
+( 590, 2, 1,    50000,  770, 22100, 'A', 'z'),
+(1050, 3, 2,    85000, 1410, 12000, 'A', 'y'),
+(  20, 3, 1,    22500, 1060, 3500 , 'A', 'y'),
+( 870, 2, 2,    90000, 1300, 17500, 'A', 'y'),
+(1320, 3, 2,   133000, 1500, 30000, 'A', 'y'),
+(1350, 2, 1,    90500,  820, 25700, 'A', 'x'),
+(2790, 3, 2.5, 260000, 2130, 25000, 'A', 'x'),
+( 680, 2, 1,   142500, 1170, 22000, 'A', 'x'),
+(1840, 3, 2,   160000, 1500, 19000, 'B', 'x'),
+(3680, 4, 2,   240000, 2790, 20000, 'B', 'y'),
+(1660, 3, 1,    87000, 1030, 17500, 'B', 'y'),
+(1620, 3, 2,   118600, 1250, 20000, 'A', 'y'),
+(3100, 3, 2,   140000, 1760, 38000, 'B', 'y'),
+(2070, 2, 3,   148000, 1550, 14000, 'B', 'y'),
+( 650, 3, 1.5,  65000, 1450, 12000, 'B', 'y');
+
+SELECT linregr_train(
+    'houses',
+    'linregr_grouping',
+    'price',
+    'array[1, bedroom, bath, size]',
+    'g1, g2'
+);
+
+SELECT pmml('linregr_grouping');
+
+CREATE OR REPLACE FUNCTION count_expected_names(formula varchar, expected varchar[])
+RETURNS bigint AS $$
+    SELECT count(distinct result.name)
+    FROM
+        (SELECT text(unnest(xpath('/n:PMML/n:DataDictionary/n:DataField/@name',
+                pmml_col, ARRAY[ARRAY['n', 'http://www.dmg.org/PMML-4_0']]))) AS name
+        FROM (SELECT CASE WHEN $1 is NULL THEN pmml('linregr_grouping')
+                          ELSE pmml('linregr_grouping', $1)
+                     END AS pmml_col) linregr_grouping_pmml
+        ) result,
+        (SELECT unnest($2) AS name) expected
+    WHERE expected.name = result.name;
+$$ LANGUAGE sql;
+
+CREATE OR REPLACE FUNCTION count_expected_names(name_spec varchar[], expected varchar[])
+RETURNS bigint AS $$
+    SELECT count(distinct result.name)
+    FROM
+        (SELECT text(unnest(xpath('/n:PMML/n:DataDictionary/n:DataField/@name',
+                pmml_col, ARRAY[ARRAY['n', 'http://www.dmg.org/PMML-4_0']]))) AS name
+        FROM (SELECT CASE WHEN $1 is NULL THEN pmml('linregr_grouping')
+                          ELSE pmml('linregr_grouping', $1)
+                     END AS pmml_col) linregr_grouping_pmml
+        ) result,
+        (SELECT unnest($2) AS name) expected
+    WHERE expected.name = result.name;
+$$ LANGUAGE sql;
+
+
+
+SELECT assert(
+    count_expected_names(
+        NULL,
+        ARRAY['price', '1', 'bedroom', 'bath', 'size', 'g1', 'g2']
+    ) = 7,
+    'default case');
+
+SELECT assert(
+    count_expected_names(
+        'c.price ~ c.1 + c.bedroom + c.bath + c.size',
+        ARRAY['c.price', 'c.1', 'c.bedroom', 'c.bath', 'c.size']
+    ) = 5,
+    text(pmml('linregr_grouping',
+              'c.price ~ c.1 + c.bedroom + c.bath + c.size')));
+
+SELECT assert(
+    count_expected_names(
+        '{c.price, c.1, c.bedroom, c.bath, c.size}'::varchar[],
+        ARRAY['c.price', 'c.1', 'c.bedroom', 'c.bath', 'c.size']
+    ) = 5,
+    text(pmml('linregr_grouping',
+              'c.price ~ c.1 + c.bedroom + c.bath + c.size')));
+
+SELECT assert(
+    count_expected_names(
+        '{c.price, c.1, c.bedroom, c.bath, c.size}',
+        ARRAY['c.price', 'c.1', 'c.bedroom', 'c.bath', 'c.size']
+    ) = 5,
+    text(pmml('linregr_grouping',
+              'c.price ~ c.1 + c.bedroom + c.bath + c.size')));
+
+SELECT assert(
+    count_expected_names(
+        'c.1 + c.bedroom + c.bath + c.size',
+        ARRAY['price', 'c.1', 'c.bedroom', 'c.bath', 'c.size']
+    ) = 5,
+    text(pmml('linregr_grouping',
+              'c.1 + c.bedroom + c.bath + c.size')));
+
+SELECT assert(
+    count_expected_names(
+        'c.1, c.bedroom, c.bath, c.size',
+        ARRAY['price', 'c.1', 'c.bedroom', 'c.bath', 'c.size']
+    ) = 5,
+    text(pmml('linregr_grouping',
+              'c.1, c.bedroom, c.bath, c.size')));

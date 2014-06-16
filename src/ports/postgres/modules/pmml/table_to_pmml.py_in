@@ -1,0 +1,250 @@
+"""
+@file
+
+@brief Convert model table from MADlib to PMML
+
+@namespace table_to_pmml
+"""
+
+import plpy
+
+import pyxb
+from binding import Extension
+from binding import Application
+from binding import Timestamp
+from binding import DataField
+from binding import MiningField
+from binding import NumericPredictor
+from binding import MiningSchema
+from binding import RegressionTable
+from binding import RegressionModel
+from binding import SimplePredicate
+from binding import CompoundPredicate
+from binding import Segment
+from binding import Segmentation
+from binding import DataDictionary
+from binding import MiningModel
+from binding import Header
+from binding import RegressionModel
+from binding import PMML
+import binding
+from pyxb.utils.domutils import BindingDOMSupport as bds
+
+import re
+from datetime import datetime
+from time import tzname, daylight
+from utilities.validate_args import input_tbl_valid
+from utilities.validate_args import cols_in_tbl_valid
+from utilities.utilities import _string_to_array
+from utilities.utilities import current_user
+from utilities.utilities import madlib_version
+
+SUPPORTED_MODELS = ['logregr', 'linregr']
+COEF_COL_NAME = {'logregr': 'coef', 'linregr': 'coef'}
+FUNCTION_NAME = {'logregr': 'classification', 'linregr': 'regression'}
+NORMALIZATION_METHOD = {'logregr': 'softmax', 'linregr': 'none' }
+Y_OPTYPE = {'logregr': 'categorical', 'linregr': 'continuous' }
+Y_DATATYPE = {'logregr': 'boolean', 'linregr': 'double' }
+
+class Formula(object):
+    def __init__(self, y_str, x_str, coef_len):
+        self.y = y_str.replace('"','')
+        self.x = self.parse(x_str, coef_len)
+
+    def parse(self, x_str, coef_len):
+        array_expr = re.compile(r'array[[](["a-z0-9_, ]+)[]]', flags=re.I)
+        simple_col = re.compile(r'["a-z0-9_]+', flags=re.I)
+        prefix = 'x'
+        if array_expr.match(x_str) is not None:
+            x_csv = array_expr.sub(r'\1', x_str)
+            ret = [s.strip().replace('"','') for s in x_csv.split(',')]
+            if len(ret) == coef_len:
+                return ret
+            else:
+                pass # fall back to using 'x'
+        elif simple_col.match(x_str) is not None:
+            prefix = x_str.replace('"','')
+        return ["{0}[{1}]".format(prefix, str(i+1)) for i in range(coef_len)]
+
+    def rename(self, spec, coef_len):
+        if isinstance(spec, str):
+            if spec.find('{') == 0:
+                spec = spec.replace('{','').replace('}','')
+                spec = [s.strip() for s in spec.split(',')]
+                return self.rename(spec, coef_len)
+            if '~' in spec:
+                (y, spec) = spec.split('~')
+                y = y.strip()
+            else:
+                y = self.y
+            if '+' in spec:
+                x = [s.strip() for s in spec.split('+')]
+            else:
+                x = [s.strip() for s in spec.split(',')]
+            if coef_len != len(x):
+                plpy.warning("PMML warning: unexpected namespec '" + \
+                        spec + "', using default names")
+            else:
+                self.y = y
+                self.x = x
+        else:
+            if len(spec) == coef_len + 1:
+                self.y = spec[0]
+                self.x = spec[1:]
+            elif len(spec) == coef_len:
+                self.x = spec
+            else:
+                plpy.warning("PMML warning: unexpected namespec '" + \
+                        str(spec) + "', using default names")
+
+
+def table_to_pmml(schema_madlib, model_table, **kwargs):
+    """
+    Convert model table from MADlib to PMML (of xml type in database)
+
+    @param schema_madlib Name of the MADlib schema
+    @param model_table   Name of model table in the database
+    @returns PMML as text
+    """
+    # parameter validation
+    input_tbl_valid(model_table, 'PMML')
+    input_tbl_valid(model_table + '_summary', 'PMML')
+    cols_in_tbl_valid(model_table + '_summary',
+                      ['method',
+                       'grouping_col',
+                       'dependent_varname',
+                       'independent_varname'],
+                      'PMML')
+    model_type = plpy.execute("""
+            SELECT method FROM {model_table}_summary
+            """.format(**locals()))[0]['method']
+    if model_type not in SUPPORTED_MODELS:
+        plpy.error("Model {0} to PMML is not supported!".format(model_type))
+    coef_col = COEF_COL_NAME[model_type]
+    cols_in_tbl_valid(model_table, [coef_col], 'PMML')
+
+    # query model and summary tables
+    summary = plpy.execute("""
+            SELECT grouping_col, dependent_varname, independent_varname
+            FROM {model_table}_summary
+            """.format(**locals()))[0]
+    y_str = summary['dependent_varname']
+    x_str = summary['independent_varname']
+    grouping_col = summary['grouping_col']
+    grouping_col = '' if grouping_col is None else grouping_col + ','
+
+    grouped_coefs = plpy.execute("""
+            SELECT {grouping_col} {coef_col} AS coef FROM {model_table}
+            """.format(**locals()))
+    coef_len = len(grouped_coefs[0]['coef'])
+
+    # process formula
+    formula = Formula(y_str, x_str, coef_len)
+    if 'name_spec' in kwargs:
+        formula.rename(kwargs['name_spec'], coef_len)
+
+    # header
+    user = current_user()
+    extension = Extension(name='user', value_=user, extender='MADlib')
+    application = Application(name='MADlib', version=madlib_version(schema_madlib))
+    now = datetime.now()
+    copyright = "Copyright (c) {year} {user}".format(year=now.year, user=user)
+    timestamp = Timestamp(str(now) + " " + tzname[daylight])
+    header = Header(extension, application, timestamp, copyright=copyright)
+
+    # data_dictionary and model
+    (data_dictionary, model) = pmml_regress(model_table,
+                                            model_type,
+                                            formula,
+                                            grouped_coefs)
+
+    pmml = PMML(header, data_dictionary, model, version='4.0')
+
+    return toprettyxml(pmml)
+
+def pmml_regress(model_table, model_type, formula, grouped_coefs):
+    coef0 = grouped_coefs[0]['coef']
+
+    data_field_forest = [DataField(name=formula.y, optype=Y_OPTYPE[model_type],
+                         dataType=Y_DATATYPE[model_type])]
+
+    if len(grouped_coefs[0]) == 1: # no grouping keys
+        ###############################################################
+        # no grouping
+        number_of_fields = len(coef0) + 1
+        data_field_forest.extend([DataField(name=x_i, optype='continuous',
+                                  dataType='double') for x_i in formula.x])
+
+        model = build_regress_model(coef0, model_type, formula)
+    else:
+        ###############################################################
+        # grouping
+        grouping_keys = [k for k in grouped_coefs[0] if k != 'coef']
+
+        number_of_fields = len(coef0) + len(grouping_keys) + 1
+        mining_field_forest = [MiningField(name=formula.y,
+                                           usageType='predicted')]
+        for x_i in formula.x:
+            data_field_forest.append(DataField(name=x_i,
+                                               optype='continuous',
+                                               dataType='double'))
+            mining_field_forest.append(MiningField(name=x_i))
+        for k in grouping_keys:
+            grouping_data_field = DataField(name=k, optype='categorical', dataType='string')
+            data_field_forest.append(grouping_data_field)
+            mining_field_forest.append(MiningField(name=k))
+        grouping_mining_schema = MiningSchema(*mining_field_forest)
+        segment_forest = []
+
+        for g in grouped_coefs: # one segment for each row in output table
+            predicate_forest = [SimplePredicate(field=k, value_=g[k], operator='equal')
+                                for k in grouping_keys]
+            if (len(predicate_forest)==1):
+                predicate = predicate_forest[0]
+            else:
+                predicate = CompoundPredicate(*predicate_forest, booleanOperator='and')
+            model = build_regress_model(g['coef'], model_type, formula)
+            segment_forest.append(Segment(predicate, model))
+        segmentation = Segmentation(*segment_forest, multipleModelMethod='selectFirst')
+        model = MiningModel(grouping_mining_schema,
+                            segmentation,
+                            functionName=FUNCTION_NAME[model_type])
+
+    data_dictionary = DataDictionary(*data_field_forest, numberOfFields=number_of_fields)
+    return (data_dictionary, model)
+
+
+##########################################################################
+# helper functions
+##########################################################################
+def build_regress_model(coef, model_type, formula):
+     # fields and predictors
+    mining_field_forest = [MiningField(name=formula.y, usageType='predicted')]
+    numeric_predictor_forest = []
+    for i, e in enumerate(coef):
+        mining_field_forest.append(MiningField(name=formula.x[i]))
+        numeric_predictor_forest.append(
+                NumericPredictor(name=formula.x[i], coefficient=e))
+
+    # schema and tables
+    mining_schema = MiningSchema(*mining_field_forest)
+    regression_table_forest = [RegressionTable(
+        *numeric_predictor_forest, targetCategory=True, intercept='0')]
+    if model_type == 'logregr':
+        regression_table_forest.append(RegressionTable(
+            targetCategory=False, intercept='0'))
+    return RegressionModel(mining_schema,
+                           *regression_table_forest,
+                           functionName=FUNCTION_NAME[model_type],
+                           normalizationMethod=NORMALIZATION_METHOD[model_type])
+
+def toprettyxml(pmml):
+    """Returns a pretty-printed XML string for the given PMML.
+    """
+    # set default namespace
+    bds.SetDefaultNamespace(binding.Namespace)
+
+    declaration = "<?xml version=\"1.0\" standalone=\"yes\"?>\n"
+    xml = pmml.toDOM().toprettyxml(indent="  ")
+    return (declaration + "\n".join(xml.split("\n")[1:]))
+
