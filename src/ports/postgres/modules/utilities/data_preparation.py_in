@@ -1,0 +1,199 @@
+"""
+@file dummy_coding.py_in
+
+@brief Marginal Effects with Interactions: Contains the main interface function
+and other functions that are common to the various methods and related to
+database constructs.
+
+@namespace marginal
+"""
+import plpy
+from utilities import _assert
+from utilities import split_quoted_delimited_str
+from utilities import strip_end_quotes
+from validate_args import table_exists
+from validate_args import columns_exist_in_table
+from validate_args import table_is_empty
+from validate_args import _get_table_schema_names
+from validate_args import get_first_schema
+
+m4_changequote(`<!', `!>')
+
+
+def get_distribution_policy(schema_madlib, source_table):
+    """ Return a list of columns that define the distribution policy of table
+    Args:
+        @param source_table
+
+    Returns:
+        List of str.
+    """
+    _, table_name = _get_table_schema_names(source_table)
+    schema_name = get_first_schema(schema_madlib, source_table)
+    dist_attr = plpy.execute("""
+    SELECT array_agg(pga.attname) as dist_attr
+    FROM (
+        SELECT gdp.localoid,
+                 CASE
+                     WHEN ( ARRAY_UPPER(gdp.attrnums, 1) > 0 ) THEN
+                        UNNEST(gdp.attrnums)
+                     ELSE NULL
+                 END AS attnum
+            FROM gp_distribution_policy gdp
+        ) AS distkey
+        INNER JOIN pg_class AS pgc
+        ON distkey.localoid = pgc.oid AND pgc.relname = '{table_name}'
+        INNER JOIN pg_namespace pgn
+        ON pgc.relnamespace = pgn.oid AND pgn.nspname = '{schema_name}'
+        LEFT OUTER JOIN pg_attribute pga
+        ON distkey.attnum = pga.attnum AND distkey.localoid = pga.attrelid
+    """.format(table_name=table_name, schema_name=schema_name))[0]["dist_attr"]
+    return dist_attr
+#------------------------------------------------------------------------------
+
+
+def create_indicator_variables(schema_madlib, source_table, out_table,
+                 categorical_cols, distributed_by=None,
+                 keep_null=False, **kwargs):
+    """
+    Helper function that can be used to create dummy coding for
+    categorical variables.
+    Args:
+        @param source_table The original data table
+        @param out_table    The output table that contains the dummy
+                            variable columns
+        @param categorical_cols   A string, comma separated column names for
+                            for categorical variables
+    """
+    cols = split_quoted_delimited_str(categorical_cols)
+    validate_dummy_coding(source_table, out_table, cols)
+
+    sql_list = ["CREATE TABLE " + out_table + " AS (SELECT *"]
+    for col in cols:
+        col_no_quotes = strip_end_quotes(col.strip())
+        distinct_values = plpy.execute(
+            "SELECT {col} AS value FROM {source_table} "
+            "GROUP BY {col} ORDER BY {col}".
+            format(col=col, source_table=source_table))
+        distinct_values = [strip_end_quotes(item['value']) for item in distinct_values]
+        null_wrap_case_str = ""
+        null_wrap_end_str = ""
+        if not keep_null and None in distinct_values:
+            null_wrap_case_str = "CASE WHEN \"{col}\" is NULL THEN NULL ELSE "
+            null_wrap_end_str = "END"
+        case_str = ("({wrap_case} "
+                    "CASE WHEN \"{{col}}\" = '{{value}}' THEN 1 ELSE 0 END "
+                    "{wrap_end})".
+                    format(wrap_case=null_wrap_case_str,
+                           wrap_end=null_wrap_end_str))
+        sql_list.append(
+            ", " +
+            ', '.join("{case_str} as \"{{col}}_{{value}}\"".
+                      format(case_str=case_str).
+                      format(col=col_no_quotes, value=str(value))
+                      for value in distinct_values if value is not None))
+        if keep_null and None in distinct_values:
+            sql_list.append(", (CASE WHEN \"{0}\" IS NULL THEN 1 ELSE 0 END) "
+                            "as \"{0}_NULL\"".format(col_no_quotes))
+    sql_list.append(" FROM " + source_table + ") ")
+    m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!
+    if distributed_by:
+        dist_str = distributed_by
+    else:
+        dist_str = ','.join(['"%s"'%i for i in get_distribution_policy(schema_madlib, source_table)
+                             if i is not None])
+    if dist_str:
+        sql_list.append("distributed by (" + dist_str + ")")
+    else:
+        sql_list.append("distributed randomly")
+    !>)
+    plpy.execute(''.join(sql_list))
+    return None
+# ---------------------------------------------------------------
+
+
+def validate_dummy_coding(source_table, out_table, cols):
+    """
+    Args:
+        @param source_table The original data table
+        @param out_table    The output table that will contain dummy columns
+        @param cols         An array of categorical column names
+    """
+    _assert(out_table and
+            out_table.strip().lower() not in ('null', ''),
+            "Invalid output table name!")
+    _assert(not table_exists(out_table),
+            "Output table already exists!")
+    _assert(source_table and source_table.strip().lower() not in ('null', ''),
+            "Invalid data table name!")
+    _assert(table_exists(source_table),
+            "Data table ({0}) is missing!". format(source_table))
+    _assert(not table_is_empty(source_table),
+            "Data table ({0}) is empty!". format(source_table))
+    _assert(columns_exist_in_table(source_table, cols),
+            "Not all columns from {0} present in source table ({1})"
+            .format(cols, source_table))
+#------------------------------------------------------------------------------
+
+
+def indicator_variables_help(schema_madlib, message, **kwargs):
+    """
+    Help function for create_indicator_variables
+
+    Args:
+        @param schema_madlib
+        @param message: string, Help message string
+        @param kwargs
+
+    Returns:
+        String. Help/usage information
+    """
+    if not message:
+        help_string = """
+-----------------------------------------------------------------------
+                            SUMMARY
+-----------------------------------------------------------------------
+Provide functionality to create indicator variables from categorical variables
+to be used by regression methods. Categorical variables require special
+attention in regression analysis because, unlike dichotomous or continuous
+variables, they cannot by entered into the regression equation just as they are.
+For example, if you have a variable called race that is coded 1 = Hispanic, 2 =
+Asian 3 = Black 4 = White, then entering race in your regression will look at
+the linear effect of race, which is probably not what you intended. Instead,
+categorical variables like this need to be recoded into a series of indicator
+variables which can then be entered into the regression model.
+
+For more details on function usage:
+    SELECT {schema_madlib}.create_indicator_variables('usage')
+            """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+ SELECT {schema_madlib}.create_indicator_variables(
+    source_table,       -- Name of source table containing data for categorical variables
+    out_table,          -- Name of table to output data for indicator variables
+                        --   (also includes other columns present in 'source_table')
+    categorical_cols,   -- Comma-separated string of categorical variable column names
+    keep_null,          -- (Default = False) Determines behavior for NULL value in categorical variable.
+                        --   If True, then an indicator variable is created corresponding to the NULL value.
+                        --   If False, then all indicator variables for that row will be set to NULL.
+    distributed_by      -- (Default = NULL) Comma-separated column names to distribute output table.
+                        --   If NULL then output is distributed using same policy as source_table.
+                        --   Note: This parameter is not available for POSTGRESQL platform.
+ );
+
+-----------------------------------------------------------------------
+                            OUTPUT
+-----------------------------------------------------------------------
+The output table ('output_table' above) has all the columns present in source
+table, plus additional columns for each indicator variable corresponding to each
+value of a categorical variable. The column name for the indicator variable is
+set as '<categorical name>_<categorical value>'.
+"""
+    else:
+        help_string = "No such option. Use {schema_madlib}.create_indicator_variables()"
+
+    return help_string.format(schema_madlib=schema_madlib)
+# ---------------------------------------------------------------------

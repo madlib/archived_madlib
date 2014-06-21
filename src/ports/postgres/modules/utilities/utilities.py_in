@@ -1,8 +1,11 @@
-
-import plpy
 import re
 import time
 import random
+from collections import Iterable
+
+
+if __name__ != "__main__":
+    import plpy
 
 
 def _assert(condition, msg):
@@ -258,6 +261,7 @@ class __mad_version:
             return True
         return False
 
+
 def _string_to_sql_array(schema_madlib, s, **kwargs):
     """
     Split a string into an array of strings
@@ -364,8 +368,6 @@ def extract_optimizer_param(optimizer_params,
     # allowed_params = set(["max_iter", "max_num_iterations", "optimizer", "precision"])
     # parameter_dict = {'max_iter': 20, 'optimizer': "irls", 'precision': 0.0001}
 
-    debug = False   # Set debug = True if using unittest
-
     if not optimizer_params:
         return default_values if default_values is not None else {}
 
@@ -390,33 +392,81 @@ def extract_optimizer_param(optimizer_params,
         try:
             param_type = optimizer_param_types[param_name]
         except KeyError:
-            if not debug:
-                plpy.error("Invalid input: {0} is not a valid parameter ".
+            raise KeyError("Invalid input: {0} is not a valid parameter ".
                            format(param_name))
-            else:
-                raise KeyError("Invalid input: {0} is not a valid parameter ".
-                               format(param_name))
         try:
             if param_type in (int, str, float):
                 parameter_dict[param_name] = param_type(param_value)
             elif param_type == list:
                 parameter_dict[param_name] = param_value.strip('[](){} ').split(',')
             else:
-                if not debug:
-                    plpy.error("Invalid input: {0} has unsupported type".
-                               format(param_name))
-                else:
-                    raise TypeError("Invalid input: {0} has unsupported type".
-                                    format(param_name))
+                raise TypeError("Invalid input: {0} has unsupported type".
+                                format(param_name))
         except ValueError:
-            if not debug:
-                plpy.error("Invalid input: {0} must be {1}".
-                           format(param_name, str(param_type)))
-            else:
-                raise ValueError("Invalid input: {0} must be {1}".
-                                 format(param_name, str(param_type)))
+            raise ValueError("Invalid input: {0} must be {1}".
+                             format(param_name, str(param_type)))
     return parameter_dict
 # -------------------------------------------------------------------------
+
+
+def split_quoted_delimited_str(input_str, delimiter=',', quote=None):
+    """ Parse a delimited-string to return a list of individual tokens taking a
+    quoted strings into account
+
+    Args:
+        @param input_str: str, Delimited input string
+        @param delimiter: str, The field delimiter character that separates
+                                the tokens in input_str. Default = ','
+        @param quote: list/str, The quoting characters (bracket delimiters). A field
+                            delimiter within a bracket delimiter will be
+                            ignored for the parsing. This can be a either a list
+                            of delimiters or just a single delimiter string.
+                            Default = '"'
+
+    Returns:
+        List. List of delimited strings.
+    """
+    if not quote:
+        quote_str = '"'
+    elif not isinstance(quote, str):
+        quote_str = "[{0}]".format(''.join(quote))
+    else:
+        quote_str = quote
+
+    if not input_str or not delimiter:
+        return []
+    try:
+        delimiter_reg = re.compile('((?:[^\{d}\{q}]|\{q}[^\{q}]*\{q})+)'.
+                                   format(d=delimiter, q=quote_str))
+        return [i.strip() for i in
+                delimiter_reg.split(input_str.strip())[1::2]]
+    except Exception as e:
+        plpy.warning(str(e))
+        raise ValueError("Invalid string input for splitting")
+#------------------------------------------------------------------------------
+
+
+def strip_end_quotes(input_str, quote='"'):
+    """ Remove the quote character from the start and end if they are present
+    (at both ends). Whitespace at start and end are not ignored.
+
+    Args:
+        @param input_str
+        @param quote
+
+    Returns:
+        str. Original string without the quotes at start and end
+    """
+    if not input_str or not quote:
+        return input_str
+    if not isinstance(input_str, str):
+        return input_str
+    if input_str.startswith(quote) and input_str.endswith(quote):
+        return input_str[1:-1]
+    else:
+        return input_str
+#------------------------------------------------------------------------------
+
 
 import unittest
 
@@ -458,6 +508,13 @@ class UtilitiesTestCase(unittest.TestCase):
                          extract_optimizer_param(self.optimizer_params4, self.optimizer_types))
         self.assertRaises(ValueError,
                           extract_optimizer_param, self.optimizer_params2, self.optimizer_types)
+
+    def test_split_delimited_string(self):
+        self.assertEqual(['a', 'b', 'c'], split_delimited_str('a,    b, c', quote='|'))
+        self.assertEqual(['a', '|b, c|'], split_delimited_str('a,    |b, c|', quote='|'))
+        self.assertEqual(['a', '"b, c"'], split_delimited_str('a, "b, c"'))
+        self.assertEqual(['"a^5,6"', 'b', 'c'], split_delimited_str('"a^5,6",    b, c', quote='"'))
+        self.assertEqual(['"a\"^5,6"', 'b', 'c'], split_delimited_str('"a\"^5,6",    b, c', quote='"'))
 
 
 if __name__ == '__main__':

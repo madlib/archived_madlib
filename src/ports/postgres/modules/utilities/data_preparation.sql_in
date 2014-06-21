@@ -1,0 +1,256 @@
+/* ----------------------------------------------------------------------- */
+/**
+ *
+ * @file data_preparation.sql_in
+ *
+ * @brief SQL functions for dummy coding categorical variables
+ * @date June 2014
+ *
+ * @sa Calculates dummy-coded indicator variables for categorical variables
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_data_prep
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#categorical">Coding systems for categorical variables</a></li>
+<li><a href="#examples">Examples</a></li>
+</ul>
+</div>
+
+@brief Provides utility functions helpful for data preparation before modeling
+
+@anchor categorical
+@par Coding systems for categorical variables
+Categorical variables require special attention in regression analysis because,
+unlike dichotomous or continuous variables, they cannot be entered into the
+regression equation just as they are.  For example, if you have a variable
+called race that is coded 1 = Hispanic, 2 = Asian, 3 = Black, 4 = White, then
+entering race in your regression will look at the linear effect of race, which
+is probably not what you intended. Instead, categorical variables like this need
+to be recoded into a series of indicator variables which can then be entered
+into the regression model.  There are a variety of coding systems (also called
+as contrasts) that can be used when coding categorical variables. including
+dummy, effects, orthogonal, and helmert coding.
+
+We currently only support the dummy coding technique. Dummy coding is used when
+a researcher wants to compare other groups of the predictor variable with one
+specific group of the predictor variable. Often, the specific group to compare
+with is called the reference group.
+
+<pre class="syntax">
+create_indicator_variables(
+	source_table,
+    output_table,
+    categorical_cols,
+    keep_null,
+    distributed_by
+    )
+</pre>
+\b Arguments
+<dl class="arglist">
+    <dt>source_table</dt>
+    <dd>VARCHAR. Name of the source table, containing data for categorical variables.</dd>
+    <dt>output_table</dt>
+    <dd>VARCHAR. Name of result table. The output table has the same columns as
+    the original table, adding new indicator variable columns for each
+    categorical column. The column name for the indicator variable is
+	<em>'categorical column name'</em>_<em>'categorical value'</em>.
+    </dd>
+    <dt>categorical_cols </dt>
+    <dd>VARCHAR. Comma-separated string of column names of categorical variables
+    that need to be dummy-coded.</dd>
+    <dt>keep_null (optional)</dt>
+    <dd>BOOLEAN. default: FALSE. Whether 'NULL' should be treated as one of the
+    categories of the categorical variable. If True, then an indicator
+    variable is created corresponding to the NULL value. If False, then
+	all indicator variables for that record will be set to NULL.
+    </dd>
+    <dt>distributed_by (optional)</dt>
+    <dd>VARCHAR. default: NULL. Columns to use for the distribution policy of
+    the output table. When NULL, the distribution policy of 'source_table'
+    will be used. This argument is not available for POSTGRESQL platforms.</dd>
+</dl>
+
+@anchor examples
+@examp
+
+-#  Use a subset of the abalone dataset.
+<pre class="example">
+DROP TABLE IF EXISTS abalone;
+CREATE TABLE abalone (
+    sex character varying,
+    length double precision,
+    diameter double precision,
+    height double precision
+);
+COPY abalone (sex, length, diameter, height) FROM stdin WITH DELIMITER '|' NULL as '@';
+M| 0.455 |   0.365 | 0.095
+F| 0.53  |   0.42  | 0.135
+M| 0.35  |   0.265 | 0.09
+F| 0.53  |   0.415 | 0.15
+M| 0.44  |   0.365 | 0.125
+F| 0.545 |   0.425 | 0.125
+I| 0.33  |   0.255 | 0.08
+F| 0.55  |   0.44  | 0.15
+I| 0.425 |   0.30  | 0.095
+F| 0.525 |   0.38  | 0.140
+M| 0.475 |   0.37  | 0.125
+F| 0.535 |   0.405 | 0.145
+M| 0.43  |   0.358 | 0.11
+F| 0.47  |   0.355 | 0.100
+M| 0.49  |   0.38  | 0.135
+F| 0.44  |   0.340 | 0.100
+M| 0.5   |   0.400 | 0.13
+F| 0.565 |   0.44  | 0.155
+I| 0.355 |   0.280 | 0.085
+F| 0.550 |   0.415 | 0.135
+@| 0.475 |   0.37  | 0.125
+\\.
+</pre>
+
+-# Create new table with dummy-coded indicator variables
+<pre class="example">
+drop table if exists abalone_out;
+select madlib.create_indicator_variables ('abalone', 'abalone_out', 'sex');
+select * from abalone_out;
+</pre>
+<pre class="result">
+ sex  | length | diameter | height | sex_F  | sex_I  | sex_M
+&nbsp; -----+--------+----------+--------+--------+--------+-------
+ F    |   0.53 |     0.42 |  0.135 |      1 |      0 |     0
+ F    |   0.53 |    0.415 |   0.15 |      1 |      0 |     0
+ F    |  0.545 |    0.425 |  0.125 |      1 |      0 |     0
+ F    |   0.55 |     0.44 |   0.15 |      1 |      0 |     0
+ F    |  0.525 |     0.38 |   0.14 |      1 |      0 |     0
+ F    |  0.535 |    0.405 |  0.145 |      1 |      0 |     0
+ F    |   0.47 |    0.355 |    0.1 |      1 |      0 |     0
+ F    |   0.44 |     0.34 |    0.1 |      1 |      0 |     0
+ F    |  0.565 |     0.44 |  0.155 |      1 |      0 |     0
+ F    |   0.55 |    0.415 |  0.135 |      1 |      0 |     0
+ M    |  0.455 |    0.365 |  0.095 |      0 |      0 |     1
+ M    |   0.35 |    0.265 |   0.09 |      0 |      0 |     0
+ M    |   0.44 |    0.365 |  0.125 |      0 |      0 |     0
+ I    |   0.33 |    0.255 |   0.08 |      0 |      1 |     0
+ I    |  0.425 |      0.3 |  0.095 |      0 |      1 |     0
+ M    |  0.475 |     0.37 |  0.125 |      0 |      0 |     0
+ M    |   0.43 |    0.358 |   0.11 |      0 |      0 |     0
+ M    |   0.49 |     0.38 |  0.135 |      0 |      0 |     0
+ M    |    0.5 |      0.4 |   0.13 |      0 |      0 |     0
+ I    |  0.355 |     0.28 |  0.085 |      0 |      1 |     0
+ NULL |   0.55 |    0.415 |  0.135 |   NULL |   NULL |  NULL
+</pre>
+
+-# Create indicator variable for 'NULL' value (note the additional column '"sex_NULL"')
+<pre class="example">
+drop table if exists abalone_out;
+select madlib.create_indicator_variables'abalone', 'abalone_out', 'sex', True);
+select * from abalone_out;
+</pre>
+<pre class="result">
+ sex  | length | diameter | height | sex_F  | sex_I  | sex_M | sex_NULL
+&nbsp; ------+--------+----------+--------+--------+--------+-------+-------
+ F    |   0.53 |     0.42 |  0.135 |      1 |      0 |     0 |     0
+ F    |   0.53 |    0.415 |   0.15 |      1 |      0 |     0 |     0
+ F    |  0.545 |    0.425 |  0.125 |      1 |      0 |     0 |     0
+ F    |   0.55 |     0.44 |   0.15 |      1 |      0 |     0 |     0
+ F    |  0.525 |     0.38 |   0.14 |      1 |      0 |     0 |     0
+ F    |  0.535 |    0.405 |  0.145 |      1 |      0 |     0 |     0
+ F    |   0.47 |    0.355 |    0.1 |      1 |      0 |     0 |     0
+ F    |   0.44 |     0.34 |    0.1 |      1 |      0 |     0 |     0
+ F    |  0.565 |     0.44 |  0.155 |      1 |      0 |     0 |     0
+ F    |   0.55 |    0.415 |  0.135 |      1 |      0 |     0 |     0
+ M    |  0.455 |    0.365 |  0.095 |      0 |      0 |     1 |     0
+ M    |   0.35 |    0.265 |   0.09 |      0 |      0 |     0 |     0
+ M    |   0.44 |    0.365 |  0.125 |      0 |      0 |     0 |     0
+ I    |   0.33 |    0.255 |   0.08 |      0 |      1 |     0 |     0
+ I    |  0.425 |      0.3 |  0.095 |      0 |      1 |     0 |     0
+ M    |  0.475 |     0.37 |  0.125 |      0 |      0 |     0 |     0
+ M    |   0.43 |    0.358 |   0.11 |      0 |      0 |     0 |     0
+ M    |   0.49 |     0.38 |  0.135 |      0 |      0 |     0 |     0
+ M    |    0.5 |      0.4 |   0.13 |      0 |      0 |     0 |     0
+ I    |  0.355 |     0.28 |  0.085 |      0 |      1 |     0 |     0
+ NULL |   0.55 |    0.415 |  0.135 |      0 |      0 |     0 |     1
+</pre>
+*/
+
+-------------------------------------------------------------------------
+
+m4_ifdef(`__POSTGRESQL__', `', `
+/**
+ * @brief Create new table containing dummy coded variables for categorical variables
+ *
+ * @param source_table Name of table containing categorical variable
+ * @param out_table Name of table to output dummy variables
+ * @param categorical_cols Comma-separated list of column names to dummy code
+ * @param keep_null Boolean to determine the behavior for rows with NULL value
+ * @param distributed_by Comma-separated list of column names to use for distribution of output
+ *
+ * @return Void
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_indicator_variables(
+    source_table         TEXT,
+    out_table            TEXT,
+    categorical_cols     TEXT,
+    keep_null            BOOLEAN,
+    distributed_by       TEXT
+) RETURNS VOID AS $$
+    PythonFunction(utilities, data_preparation, create_indicator_variables)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+');
+-- Above function is not to be created for POSTGRESQL
+
+/**
+ * @brief Create new table containing dummy coded variables for categorical variables
+ *
+ * @param source_table Name of table containing categorical variable
+ * @param out_table Name of table to output dummy variables
+ * @param categorical_cols Comma-separated list of column names to dummy code
+ * @param keep_null Boolean to determine the behavior for rows with NULL value
+ *
+ * @return Void
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_indicator_variables(
+    source_table         TEXT,
+    out_table            TEXT,
+    categorical_cols     TEXT,
+    keep_null		     BOOLEAN
+) RETURNS VOID AS $$
+    PythonFunction(utilities, data_preparation, create_indicator_variables)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_indicator_variables(
+    source_table         TEXT,
+    out_table            TEXT,
+    categorical_cols     TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.create_indicator_variables($1, $2, $3, False)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-- Online help
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_indicator_variables(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(utilities, data_preparation, indicator_variables_help)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+--------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_indicator_variables()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.create_indicator_variables('');
+$$ LANGUAGE sql IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+--------------------------------------------------------------------------------

@@ -22,6 +22,8 @@ from margins_builder import TermBase
 import re
 #------------------------------------------------------------------------------
 
+m4_changequote(`<!', `!>')
+
 
 def margins(schema_madlib, model_table, out_table, x_design=None,
             source_table=None, marginal_vars=None, *args, **kwargs):
@@ -153,71 +155,6 @@ The output table ('output_table' above) has the following columns
 
     return help_string.format(schema_madlib=schema_madlib)
 # ---------------------------------------------------------------------
-
-
-def create_dummy_coding(schema_madlib, origin_table, out_table,
-                        indicators, distributed_by=None,
-                        keep_null=False, **kwargs):
-    """
-    Helper function that can be used to create dummy coding for
-    categorical variables.
-    Args:
-        @param origin_table The original data table
-        @param out_table    The output table that contains the dummy
-                            variable columns
-        @param indicators   A string, comma separated column names for
-                            for categorical variables
-    """
-    cols = [s.strip() for s in indicators.split(',')]
-    validate_create_dummy_coding(origin_table, out_table, cols)
-    sql_list = ["create table " + out_table + " as (select *"]
-    for col in cols:
-        distinct = plpy.execute("""
-                SELECT {col} AS value FROM {origin_table} GROUP BY {col}
-                """.format(col=col, origin_table=origin_table))
-        distinct = [item['value'] for item in distinct]
-        sql_list.append(", " +
-                        ', '.join("(case when {0} = '{1}' "
-                                  "then 1 else 0 end) as \"{0}_{1}\"".
-                                  format(col, str(value))
-                                  for value in distinct if value is not None))
-        if keep_null and None in distinct:
-            sql_list.append(", (case when {0} is NULL then 1 else 0) "
-                            "as {0}_NULL".format(col))
-    sql_list.append(" from " + origin_table + ")")
-    if distributed_by:
-        sql_list.append("distributed by ({0})".format(",".join(distributed_by)))
-    plpy.execute(''.join(sql_list))
-    return None
-# ---------------------------------------------------------------
-
-
-def validate_create_dummy_coding(origin_table, out_table, cols):
-    """
-    Args:
-        @param origin_table The original data table
-        @param out_table    The output table that will contain dummy columns
-        @param cols         An array of categorical column names
-    """
-    _assert(out_table and
-            out_table.strip().lower() not in ('null', ''),
-            "Creating dummy coding error: Invalid output table name!")
-    _assert(not table_exists(out_table),
-            "Creating dummy coding error: Output table already exists!")
-    _assert(not table_exists(out_table + '_summary'),
-            "Creating dummy coding error: Output summary table already exists!")
-
-    _assert(origin_table and origin_table.strip().lower() not in ('null', ''),
-            "Creating dummy coding error: Invalid data table name!")
-    _assert(table_exists(origin_table),
-            "Creating dummy coding error: Data table ({0}) is missing!".format(origin_table))
-    _assert(not table_is_empty(origin_table),
-            "Creating dummy coding error: Data table ({0}) is empty!".format(origin_table))
-
-    _assert(columns_exist_in_table(origin_table, cols),
-            "Creating dummy coding error: Invalid original table ({0})"
-            " - some required columns missing".format(origin_table))
-#------------------------------------------------------------------------------
 
 
 def margins_validate_model_table(model_table):
