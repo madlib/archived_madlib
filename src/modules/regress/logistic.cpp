@@ -1244,7 +1244,7 @@ AnyType robuststateToResult(
  */
 AnyType
 robust_logregr_step_transition::run(AnyType &args) {
-    // Early return because of an exception has been "thrown" 
+    // Early return because of an exception has been "thrown"
     // (actually "warning") in the previous invocations
     if(args[0].isNull())
         return Null();
@@ -1331,7 +1331,7 @@ robust_logregr_step_final::run(AnyType &args) {
     // In case the aggregator should be terminated because
     // an exception has been "thrown" in the transition function
     if (args[0].isNull())
-        return Null(); 
+        return Null();
     // We request a mutable object. Depending on the backend, this might perform
     // a deep copy.
     RobustLogRegrTransitionState<MutableArrayHandle<double> > state = args[0];
@@ -1558,7 +1558,7 @@ AnyType marginalstateToResult(
  */
 AnyType
 marginal_logregr_step_transition::run(AnyType &args) {
-    // Early return because of an exception has been "thrown" 
+    // Early return because of an exception has been "thrown"
     // (actually "warning") in the previous invocations
     if (args[0].isNull())
         return Null();
@@ -1651,7 +1651,7 @@ marginal_logregr_step_final::run(AnyType &args) {
     // In case the aggregator should be terminated because
     // an exception has been "thrown" in the transition function
     if (args[0].isNull())
-        return Null(); 
+        return Null();
 
     // We request a mutable object.
     // Depending on the backend, this might perform a deep copy.
@@ -1678,8 +1678,64 @@ marginal_logregr_step_final::run(AnyType &args) {
 
 // ------------------------ End of Marginal ------------------------------------
 
+AnyType logregr_predict::run(AnyType &args) {
+    try {
+        args[0].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        throw std::runtime_error(
+            "Logregr error: the coefficients contain NULL values");
+    }
+
+    // returns NULL if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    MappedColumnVector vec1 = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector vec2 = args[1].getAs<MappedColumnVector>();
+
+    if (vec1.size() != vec2.size())
+        throw std::runtime_error(
+            "Coefficients and independent variables are of incompatible length");
+
+    return vec1.dot(vec2) > 0 ? true : false;
+}
+
+AnyType logregr_predict_prob::run(AnyType &args) {
+    try {
+        args[0].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        throw std::runtime_error(
+            "Logregr error: the coefficients contain NULL values");
+    }
+
+    // returns NULL if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    MappedColumnVector vec1 = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector vec2 = args[1].getAs<MappedColumnVector>();
+
+    if (vec1.size() != vec2.size())
+        throw std::runtime_error(
+            "Coefficients and independent variables are of incompatible length");
+
+    double dot = vec1.dot(vec2);
+    double logit = 0.0;
+    // Underflow/overfolow handling
+    try {
+        logit = 1.0 / (1 + exp(-dot));
+    } catch (...) {
+        logit = (dot > 0) ? 1.0 : 0.0;
+    }
+    return logit;
+}
+
 } // namespace regress
-
 } // namespace modules
-
 } // namespace madlib
