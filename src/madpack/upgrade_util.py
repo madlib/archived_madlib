@@ -59,8 +59,7 @@ class UpgradeBase:
             SELECT
                 max(proname) AS proname,
                 max(rettype) AS rettype,
-                array_to_string(
-                    array_agg(argname || ' ' || argtype order by i), ',') AS argument
+                array_to_string(array_agg(argtype order by i), ', ') AS argument
             FROM
             (
                 SELECT
@@ -93,48 +92,16 @@ class ChangeHandler(UpgradeBase):
     """
     def __init__(self, schema, portid, con_args, maddir, mad_dbrev):
         UpgradeBase.__init__(self, schema, portid, con_args)
-        self._opr_ind_svec = None
-        self._get_opr_indepent_svec()
         self._maddir = maddir
         self._mad_dbrev = mad_dbrev
-        self._newmodule = None
-        self._udt = None
-        self._udf = None
-        self._uda = None
-        self._udc = None
+        self._newmodule = {}
+        self._udt = {}
+        self._udf = {}
+        self._uda = {}
+        self._udc = {}
+        self._udo = {}
+        self._udoc = {}
         self._load()
-
-    def _get_opr_indepent_svec(self):
-        """
-        @brief Get the User Defined Operators independent of svec in the current version
-        """
-        rows = self._run_sql("""
-            SELECT
-                oprname,
-                tl.typname AS typ_left,
-                nspl.nspname AS nsp_left,
-                tr.typname AS typ_right,
-                nspr.nspname AS nsp_right
-            FROM
-                pg_operator AS o,
-                pg_type AS tl,
-                pg_type AS tr,
-                pg_namespace AS nspl,
-                pg_namespace AS nspr
-            WHERE
-                oprnamespace = {schema_oid} AND
-                (
-                    oprleft <> '{schema_madlib}.svec'::regtype AND
-                    oprright <> '{schema_madlib}.svec'::regtype AND
-                    oprleft = tl.oid AND
-                    oprright = tr.oid AND
-                    tl.typnamespace = nspl.oid AND
-                    tr.typnamespace = nspr.oid
-                )
-            """.format(schema_madlib=self._schema, schema_oid=self._schema_oid))
-        self._opr_ind_svec = {}
-        for row in rows:
-            self._opr_ind_svec[row['oprname']] = row
 
     def _load_config_param(self, config_iterable):
         """
@@ -161,18 +128,11 @@ class ChangeHandler(UpgradeBase):
         if config_iterable is not None:
             for each_config in config_iterable:
                 for obj_name, obj_details in each_config.iteritems():
-                    rettype = obj_details['rettype'].lower().replace(
-                                                'schema_madlib', self._schema)
-                    if obj_details['argument'] is not None:
-                        argument = obj_details['argument'].lower().replace(
-                                                'schema_madlib', self._schema)
-                        all_arguments = [each_arg.strip()
-                                         for each_arg in argument.split(',')]
-                    else:
-                        all_arguments = []
-                    _return_obj[obj_name].append(
-                                    {'rettype': rettype,
-                                     'argument': ','.join(all_arguments)})
+                    formatted_obj = {}
+                    for k, v in obj_details.items():
+                        v = v.lower().replace('schema_madlib', self._schema)
+                        formatted_obj[k] = v
+                    _return_obj[obj_name].append(formatted_obj)
         return _return_obj
 
     def _load(self):
@@ -183,24 +143,28 @@ class ChangeHandler(UpgradeBase):
         # _mad_dbrev = 1.0
         if self._mad_dbrev.split('.') < '1.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.0_1.5.yaml')
+                                    'changelist_1.0_1.6.yaml')
         # _mad_dbrev = 1.1
         elif self._mad_dbrev.split('.') < '1.2'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.1_1.5.yaml')
+                                    'changelist_1.1_1.6.yaml')
         # _mad_dbrev = 1.2
         elif self._mad_dbrev.split('.') < '1.3'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.2_1.5.yaml')
+                                    'changelist_1.2_1.6.yaml')
         # _mad_dbrev = 1.3
         elif self._mad_dbrev.split('.') < '1.4'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.3_1.5.yaml')
+                                    'changelist_1.3_1.6.yaml')
         # _mad_dbrev = 1.4
         elif self._mad_dbrev.split('.') < '1.4.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.4_1.5.yaml')
+                                    'changelist_1.4_1.6.yaml')
         # _mad_dbrev = 1.4.1
+        elif self._mad_dbrev.split('.') < '1.5'.split('.'):
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.4.1_1.6.yaml')
+        # _mad_dbrev = 1.5
         else:
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist.yaml')
@@ -212,6 +176,11 @@ class ChangeHandler(UpgradeBase):
         self._udc = config['udc'] if config['udc'] else {}
         self._udf = self._load_config_param(config['udf'])
         self._uda = self._load_config_param(config['uda'])
+        # FIXME remove the following  special handling for HAWQ after svec got
+        #   out from catalog
+        if self._portid != 'hawq':
+            self._udo = self._load_config_param(config['udo'])
+            self._udoc = self._load_config_param(config['udoc'])
 
     @property
     def newmodule(self):
@@ -232,6 +201,14 @@ class ChangeHandler(UpgradeBase):
     @property
     def udc(self):
         return self._udc
+
+    @property
+    def udo(self):
+        return self._udo
+
+    @property
+    def udoc(self):
+        return self._udoc
 
     def get_udf_signature(self):
         """
@@ -257,32 +234,70 @@ class ChangeHandler(UpgradeBase):
                 res[signature] = True
         return res
 
+    def get_udo_oids(self):
+        """
+        @brief Get the list of changed/removed UDO OIDs for comparison
+        """
+        ret = []
+
+        changed_ops = set()
+        for op, li in self._udo.items():
+            for e in li:
+                changed_ops.add((op, e['leftarg'], e['rightarg']))
+
+        rows = self._run_sql("""
+            SELECT
+                o.oid, oprname, oprleft::regtype, oprright::regtype
+            FROM
+                pg_operator AS o, pg_namespace AS ns
+            WHERE
+                o.oprnamespace = ns.oid AND
+                ns.nspname = '{schema}'
+            """.format(schema=self._schema.lower()))
+        for row in rows:
+            if (row['oprname'], row['oprleft'], row['oprright']) in changed_ops:
+                ret.append(row['oid'])
+
+        return ret
+
+    def get_udoc_oids(self):
+        """
+        @brief Get the list of changed/removed UDOC OIDs for comparison
+        """
+        ret = []
+
+        changed_opcs = set()
+        for opc, li in self._udoc.items():
+            for e in li:
+                changed_opcs.add((opc, e['index']))
+
+        if self._portid == 'postgres':
+            method_col = 'opcmethod'
+        else:
+            method_col = 'opcamid'
+        rows = self._run_sql("""
+            SELECT
+                oc.oid, opcname, amname AS index
+            FROM
+                pg_opclass AS oc, pg_am as am
+            WHERE
+                oc.opcnamespace = {madlib_schema_oid} AND
+                oc.{method_col} = am.oid;
+            """.format(method_col=method_col, madlib_schema_oid=self._schema_oid))
+        for row in rows:
+            if (row['opcname'], row['index']) in changed_opcs:
+                ret.append(row['oid'])
+
+        return ret
+
     def drop_changed_udt(self):
         """
         @brief Drop all types that were updated/removed in the new version
         @note It is dangerous to drop a UDT becuase there might be many
         dependencies
         """
-        # Note that we use CASCADE option here. This might be dangerous because
-        # it may drop some undetected dependent objects (eg. UDCast, UDOp, etc)
         for udt in self._udt:
-            self._run_sql("DROP TYPE IF EXISTS {0}.{1} CASCADE".
-                          format(self._schema, udt))
-            if udt == 'svec':
-                # Drop operators defined in the svec module which do not
-                # depend on svec. We will run the whole svec.sql without
-                # filtering once svec changed
-                for opr in self._opr_ind_svec:
-                    self._run_sql("""
-                        DROP OPERATOR IF EXISTS {schema}.{oprname}
-                        ({nsp_left}.{typ_left}, {nsp_left}.{typ_left})
-                        """.format(
-                            schema=self._schema, oprname=opr,
-                            nsp_left=self._opr_ind_svec[opr]['nsp_left'],
-                            typ_left=self._opr_ind_svec[opr]['typ_left'],
-                            nsp_right=self._opr_ind_svec[opr]['nsp_right'],
-                            typ_right=self._opr_ind_svec[opr]['typ_right']
-                        ))
+            self._run_sql("DROP TYPE IF EXISTS {0}.{1}".format(self._schema, udt))
 
     def drop_changed_udf(self):
         """
@@ -315,32 +330,58 @@ class ChangeHandler(UpgradeBase):
             self._run_sql("DROP CAST IF EXISTS ({sourcetype} AS {targettype})".
                           format(sourcetype=self._udc[udc]['sourcetype'],
                                  targettype=self._udc[udc]['targettype']))
+
     def drop_traininginfo_4dt(self):
         """
-        @brief Drop the madlib.training_info table, which is no longer used since
+        @brief Drop the madlib.training_info table, which should no longer be used since
         the version 1.5
         """
         self._run_sql("DROP TABLE IF EXISTS {schema}.training_info".format(
             schema=self._schema))
 
+    def drop_changed_udo(self):
+        """
+        @brief Drop all operators (UDO) that were removed/updated in new version
+        """
+        for op in self._udo:
+            for value in self._udo[op]:
+                leftarg=value['leftarg'].replace('schema_madlib', self._schema)
+                rightarg=value['rightarg'].replace('schema_madlib', self._schema)
+                self._run_sql("""
+                    DROP OPERATOR IF EXISTS {schema}.{op} ({leftarg}, {rightarg})
+                    """.format(schema=self._schema, **locals()))
+
+    def drop_changed_udoc(self):
+        """
+        @brief Drop all operator classes (UDOC) that were removed/updated in new version
+        """
+        for op_cls in self._udoc:
+            for value in self._udoc[op_cls]:
+                index = value['index']
+                self._run_sql("""
+                    DROP OPERATOR CLASS IF EXISTS {schema}.{op_cls} USING {index}
+                    """.format(schema=self._schema, **locals()))
+
 class ViewDependency(UpgradeBase):
     """
     @brief This class detects the direct/recursive view dependencies on MADLib
-    UDFs/UDAs defined in the current version
+    UDFs/UDAs/UDOs defined in the current version
     """
     def __init__(self, schema, portid, con_args):
         UpgradeBase.__init__(self, schema, portid, con_args)
         self._view2proc = None
+        self._view2op = None
         self._view2view = None
         self._view2def = None
-        self._detect_direct_view_dependency()
+        self._detect_direct_view_dependency_udf_uda()
+        self._detect_direct_view_dependency_udo()
         self._detect_recursive_view_dependency()
         self._filter_recursive_view_dependency()
 
-    """
-    @brief  Detect direct view dependencies on MADLib UDFs/UDAs
-    """
-    def _detect_direct_view_dependency(self):
+    def _detect_direct_view_dependency_udf_uda(self):
+        """
+        @brief  Detect direct view dependencies on MADlib UDFs/UDAs
+        """
         rows = self._run_sql("""
             SELECT
                 view, nsp.nspname AS schema, procname, procoid, proisagg
@@ -375,7 +416,44 @@ class ViewDependency(UpgradeBase):
             key = (row['schema'], row['view'])
             self._view2proc[key].append(
                 (row['procname'], row['procoid'],
-                    True if row['proisagg'] == 't' else False))
+                    'UDA' if row['proisagg'] == 't' else 'UDF'))
+
+    def _detect_direct_view_dependency_udo(self):
+        """
+        @brief  Detect direct view dependencies on MADlib UDOs
+        """
+        rows = self._run_sql("""
+            SELECT
+                view, nsp.nspname AS schema, oprname, oproid
+            FROM
+                pg_namespace nsp,
+                (
+                    SELECT
+                        c.relname AS view,
+                        c.relnamespace AS namespace,
+                        p.oprname AS oprname,
+                        p.oid AS oproid
+                    FROM
+                        pg_class AS c,
+                        pg_rewrite AS rw,
+                        pg_depend AS d,
+                        pg_operator AS p
+                    WHERE
+                        c.oid = rw.ev_class AND
+                        rw.oid = d.objid AND
+                        d.classid = 'pg_rewrite'::regclass AND
+                        d.refclassid = 'pg_operator'::regclass AND
+                        d.refobjid = p.oid AND
+                        p.oprnamespace = {schema_madlib_oid}
+                ) t1
+            WHERE
+                t1.namespace = nsp.oid
+        """.format(schema_madlib_oid=self._schema_oid))
+
+        self._view2op = defaultdict(list)
+        for row in rows:
+            key = (row['schema'], row['view'])
+            self._view2op[key].append((row['oprname'], row['oproid'], "UDO"))
 
     """
     @brief  Detect recursive view dependencies (view on view)
@@ -431,12 +509,15 @@ class ViewDependency(UpgradeBase):
         # Get recursive dependee list
         dependeelist = []
         checklist = self._view2proc
+        checklist2 = self._view2op
+
+        dependeelist.extend(checklist2.keys())
         while True:
             dependeelist.extend(checklist.keys())
             new_checklist = defaultdict(bool)
             for depender in self._view2view.keys():
                 for dependee in self._view2view[depender]:
-                    if dependee in checklist:
+                    if dependee in checklist or dependee in checklist2:
                         new_checklist[depender] = True
                         break
             if len(new_checklist) == 0:
@@ -465,6 +546,12 @@ class ViewDependency(UpgradeBase):
             if hasProcDependency:
                 der2dee[view].extend(self._view2proc[view])
 
+        for view in self._view2op:
+            if view not in self._view2view:
+                der2dee[view] = []
+            if hasProcDependency:
+                der2dee[view].extend(self._view2op[view])
+
         graph = der2dee.copy()
         for der in der2dee:
             for dee in der2dee[der]:
@@ -476,7 +563,7 @@ class ViewDependency(UpgradeBase):
     @brief Check dependencies
     """
     def has_dependency(self):
-        return len(self._view2proc) > 0
+        return (len(self._view2proc) > 0) or (len(self._view2op) > 0)
 
     """
     @brief Get the ordered views for creation
@@ -507,14 +594,14 @@ class ViewDependency(UpgradeBase):
         ordered_views.reverse()
         return ordered_views
 
-    """
-    @brief Get the depended UDF/UDA signatures for comparison
-    """
-    def get_depended_func_signature(self, aggregate=True):
+    def get_depended_func_signature(self, tag='UDA'):
+        """
+        @brief Get the depended UDF/UDA signatures for comparison
+        """
         res = {}
         for procs in self._view2proc.values():
             for proc in procs:
-                if proc[2] is aggregate and (self._schema, proc) not in res:
+                if proc[2] == tag and (self._schema, proc) not in res:
                     funcinfo = self._get_function_info(proc[1])
                     signature = get_signature_for_compare(self._schema, proc[0],
                                                           funcinfo['rettype'],
@@ -522,11 +609,22 @@ class ViewDependency(UpgradeBase):
                     res[signature] = True
         return res
 
-    def get_proc_w_dependency(self, aggregate=True):
+    def get_depended_opr_oids(self):
+        """
+        @brief Get the depended UDO OIDs for comparison
+        """
+        res = set()
+        for depended_ops in self._view2op.values():
+            for op_entry in depended_ops:
+                res.add(op_entry[1])
+
+        return list(res)
+
+    def get_proc_w_dependency(self, tag='UDA'):
         res = []
         for procs in self._view2proc.values():
             for proc in procs:
-                if proc[2] is aggregate and (self._schema, proc) not in res:
+                if proc[2] == tag and (self._schema, proc) not in res:
                     res.append((self._schema, proc))
         res.sort()
         return res
@@ -535,14 +633,15 @@ class ViewDependency(UpgradeBase):
         """
         @brief Get dependent UDAs
         """
-        self.get_proc_w_dependency(aggregate=True)
+        self.get_proc_w_dependency(tag='UDA')
 
     def get_depended_udf(self):
         """
         @brief Get dependent UDFs
         """
-        self.get_proc_w_dependency(aggregate=False)
+        self.get_proc_w_dependency(tag='UDF')
 
+    # DEPRECATED ------------------------------------------------------------
     def save_and_drop(self):
         """
         @brief Save and drop the dependent views
@@ -568,6 +667,7 @@ class ViewDependency(UpgradeBase):
                 DROP VIEW IF EXISTS {schema}.{view}
                 """.format(schema=view[0], view=view[1]))
 
+    # DEPRECATED ------------------------------------------------------------
     def restore(self):
         """
         @brief Restore the dependent views
@@ -595,8 +695,12 @@ class ViewDependency(UpgradeBase):
         if len(node) == 2:
             res = '%s.%s' % (node[0], node[1])
         else:
-            res = '%s.%s{oid=%s,isagg=%s}' % (
-                self._schema, node[0], node[1], node[2])
+            node_type = 'uda'
+            if node[2] == 'UDO':
+                node_type = 'udo'
+            elif node[2] == 'UDF':
+                node_type = 'udf'
+            res = '%s.%s{oid=%s, %s}' % (self._schema, node[0], node[1], node_type)
         return res
 
     def _nodes_to_str(self, nodes):
@@ -625,6 +729,7 @@ class TableDependency(UpgradeBase):
         UpgradeBase.__init__(self, schema, portid, con_args)
         self._table2type = None
         self._detect_table_dependency()
+        self._detect_index_dependency()
 
     def _detect_table_dependency(self):
         """
@@ -657,11 +762,44 @@ class TableDependency(UpgradeBase):
             self._table2type[key].append(
                 (row['column'], row['type']))
 
+    def _detect_index_dependency(self):
+        """
+        @brief Detect the index dependencies on MADlib UDOCs
+        """
+        rows = self._run_sql(
+            """
+            select
+                s.idxname, s.oid as opcoid, nsp.nspname as schema, s.name as opcname
+            from
+                pg_namespace nsp
+            join
+            (
+            select
+                objid::regclass as idxname, c.relnamespace as namespace, oc.oid as oid,
+                oc.opcname as name
+            from
+                pg_depend d
+                join
+                pg_opclass oc
+                on (d.refclassid='pg_opclass'::regclass and d.refobjid = oc.oid)
+                join
+                pg_class c
+                on (c.oid = d.objid)
+            where oc.opcnamespace = {schema_madlib_oid} and c.relkind = 'i'
+            ) s
+            on (nsp.oid = s.namespace)
+                """.format(schema_madlib_oid=self._schema_oid))
+        self._index2opclass = defaultdict(list)
+        for row in rows:
+            key = (row['schema'], row['idxname'])
+            self._index2opclass[key].append(
+                (row['opcoid'], row['opcname']))
+
     def has_dependency(self):
         """
         @brief Check dependencies
         """
-        return len(self._table2type) > 0
+        return len(self._table2type) > 0 or len(self._index2opclass) > 0
 
     def get_depended_udt(self):
         """
@@ -674,6 +812,17 @@ class TableDependency(UpgradeBase):
                     res[typ] = True
         return res
 
+    def get_depended_udoc_oids(self):
+        """
+        @brief Get the list of depended UDOC OIDs
+        """
+        res = set()
+        for depended_opcs in self._index2opclass.values():
+            for opc_entry in depended_opcs:
+                res.add(opc_entry[0])
+
+        return list(res)
+
     def get_dependency_str(self):
         """
         @brief Get the dependencies in string for print
@@ -683,6 +832,10 @@ class TableDependency(UpgradeBase):
             for (col, udt) in self._table2type[table]:
                 res.append("{0}.{1}.{2} -> {3}".format(table[0], table[1], col,
                                                        udt))
+        for index in self._index2opclass:
+            for (oid, name) in self._index2opclass[index]:
+                res.append("{0}.{1} -> {3}(oid={4})".format(index[0], index[1], name, oid))
+
         return "\n\t\t\t\t".join(res)
 
 
@@ -698,9 +851,52 @@ class ScriptCleaner(UpgradeBase):
         self._existing_uda = None
         self._existing_udt = None
         self._aggregate_patterns = self._get_all_aggregate_patterns()
+        self._unchanged_operator_patterns = self._get_unchanged_operator_patterns()
+        self._unchanged_opclass_patterns = self._get_unchanged_opclass_patterns()
         # print("Number of existing UDAs = " + str(len(self._existing_uda)))
         # print("Number of UDAs to not create = " + str(len(self._aggregate_patterns)))
         self._get_existing_udt()
+
+    def _get_existing_udoc(self):
+        """
+        @brief Get the existing UDOCs in the current version
+        """
+        if self._portid == 'postgres':
+            method_col = 'opcmethod'
+        else:
+            method_col = 'opcamid'
+        rows = self._run_sql("""
+            SELECT
+                opcname, amname AS index
+            FROM
+                pg_opclass AS oc, pg_namespace AS ns, pg_am as am
+            WHERE
+                oc.opcnamespace = ns.oid AND
+                oc.{method_col} = am.oid AND
+                ns.nspname = '{schema}';
+            """.format(schema=self._schema.lower(), **locals()))
+        self._existing_udoc = defaultdict(list)
+        for row in rows:
+            self._existing_udoc[row['opcname']].append({'index': row['index']})
+
+    def _get_existing_udo(self):
+        """
+        @brief Get the existing UDOs in the current version
+        """
+        rows = self._run_sql("""
+            SELECT
+                oprname, oprleft::regtype, oprright::regtype
+            FROM
+                pg_operator AS o, pg_namespace AS ns
+            WHERE
+                o.oprnamespace = ns.oid AND
+                ns.nspname = '{schema}'
+            """.format(schema=self._schema.lower()))
+        self._existing_udo = defaultdict(list)
+        for row in rows:
+            self._existing_udo[row['oprname']].append(
+                    {'leftarg': row['oprleft'],
+                     'rightarg': row['oprright']})
 
     def _get_existing_uda(self):
         """
@@ -710,7 +906,7 @@ class ScriptCleaner(UpgradeBase):
             SELECT
                 max(proname) AS proname,
                 max(rettype) AS rettype,
-                array_to_string(array_agg(argtype order by i), ',') AS argument
+                array_to_string(array_agg(argtype order by i), ', ') AS argument
             FROM
             (
                 SELECT
@@ -743,6 +939,58 @@ class ScriptCleaner(UpgradeBase):
                                     {'rettype': row['rettype'],
                                      'argument': row['argument']})
 
+    def _get_unchanged_operator_patterns(self):
+        """
+        Creates a list of string patterns that represent all
+        'CREATE OPERATOR' statements not changed since the old version.
+
+        @return unchanged = existing - changed
+        """
+        self._get_existing_udo() # from the old version
+        operator_patterns = []
+        # for all, pass the changed ones, add others to ret
+        for each_udo, udo_details in self._existing_udo.items():
+            for each_item in udo_details:
+                if each_udo in self._ch.udo:
+                    if each_item in self._ch.udo[each_udo]:
+                        continue
+                p_arg_str = ''
+                # assuming binary ops
+                leftarg = self._rewrite_type_in(each_item['leftarg'])
+                rightarg = self._rewrite_type_in(each_item['rightarg'])
+                p_str = "CREATE\s+OPERATOR\s+{schema}\.{op_name}\s*\(" \
+                        "\s*leftarg\s*=\s*{leftarg}\s*," \
+                        "\s*rightarg\s*=\s*{rightarg}\s*," \
+                        ".*?\)\s*;".format(schema=self._schema.upper(),
+                                           op_name=re.escape(each_udo), **locals())
+                operator_patterns.append(p_str)
+        return operator_patterns
+
+    def _get_unchanged_opclass_patterns(self):
+        """
+        Creates a list of string patterns that represent all
+        'CREATE OPERATOR CLASS' statements not changed since the old version.
+
+        @return unchanged = existing - changed
+        """
+        self._get_existing_udoc() # from the old version
+        opclass_patterns = []
+        # for all, pass the changed ones, add others to ret
+        for each_udoc, udoc_details in self._existing_udoc.items():
+            for each_item in udoc_details:
+                if each_udoc in self._ch.udoc:
+                    if each_item in self._ch.udoc[each_udoc]:
+                        continue
+                p_arg_str = ''
+                # assuming binary ops
+                index = each_item['index']
+                p_str = "CREATE\s+OPERATOR\s+CLASS\s+{schema}\.{opc_name}" \
+                        ".*?USING\s+{index}" \
+                        ".*?;".format(schema=self._schema.upper(),
+                                      opc_name=each_udoc, **locals())
+                opclass_patterns.append(p_str)
+        return opclass_patterns
+
     def _get_all_aggregate_patterns(self):
         """
         Creates a list of string patterns that represent all possible
@@ -752,6 +1000,7 @@ class ScriptCleaner(UpgradeBase):
         """
         self._get_existing_uda()
         aggregate_patterns = []
+
         for each_uda, uda_details in self._existing_uda.iteritems():
             for each_item in uda_details:
                 if each_uda in self._ch.uda:
@@ -809,7 +1058,7 @@ class ScriptCleaner(UpgradeBase):
                 line = re.sub(pattern, '', line)
             res += line + '\n'
         self._sql = res.strip()
-        #self._sql = re.sub(pattern, '', self._sql).strip()
+        self._sql = re.sub(pattern, '', self._sql).strip()
 
     """
     @breif Remove "drop/create type" statements in the sql script
@@ -863,12 +1112,30 @@ class ScriptCleaner(UpgradeBase):
     """
     def _clean_operator(self):
         # remove 'drop operator'
-        pattern = re.compile('DROP(\s+)OPERATOR(.*?);', re.DOTALL | re.IGNORECASE)
+        pattern = re.compile('DROP\s+OPERATOR.*?PROCEDURE\s+=.*?;', re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
 
-        # remove 'create operator'
-        pattern = re.compile(r"""CREATE(\s+)OPERATOR(.*?);""", re.DOTALL | re.IGNORECASE)
+        # for create operator statements:
+        #   delete: unchanged, removed (not in the input sql anyway)
+        #   keep: new, changed
+        for p in self._unchanged_operator_patterns:
+            regex_pat = re.compile(p, re.DOTALL | re.IGNORECASE)
+            self._sql = re.sub(regex_pat, '', self._sql)
+
+    """
+    @brief Remove "drop/create operator class" statements in the sql script
+    """
+    def _clean_opclass(self):
+        # remove 'drop operator class'
+        pattern = re.compile(r'DROP\s+OPERATOR\s*CLASS.*?;', re.DOTALL | re.IGNORECASE)
         self._sql = re.sub(pattern, '', self._sql)
+
+        # for create operator class statements:
+        #   delete: unchanged, removed (not in the input sql anyway)
+        #   keep: new, changed
+        for p in self._unchanged_opclass_patterns:
+            regex_pat = re.compile(p, re.DOTALL | re.IGNORECASE)
+            self._sql = re.sub(regex_pat, '', self._sql)
 
     """
     @brief Rewrite the type
@@ -891,8 +1158,9 @@ class ScriptCleaner(UpgradeBase):
         self._sql = re.sub(re.compile('DROP(\s+)AGGREGATE(.*?);',
                                       re.DOTALL | re.IGNORECASE),
                            '', self._sql)
-        # remove all create aggregate statements except ones that should
-        #  be created as part of upgrade
+        # for create aggregate statements:
+        #   delete: unchanged, removed (not in the input sql anyway)
+        #   keep: new, changed
         for each_pattern in self._aggregate_patterns:
             regex_pat = re.compile(each_pattern, re.DOTALL | re.IGNORECASE)
             self._sql = re.sub(regex_pat, '', self._sql)
@@ -919,6 +1187,12 @@ class ScriptCleaner(UpgradeBase):
         self._clean_type()
         self._clean_cast()
         self._clean_operator()
+        self._clean_opclass()
         self._clean_aggregate()
         self._clean_function()
         return self._sql
+
+if __name__ == '__main__':
+    config = yaml.load(open('changelist.yaml'))
+    for obj in ('new module', 'udt', 'udc', 'udf', 'uda', 'udo', 'udoc'):
+        print config[obj]

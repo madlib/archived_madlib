@@ -480,13 +480,13 @@ CREATE AGGREGATE MADLIB_SCHEMA.array_avg(
 ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
-    source_table             TEXT,
-    output_table             TEXT,
-    dependent_varname        TEXT,
-    independent_varname      TEXT,
-    right_censoring_status   TEXT,
-    strata                   TEXT,
-    optimizer_params         TEXT
+    source_table             VARCHAR,
+    output_table             VARCHAR,
+    dependent_varname        VARCHAR,
+    independent_varname      VARCHAR,
+    right_censoring_status   VARCHAR,
+    strata                   VARCHAR,
+    optimizer_params         VARCHAR
 )
 RETURNS VOID AS $$
     PythonFunctionBodyOnly(`stats', `cox_prop_hazards')
@@ -516,7 +516,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 ----------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
-     message TEXT     -- usage string
+     message VARCHAR    -- usage string
 )
 RETURNS VARCHAR AS $$
 PythonFunction(stats, cox_prop_hazards, coxph_help_message)
@@ -529,12 +529,12 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
   * @brief Cox regression training function
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
-     source_table           TEXT     -- name of input  table
-   , output_table           TEXT     -- name of output table
-   , dependent_variable     TEXT     -- name of dependent variable
-   , independent_variable   TEXT     -- name of independent variable
-   , right_censoring_status  TEXT     -- censored status
-   , strata                 TEXT     -- stratification column names
+     source_table           VARCHAR  -- name of input  table
+   , output_table           VARCHAR  -- name of output table
+   , dependent_variable     VARCHAR  -- name of dependent variable
+   , independent_variable   VARCHAR  -- name of independent variable
+   , right_censoring_status VARCHAR  -- censored status
+   , strata                 VARCHAR  -- stratification column names
   )
 RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.coxph_train($1, $2, $3, $4, $5, $6, NULL)
@@ -547,11 +547,11 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
   * @brief Cox regression training function
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
-     source_table               TEXT       -- name of input  table
-   , output_table               TEXT       -- name of output table
-   , dependent_variable         TEXT       -- name of dependent variable
-   , independent_variable       TEXT       -- name of independent variable
-   , right_censoring_status     TEXT       -- censored status
+     source_table               VARCHAR     -- name of input  table
+   , output_table               VARCHAR     -- name of output table
+   , dependent_variable         VARCHAR     -- name of dependent variable
+   , independent_variable       VARCHAR     -- name of independent variable
+   , right_censoring_status     VARCHAR     -- censored status
   )
 RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.coxph_train($1, $2, $3, $4, $5, NULL)
@@ -564,10 +564,10 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
   * @brief Cox regression training function
  */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_train(
-     source_table               TEXT       -- name of input  table
-   , output_table                  TEXT       -- name of output table
-   , dependent_variable         TEXT       -- name of dependent variable
-   , independent_variable       TEXT       -- name of independent variable
+     source_table               VARCHAR     -- name of input  table
+   , output_table               VARCHAR     -- name of output table
+   , dependent_variable         VARCHAR     -- name of dependent variable
+   , independent_variable       VARCHAR     -- name of independent variable
   )
 RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.coxph_train($1, $2, $3, $4, 'TRUE')
@@ -655,8 +655,8 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
 ------------------------------------------------------------
 
-DROP TYPE IF EXISTS MADLIB_SCHEMA.coxph_new_result CASCADE;
-CREATE TYPE MADLIB_SCHEMA.coxph_new_result AS (
+DROP TYPE IF EXISTS MADLIB_SCHEMA.coxph_result CASCADE;
+CREATE TYPE MADLIB_SCHEMA.coxph_result AS (
     coef DOUBLE PRECISION[],
     logLikelihood DOUBLE PRECISION,
     std_err DOUBLE PRECISION[],
@@ -672,7 +672,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.compute_coxph_result(
     d2L     DOUBLE PRECISION[],
     nIter   INTEGER,
     stds    DOUBLE PRECISION[]
-) RETURNS MADLIB_SCHEMA.coxph_new_result AS
+) RETURNS MADLIB_SCHEMA.coxph_result AS
     'MODULE_PATHNAME', 'compute_coxph_result'
 LANGUAGE c IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
@@ -1098,56 +1098,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.cox_prop_hazards(
      usage_string VARCHAR                               -- usage string
 )
 RETURNS VARCHAR AS $$
-DECLARE
-insert_string       VARCHAR;
-BEGIN
-    RAISE WARNING $sql$This function has been deprecated. Please use 'coxph_train' instead.$sql$;
-    IF (usage_string = '') THEN
-    insert_string := '' ||
-    E'Summary \n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' Functionality: Cox proprtional hazards regression (Breslow method)\n' ||
-    E' SELECT {schema_madlib}.cox_prop_hazards(''source_table''  \n' ||
-    E'                                        ,''output_table''  \n' ||
-    E'                                        ,''dependent_variable'' \n' ||
-    E'                                        ,''independent_variable'' \n' ||
-    E'                                        ,''right_censoring_status''  \n' ||
-    E'                                        );\n' ||
-    E'For more details on function usage:  \n' ||
-    E'SELECT {schema_madlib}.cox_prop_hazards(''usage'') \n' ||
-    E'';
-  ELSIF (usage_string  = 'usage' OR usage_string = 'help' OR usage_string = '?') THEN
-    insert_string := '' ||
-    E'Usage\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' SELECT {schema_madlib}.cox_prop_hazards( \n' ||
-    E' ''source_table'',            -- Name of data table          \n' ||
-    E' ''output_table'',            -- Name of result table (overwrites if exists) \n' ||
-    E' ''dependent_variable'',      -- Name of column for dependent variables\n' ||
-    E' ''independent_variable'',    -- Name of column for independent variables\n' ||
-    E'                                  (can be any SQL expression Eg: ''*'') \n' ||
-    E' [''right_censoring_status'', -- Name of the column containing censoring status \n' ||
-    E'                                    0/false : If the observation is censored\n' ||
-    E'                                    1/true : otherwise\n' ||
-    E'                                Default is 1/true for all observations\n' ||
-    E'                                Can also be an SQL expression: ''dependent_variable < 10'') \n' ||
-    E' );\n' ||
-    E'\n'    ||
-    E'Output:\n' ||
-    E'-----------------------------------------------------------------------------------------\n' ||
-    E' The output table (''output_table'' above) has the following columns\n' ||
-    E' ''coef''    DOUBLE PRECISION[],  -- Coefficients of regression \n' ||
-    E' ''std_err''  DOUBLE PRECISION[], -- Standard errors\n' ||
-    E' ''z_stats''    DOUBLE PRECISION[], -- z-stats of the standard errors\n' ||
-    E' ''p_values'' DOUBLE PRECISION[], -- p-values of the standard errors\n' ||
-    E'\n' ||
-    E'';
-  ELSE
-    insert_string := 'No such option. Run SELECT {schema_madlib}.cox_prop_hazards()';
-  END IF;
-  RETURN insert_string;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE
+PythonFunction(stats, cox_prop_hazards, cox_prop_hazards)
+$$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
 

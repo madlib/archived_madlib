@@ -122,7 +122,7 @@ def ____run_sql_query(sql, show_error, portid=portid, con_args=con_args):
     if portid in ('greenplum', 'postgres', 'hawq'):
         # Define sqlcmd
         sqlcmd = 'psql'
-        delimiter = '|'
+        delimiter = ' <$madlib_delimiter$> '
 
         # Test the DB cmd line utility
         std, err = subprocess.Popen(['which', sqlcmd], stdout=subprocess.PIPE,
@@ -232,10 +232,7 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
         sub_module = os.path.splitext(os.path.basename(sqlfile))[0]
         __info(sub_module, False)
 
-        # Special treatment for new module and 'svec' module
-        if ((sub_module not in sc.get_change_handler().newmodule) and
-                not (sub_module == 'svec' and
-                     'svec' in sc.get_change_handler().udt)):
+        if sub_module not in sc.get_change_handler().newmodule:
             sql = open(tmpfile).read()
             sql = sc.cleanup(sql)
             open(tmpfile, 'w').write(sql)
@@ -587,7 +584,7 @@ def __db_upgrade(schema, dbrev):
     abort = False
     if td.has_dependency():
         __info("*"*50, True)
-        __info("\tFollowing user tables are dependent on updated MADlib types:", True)
+        __info("\tFollowing user tables/indexes are dependent on MADlib objects:", True)
         __info(td.get_dependency_str(), True)
         __info("*"*50, True)
         cd_udt = [udt for udt in td.get_depended_udt() if udt in ch.udt]
@@ -598,7 +595,6 @@ def __db_upgrade(schema, dbrev):
                 These objects need to be dropped before upgrading.
                 """.format('\n\t\t\t'.join(cd_udt)), False)
 
-            # TODO: Remove this after v1.3
             # we add special handling for 'linregr_result'
             if 'linregr_result' in cd_udt:
                 __info("""Dependency on 'linregr_result' could be due to objects
@@ -609,14 +605,25 @@ def __db_upgrade(schema, dbrev):
                         """, False)
             abort = True
 
+        c_udoc = ch.get_udoc_oids()
+        d_udoc = td.get_depended_udoc_oids()
+        cd_udoc = [udoc for udoc in d_udoc if udoc in c_udoc]
+        if len(cd_udoc) > 0:
+            __error("""
+                User has objects dependent on the following updated MADlib operator classes!
+                        oid={0}
+                These objects need to be dropped before upgrading.
+                """.format('\n\t\t\t'.join(cd_udoc)), False)
+            abort = True
+
     if vd.has_dependency():
         __info("*"*50, True)
-        __info("\tFollowing user views are dependent on updated MADlib objects:", True)
+        __info("\tFollowing user views are dependent on MADlib objects:", True)
         __info(vd.get_dependency_graph_str(), True)
         __info("*"*50, True)
 
         c_udf = ch.get_udf_signature()
-        d_udf = vd.get_depended_func_signature(False)
+        d_udf = vd.get_depended_func_signature('UDF')
         cd_udf = [udf for udf in d_udf if udf in c_udf]
         if len(cd_udf) > 0:
             __error("""
@@ -628,7 +635,7 @@ def __db_upgrade(schema, dbrev):
             abort = True
 
         c_uda = ch.get_uda_signature()
-        d_uda = vd.get_depended_func_signature(True)
+        d_uda = vd.get_depended_func_signature('UDA')
         cd_uda = [uda for uda in d_uda if uda in c_uda]
         if len(cd_uda) > 0:
             __error("""
@@ -639,36 +646,45 @@ def __db_upgrade(schema, dbrev):
                 """.format('\n\t\t\t\t\t'.join(cd_uda)), False)
             abort = True
 
+        c_udo = ch.get_udo_oids()
+        d_udo = vd.get_depended_opr_oids()
+        cd_udo = [udo for udo in d_udo if udo in c_udo]
+        if len(cd_udo) > 0:
+            __error("""
+                User has objects dependent on following updated MADlib operators!
+                    oid={0}
+                These objects will fail to work with the new operators and
+                need to be dropped before starting upgrade again.
+                """.format('\n\t\t\t\t\t'.join(cd_udo)), False)
+            abort = True
+
     if abort:
         __error('------- Upgrade aborted. -------', True)
     else:
         __info("No dependency problem found, continuing to upgrade ...", True)
-        if vd.has_dependency():
-            vd.save_and_drop()
+
+        # DEPRECATED ------------------------------------------------------------
+        # if vd.has_dependency():
+        #     vd.save_and_drop()
 
     __info("\tReading existing UDAs/UDTs...", False)
-    try:
-        sc = ScriptCleaner(schema, portid, con_args, ch)
-    except Exception as e:
-        __info(str(e), True)
-        raise e
+    sc = ScriptCleaner(schema, portid, con_args, ch)
     __info("Script Cleaner initialized ...", False)
 
-    # __info("\tChanged functions: " + str(ch.udf), True)
-    # __info("\tChanged aggregates: " + str(ch.uda), True)
-    # __info("\tChanged types: " + str(ch.udt), True)
-    # __info("\tChanged casts: " + str(ch.udc), True)
-
     ch.drop_changed_uda()
-    ch.drop_changed_udt()
+    ch.drop_changed_udoc()
+    ch.drop_changed_udo()
     ch.drop_changed_udc()
     ch.drop_changed_udf()
-    ch.drop_traininginfo_4dt()
+    ch.drop_changed_udt() # assume dependent udf for udt does not change
+    ch.drop_traininginfo_4dt() # used types: oid, text, integer, float
     __db_create_objects(schema, None, True, sc)
 
-    if vd.has_dependency():
-        vd.restore()
+    # if vd.has_dependency():
+    #     vd.restore()
+
     __info("MADlib %s upgraded successfully in %s schema." % (rev, schema.upper()), True)
+
 #------------------------------------------------------------------------------
 
 
@@ -809,8 +825,7 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
         # Execute all SQL files for the module
         for sqlfile in sql_files:
             algoname = os.path.basename(sqlfile).split('.')[0]
-            if ((hawq_debug or hawq_fresh) and
-                    algoname in ('svec')):
+            if portid == 'hawq' and algoname in ('svec'):
                 continue
 
             if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
@@ -1192,25 +1207,27 @@ def main(argv):
     ###
     # COMMAND: upgrade
     ###
-    if args.command[0] in ('upgrade', 'update') and portid != 'hawq':
+    if args.command[0] in ('upgrade', 'update'):
         __info("*** Upgrading MADlib ***", True)
         dbrev = __get_madlib_dbver(schema)
 
         # 1) Check DB version. If None, nothing to upgrade.
         if not dbrev:
-            __info("MADlib is not installed and there is nothing to upgrade.", True)
+            __info("MADlib is not installed in {schema} schema and there "
+                   "is nothing to upgrade. Please use install "
+                   "instead.".format(schema=schema.upper()),
+                   True)
             return
 
         # 2) Compare OS and DB versions. Continue if OS > DB.
         __print_revs(rev, dbrev, con_args, schema)
         if __get_rev_num(dbrev) >= __get_rev_num(rev):
-            __info("Current MADlib version already up to date.", True)
+            __info("Current MADlib version is already up-to-date.", True)
             return
 
-        # FIXME: Change this to get the previous version from a config file
         if float('.'.join(dbrev.split('.')[0:2])) < 1.0:
-            __info("""The version gap is too large, upgrade is supported only for
-                   packages greater than or equal to v1.0.""", True)
+            __info("The version gap is too large, upgrade is supported only for "
+                   "packages greater than or equal to v1.0.", True)
             return
 
         # 3) Run upgrade
