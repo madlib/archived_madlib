@@ -469,6 +469,7 @@ def __db_install(schema, dbrev, testcase):
             __info("***************************************************************************", True)
             __info("* Schema MADLIB already exists", True)
             __info("* For HAWQ, MADlib objects will be overwritten to the 'MADLIB' schema", True)
+            __info("* It may drop any database objects (tables, views, etc.) that depend on 'MADLIB' SCHEMA!!!!!!!!!!!!!", True)
             __info("***************************************************************************", True)
             __info("Would you like to continue? [Y/N]", True)
             go = raw_input('>>> ').upper()
