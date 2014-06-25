@@ -49,6 +49,21 @@ public:
     }
 };
 
+class Gamma {
+public:
+    static double variance(const double &mu) { return mu*mu; }
+    static double loglik(const double &y, const double &mu,
+            const double &psi) {
+        double theta = -1/mu;
+        double a = psi;
+        double b = -std::log(-theta);
+        double c = 1/psi*std::log(y/psi)-std::log(y)-lgamma(1/psi);
+
+	return (y * theta - b) / a + c;
+    }
+};
+
+
 } // namespace glm
 
 } // namespace modules

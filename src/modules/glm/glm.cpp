@@ -111,6 +111,35 @@ glm_gaussian_inverse_transition::run(AnyType& args) {
 }
 
 // ------------------------------------------------------------------------
+typedef GLMAccumulator<MutableRootContainer,Gamma,Log>
+    MutableGLMGammaLogState;
+
+AnyType
+glm_gamma_log_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMGammaLogState);
+}
+
+// ------------------------------------------------------------------------
+
+typedef GLMAccumulator<MutableRootContainer,Gamma,Identity>
+    MutableGLMGammaIdentityState;
+
+AnyType
+glm_gamma_identity_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMGammaIdentityState);
+}
+
+// ------------------------------------------------------------------------
+
+typedef GLMAccumulator<MutableRootContainer,Gamma,Inverse>
+    MutableGLMGammaInverseState;
+
+AnyType
+glm_gamma_inverse_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMGammaInverseState);
+}
+
+// ------------------------------------------------------------------------
 
 AnyType
 glm_merge_states::run(AnyType& args) {
@@ -159,6 +188,36 @@ glm_result_z_stats::run(AnyType& args) {
 // ------------------------------------------------------------------------
 
 AnyType
+glm_result_z_stats_dispersion::run(AnyType& args) {
+    if (args[0].isNull()) { return Null(); }
+
+    GLMState state = args[0].getAs<ByteString>();
+    GLMResult result(state);
+
+    result.std_err = result.std_err * sqrt(result.dispersion);
+    result.z_stats = result.coef.cwiseQuotient(result.std_err);
+
+    for (Index i = 0; i < state.num_features; i ++) {
+        result.p_values(i) = 2. * prob::cdf( prob::normal(), -std::abs(result.z_stats(i)));
+    }
+
+    AnyType tuple;
+    tuple << result.coef
+          << result.loglik
+          << result.std_err
+          << result.z_stats
+          << result.p_values
+          << result.num_rows_processed
+          << result.dispersion;
+
+    return tuple;
+}
+
+
+// ------------------------------------------------------------------------
+
+
+AnyType
 glm_result_t_stats::run(AnyType& args) {
     if (args[0].isNull()) { return Null(); }
 
@@ -202,6 +261,39 @@ glm_loglik_diff::run(AnyType& args) {
         if (a >= 0. || b >= 0.) { return 0.; } // probability = 1
         return std::abs(a - b) / std::min(std::abs(a), std::abs(b));
     }
+}
+
+// ------------------------------------------------------------------------
+
+AnyType glm_predict::run(AnyType &args) {
+    try {
+        args[0].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        throw std::runtime_error(
+            "GLM error: the coefficients contain NULL values");
+    }
+    // returns NULL if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    MappedColumnVector vec1 = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector vec2 = args[1].getAs<MappedColumnVector>();
+    char* link              = args[2].getAs<char*>();
+
+    if (vec1.size() != vec2.size())
+        throw std::runtime_error(
+            "Coefficients and independent variables are of incompatible length");
+    double dot = vec1.dot(vec2);
+
+    if (strcmp(link,"identity")==0) return(dot);
+    if (strcmp(link,"inverse")==0) return(1/dot);
+    if (strcmp(link,"log")==0) return(exp(dot));
+    if (strcmp(link,"sqrt")==0) return(dot*dot);
+
+    throw std::runtime_error("Invalid link function!");
 }
 
 } // namespace glm
