@@ -20,7 +20,7 @@ namespace glm {
 using namespace dbal;
 using namespace dbal::eigen_integration;
 
-template <class Container, class Family=Normal, class Link=Identity>
+template <class Container, class Family=Gaussian, class Link=Identity>
 class GLMAccumulator
   : public DynamicStruct<GLMAccumulator<Container,Family,Link>,Container> {
 public:
@@ -49,6 +49,9 @@ public:
     Matrix_type X_trans_W_X;
 
     Matrix_type xcov;
+
+    double_type dispersion;
+    double_type dispersion_accum; // to accumulate the dispersion
 };
 
 // ------------------------------------------------------------------------
@@ -67,6 +70,7 @@ public:
     MutableNativeColumnVector z_stats;
     MutableNativeColumnVector p_values;
     uint64_t num_rows_processed;
+    double dispersion;
 };
 
 } // namespace glm

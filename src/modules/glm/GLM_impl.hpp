@@ -43,6 +43,7 @@ GLMAccumulator<Container,Family,Link>::reset() {
     loglik = 0.;
     X_trans_W_Y.fill(0);
     X_trans_W_X.fill(0);
+    dispersion_accum = 0.;
 }
 
 /**
@@ -70,6 +71,8 @@ GLMAccumulator<Container,Family,Link>::bind(
         >> terminated
         >> loglik
         >> num_rows
+        >> dispersion
+        >> dispersion_accum
         >> X_trans_W_Y.rebind(actual_num_features)
         >> X_trans_W_X.rebind(actual_num_features, actual_num_features);
 
@@ -105,13 +108,14 @@ GLMAccumulator<Container,Family,Link>::operator<<(
     } else {
         // normal case
         if (beta.norm() == 0.) {
-            double mu = Family::init(y);
+            double mu = Link::init(y);
             double ita = Link::link_func(mu);
             double G_prime = Link::mean_derivative(ita);
             double V = Family::variance(mu);
             double w = G_prime * G_prime / V;
             // Note: we need to remove the placehoder for normal, gamma, etc.
-            loglik += Family::loglik(y, mu, 0.);
+            dispersion_accum += (y - mu) * (y - mu) / V;
+            loglik += Family::loglik(y, mu, dispersion);
             X_trans_W_X += x * trans(x) * w;
             X_trans_W_Y += x * w * ita;
         } else {
@@ -121,7 +125,8 @@ GLMAccumulator<Container,Family,Link>::operator<<(
             double V = Family::variance(mu);
             double w = G_prime * G_prime / V;
             // Note: we need to remove the placehoder for normal, gamma, etc.
-            loglik += Family::loglik(y, mu, 0.);
+            dispersion_accum += (y - mu) * (y - mu) / V;
+            loglik += Family::loglik(y, mu, dispersion);
             X_trans_W_X += x * trans(x) * w;
             X_trans_W_Y += x * (y - mu) * G_prime / V;
         }
@@ -154,6 +159,7 @@ GLMAccumulator<Container,Family,Link>::operator<<(
         loglik += inOther.loglik;
         X_trans_W_Y += inOther.X_trans_W_Y;
         X_trans_W_X += inOther.X_trans_W_X;
+        dispersion_accum += inOther.dispersion_accum;
     }
 
     return *this;
@@ -186,6 +192,7 @@ GLMAccumulator<Container,Family,Link>::apply() {
     } else {
         xcov = X_trans_W_X.inverse();
         beta += xcov * X_trans_W_Y;
+        dispersion = dispersion_accum / num_rows;
     }
 }
 
@@ -213,6 +220,7 @@ GLMResult::compute(const GLMAccumulator<Container>& state) {
 
     loglik = state.loglik;
     coef = state.beta;
+    dispersion = state.dispersion * state.num_rows / (state.num_rows - state.num_features);
     std_err = state.xcov.diagonal().cwiseSqrt();
     z_stats = coef.cwiseQuotient(std_err);
     for (Index i = 0; i < state.num_features; i ++) {

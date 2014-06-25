@@ -7,6 +7,7 @@
  *//* ----------------------------------------------------------------------- */
 
 #include <dbconnector/dbconnector.hpp>
+#include <modules/prob/student.hpp>
 
 #include "GLM_proto.hpp"
 #include "GLM_impl.hpp"
@@ -79,7 +80,36 @@ glm_poisson_sqrt_transition::run(AnyType& args) {
     DEFINE_GLM_TRANSITION(MutableGLMPoissonSqrtState);
 }
 
+// ------------------------------------------------------------
+
+typedef GLMAccumulator<MutableRootContainer,Gaussian,Log>
+    MutableGLMGaussianLogState;
+
+AnyType
+glm_gaussian_log_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMGaussianLogState);
+}
+
 // ------------------------------------------------------------------------
+
+typedef GLMAccumulator<MutableRootContainer,Gaussian,Identity>
+    MutableGLMGaussianIdentityState;
+
+AnyType
+glm_gaussian_identity_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMGaussianIdentityState);
+}
+
+// ------------------------------------------------------------------------
+
+typedef GLMAccumulator<MutableRootContainer,Gaussian,Inverse>
+    MutableGLMGaussianInverseState;
+
+AnyType
+glm_gaussian_inverse_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMGaussianInverseState);
+}
+
 // ------------------------------------------------------------------------
 
 AnyType
@@ -105,10 +135,9 @@ glm_final::run(AnyType& args) {
 }
 
 // ------------------------------------------------------------------------
-// ------------------------------------------------------------------------
 
 AnyType
-glm_result::run(AnyType& args) {
+glm_result_z_stats::run(AnyType& args) {
     if (args[0].isNull()) { return Null(); }
 
     GLMState state = args[0].getAs<ByteString>();
@@ -120,7 +149,43 @@ glm_result::run(AnyType& args) {
           << result.std_err
           << result.z_stats
           << result.p_values
-          << result.num_rows_processed;
+          << result.num_rows_processed
+          << result.dispersion;
+
+    return tuple;
+}
+
+
+// ------------------------------------------------------------------------
+
+AnyType
+glm_result_t_stats::run(AnyType& args) {
+    if (args[0].isNull()) { return Null(); }
+
+    GLMState state = args[0].getAs<ByteString>();
+    GLMResult result(state);
+
+    result.std_err = result.std_err * sqrt(result.dispersion);
+    result.z_stats = result.coef.cwiseQuotient(result.std_err);
+
+    for (Index i = 0; i < state.num_features; i++) {
+        result.p_values(i) = 2. * prob::cdf(
+                boost::math::complement(
+                    prob::students_t(
+                        static_cast<double>(state.num_rows - state.num_features)
+                        ),
+                    std::fabs(result.z_stats(i))
+                    ));
+    }
+
+    AnyType tuple;
+    tuple << result.coef
+          << result.loglik
+          << result.std_err
+          << result.z_stats
+          << result.p_values
+          << result.num_rows_processed
+          << result.dispersion;
 
     return tuple;
 }
