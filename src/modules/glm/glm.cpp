@@ -140,6 +140,46 @@ glm_gamma_inverse_transition::run(AnyType& args) {
 }
 
 // ------------------------------------------------------------------------
+typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Log>
+    MutableGLMInverse_gaussianLogState;
+
+AnyType
+glm_inverse_gaussian_log_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianLogState);
+}
+
+// ------------------------------------------------------------------------
+
+typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Identity>
+    MutableGLMInverse_gaussianIdentityState;
+
+AnyType
+glm_inverse_gaussian_identity_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianIdentityState);
+}
+
+// ------------------------------------------------------------------------
+
+typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Inverse>
+    MutableGLMInverse_gaussianInverseState;
+
+AnyType
+glm_inverse_gaussian_inverse_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianInverseState);
+}
+
+// ------------------------------------------------------------------------
+typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Sqr_inverse>
+    MutableGLMInverse_gaussianSqr_inverseState;
+
+AnyType
+glm_inverse_gaussian_sqr_inverse_transition::run(AnyType& args) {
+    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianSqr_inverseState);
+}
+
+// ------------------------------------------------------------------------
+
+
 
 AnyType
 glm_merge_states::run(AnyType& args) {
@@ -179,36 +219,7 @@ glm_result_z_stats::run(AnyType& args) {
           << result.z_stats
           << result.p_values
           << result.num_rows_processed
-          << result.dispersion;
-
-    return tuple;
-}
-
-
-// ------------------------------------------------------------------------
-
-AnyType
-glm_result_z_stats_dispersion::run(AnyType& args) {
-    if (args[0].isNull()) { return Null(); }
-
-    GLMState state = args[0].getAs<ByteString>();
-    GLMResult result(state);
-
-    result.std_err = result.std_err * sqrt(result.dispersion);
-    result.z_stats = result.coef.cwiseQuotient(result.std_err);
-
-    for (Index i = 0; i < state.num_features; i ++) {
-        result.p_values(i) = 2. * prob::cdf( prob::normal(), -std::abs(result.z_stats(i)));
-    }
-
-    AnyType tuple;
-    tuple << result.coef
-          << result.loglik
-          << result.std_err
-          << result.z_stats
-          << result.p_values
-          << result.num_rows_processed
-          << result.dispersion;
+          << 1.; // when z-stats is calculated, dispersion parameter is always 1
 
     return tuple;
 }
@@ -292,6 +303,7 @@ AnyType glm_predict::run(AnyType &args) {
     if (strcmp(link,"inverse")==0) return(1/dot);
     if (strcmp(link,"log")==0) return(exp(dot));
     if (strcmp(link,"sqrt")==0) return(dot*dot);
+    if (strcmp(link,"sqr_inverse")==0) return(1/sqrt(dot));
 
     throw std::runtime_error("Invalid link function!");
 }

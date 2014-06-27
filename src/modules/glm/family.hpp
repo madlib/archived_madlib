@@ -54,15 +54,28 @@ public:
     static double variance(const double &mu) { return mu*mu; }
     static double loglik(const double &y, const double &mu,
             const double &psi) {
-        double theta = -1/mu;
+        double theta = -1./mu;
         double a = psi;
         double b = -std::log(-theta);
-        double c = 1/psi*std::log(y/psi)-std::log(y)-lgamma(1/psi);
+        double c = 1./psi*std::log(y/psi)-std::log(y)-lgamma(1./psi);
 
 	return (y * theta - b) / a + c;
     }
 };
 
+class Inverse_gaussian {
+public:
+    static double variance(const double &mu) { return mu*mu*mu; }
+    static double loglik(const double &y, const double &mu,
+            const double &psi) {
+        double theta = 1./2/mu/mu;
+        double a = -psi;
+        double b = 1./mu;
+        double c = -1./(2*y*psi) - 1./2*std::log(2.*M_PI*y*y*y*psi);
+
+	return (y * theta - b) / a + c;
+    }
+};
 
 } // namespace glm
 

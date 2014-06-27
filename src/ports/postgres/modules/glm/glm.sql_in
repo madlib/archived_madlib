@@ -27,7 +27,7 @@ m4_include(`SQLCommon.m4')
 @brief Estimate generalized linear model (GLM).
 GLM is a flexible generalization of ordinary linear regression that allows for response variables that have error distribution models other than a normal distribution. The GLM generalizes linear regression by allowing the linear model to be related to the response variable via a link function and by allowing the magnitude of the variance of each measurement to be a function of its predicted value.
 
-Generalized linear models extends the oridinary linear regression by allowing for response variables that have arbitrary distributions (rather than simply Gaussian distributions), and for an arbitrary function of the response variable (the link function) to vary linearly with the predicted values (rather than assuming that the response itself must vary linearly). For example, data of counts would typically be modeled with a Poisson distribution and a log link, while the case of probability would typically be modeled with a Bernoulli distribution (or binomial distribution, depending on exactly how the problem is phrased) and a log-odds (or logit) link function. Currently, the implemented distribution families are gaussian distribution (with link functions, identity, inverse and log), possion distribution (with link functions log, identity and square-root) and gamma distribution (with link functions, inverse, identity and log).
+Generalized linear models extends the oridinary linear regression by allowing for response variables that have arbitrary distributions (rather than simply Gaussian distributions), and for an arbitrary function of the response variable (the link function) to vary linearly with the predicted values (rather than assuming that the response itself must vary linearly). For example, data of counts would typically be modeled with a Poisson distribution and a log link, while the case of probability would typically be modeled with a Bernoulli distribution (or binomial distribution, depending on exactly how the problem is phrased) and a log-odds (or logit) link function. Currently, the implemented distribution families are gaussian distribution (with link functions, identity, inverse and log), possion distribution (with link functions log, identity and square-root), gamma distribution (with link functions, inverse, identity and log) and inverse gaussian distribution (with link functions, inverse of square, inverse, identity and log).
 
 @anchor train
 @par Training Function
@@ -68,7 +68,8 @@ glm(source_table,
       <tr>
         <th>log_likelihood</th>
         <td>FLOAT8. The log-likelihood \f$ l(\boldsymbol \beta) \f$. We use the maximum likelihood estimate of
-            dispersion parameter while R and Python use deviance estimate and Pearson estimate respectively.</td>
+            dispersion parameter to calculate the log-likelihood while R and Python use deviance estimate and
+            Pearson estimate respectively.</td>
       </tr>
 
       <tr>
@@ -78,7 +79,7 @@ glm(source_table,
 
       <tr>
         <th>z_stats or t_stats</th>
-        <td>FLOAT8[]. Vector of the z-statistics (in Poisson distribtuion) or the t-statistics (in Gaussian and Gamma distributions) of the coefficients.</td>
+        <td>FLOAT8[]. Vector of the z-statistics (in Poisson distribtuion) or the t-statistics (other than Poisson distribution) of the coefficients.</td>
       </tr>
 
       <tr>
@@ -89,7 +90,7 @@ glm(source_table,
       <tr>
         <th>dispersion</th>
         <td>FLOAT8. The dispersion value (Pearson estimate). When family=poisson, the dispersion is
-        always 1, so this term is not output for Poisson.</td>
+        always 1.</td>
       </tr>
 
       <tr>
@@ -196,6 +197,8 @@ glm(source_table,
     exactly the same as the linear regression.
 
     (3) family=gamma and link=[inverse or identity or log].
+
+    (4) family=inverse_gaussian and link=[sqr_inverse or log or identity or inverse].
     </DD>
 
   <DT>grouping_col (optional)</DT>
@@ -460,6 +463,18 @@ Gamma Example (reuse the dataset in Gaussian case):
 -- Train a model with family=gamma and link=inverse (support MADlib has been installed in madlib schema)
 SELECT madlib.glm('abalone', 'abalone_out', 'rings', 'array[1, length, diameter, height, whole, shucked, viscera, shell]', 'family=gamma, link=inverse');
 </pre>
+
+Inverse Gaussian Example (reuse the dataset in Gaussian case):
+
+-# Example for family=inverse_gaussian
+<pre class="example">
+
+-- Reuse the test data set in Gaussian
+
+-- Train a model with family=inverse_gaussian and link=sqr_inverse (support MADlib has been installed in madlib schema)
+SELECT madlib.glm('abalone', 'abalone_out', 'rings', 'array[1, length, diameter, height, whole, shucked, viscera, shell]', 'family=inverse_gaussian, link=sqr_inverse');
+</pre>
+
 
 @anchor notes
 @par Notes
@@ -783,6 +798,118 @@ CREATE AGGREGATE MADLIB_SCHEMA.__glm_gamma_identity_agg(
 
 ------------------------------------------------------------------------
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_inverse_gaussian_identity_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'glm_inverse_gaussian_identity_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__glm_inverse_gaussian_identity_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8);
+CREATE AGGREGATE MADLIB_SCHEMA.__glm_inverse_gaussian_identity_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__glm_inverse_gaussian_identity_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__glm_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__glm_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_inverse_gaussian_log_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'glm_inverse_gaussian_log_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__glm_inverse_gaussian_log_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8);
+CREATE AGGREGATE MADLIB_SCHEMA.__glm_inverse_gaussian_log_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__glm_inverse_gaussian_log_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__glm_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__glm_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_inverse_gaussian_inverse_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'glm_inverse_gaussian_inverse_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__glm_inverse_gaussian_inverse_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8);
+CREATE AGGREGATE MADLIB_SCHEMA.__glm_inverse_gaussian_inverse_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__glm_inverse_gaussian_inverse_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__glm_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__glm_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_inverse_gaussian_sqr_inverse_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'glm_inverse_gaussian_sqr_inverse_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__glm_inverse_gaussian_sqr_inverse_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8);
+CREATE AGGREGATE MADLIB_SCHEMA.__glm_inverse_gaussian_sqr_inverse_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__glm_inverse_gaussian_sqr_inverse_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__glm_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__glm_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------------------
+
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_result_z_stats(
         /*+ state */ MADLIB_SCHEMA.bytea8)
 RETURNS MADLIB_SCHEMA.__glm_result_type
@@ -800,16 +927,6 @@ LANGUAGE C IMMUTABLE STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 ------------------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_result_z_stats_dispersion(
-        /*+ state */ MADLIB_SCHEMA.bytea8)
-RETURNS MADLIB_SCHEMA.__glm_result_type
-AS 'MODULE_PATHNAME', 'glm_result_z_stats_dispersion'
-LANGUAGE C IMMUTABLE STRICT
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
-
-------------------------------------------------------------------------
-
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_loglik_diff(
         /*+ state1 */ MADLIB_SCHEMA.bytea8,

@@ -50,6 +50,15 @@ public:
     static double mean_derivative(const double &ita) { return -1./(ita*ita); }
 };
 
+class Sqr_inverse
+{
+public:
+    static double init(const double &y) { return y == 0 ? 0.1 : y; }
+    static double link_func(const double &mu) { return 1./mu/mu; }
+    static double mean_func(const double &ita) { return 1./sqrt(ita); }
+    static double mean_derivative(const double &ita) { return -1./2/sqrt(ita*ita*ita); }
+};
+
 } // namespace glm
 
 } // namespace modules
