@@ -36,8 +36,8 @@ AnyType array_to_1d::run(AnyType & args) {
         allocateArray<double, dbal::FunctionContext,
             dbal::DoZero, dbal::ThrowBadAlloc>(in_array.size() + 2);
     // The fist two elements encode the dimension info
-    out_array[0] = in_array.sizeOfDim(0);
-    out_array[1] = in_array.sizeOfDim(1);
+    out_array[0] = static_cast<double>(in_array.sizeOfDim(0));
+    out_array[1] = static_cast<double>(in_array.sizeOfDim(1));
     memcpy(out_array.ptr() + 2, in_array.ptr(), sizeof(double) * in_array.size());
 
     return out_array;

@@ -45,7 +45,7 @@ template <class Container>
 inline void ClusteredState<Container>::bind(ByteStream_type& inStream)
 {
     inStream >> numRows >> widthOfX >> numCategories >> refCategory;
-    uint16_t actualWidthOfX = widthOfX.isNull() ? 0 : static_cast<uint16_t>(widthOfX);
+    uint16_t actualWidthOfX = widthOfX.isNull() ? static_cast<uint16_t>(0) : static_cast<uint16_t>(widthOfX);
     inStream >> coef.rebind(actualWidthOfX)
              >> meat_half.rebind(1, actualWidthOfX)
              >> bread.rebind(actualWidthOfX, actualWidthOfX);

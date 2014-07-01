@@ -202,7 +202,7 @@ AnyType clustered_compute_stats (AnyType& args,
     const MappedColumnVector& breadvec = args[2].getAs<MappedColumnVector>();
     int mcluster = args[3].getAs<int>();
     int numRows = args[4].getAs<int>();
-    int k =  coef.size();
+    int k = static_cast<int>(coef.size());
     Matrix bread(k,k);
     Matrix meat(k,k);
     int count = 0;

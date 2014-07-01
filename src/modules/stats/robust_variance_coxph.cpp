@@ -250,7 +250,7 @@ AnyType rb_coxph_step_final::run(AnyType& args)
         state.hessian, EigenvaluesOnly, ComputePseudoInverse);
     Matrix inverse_of_hessian = decomposition.pseudoInverse();
 
-    Matrix sandwich = inverse_of_hessian * state.M * inverse_of_hessian;
+    Matrix sandwich(inverse_of_hessian * state.M * inverse_of_hessian);
     ColumnVector sig = sandwich.diagonal();
 
     MutableNativeColumnVector std_err(
@@ -475,7 +475,7 @@ AnyType rb_sum_strata_final::run(AnyType& args)
         state.hessian, EigenvaluesOnly, ComputePseudoInverse);
     Matrix inverse_of_hessian = decomposition.pseudoInverse();
 
-    Matrix sandwich = inverse_of_hessian * state.M * inverse_of_hessian;
+    Matrix sandwich(inverse_of_hessian * state.M * inverse_of_hessian);
     ColumnVector sig = sandwich.diagonal();
 
     MutableNativeColumnVector std_err(

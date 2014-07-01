@@ -342,15 +342,15 @@ Datum sketch_leftmost_zero(PG_FUNCTION_ARGS);
  * the C99 standard.
  */
 #pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wsign-compare"
 #endif
+#pragma GCC diagnostic ignored "-Wsign-compare"
 Datum sketch_rightmost_one(PG_FUNCTION_ARGS)
 {
     bytea *bitmap = (bytea *)PG_GETARG_BYTEA_P(0);
     size_t sketchsz = PG_GETARG_INT32(1);          /* size in bits */
     size_t sketchnum = PG_GETARG_INT32(2);          /* from the left! */
     char * bits = VARDATA(bitmap);
-    size_t len = (size_t)VARSIZE_ANY_EXHDR(bitmap);
+    size_t len = (size_t)(VARSIZE_ANY_EXHDR(bitmap));
 
     return rightmost_one((uint8 *)bits, len, sketchsz, sketchnum);
 }
@@ -361,7 +361,7 @@ Datum sketch_leftmost_zero(PG_FUNCTION_ARGS)
     size_t sketchsz = PG_GETARG_INT32(1);          /* size in bits */
     size_t sketchnum = PG_GETARG_INT32(2);          /* from the left! */
     char * bits = VARDATA(bitmap);
-    size_t len = (size_t)VARSIZE_ANY_EXHDR(bitmap);
+    size_t len = (size_t)(VARSIZE_ANY_EXHDR(bitmap));
 
     return leftmost_zero((uint8 *)bits, len, sketchsz, sketchnum);
 }

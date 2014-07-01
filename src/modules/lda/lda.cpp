@@ -147,7 +147,7 @@ template<class T> static T __max(ArrayHandle<T> ah){
  **/
 static int32_t __sum(ArrayHandle<int32_t> ah){
     const int32_t * array = ah.ptr();
-    int32_t size = ah.size();
+    size_t size = ah.size();
     return std::accumulate(array, array + size, static_cast<int32_t>(0));
 }
 
@@ -244,8 +244,8 @@ AnyType lda_gibbs_sample::run(AnyType & args)
         throw std::runtime_error("args.mSysInfo->user_fctx is null");
     }
 
-    int32_t unique_word_count = words.size();
-    for(int it = 0; it < iter_num; it++){
+    int32_t unique_word_count = static_cast<int32_t>(words.size());
+    for(int32_t it = 0; it < iter_num; it++){
         int32_t word_index = topic_num;
         for(int32_t i = 0; i < unique_word_count; i++) {
             int32_t wordid = words[i];
@@ -296,7 +296,7 @@ AnyType lda_random_assign::run(AnyType & args)
             INT4TI.align));
 
     for(int32_t i = 0; i < word_count; i++){
-        int32_t topic = random() % topic_num;
+        int32_t topic = static_cast<int32_t>(random() % topic_num);
         doc_topic[topic] += 1;
         doc_topic[topic_num + i] = topic;  
     }
@@ -363,7 +363,7 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
         state = args[0].getAs<MutableArrayHandle<int64_t> >();
     }
 
-    int32_t unique_word_count = words.size();
+    int32_t unique_word_count = static_cast<int32_t>(words.size());
     int32_t word_index = 0;
     for(int32_t i = 0; i < unique_word_count; i++){
         int32_t wordid = words[i];
@@ -410,8 +410,8 @@ AnyType lda_transpose::run(AnyType & args)
     if(matrix.dims() != 2)
         throw std::domain_error("invalid dimension");
 
-    int32_t row_num  = matrix.sizeOfDim(0);
-    int32_t col_num  = matrix.sizeOfDim(1);
+    int32_t row_num = static_cast<int32_t>(matrix.sizeOfDim(0));
+    int32_t col_num = static_cast<int32_t>(matrix.sizeOfDim(1));
         
     int dims[2] = {col_num, row_num};
     int lbs[2] = {1, 1};
@@ -453,8 +453,8 @@ void * lda_unnest::SRF_init(AnyType &args)
 
     sr_ctx * ctx = new sr_ctx;
     ctx->inarray = inarray.ptr();
-    ctx->maxcall = inarray.sizeOfDim(0);
-    ctx->dim = inarray.sizeOfDim(1);
+    ctx->maxcall = static_cast<int32_t>(inarray.sizeOfDim(0));
+    ctx->dim = static_cast<int32_t>(inarray.sizeOfDim(1));
     ctx->curcall = 0;
 
     return ctx;
@@ -552,9 +552,12 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
         if(__min(model) < 0)
             throw std::invalid_argument("invalid topic counts in model");
 
-        state =  madlib_construct_array(
-            NULL, model.size() + 1, INT8TI.oid, INT8TI.len, INT8TI.byval,
-            INT8TI.align);
+        state =  madlib_construct_array(NULL,
+                                        static_cast<int>(model.size()) + 1,
+                                        INT8TI.oid,
+                                        INT8TI.len,
+                                        INT8TI.byval,
+                                        INT8TI.align);
 
         memcpy(state.ptr(), model.ptr(),  model.size() * sizeof(int64_t));
     }else{
@@ -625,7 +628,7 @@ AnyType l1_norm_with_smoothing::run(AnyType & args){
     double sum = 0.0;
     for(size_t i = 0; i < arr.size(); i++)
         sum += fabs(arr[i]);
-    sum += smooth * arr.size();
+    sum += smooth * static_cast<double>(arr.size());
 
     double inverse_sum = 0.0;
     if (sum != 0.0)

@@ -566,7 +566,7 @@ AnyType mLogstateToResult(
     int ref_category = state.ref_category;
     const HandleMap<const ColumnVector, TransparentHandle<double> > &inCoef = state.coef;
     double logLikelihood = state.logLikelihood;
-    int num_processed = state.numRows;
+    uint64_t num_processed = state.numRows;
 
     // Per the hack at the end of the final function we place the inverse
     // of the X_tranp_AX into the state.X_transp_AX
@@ -667,9 +667,9 @@ mlogregr_robust_step_transition::run(AnyType &args) {
     }
 
     // Get the category & numCategories as integer
-    int16_t category = args[1].getAs<int>();
+    int16_t category = static_cast<int16_t>(args[1].getAs<int>());
     // Number of categories after pivoting (We pivot around the first category)
-    int16_t numCategories = (args[2].getAs<int>() - 1);
+    int16_t numCategories = static_cast<int16_t>(args[2].getAs<int>() - 1);
     int32_t ref_category = args[3].getAs<int32_t>();
 	MappedMatrix coefMat = args[5].getAs<MappedMatrix>();
 

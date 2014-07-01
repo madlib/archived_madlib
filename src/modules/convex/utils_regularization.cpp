@@ -131,8 +131,8 @@ AnyType utils_var_scales_final::run (AnyType& args)
 
     if (state.numRows == 0) return Null();
 
-    state.mean /= state.numRows;
-    state.std /= state.numRows;
+    state.mean /= static_cast<double>(state.numRows);
+    state.std /= static_cast<double>(state.numRows);
     for (uint32_t i = 0; i < state.dimension; i++)
         state.std(i) = sqrt(state.std(i) - state.mean(i) * state.mean(i));
 

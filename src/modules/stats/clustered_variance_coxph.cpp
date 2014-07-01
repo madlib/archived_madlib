@@ -197,7 +197,7 @@ AnyType coxph_compute_clustered_stats::run(AnyType& args)
         hessian.transpose(), EigenvaluesOnly, ComputePseudoInverse);
     Matrix inverse_of_hessian = decomposition.pseudoInverse();
 
-    Matrix sandwich = inverse_of_hessian * (matA * matA.transpose()) * inverse_of_hessian;
+    Matrix sandwich(inverse_of_hessian * (matA * matA.transpose()) * inverse_of_hessian);
     ColumnVector sig = sandwich.diagonal();
 
     MutableNativeColumnVector std_err(

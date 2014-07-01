@@ -208,15 +208,15 @@ margins_coxph_int_transition::run(AnyType &args) {
     MappedColumnVector basis_indices = args[4].getAs<MappedColumnVector>();
 
     // all variable symbols correspond to the design document
-    const uint16_t N = beta.size();
-    const uint16_t M = basis_indices.size();
+    const uint16_t N = static_cast<uint16_t>(beta.size());
+    const uint16_t M = static_cast<uint16_t>(basis_indices.size());
     assert(N >= M);
 
     Matrix J;  // J: N x M
     if (args[5].isNull()){
         J = Matrix::Zero(N, M);
         for (Index i = 0; i < M; ++i)
-            J(basis_indices(i), i) = 1;
+            J(static_cast<Index>(basis_indices(i)), i) = 1;
     } else{
         J = args[5].getAs<MappedMatrix>();
     }
@@ -234,7 +234,7 @@ margins_coxph_int_transition::run(AnyType &args) {
         } catch (const ArrayWithNullException &e) {
              throw std::runtime_error("The categorical indices contain NULL values");
         }
-        numCategoricalVars = categorical_indices.size();
+        numCategoricalVars = static_cast<uint16_t>(categorical_indices.size());
     }
 
     if (state.numRows == 0) {
@@ -249,12 +249,12 @@ margins_coxph_int_transition::run(AnyType &args) {
             for (Index i = 0; i < basis_indices.size(); ++i){
                 for (Index j = 0; j < categorical_indices.size(); ++j){
                     if (basis_indices(i) == categorical_indices(j)){
-                        tmp_cat_basis_indices.push_back(i);
+                        tmp_cat_basis_indices.push_back(static_cast<uint16_t>(i));
                         continue;
                     }
                 }
             }
-            state.numCategoricalVarsInSubset = tmp_cat_basis_indices.size();
+            state.numCategoricalVarsInSubset = static_cast<uint16_t>(tmp_cat_basis_indices.size());
         }
 
         state.initialize(*this,
@@ -324,8 +324,8 @@ margins_coxph_int_transition::run(AnyType &args) {
             f_set = f;
             f_unset = f;
             for (Index j=0; j < shortened_f_set.size(); ++j){
-                f_set(categorical_indices(j)) = shortened_f_set(j);
-                f_unset(categorical_indices(j)) = shortened_f_unset(j);
+                f_set(static_cast<Index>(categorical_indices(j))) = shortened_f_set(j);
+                f_unset(static_cast<Index>(categorical_indices(j))) = shortened_f_unset(j);
             }
         } else {
             f_set = shortened_f_set;
@@ -389,7 +389,7 @@ margins_coxph_int_final::run(AnyType &args) {
     // We divide by numRows^2 since we need the average variance
     ColumnVector std_err =
         variance.cwiseProduct(state.delta).rowwise().sum();
-    std_err = std_err.array().sqrt() / state.numRows;
+    std_err = std_err.array().sqrt() / static_cast<double>(state.numRows);
 
     MutableNativeColumnVector tStats(this->allocateArray<double>(state.numBasis));
     MutableNativeColumnVector pValues(this->allocateArray<double>(state.numBasis));
@@ -426,7 +426,7 @@ margins_compute_stats::run(AnyType &args) {
 
     MappedColumnVector marginal_effects = args[0].getAs<MappedColumnVector>();
     MappedColumnVector std_err = args[1].getAs<MappedColumnVector>();
-    uint16_t n_basis_terms = marginal_effects.size();
+    uint16_t n_basis_terms = static_cast<uint16_t>(marginal_effects.size());
     MutableNativeColumnVector tStats(
         (*this).allocateArray<double>(n_basis_terms));
     MutableNativeColumnVector pValues(

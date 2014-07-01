@@ -2,7 +2,7 @@
  *
  * @file arima.cpp
  *
- * @brief ARIMA 
+ * @brief ARIMA
  *
  * @date Aug 21, 2013
  *//* ----------------------------------------------------------------------- */
@@ -47,7 +47,7 @@ static type_info FLOAT8TI(FLOAT8OID);
 
 AnyType arima_residual::run (AnyType & args)
 {
-    int32_t distid = args[0].getAs<int32_t>(); 
+    int32_t distid = args[0].getAs<int32_t>();
     ArrayHandle<double> tvals = args[1].getAs<ArrayHandle<double> >();
     int p = args[2].getAs<int>();
     int d = args[3].getAs<int>();
@@ -65,7 +65,8 @@ AnyType arima_residual::run (AnyType & args)
     if(q > 0)
         prez = args[8].getAs<ArrayHandle<double> >();
 
-    int ret_size = (distid == 1) ? (tvals.size()+d) : (tvals.size()-p);    
+    int ret_size = static_cast<int>((distid == 1) ? \
+            (tvals.size()+d) : (tvals.size()-p));
     MutableArrayHandle<double> res(
         madlib_construct_array(
             NULL, ret_size, FLOAT8TI.oid,
@@ -77,7 +78,7 @@ AnyType arima_residual::run (AnyType & args)
             double err = tvals[i] - mean;
             for(int j = 0; j < p; j++)
                 err -= phi[j] * (tvals[i - j - 1] - mean);
-            // note that for distid = 1, the first p residuals 
+            // note that for distid = 1, the first p residuals
             // will always be 0
             res[(distid == 1) ? i+d : (i - p)] = err;
         }
@@ -104,7 +105,7 @@ AnyType arima_residual::run (AnyType & args)
                     err -= theta[j] * errs[t-p+q-j-1];
             errs[(distid == 1) ? (t+q+d) : (t - p + q)] = err;
         }
-        memcpy(res.ptr(), errs + q, ret_size * sizeof(double)); 
+        memcpy(res.ptr(), errs + q, ret_size * sizeof(double));
         delete[] errs;
     }
 
@@ -134,23 +135,23 @@ static int * diff_coef (int d)
 AnyType arima_diff::run (AnyType & args)
 {
     ArrayHandle<double> tvals = args[0].getAs<ArrayHandle<double> >();
-    int32_t d  = args[1].getAs<int32_t>();
-    int sz = tvals.size() - d;
+    uint32_t d  = args[1].getAs<uint32_t>();
+    int sz = static_cast<int>(tvals.size() - d);
     MutableArrayHandle<double> diffs(
         madlib_construct_array(
             NULL, sz, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
-    
-    // get diff coef
-    int * coef = diff_coef(d);
 
-    // in-place diff 
-    for(int i = tvals.size() - 1; i >= d; i--){
+    // get diff coef
+    int* coef = diff_coef(d);
+
+    // in-place diff
+    for(size_t i = tvals.size() - 1; i >= d; i--){
         diffs[i-d] = 0;
-        for(int j = 0; j <=d; j++)
-            diffs[i-d] += coef[j] * tvals[i - j]; 
+        for(size_t j = 0; j <=d; j++)
+            diffs[i-d] += coef[j] * tvals[i - j];
         // tvals[i] = diff;
     }
-    
+
     // // set the first d elements to zero
     // for(int i = 0; i < d; i++)
     //     tvals[i] = 0;
@@ -162,21 +163,24 @@ AnyType arima_diff::run (AnyType & args)
 // ----------------------------------------------------------------------
 
 AnyType arima_adjust::run (AnyType & args)
-{  
+{
     int distid = args[0].getAs<int>();
 
     if (distid == 1) return args[1];
-        
+
     ArrayHandle<double> cur_tvals = args[1].getAs<ArrayHandle<double> >();
     ArrayHandle<double> pre_tvals = args[2].getAs<ArrayHandle<double> >();
     int32_t p  = args[3].getAs<int32_t>();
 
-    // note that curr_tvals.size() could be different with prez_tvals.size() 
+    // note that curr_tvals.size() could be different with prez_tvals.size()
     MutableArrayHandle<double> res(
-        madlib_construct_array(
-            NULL, cur_tvals.size() + p, FLOAT8TI.oid,
-            FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
-    
+        madlib_construct_array(NULL,
+                               static_cast<int>(cur_tvals.size() + p),
+                               FLOAT8TI.oid,
+                               FLOAT8TI.len,
+                               FLOAT8TI.byval,
+                               FLOAT8TI.align));
+
     // fill in the last p values from the previous tvals
     for(int i = 0; i < p; i++)
         res[i] = pre_tvals[pre_tvals.size() - p + i];
@@ -195,13 +199,13 @@ AnyType arima_lm_delta::run (AnyType & args)
     MappedColumnVector g = args[1].getAs<MappedColumnVector>();
     double u = args[2].getAs<double>();
 
-    int l = g.size();
+    size_t l = g.size();
     Matrix m_jj(jj);
     m_jj.resize(l, l);
- 
+
     Matrix a = m_jj.diagonal().asDiagonal();
     a = m_jj.transpose() + u * a;
-    
+
     ColumnVector x = a.lu().solve(g);
     return x;
 }
@@ -220,12 +224,12 @@ AnyType arima_lm::run (AnyType & args)
     ArrayHandle<double> theta(NULL);
     if (q > 0)
         theta = args[5].getAs<ArrayHandle<double> >();
-    
+
     bool include_mean = true;
     double mean = 0.0;
     if (args[6].isNull())
         include_mean = false;
-    else 
+    else
         mean = args[6].getAs<double>();
 
     int l = p + q;
@@ -247,10 +251,10 @@ AnyType arima_lm::run (AnyType & args)
             prez = args[7].getAs<MutableArrayHandle<double> >();
             prej = args[8].getAs<MutableArrayHandle<double> >();
         }
-    } 
-    
+    }
+
     // minus the mean
-    if (include_mean) 
+    if (include_mean)
         for(size_t i = 0; i < tvals.size(); i++)
             tvals[i] -= mean;
 
@@ -294,7 +298,7 @@ AnyType arima_lm::run (AnyType & args)
                 jacob[p + i] -= theta[j] * prej[(q - j - 1) * l + p + i];
         }
 
-        // compute the partial derivatives over mean 
+        // compute the partial derivatives over mean
         if (include_mean) {
             jacob[p + q] = 1;
             for(int i = 0; i < p; i++)
@@ -324,9 +328,9 @@ AnyType arima_lm::run (AnyType & args)
             for(int j = 0; j < l; j++)
                 jj[i * l + j] += jacob[i] * jacob[j];
 
-        // update jz        
+        // update jz
         for(int i = 0; i < l; i++)
-            jz[i] += jacob[i] * err; 
+            jz[i] += jacob[i] * err;
 
         // delete jacob
         if(jacob) delete[] jacob;
@@ -344,7 +348,7 @@ AnyType arima_lm_result_sfunc::run (AnyType& args)
     ArrayHandle<double> jj = args[1].getAs<ArrayHandle<double> >();
     ArrayHandle<double> jz = args[2].getAs<ArrayHandle<double> >();
     double z2 = args[3].getAs<double>();
-    int l = jz.size();
+    int l = static_cast<int>(jz.size());
     int l2 = l*l;
 
     MutableArrayHandle<double> state(NULL);
@@ -356,7 +360,7 @@ AnyType arima_lm_result_sfunc::run (AnyType& args)
         // state[l*l+l+1]           - l
         state = madlib_construct_array(NULL, l2+l+2, FLOAT8TI.oid,
                                        FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
-        
+
         for (int i = 0; i < l2; i++) state[i] = jj[i];
         for (int i = 0; i < l; i++) state[l2 + i] = jz[i];
         state[l2 + l] = z2;
@@ -404,7 +408,7 @@ AnyType arima_lm_result_ffunc::run (AnyType& args)
         if (jj[ll] > mx)
             mx = jj[ll];
     }
-    
+
     MutableArrayHandle<double> arr_jj(
         madlib_construct_array(
             NULL, l*l, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
@@ -422,7 +426,7 @@ AnyType arima_lm_result_ffunc::run (AnyType& args)
 
 // ----------------------------------------------------------------------
 
-static double error(int tid, const double * tvals, int p, int q, 
+static double error(int tid, const double * tvals, int p, int q,
                     const double * phi, const double * theta, const double * prez)
 {
     double err = 0.0;
@@ -431,7 +435,7 @@ static double error(int tid, const double * tvals, int p, int q,
         for(int i = 0; i < p; i++)
             err -= phi[i] * tvals[p - i - 1];
         for(int i = 0; i < q; i++)
-            err -= theta[i] * prez[q - i - 1]; 
+            err -= theta[i] * prez[q - i - 1];
     }
 
     return err;
@@ -439,7 +443,7 @@ static double error(int tid, const double * tvals, int p, int q,
 
 // ----------------------------------------------------------------------
 
-static double error(int tid, const double * tvals, int p, int q, 
+static double error(int tid, const double * tvals, int p, int q,
                     double * phi, double * theta, const double * prez,
                     double delta, int pos1, int pos2, int sign1, int sign2)
 {
@@ -450,7 +454,7 @@ static double error(int tid, const double * tvals, int p, int q,
             phi[pos1] += sign1 * delta;
         else if (pos1 < p + q)
             theta[pos1-p] += sign1 * delta;
-        else 
+        else
             dmean = sign1 * delta;
     } else {
         if (pos1 < p)
@@ -474,7 +478,7 @@ static double error(int tid, const double * tvals, int p, int q,
         for (int i = 0; i < p; i++)
             err -= phi[i] * (tvals[p - i - 1] - dmean);
         for (int i = 0; i < q; i++)
-            err -= theta[i] * prez[q - i - 1]; 
+            err -= theta[i] * prez[q - i - 1];
     }
 
     // Restore the original coefficients
@@ -537,11 +541,11 @@ AnyType arima_lm_stat_sfunc::run (AnyType& args)
             tvals[i] -= mean;
 
     MutableArrayHandle<double> state(NULL);
-    
+
     if (args[0].isNull()) {
         // Eqs. (1.2.21, 1.2.22) tells how many Z^2 are needed
         // Also Hessian is symmetric
-        int sz = (2 * l * l + 1) * (1 + q) + 4; 
+        int sz = (2 * l * l + 1) * (1 + q) + 4;
         // state[0]                     -- l
         // state[1]                     -- delta
         // state[2]                     -- N
@@ -572,14 +576,14 @@ AnyType arima_lm_stat_sfunc::run (AnyType& args)
     // The one without delta
     int prez_offset = 4 + 2 * l * l;
     for (size_t t = p; t < tvals.size(); t++) {
-        int dtid = (distid == 1) ? (1+t) : (p+1);
-        int dtv = t - p;
+        int dtid = static_cast<int>((distid == 1) ? (1+t) : (p+1));
+        int dtv = static_cast<int>(t - p);
         double * prez = state.ptr() + prez_offset;
 
         double err = error(dtid, tvals.ptr()+dtv, p, q, phi.ptr(), theta.ptr(), prez);
         state[3] += err * err;
-        update_prez(prez, q, err); 
-        
+        update_prez(prez, q, err);
+
         // The others with delta
         int count = 0;
         for (int i = 0; i < l; i++) {
@@ -601,15 +605,14 @@ AnyType arima_lm_stat_sfunc::run (AnyType& args)
                         update_prez(prez, q, err);
                     }
                     count += 4;
-                } 
+                }
             }
         }
     }
 
-    if (distid == 1)
-        state[2] += tvals.size();
-    else
-        state[2] += tvals.size() - p;
+    if (distid == 1) { state[2] += static_cast<double>(tvals.size()); }
+    else { state[2] += static_cast<double>(tvals.size() - p); }
+
     return state;
 }
 
@@ -638,7 +641,7 @@ AnyType arima_lm_stat_ffunc::run (AnyType& args)
             if(j == i) {
                 hessian[l * i + i] = (state[4 + i * 2] - 2 * z2 + state[4 + i * 2 + 1]) / delta2;
             } else {
-                hessian[l * i + j] = (state[offset + count] - state[offset + count + 1] 
+                hessian[l * i + j] = (state[offset + count] - state[offset + count + 1]
                     - state[offset + count + 2] + state[offset + count + 3]) / delta2;
                 hessian[l * j + i] = hessian[l * i + j];
                 count += 4;
@@ -651,7 +654,7 @@ AnyType arima_lm_stat_ffunc::run (AnyType& args)
     SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
          m.transpose(), EigenvaluesOnly, ComputePseudoInverse);
     ColumnVector diag = decomposition.pseudoInverse().diagonal();
-    
+
     MutableArrayHandle<double> std_err(
         madlib_construct_array(
             NULL, l, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
@@ -659,9 +662,9 @@ AnyType arima_lm_stat_ffunc::run (AnyType& args)
     for (int i = 0; i < l; i++) std_err[i] = sqrt(diag[i]);
 
     delete [] hessian;
-    
+
     AnyType tuple;
-    tuple << std_err << sigma2 << loglik; 
+    tuple << std_err << sigma2 << loglik;
     return tuple;
 }
 

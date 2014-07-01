@@ -58,7 +58,8 @@ Datum generate_sparse_vector(PG_FUNCTION_ARGS)
 	/* Check if term index array has indexes in proper order or not */
 	for(int i = 0; i < term_index_nelems; i++)
 	{
-		if ((term_index_data[i] < 0) || (term_index_data[i] >= dict_size))
+		if (DatumGetInt64(term_index_data[i]) < 0 ||
+                DatumGetInt64(term_index_data[i]) >= dict_size)
 			elog(ERROR, "Term indexes must range from 0 to total number of elements in the dictonary - 1.");
 	}
 

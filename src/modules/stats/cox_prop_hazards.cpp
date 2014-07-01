@@ -87,7 +87,7 @@ AnyType zph_transition::run(AnyType &args){
     if (!dbal::eigen_integration::isfinite(x))
         throw std::domain_error("Design matrix is not finite.");
 
-    int data_dim = x.size();
+    int data_dim = static_cast<int>(x.size());
     if (data_dim > std::numeric_limits<uint16_t>::max())
         throw std::domain_error(
                 "Number of independent variables cannot be larger than 65535.");
@@ -354,10 +354,10 @@ AnyType array_elem_corr_final::run(AnyType &args) {
         return Null();
 
     ColumnVector S_xy =
-        state.numRows * state.sum_xy - state.sum_x  * state.sum_y;
+        static_cast<double>(state.numRows) * state.sum_xy - state.sum_x  * state.sum_y;
     ColumnVector S_xx =
-        state.numRows * state.sum_xx - state.sum_x.cwiseProduct(state.sum_x);
-    double S_yy = state.numRows * state.sum_yy - state.sum_y * state.sum_y;
+        static_cast<double>(state.numRows) * state.sum_xx - state.sum_x.cwiseProduct(state.sum_x);
+    double S_yy = static_cast<double>(state.numRows) * state.sum_yy - state.sum_y * state.sum_y;
     ColumnVector correlation = S_xy.cwiseQuotient(S_xx.cwiseSqrt() * sqrt(S_yy));
 
     return correlation;
@@ -371,7 +371,7 @@ AnyType coxph_resid_stat_transition::run(AnyType &args) {
 
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
-        int n = residual.size();
+        int n = static_cast<int>(residual.size());
         // state[0]: m
         // state[1]: n
         // state[2]: w_t * w

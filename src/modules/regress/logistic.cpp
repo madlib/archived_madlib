@@ -1666,14 +1666,14 @@ marginal_logregr_step_final::run(AnyType &args) {
     Matrix variance = decomposition.pseudoInverse();
     // Standard error according to the delta method
     Matrix std_err;
-    std_err = state.delta * variance * trans(state.delta) / (state.numRows*state.numRows);
+    std_err = state.delta * variance * trans(state.delta) / static_cast<double>(state.numRows*state.numRows);
 
     // Computing the marginal effects
     return marginalstateToResult(*this,
                                  state.coef,
                                  std_err.diagonal(),
                                  state.marginal_effects_per_observation,
-                                 state.numRows);
+                                 static_cast<double>(state.numRows));
 }
 
 // ------------------------ End of Marginal ------------------------------------

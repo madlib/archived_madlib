@@ -97,9 +97,9 @@ AnyType Igd<Model>::igd_transition (AnyType& args, const Allocator& inAllocator)
     ColumnVector gradient(state.dimension); // gradient for coef only, not for intercept
     Model::compute_gradient(gradient, state, x, y);
 
-    double a = state.stepsize / state.totalRows;
+    double a = state.stepsize / static_cast<double>(state.totalRows);
     double b = state.stepsize * state.alpha * state.lambda
-        / state.totalRows;
+        / static_cast<double>(state.totalRows);
     for (uint32_t i = 0; i < state.dimension; i++)
     {
         // step 1
@@ -180,7 +180,7 @@ AnyType Igd<Model>::igd_final (AnyType& args)
 
     // compute the final loglikelihood value from the accumulated loss value
     double loss_value;
-    loss_value = state.loglikelihood / (state.numRows * 2);
+    loss_value = state.loglikelihood / static_cast<double>(state.numRows * 2);
     double sum_sqr_coef = 0;
     double sum_abs_coef = 0;
     for (uint32_t i = 0; i < state.dimension; i++){

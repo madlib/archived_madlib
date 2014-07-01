@@ -291,7 +291,7 @@ inline
 void
 RobustLinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
     inStream >> numRows >> widthOfX;
-    uint16_t actualWidthOfX = widthOfX.isNull() ? 0 : static_cast<uint16_t>(widthOfX);
+    uint16_t actualWidthOfX = widthOfX.isNull() ? static_cast<uint16_t>(0) : static_cast<uint16_t>(widthOfX);
     inStream	>> ols_coef.rebind(actualWidthOfX)
 							>> X_transp_X.rebind(actualWidthOfX, actualWidthOfX)
 							>> X_transp_r2_X.rebind(actualWidthOfX, actualWidthOfX);
@@ -494,7 +494,7 @@ HeteroLinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
     inStream
         >> numRows >> widthOfX >> a_sum >> a_square_sum;
     uint16_t actualWidthOfX = widthOfX.isNull()
-        ? 0
+        ? static_cast<uint16_t>(0)
         : static_cast<uint16_t>(widthOfX);
     inStream
         >> X_transp_A.rebind(actualWidthOfX)
@@ -636,7 +636,7 @@ HeteroLinearRegression::compute(
     if (ess > tss) ess = tss;
 
     // Test statistic: numRows*Coefficient of determination
-    test_statistic = inState.numRows*(tss == 0 ? 1 : ess / tss);
+    test_statistic = static_cast<double>(inState.numRows) * (tss == 0 ? 1 : ess / tss);
     pValue = prob::cdf(complement(prob::chi_squared(
                                       static_cast<double>(inState.widthOfX-1)), test_statistic));
 

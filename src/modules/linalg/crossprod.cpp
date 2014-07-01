@@ -14,7 +14,8 @@ AnyType __pivotalr_crossprod_transition::run (AnyType& args)
 {
     ArrayHandle<double> left = args[1].getAs<ArrayHandle<double> >();
     ArrayHandle<double> right = args[2].getAs<ArrayHandle<double> >();
-    int m = left.size(), n = right.size();
+    size_t m = left.size();
+    size_t n = right.size();
     MutableArrayHandle<double> state(NULL);
 
     if (args[0].isNull()) {
@@ -25,8 +26,8 @@ AnyType __pivotalr_crossprod_transition::run (AnyType& args)
         state = args[0].getAs<MutableArrayHandle<double> >();
 
     int count = 0;
-    for (int i = 0; i < m; i++)
-        for (int j = 0; j < n; j++)
+    for (size_t i = 0; i < m; i++)
+        for (size_t j = 0; j < n; j++)
             state[count++] += left[i] * right[j];
 
     return state;
@@ -51,7 +52,7 @@ AnyType __pivotalr_crossprod_merge::run (AnyType& args)
 AnyType __pivotalr_crossprod_sym_transition::run (AnyType& args)
 {
     ArrayHandle<double> arr = args[1].getAs<ArrayHandle<double> >();
-    int n = arr.size();
+    size_t n = arr.size();
     MutableArrayHandle<double> state(NULL);
 
     if (args[0].isNull()) {
@@ -62,8 +63,8 @@ AnyType __pivotalr_crossprod_sym_transition::run (AnyType& args)
         state = args[0].getAs<MutableArrayHandle<double> >();
 
     int count = 0;
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j <= i; j++)
+    for (size_t i = 0; i < n; i++)
+        for (size_t j = 0; j <= i; j++)
             state[count++] += arr[i] * arr[j];
 
     return state;

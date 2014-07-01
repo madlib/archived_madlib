@@ -200,9 +200,9 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
     }
 
     // Get the category & numCategories as integer
-    int16_t category = args[1].getAs<int>();
+    int16_t category = static_cast<int16_t>(args[1].getAs<int>());
     // Number of categories after pivoting (We pivot around ref_category)
-    int16_t numCategories = (args[2].getAs<int>() - 1);
+    int16_t numCategories = static_cast<int16_t>(args[2].getAs<int>() - 1);
     int32_t ref_category = args[3].getAs<int32_t>();
 	MappedMatrix coefMat = args[5].getAs<MappedMatrix>();
 
@@ -297,7 +297,7 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
     }
 
     triangularView<Lower>(state.X_transp_AX) += X_transp_AX;
-    int numIndepVars = state.coef.size() / state.numCategories;
+    int numIndepVars = static_cast<int>(state.coef.size() / state.numCategories);
 
     // Marginal effects (reference calculated separately)
     ColumnVector coef_trans_prob;
@@ -356,7 +356,7 @@ mlogregr_marginal_step_merge_states::run(AnyType &args) {
 
 AnyType mlogregr_marginalstateToResult(
     const Allocator &inAllocator,
-    const int numRows,
+    const double numRows,
     const ColumnVector &inCoef,
     const ColumnVector &inMargins,
     const ColumnVector &inVariance
@@ -424,7 +424,7 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     // Include marginal effects of reference variable:
     // FIXME: They have been taken out of the output for now
     //const int size = state.coef.size() + numIndepVars;
-    const int size = state.coef.size();
+    const size_t size = state.coef.size();
 
     // Variance-covariance calculation
     // ----------------------------------------------------------
@@ -434,7 +434,7 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     // Precompute -(X^T * A * X)^-1
     Matrix V = decomposition.pseudoInverse();
 
-    int numIndepVars = state.coef.size() / state.numCategories;
+    int numIndepVars = static_cast<int>(state.coef.size() / state.numCategories);
     int numCategories = state.numCategories;
 
     Matrix coef = state.coef;
@@ -445,7 +445,7 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     ColumnVector variance(size);
     variance.setOnes();
 
-    variance = (state.delta * V * trans(state.delta) / (state.numRows*state.numRows)).diagonal();
+    variance = (state.delta * V * trans(state.delta) / static_cast<double>(state.numRows*state.numRows)).diagonal();
     
     // Add in reference variables to all the calculations
     // ----------------------------------------------------------
@@ -457,12 +457,12 @@ mlogregr_marginal_step_final::run(AnyType &args) {
         for (int j=0; j < numCategories; j++){
             int index = k * numCategories + j;
             coef_with_ref(index) = coef(j,k);
-            margins_with_ref(index) = state.margins_matrix(j,k) / state.numRows;
+            margins_with_ref(index) = state.margins_matrix(j,k) / static_cast<double>(state.numRows);
         }
     }
 
     return mlogregr_marginalstateToResult(*this,
-                                          state.numRows,
+                                          static_cast<double>(state.numRows),
                                           coef_with_ref,
                                           margins_with_ref,
                                           variance);

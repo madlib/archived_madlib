@@ -277,11 +277,14 @@ get_metric_fn_for_array(KMeansMetric inMetric)
             calc_tanimoto_distance
         };
     
-    if (inMetric < 1 || inMetric > sizeof(metrics)/sizeof(PGFunction))
+    if (inMetric < 1 || inMetric > sizeof(metrics)/sizeof(PGFunction)) {
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                  errmsg("invalid metric")));
-    return metrics[inMetric - 1];
+        return NULL;
+    } else {
+        return metrics[inMetric - 1];
+    }
 }
 
 PG_FUNCTION_INFO_V1(internal_kmeans_closest_centroid);

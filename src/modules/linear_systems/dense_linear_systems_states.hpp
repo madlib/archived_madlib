@@ -44,7 +44,7 @@ inline void ResidualState<Container>::bind(ByteStream_type& inStream){
              >> widthOfA
              >> residual_norm
              >> b_norm;
-    uint16_t actualWidthOfA = widthOfA.isNull() ? 0 : static_cast<uint16_t>(widthOfA);
+    uint16_t actualWidthOfA = widthOfA.isNull() ? static_cast<uint16_t>(0) : static_cast<uint16_t>(widthOfA);
     inStream >> solution.rebind(actualWidthOfA);
 
 }

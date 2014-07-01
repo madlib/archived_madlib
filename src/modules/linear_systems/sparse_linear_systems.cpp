@@ -679,8 +679,8 @@ sparse_inmem_iterative_linear_system_final::run(AnyType &args) {
     }
 
 
-    int iters;
-    double error;
+    int iters = 0;
+    double error = 0.;
 
 
     // Switch case needs scoping in C++ if you want to declare inside it

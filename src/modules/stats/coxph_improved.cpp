@@ -182,7 +182,7 @@ AnyType compute_coxph_result::run(AnyType &args) {
     int nIter = args[3].getAs<int>();
     MappedColumnVector stds = args[4].getAs<MappedColumnVector>();
 
-    int m = coef.size();
+    int m = static_cast<int>(coef.size());
     Matrix hessian = d2L;
     hessian.resize(m, m);
 
@@ -386,10 +386,10 @@ AnyType array_avg_transition::run(AnyType& args)
 
     state[0] += 1;
     if (use_abs)
-        for (size_t i = 1; i <= x.size(); i++)
+        for (int i = 1; i <= x.size(); i++)
             state[i] += fabs(x(i-1));
     else
-        for (size_t i = 1; i <= x.size(); i++)
+        for (int i = 1; i <= x.size(); i++)
             state[i] += x(i-1);
 
     return state;

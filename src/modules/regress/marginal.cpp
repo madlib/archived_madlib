@@ -42,7 +42,7 @@ AnyType margins_stateToResult(
     const ColumnVector &inmarginal_effects_per_observation,
     const double numRows) {
 
-    uint16_t n_basis_terms = inmarginal_effects_per_observation.size();
+    uint16_t n_basis_terms = static_cast<uint16_t>(inmarginal_effects_per_observation.size());
     MutableNativeColumnVector marginal_effects(
         inAllocator.allocateArray<double>(n_basis_terms));
     MutableNativeColumnVector stdErr(
@@ -310,11 +310,11 @@ margins_linregr_int_final::run(AnyType &args) {
     // we only need the diagonal elements of the variance, so we perform a dot
     // product of each row with itself to compute each diagonal element.
     ColumnVector variance_diagonal =
-        variance.cwiseProduct(state.delta).rowwise().sum() / (state.numRows * state.numRows);
+        variance.cwiseProduct(state.delta).rowwise().sum() / static_cast<double>(state.numRows * state.numRows);
 
     // Computing the marginal effects
     return margins_stateToResult(*this, variance_diagonal,
-                                 state.marginal_effects, state.numRows);
+                                 state.marginal_effects, static_cast<double>(state.numRows));
 }
 
 // ---------------------------------------------------------------------------
@@ -499,15 +499,15 @@ margins_logregr_int_transition::run(AnyType &args) {
     MappedColumnVector basis_indices = args[4].getAs<MappedColumnVector>();
 
     // below symbols match the ones used in the design doc
-    const uint16_t N = beta.size();
-    const uint16_t M = basis_indices.size();
+    const uint16_t N = static_cast<uint16_t>(beta.size());
+    const uint16_t M = static_cast<uint16_t>(basis_indices.size());
     assert(N >= M);
 
     Matrix J;  // J: N * M
     if (args[5].isNull()){
         J = Matrix::Zero(N, M);
         for (Index i = 0; i < M; ++i)
-            J(basis_indices(i), i) = 1;
+            J(static_cast<Index>(basis_indices(i)), i) = 1;
     } else{
         J = args[5].getAs<MappedMatrix>();
     }
@@ -527,7 +527,7 @@ margins_logregr_int_transition::run(AnyType &args) {
              warning("The categorical indices contain NULL values");
              return Null();
         }
-        numCategoricalVars = categorical_indices.size();
+        numCategoricalVars = static_cast<uint16_t>(categorical_indices.size());
     }
 
     if (state.numRows == 0) {
@@ -544,12 +544,12 @@ margins_logregr_int_transition::run(AnyType &args) {
             for (Index i = 0; i < basis_indices.size(); ++i){
                 for (Index j = 0; j < categorical_indices.size(); ++j){
                     if (basis_indices(i) == categorical_indices(j)){
-                        tmp_cat_basis_indices.push_back(i);
+                        tmp_cat_basis_indices.push_back(static_cast<uint16_t>(i));
                         continue;
                     }
                 }
             }
-            state.numCategoricalVarsInSubset = tmp_cat_basis_indices.size();
+            state.numCategoricalVarsInSubset = static_cast<uint16_t>(tmp_cat_basis_indices.size());
         }
         state.initialize(*this,
                          static_cast<uint16_t>(N),
@@ -615,8 +615,8 @@ margins_logregr_int_transition::run(AnyType &args) {
             f_set = f;
             f_unset = f;
             for (Index j=0; j < shortened_f_set.size(); ++j){
-                f_set(categorical_indices(j)) = shortened_f_set(j);
-                f_unset(categorical_indices(j)) = shortened_f_unset(j);
+                f_set(static_cast<Index>(categorical_indices(j))) = shortened_f_set(j);
+                f_unset(static_cast<Index>(categorical_indices(j))) = shortened_f_unset(j);
             }
         } else {
             f_set = shortened_f_set;
@@ -682,11 +682,11 @@ margins_logregr_int_final::run(AnyType &args) {
     // product of each row with state.delta to compute each diagonal element.
     // We divide by numRows^2 since we need the average variance
     ColumnVector variance_diagonal =
-        variance.cwiseProduct(state.delta).rowwise().sum() / (state.numRows * state.numRows);
+        variance.cwiseProduct(state.delta).rowwise().sum() / static_cast<double>(state.numRows * state.numRows);
 
     // Computing the final results
     return margins_stateToResult(*this, variance_diagonal,
-                                 state.marginal_effects, state.numRows);
+                                 state.marginal_effects, static_cast<double>(state.numRows));
 }
 // ------------------------ End of Logistic Marginal ---------------------------
 
@@ -828,16 +828,16 @@ class MarginsMLogregrInteractionState {
 
         marginal_effects.rebind(&mStorage[5], M, L-1);
 
-        uint16_t current_length = 5 + M*(L-1);
+        int current_length = 5 + M * (L - 1);
 
         training_data_vcov.rebind(&mStorage[current_length], N*(L-1), N*(L-1));
-        current_length += N*(L-1)*N*(L-1);
+        current_length += N * (L - 1) * N * (L - 1);
 
         delta.rebind(&mStorage[current_length], M*(L-1), N*(L-1));
-        current_length += N*(L-1)*M*(L-1);
+        current_length += N * (L - 1) * M * (L - 1);
 
         if (inNumCategoricalVars > 0)
-            categorical_basis_indices.rebind(&mStorage[current_length], inNumCategoricalVars);
+            categorical_basis_indices.rebind(&mStorage[static_cast<uint16_t>(current_length)], inNumCategoricalVars);
     }
     Handle mStorage;
 
@@ -901,15 +901,15 @@ margins_mlogregr_int_transition::run(AnyType &args) {
     MappedColumnVector basis_indices = args[4].getAs<MappedColumnVector>();
 
     // all variable symbols correspond to the design document
-    const uint16_t N = beta.rows();
-    const uint16_t M = basis_indices.size();
+    const uint16_t N = static_cast<uint16_t>(beta.rows());
+    const uint16_t M = static_cast<uint16_t>(basis_indices.size());
     assert(N >= M);
 
     Matrix J;  // J: N x M
     if (args[5].isNull()){
         J = Matrix::Zero(N, M);
         for (Index i = 0; i < M; ++i)
-            J(basis_indices(i), i) = 1;
+            J(static_cast<Index>(basis_indices(i)), i) = 1;
     } else{
         J = args[5].getAs<MappedMatrix>();
     }
@@ -929,7 +929,7 @@ margins_mlogregr_int_transition::run(AnyType &args) {
              warning("The categorical indices contain NULL values");
              return Null();
         }
-        numCategoricalVars = categorical_indices.size();
+        numCategoricalVars = static_cast<uint16_t>(categorical_indices.size());
     }
 
     if (state.numRows == 0) {
@@ -946,12 +946,12 @@ margins_mlogregr_int_transition::run(AnyType &args) {
             for (Index i = 0; i < basis_indices.size(); ++i){
                 for (Index j = 0; j < categorical_indices.size(); ++j){
                     if (basis_indices(i) == categorical_indices(j)){
-                        tmp_cat_basis_indices.push_back(i);
+                        tmp_cat_basis_indices.push_back(static_cast<uint16_t>(i));
                         continue;
                     }
                 }
             }
-            state.numCategoricalVarsInSubset = tmp_cat_basis_indices.size();
+            state.numCategoricalVarsInSubset = static_cast<uint16_t>(tmp_cat_basis_indices.size());
         }
         state.initialize(*this,
                          static_cast<uint16_t>(J.rows()),
@@ -972,15 +972,15 @@ margins_mlogregr_int_transition::run(AnyType &args) {
 
     // all variable symbols correspond to the design document
     const uint16_t & L = state.numCategories;
-    ColumnVector prob = trans(beta) * f;
-    Matrix J_trans_beta = trans(J) * beta;
+    ColumnVector prob(trans(beta) * f);
+    Matrix J_trans_beta(trans(J) * beta);
 
     // Calculate the odds ratio
     prob = prob.array().exp();
     double prob_sum = prob.sum();
     prob = prob / (1 + prob_sum);
 
-    ColumnVector JBP = J_trans_beta * prob;
+    ColumnVector JBP(J_trans_beta * prob);
     Matrix curr_margins = J_trans_beta * prob.asDiagonal() - JBP * trans(prob);
 
     // compute delta using 2nd derivatives
@@ -988,7 +988,8 @@ margins_mlogregr_int_transition::run(AnyType &args) {
     //      row_index = [0, (L-1)M), col_index = [0, (L-1)N)
     // row_index(m, l) = m * (L-1) + l
     // col_index(n, l1) = n * (L-1) + l1
-    int row_index, col_index, delta_l_l1;
+    Index row_index, col_index;
+    int delta_l_l1;
     for (int m = 0; m < M; m++){
         // Skip the categorical variables
         if (state.numCategoricalVarsInSubset > 0) {
@@ -1051,22 +1052,22 @@ margins_mlogregr_int_transition::run(AnyType &args) {
             f_set = f;
             f_unset = f;
             for (Index j=0; j < shortened_f_set.size(); ++j){
-                f_set(categorical_indices(j)) = shortened_f_set(j);
-                f_unset(categorical_indices(j)) = shortened_f_unset(j);
+                f_set(static_cast<Index>(categorical_indices(j))) = shortened_f_set(j);
+                f_unset(static_cast<Index>(categorical_indices(j))) = shortened_f_unset(j);
             }
         } else {
             f_set = shortened_f_set;
             f_unset = shortened_f_unset;
         }
 
-        RowVector p_set = trans(f_set) * beta;
+        RowVector p_set(trans(f_set) * beta);
         {
             p_set = p_set.array().exp();
             double p_sum = p_set.sum();
             p_set = p_set / (1 + p_sum);
         }
 
-        RowVector p_unset = trans(f_unset) * beta;
+        RowVector p_unset(trans(f_unset) * beta);
         {
             p_unset = p_unset.array().exp();
             double p_sum = p_unset.sum();
@@ -1135,17 +1136,17 @@ margins_mlogregr_int_final::run(AnyType &args) {
     if (state.numRows == 0)
         return Null();
 
-    state.marginal_effects /= state.numRows;
+    state.marginal_effects /= static_cast<double>(state.numRows);
     Matrix marginal_effects_trans = trans(state.marginal_effects);
     AnyType tuple;
     tuple << marginal_effects_trans;
 
     // Variance for marginal effects according to the delta method
-    Matrix variance = state.delta * state.training_data_vcov;
+    Matrix variance(state.delta * state.training_data_vcov);
     // // we only need the diagonal elements of the variance, so we perform a dot
     // // product of each row with itself to compute each diagonal element.
     // // We divide by numRows^2 since we need the average variance
-    Matrix std_err = variance.cwiseProduct(state.delta).rowwise().sum() / (state.numRows * state.numRows);
+    Matrix std_err = variance.cwiseProduct(state.delta).rowwise().sum() / static_cast<double>(state.numRows * state.numRows);
     std_err = std_err.array().sqrt();
     std_err.resize(state.numCategories-1, state.numBasis);
     tuple << std_err;

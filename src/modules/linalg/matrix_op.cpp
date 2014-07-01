@@ -80,8 +80,8 @@ AnyType matrix_mem_sum_sfunc::run(AnyType & args)
             "invalid argument - 2-d array expected");
     }
 
-    int row_m = m.sizeOfDim(0);
-    int col_m = m.sizeOfDim(1);
+    int row_m = static_cast<int>(m.sizeOfDim(0));
+    int col_m = static_cast<int>(m.sizeOfDim(1));
 
     MutableArrayHandle<double> state(NULL);
     if (args[0].isNull()){
@@ -110,7 +110,7 @@ AnyType matrix_blockize_sfunc::run(AnyType & args)
 
     int32_t row_id = args[1].getAs<int32_t>();
     ArrayHandle<double> row_vec  = args[2].getAs<ArrayHandle<double> >();
-    int32_t csize = row_vec.sizeOfDim(0);
+    int32_t csize = static_cast<int32_t>(row_vec.sizeOfDim(0));
     int32_t rsize = args[3].getAs<int32_t>();
     if(rsize < 1){
         throw std::invalid_argument(
@@ -146,10 +146,10 @@ AnyType matrix_mem_mult::run(AnyType & args)
             "invalid argument - 2-d array expected");
     }
 
-    int row_a = a.sizeOfDim(0);
-    int col_a = a.sizeOfDim(1);
-    int row_b = b.sizeOfDim(0);
-    int col_b = b.sizeOfDim(1);
+    int row_a = static_cast<int>(a.sizeOfDim(0));
+    int col_a = static_cast<int>(a.sizeOfDim(1));
+    int row_b = static_cast<int>(b.sizeOfDim(0));
+    int col_b = static_cast<int>(b.sizeOfDim(1));
 
     if ((!trans_b && col_a != row_b) || (trans_b && col_a != col_b)){
         throw std::invalid_argument(
@@ -192,8 +192,8 @@ AnyType matrix_mem_trans::run(AnyType & args)
             "invalid argument - 2-d array expected");
     }
 
-    int row_m = m.sizeOfDim(0);
-    int col_m = m.sizeOfDim(1);
+    int row_m = static_cast<int>(m.sizeOfDim(0));
+    int col_m = static_cast<int>(m.sizeOfDim(1));
 
     int dims[2] = {col_m, row_m};
     int lbs[2] = {1, 1};
@@ -267,7 +267,7 @@ void * row_split::SRF_init(AnyType &args)
 
     sr_ctx1 * ctx = new sr_ctx1;
     ctx->inarray = inarray.ptr();
-    ctx->dim = inarray.sizeOfDim(0);
+    ctx->dim = static_cast<int32_t>(inarray.sizeOfDim(0));
     ctx->size = size;
     ctx->maxcall = static_cast<int32_t>(
         ceil(static_cast<double>(ctx->dim) / size));
@@ -315,7 +315,7 @@ AnyType matrix_unblockize_sfunc::run(AnyType & args)
     int32_t total_col_dim = args[1].getAs<int32_t>();
     int32_t col_id = args[2].getAs<int32_t>();
     ArrayHandle<double> row_vec = args[3].getAs<ArrayHandle<double> >();
-    int32_t col_dim = row_vec.sizeOfDim(0);
+    int32_t col_dim = static_cast<int32_t>(row_vec.sizeOfDim(0));
 
     if(total_col_dim < 1){
         throw std::invalid_argument(
@@ -361,8 +361,8 @@ void * unnest_block::SRF_init(AnyType &args)
 
     sr_ctx2 * ctx = new sr_ctx2;
     ctx->inarray = inarray.ptr();
-    ctx->maxcall = inarray.sizeOfDim(0);
-    ctx->dim = inarray.sizeOfDim(1);
+    ctx->maxcall = static_cast<int32_t>(inarray.sizeOfDim(0));
+    ctx->dim = static_cast<int32_t>(inarray.sizeOfDim(1));
     ctx->curcall = 0;
 
     return ctx;

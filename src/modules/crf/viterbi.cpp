@@ -44,7 +44,7 @@ AnyType vcrf_top1_label::run(AnyType& args) {
     if (numLabels == 0)
         throw std::invalid_argument("Number of labels cannot be zero");
 
-    int doc_len = rArray.size()/numLabels;
+    int doc_len = static_cast<int>(rArray.size() / numLabels);
 
     double* prev_top1_array = new double[numLabels];
     double* curr_top1_array = new double[numLabels];

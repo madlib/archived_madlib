@@ -235,9 +235,12 @@ AnyType svd_gram_schmidt_orthogonalize_sfunc::run(AnyType & args){
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
         state = MutableArrayHandle<double>(
-            madlib_construct_array(
-                NULL, u.size() * 2, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-                FLOAT8TI.align));
+            madlib_construct_array(NULL,
+                                   static_cast<int>(u.size()) * 2,
+                                   FLOAT8TI.oid,
+                                   FLOAT8TI.len,
+                                   FLOAT8TI.byval,
+                                   FLOAT8TI.align));
 
         // Save v into the state variable
         memcpy(state.ptr() + u.size(), v.data(), v.size() * sizeof(double));
@@ -376,7 +379,7 @@ AnyType svd_decompose_bidiagonal_prefunc::run(AnyType & args){
  **/
 AnyType svd_decompose_bidiagonal_ffunc::run(AnyType & args){
     MappedColumnVector state = args[0].getAs<MappedColumnVector>();
-    size_t k = static_cast<size_t>(sqrt(state.size()));
+    size_t k = static_cast<size_t>(sqrt(static_cast<double>(state.size())));
 
     // Note that Eigen Matrix deserializes the vector in the column order
     // Thus transpose() is needed after resize()
@@ -451,8 +454,8 @@ AnyType svd_block_lanczos_sfunc::run(AnyType & args){
 
     // Note that m is constructed in the column-first order
     Matrix m = block;
-    int row_size = block.cols();
-    int col_size = block.rows();
+    size_t row_size = block.cols();
+    size_t col_size = block.rows();
 
     Matrix v = block.transpose() * vec.segment(col_id * col_size, col_size);
     for(int32_t i = 0; i < v.size(); i++)
@@ -506,7 +509,7 @@ AnyType svd_vec_mult_matrix::run(AnyType & args){
 
     // Any integer is ok
     if(k <= 0 || k > mat.rows()){
-        k = mat.rows();
+        k = static_cast<int32_t>(mat.rows());
     }
 
     // Note mat is constructed in the column-first order
@@ -554,7 +557,7 @@ void * svd_vec_trans_mult_matrix::SRF_init(AnyType &args){
             "invalid parameter - k should be in the range of (0, mat.cols()]");
     }
 
-    ctx->max_call = ctx->vec.size();
+    ctx->max_call = static_cast<int32_t>(ctx->vec.size());
     ctx->cur_call = 0;
 
     return ctx;

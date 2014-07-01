@@ -202,7 +202,7 @@ AnyType Fista<Model>::fista_final (AnyType& args)
     if (state.numRows == 0) return Null();
 
     if (state.backtracking == 0) {
-        state.gradient = state.gradient / state.totalRows;
+        state.gradient = state.gradient / static_cast<double>(state.totalRows);
         double la = state.lambda * (1 - state.alpha);
         for (uint32_t i = 0; i < state.dimension; i++)
             if (state.coef_y(i) != 0)
@@ -236,11 +236,11 @@ AnyType Fista<Model>::fista_final (AnyType& args)
     }
     else {
         // finish computing fn and Qfn if needed
-        state.fn = state.fn / state.totalRows + 0.5 * state.lambda * (1 - state.alpha)
+        state.fn = state.fn / static_cast<double>(state.totalRows) + 0.5 * state.lambda * (1 - state.alpha)
             * sparse_dot(state.b_coef, state.b_coef);
 
         if (state.backtracking == 1)
-            state.Qfn = state.Qfn / state.totalRows + 0.5 * state.lambda * (1 - state.alpha)
+            state.Qfn = state.Qfn / static_cast<double>(state.totalRows) + 0.5 * state.lambda * (1 - state.alpha)
                 * sparse_dot(state.coef_y, state.coef_y);
 
         ColumnVector r = state.b_coef - state.coef_y;
@@ -292,7 +292,7 @@ AnyType Fista<Model>::fista_final (AnyType& args)
 
     // compute the final loglikelihood value from the accumulated loss value
     double loss_value;
-    loss_value = state.loglikelihood / (state.numRows * 2);
+    loss_value = state.loglikelihood / static_cast<double>(state.numRows * 2);
     double sum_sqr_coef = 0;
     double sum_abs_coef = 0;
     for (uint32_t i = 0; i < state.dimension; i++){

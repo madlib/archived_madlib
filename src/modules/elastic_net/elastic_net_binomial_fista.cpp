@@ -41,7 +41,7 @@ class BinomialFista
 
 inline void BinomialFista::update_y_intercept_final(FistaState<MutableArrayHandle<double> >& state)
 {
-    state.gradient_intercept = state.gradient_intercept / state.totalRows;
+    state.gradient_intercept = state.gradient_intercept / static_cast<double>(state.totalRows);
 }
 // -----------------------------------------------------------------------------
 
