@@ -34,9 +34,9 @@ def linregr_train(schema_madlib, source_table, out_table,
             CREATE TEMP TABLE {temp_lin_rst} AS
             SELECT
                 {group_str_sel}
-                {schema_madlib}.linregr(
+                ({schema_madlib}.linregr(
                     {dependent_varname},
-                    {independent_varname}) AS lin_rst,
+                    {independent_varname})).*,
                 count(*) AS num_rows
             FROM
                 {source_table}
@@ -61,7 +61,7 @@ def linregr_train(schema_madlib, source_table, out_table,
                     {schema_madlib}.heteroskedasticity_test_linregr(
                         {dependent_varname},
                         {independent_varname},
-                        (lin_rst).coef) AS hsk_rst
+                        {temp_lin_rst}.coef) AS hsk_rst
                 FROM
                     {source_table} {join_str} {temp_lin_rst} {using_str}
                 {group_str}
@@ -90,23 +90,23 @@ def linregr_train(schema_madlib, source_table, out_table,
             CREATE TABLE {out_table} AS
             SELECT
                 {group_str_sel}
-                (lin.lin_rst).coef,
-                (lin.lin_rst).r2,
-                (lin.lin_rst).std_err,
-                (lin.lin_rst).t_stats,
-                (lin.lin_rst).p_values,
-                (lin.lin_rst).condition_no,
+                coef,
+                r2,
+                std_err,
+                t_stats,
+                p_values,
+                condition_no,
                 {bp_stats}
                 {bp_p_value}
-                CASE WHEN (lin.lin_rst).num_processed IS NULL
+                CASE WHEN num_processed IS NULL
                     THEN 0
-                    ELSE (lin.lin_rst).num_processed
+                    ELSE num_processed
                 END AS num_rows_processed,
-                CASE WHEN (lin.lin_rst).num_processed IS NULL
+                CASE WHEN num_processed IS NULL
                     THEN lin.num_rows
-                    ELSE lin.num_rows - (lin.lin_rst).num_processed
+                    ELSE lin.num_rows - num_processed
                 END AS num_missing_rows_skipped,
-                (lin.lin_rst).vcov as variance_covariance
+                vcov as variance_covariance
             FROM
                 {temp_lin_rst} AS lin {join_str} {using_str}
            """.format(out_table=out_table, group_str_sel=group_str_sel,
@@ -176,12 +176,12 @@ def _validate_args(schema_madlib, source_table, out_table, dependent_varname,
     # an informative error messages when they are not valid
 
     _assert(heteroskedasticity_option is not None and
-        heteroskedasticity_option in (True, False),
-        "Linregr error: Invalid heteroskedasticity_option")
+            heteroskedasticity_option in (True, False),
+            "Linregr error: Invalid heteroskedasticity_option")
 
     if grouping_cols is not None:
         _assert(grouping_cols != '',
-            "Linregr error: Invalid grouping columns name!")
+                "Linregr error: Invalid grouping columns name!")
         grouping_list = _string_to_array(grouping_cols)
         _assert(columns_exist_in_table(
             source_table, grouping_list, schema_madlib),
@@ -194,10 +194,10 @@ def _validate_args(schema_madlib, source_table, out_table, dependent_varname,
         if heteroskedasticity_option is not None:
             predefined.update(frozenset(('bp_stats', 'bp_p_value')))
         intersect = frozenset(grouping_list).intersection(predefined)
-        _assert(len(intersect) == 0,
-            "Linregr error: Conflicted grouping column name.\n"
-            "Predefined name(s) {0} are not allow!".format(
-            ', '.join(intersect)))
+        _assert(not intersect,
+                "Linregr error: Conflicting grouping column name.\n"
+                "Predefined name(s) {0} are not allowed!".
+                format(', '.join(intersect)))
 
 # ------------------------------------------------------------------------------
 # -- Online help function ------------------------------------------------------
