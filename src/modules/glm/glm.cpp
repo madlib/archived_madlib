@@ -312,20 +312,20 @@ AnyType glm_predict::run(AnyType &args) {
 
     MappedColumnVector vec1 = args[0].getAs<MappedColumnVector>();
     MappedColumnVector vec2 = args[1].getAs<MappedColumnVector>();
-    char* link              = args[2].getAs<char*>();
+    std::string link        = args[2].getAs<std::string>();
 
     if (vec1.size() != vec2.size())
         throw std::runtime_error(
             "Coefficients and independent variables are of incompatible length");
     double dot = vec1.dot(vec2);
 
-    if (strcmp(link,"identity")==0) return(dot);
-    if (strcmp(link,"inverse")==0) return(1/dot);
-    if (strcmp(link,"log")==0) return(exp(dot));
-    if (strcmp(link,"sqrt")==0) return(dot*dot);
-    if (strcmp(link,"sqr_inverse")==0) return(1/sqrt(dot));
-    if (strcmp(link,"probit")==0) return(prob::cdf(prob::normal(), dot));
-    if (strcmp(link,"logit")==0) return (1./(1 + exp(-dot)));
+    if (link.compare("identity")==0) return(dot);
+    if (link.compare("inverse")==0) return(1/dot);
+    if (link.compare("log")==0) return(exp(dot));
+    if (link.compare("sqrt")==0) return(dot*dot);
+    if (link.compare("sqr_inverse")==0) return(1/sqrt(dot));
+    if (link.compare("probit")==0) return(prob::cdf(prob::normal(), dot));
+    if (link.compare("logit")==0) return (1./(1 + exp(-dot)));
 
     throw std::runtime_error("Invalid link function!");
 }
@@ -346,7 +346,7 @@ AnyType glm_predict_binomial::run(AnyType &args) {
 
     MappedColumnVector vec1 = args[0].getAs<MappedColumnVector>();
     MappedColumnVector vec2 = args[1].getAs<MappedColumnVector>();
-    std::string link              = args[2].getAs<std::string>();
+    std::string link        = args[2].getAs<std::string>();
     if (vec1.size() != vec2.size())
         throw std::runtime_error(
             "Coefficients and independent variables are of incompatible length");
@@ -356,6 +356,38 @@ AnyType glm_predict_binomial::run(AnyType &args) {
     if (link.compare("logit")==0) return ((1./(1 + exp(-dot))) >= 0.5);
 
     throw std::runtime_error("Invalid link function!");
+}
+
+// ------------------------------------------------------------------------
+
+AnyType glm_predict_poisson::run(AnyType &args) {
+    try {
+        args[0].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        throw std::runtime_error(
+            "GLM error: the coefficients contain NULL values");
+    }
+    // returns NULL if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    MappedColumnVector vec1 = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector vec2 = args[1].getAs<MappedColumnVector>();
+    std::string link        = args[2].getAs<std::string>();
+
+    if (vec1.size() != vec2.size())
+        throw std::runtime_error(
+            "Coefficients and independent variables are of incompatible length");
+    double dot = vec1.dot(vec2);
+    
+    if (link.compare("identity")==0) return(round(dot));
+    if (link.compare("log")==0) return(round(exp(dot)));
+    if (link.compare("sqrt")==0) return(round(dot*dot)); 
+
+    throw std::runtime_error("Invalid link function!"); 
 }
 
 } // namespace glm

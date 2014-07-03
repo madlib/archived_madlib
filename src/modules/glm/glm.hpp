@@ -53,3 +53,4 @@ DECLARE_UDF(glm, glm_loglik_diff)
  */
 DECLARE_UDF(glm, glm_predict)
 DECLARE_UDF(glm, glm_predict_binomial)
+DECLARE_UDF(glm, glm_predict_poisson)
