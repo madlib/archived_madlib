@@ -170,7 +170,8 @@ def __extract_family_params(schema_madlib, family_params):
             poisson  = ["log","identity","sqrt"],
             gaussian = ["identity", "log", "inverse"],
             gamma = ["inverse", "log", "identity"],
-            inverse_gaussian = ["identity", "log", "inverse","sqr_inverse"])
+            inverse_gaussian = ["identity", "log", "inverse","sqr_inverse"],
+            binomial = ["logit", "probit"])
     name_value = {}
     for k, v in family_params_dict.iteritems():
         if k == "family":
@@ -263,6 +264,13 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
         grouping_col = None
         grouping_str = "NULL"
 
+    # for binomial distribution, the dependent variable is of type boolean.
+    # it's cast to type integer here so that it can later be type cast to
+    # double precision before computation begins.
+
+    if family_params['family'] == 'binomial':
+        dep_col = "(" + dep_col + ")::integer"
+
     iteration_run = __compute_glm(schema_madlib, args["tbl_glm_args"],
                                       args["tbl_glm_state"], tbl_source,
                                       dep_col, ind_col,
@@ -279,11 +287,11 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
     using_str = "" if grouping_str1 == "" else "using (" + grouping_col + ")"
     join_str = "," if grouping_str1 == "" else "join "
 
-    if family_params['family'] == 'poisson':
+    if family_params['family'] in ['poisson', 'binomial']:
         res_str = """
             (result).z_stats AS z_stats,
             (result).p_values AS p_values,
-	    (result).dispersion AS dispersion
+            (result).dispersion AS dispersion
             """
         glm_result = "__glm_result_z_stats"
     else:
@@ -424,12 +432,13 @@ def glm_help_msg(schema_madlib, message, **kwargs):
 ----------------------------------------------------------------
 Generalized Linear Model:
 
-Currently Poisson, Gaussian, Gamma and Inverse Gaussian families are supported. For Poisson
+Currently Poisson, Gaussian, Gamma, Inverse Gaussian and Binomial families are supported. For Poisson
 family, supported link functions are 'log', 'identity' and 'sqrt'.
 For Gaussian family, supported link functions are 'identity',
 'log' and 'inverse'. For Gamma family, supported link functions are 'inverse',
 'log' and 'identity'. For Inverse Gaussian family, supported link functions are 'sqr_inverse'
-(i.e. 1/(mu)^2), 'log', 'identity', 'inverse'.
+(i.e. 1/(mu)^2), 'log', 'identity', 'inverse'. For Binomial family, supported link functions
+are 'probit' and 'logit'.
 
 For more details on function usage:
     SELECT {schema_madlib}.glm('usage')
@@ -462,7 +471,7 @@ The output table ('out_table' above) has the following columns:
     'coef'               double precision[], -- vector of coefficients
     'log_likelihood'     double precision,   -- log likelihood
     'std_err'            double precision[], -- vector of standard errors
-    'z_stats'/'t_stats'  double precision[], -- vector of z-statistics if family=Poisson or vector of t-statistics otherwise
+    'z_stats'/'t_stats'  double precision[], -- vector of z-statistics if family=Poisson or Binomial; vector of t-statistics otherwise
     'p_values'           double precision[], -- vector of p-values
     'dispersion'         double precision[], -- dispersion parameter (if z-stats is used, dispersion is set to be constant 1)
     'num_rows_processed' bigint,             -- numbers of rows processed

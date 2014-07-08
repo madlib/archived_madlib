@@ -79,7 +79,7 @@ glm(source_table,
 
       <tr>
         <th>z_stats or t_stats</th>
-        <td>FLOAT8[]. Vector of the z-statistics (in Poisson distribtuion) or the t-statistics (other than Poisson distribution) of the coefficients.</td>
+        <td>FLOAT8[]. Vector of the z-statistics (in Poisson distribtuion and Binomial distribution) or the t-statistics (in all other distributions) of the coefficients.</td>
       </tr>
 
       <tr>
@@ -89,7 +89,7 @@ glm(source_table,
 
       <tr>
         <th>dispersion</th>
-        <td>FLOAT8. The dispersion value (Pearson estimate). When family=poisson, the dispersion is
+        <td>FLOAT8. The dispersion value (Pearson estimate). When family=poisson or family=binomial, the dispersion is
         always 1.</td>
       </tr>
 
@@ -199,6 +199,8 @@ glm(source_table,
     (3) family=gamma and link=[inverse or identity or log].
 
     (4) family=inverse_gaussian and link=[sqr_inverse or log or identity or inverse].
+
+    (5) family=binomial and link=[probit or logit].
     </DD>
 
   <DT>grouping_col (optional)</DT>
@@ -457,7 +459,6 @@ Gamma Example (reuse the dataset in Gaussian case):
 
 -# Example for family=gamma
 <pre class="example">
-
 -- Reuse the test data set in Gaussian
 
 -- Train a model with family=gamma and link=inverse (support MADlib has been installed in madlib schema)
@@ -468,13 +469,27 @@ Inverse Gaussian Example (reuse the dataset in Gaussian case):
 
 -# Example for family=inverse_gaussian
 <pre class="example">
-
 -- Reuse the test data set in Gaussian
 
 -- Train a model with family=inverse_gaussian and link=sqr_inverse (support MADlib has been installed in madlib schema)
 SELECT madlib.glm('abalone', 'abalone_out', 'rings', 'array[1, length, diameter, height, whole, shucked, viscera, shell]', 'family=inverse_gaussian, link=sqr_inverse');
 </pre>
 
+Binomial Example (reuse the dataset in Gaussian case):
+
+-# Example for family=binomial
+<pre class="example">
+-- Reuse the test data set in Gaussian
+
+-- Train a model with family=binomial and link=probit (support MADlib has been installed in madlib schema)
+SELECT madlib.glm('abalone', 'abalone_out', 'rings < 10', 'array[1, length, diameter, height, whole, shucked, viscera, shell]', 'family=binomial, link=probit');
+
+-- Predict output probabilities
+SELECT madlib.glm_predict(coef, ARRAY[1, length, diameter, height, whole, shucked, viscera, shell]::float8[], 'probit') from abalone_out, abalone;
+
+-- Predict output categories
+SELECT madlib.glm_predict_binomial(coef, ARRAY[1, length, diameter, height, whole, shucked, viscera, shell]::float8[], 'probit') from abalone_out, abalone;
+</pre>
 
 @anchor notes
 @par Notes
@@ -796,6 +811,34 @@ CREATE AGGREGATE MADLIB_SCHEMA.__glm_gamma_identity_agg(
     INITCOND=''
 );
 
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_binomial_probit_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'glm_binomial_probit_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__glm_binomial_probit_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8);
+CREATE AGGREGATE MADLIB_SCHEMA.__glm_binomial_probit_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__glm_binomial_probit_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__glm_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__glm_final,
+    INITCOND=''
+);
+
 ------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_inverse_gaussian_identity_transition(
@@ -806,6 +849,43 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_inverse_gaussian_identity_transit
 RETURNS MADLIB_SCHEMA.bytea8
 AS 'MODULE_PATHNAME', 'glm_inverse_gaussian_identity_transition'
 LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_binomial_logit_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'glm_binomial_logit_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__glm_binomial_logit_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8);
+CREATE AGGREGATE MADLIB_SCHEMA.__glm_binomial_logit_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__glm_binomial_logit_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__glm_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__glm_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__glm_result_z_stats(
+        /*+ state */ MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.__glm_result_type
+AS 'MODULE_PATHNAME', 'glm_result_z_stats'
+LANGUAGE C IMMUTABLE STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 ------------------------------------------------------------------------
@@ -1018,6 +1098,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
  *
  * @param coef Coefficients obtained by running generalized linear model.
  * @param col_ind Predictor variable array
+ * @param link    Link function used in training. Can be one of probit/logit
  * @returns Numeric value of the predicted mean
  *
  * This function computes the dot product of the independent variables and the
@@ -1032,6 +1113,31 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.glm_predict(
 AS 'MODULE_PATHNAME', 'glm_predict'
 LANGUAGE C STRICT IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+/**
+ * @brief Predict the output category for the response variable given a specific
+ *        predictor variable value in a generalized linear model
+ *
+ * @param coef Coefficients obtained by running generalized linear model.
+ * @param col_ind Predictor variable array
+ * @param link    Link function used in training. Can be one of probit/logit.
+ * @returns True/False Boolean value corresponding to output category
+            True if predicted probability >= 0.5, False otherwise
+ *
+ * This function computes the dot product of the independent variables and the
+ * coefficients. This requires the length of the two vectors to be the same.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.glm_predict_binomial(
+    coef            DOUBLE PRECISION[],
+    col_ind_var     DOUBLE PRECISION[],
+    link            TEXT
+) RETURNS BOOLEAN
+AS 'MODULE_PATHNAME', 'glm_predict_binomial'
+LANGUAGE C STRICT IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
 
 -- Help messages -------------------------------------------------------
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.glm_predict(

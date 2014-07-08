@@ -230,6 +230,18 @@ struct TypeTraits<char*> {
 };
 
 template <>
+struct TypeTraits<std::string> {
+    typedef std::string value_type;
+
+    WITH_OID( TEXTOID );
+    WITH_TYPE_CLASS( dbal::SimpleType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION(PointerGetDatum(cstring_to_text_with_len(value.data(), value.size())));
+    WITH_TO_CXX_CONVERSION(std::string(VARDATA_ANY(value), VARSIZE_ANY(value) - VARHDRSZ));
+};
+
+template <>
 struct TypeTraits<ByteString> : public TypeTraitsBase<ByteString> {
     enum { alignment = MAXIMUM_ALIGNOF };
     WITH_TYPE_NAME("bytea8");

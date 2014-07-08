@@ -24,6 +24,9 @@ DECLARE_UDF(glm, glm_inverse_gaussian_identity_transition)
 DECLARE_UDF(glm, glm_inverse_gaussian_inverse_transition)
 DECLARE_UDF(glm, glm_inverse_gaussian_sqr_inverse_transition)
 
+DECLARE_UDF(glm, glm_binomial_probit_transition)
+DECLARE_UDF(glm, glm_binomial_logit_transition)
+
 /**
  * @brief Generalized linear model: State merge function
  */
@@ -49,3 +52,4 @@ DECLARE_UDF(glm, glm_loglik_diff)
  * @brief Generalized linear model: Prediction function
  */
 DECLARE_UDF(glm, glm_predict)
+DECLARE_UDF(glm, glm_predict_binomial)

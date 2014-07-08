@@ -9,7 +9,6 @@
 
 #include <dbconnector/dbconnector.hpp>
 #include <boost/math/distributions.hpp>
-#include <modules/prob/boost.hpp>
 #include <limits>
 
 namespace madlib {

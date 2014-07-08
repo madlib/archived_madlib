@@ -77,6 +77,20 @@ public:
     }
 };
 
+class Binomial {
+public:
+    static double variance(const double &mu) { return mu * (1 - mu); }
+    static double loglik(const double &y, const double &mu,
+            const double &psi) {
+        if (mu == 0 || mu == 1) return 0;
+        double theta = log(mu / (1 - mu));
+        double a = 1;
+        double b = 0;
+        double c = log(1 - mu);
+        return (y * theta - b) / a + c;
+    }
+};
+
 } // namespace glm
 
 } // namespace modules
