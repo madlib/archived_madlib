@@ -88,6 +88,7 @@ def __compute_glm(schema_madlib, rel_args, rel_state, rel_source,
                     OR {schema_madlib}.__glm_loglik_diff(
                         _state_previous, _state_current) < _args.tolerance
                     """):
+                it.final()
                 break
     return iterationCtrl.iteration
 
@@ -170,7 +171,7 @@ def __extract_family_params(schema_madlib, family_params):
             poisson  = ["log","identity","sqrt"],
             gaussian = ["identity", "log", "inverse"],
             gamma = ["inverse", "log", "identity"],
-            inverse_gaussian = ["identity", "log", "inverse","sqr_inverse"],
+            inverse_gaussian = ["sqr_inverse","identity", "log", "inverse"],
             binomial = ["logit", "probit"])
     name_value = {}
     for k, v in family_params_dict.iteritems():
@@ -427,20 +428,15 @@ def glm_help_msg(schema_madlib, message, **kwargs):
     if not message:
 
         help_string = """
-----------------------------------------------------------------
+------------------------------------------------------------------
                         SUMMARY
-----------------------------------------------------------------
+------------------------------------------------------------------
 Generalized Linear Model:
 
-Currently Poisson, Gaussian, Gamma, Inverse Gaussian and Binomial families are supported. For Poisson
-family, supported link functions are 'log', 'identity' and 'sqrt'.
-For Gaussian family, supported link functions are 'identity',
-'log' and 'inverse'. For Gamma family, supported link functions are 'inverse',
-'log' and 'identity'. For Inverse Gaussian family, supported link functions are 'sqr_inverse'
-(i.e. 1/(mu)^2), 'log', 'identity', 'inverse'. For Binomial family, supported link functions
-are 'probit' and 'logit'.
+Function to fit a generalized linear model, relating responses to linear combinations 
+of predictor variables.
 
-For more details on function usage:
+For details on function usage:
     SELECT {schema_madlib}.glm('usage')
 
 For a small example on using the function:
@@ -458,8 +454,28 @@ SELECT {schema_madlib}.glm(
     dependent_varname,   -- name of dependent variable
     independent_varname, -- names of independent variables
     family_params,       -- parameters for family distribution and link function
+
+                            usage:
+                            'family=<family_name>,link=<link_function_name>'
+
+                            supported values include:
+                            'family=poisson,link=identity|log|sqrt' (default link: log)
+                            'family=binomial,link=logit|probit' (default link: logit)
+                            'family=gaussian,link=identity|log|inverse' (default link: identity)
+                            'family=inverse_gaussian,link=identity|log|inverse|sqr_inverse' (default link: sqr_inverse i.e. 1/mu^2)
+                            'family=gamma,link=identitiy|log|inverse' (default link: inverse)
+
     grouping_col,        -- optional, default NULL, names of columns to group-by
-    optimi_params,       -- optional, parameters for optimizer
+    optimizer_params,    -- optional, parameters for optimizer
+
+                            usage:
+                            'max_iter=<max_num_iterations>,optimizer=<optimizer_name>,tolerance=<tolerance_value>'
+
+                            default values include:
+                            max_iter=100
+                            optimizer='irls'
+                            tolerance=1e-6
+
     verbose              -- optional, default FALSE, whether to print debug info
 );
 
@@ -598,14 +614,18 @@ def glm_predict_help_msg(schema_madlib, message, **kwargs):
 ----------------------------------------------------------------
 Prediction function for generalized linear regression:
 
-Estimate the conditional mean for the new predictors. The length of inputted
-coefficient should match the number of variables in the new predictors.
+Estimate the conditional mean for the new predictors. The length of input
+coefficients should match the number of variables in the new predictors.
 
-For more details on function usage:
+For details on function usage:
     SELECT {schema_madlib}.glm_predict('usage')
 
 For a small example on using the function:
     SELECT {schema_madlib}.glm_predict('example')
+
+For prediction functions related to specific distributions:
+    SELECT {schema_madlib}.glm_predict_poisson('help')
+    SELECT {schema_madlib}.glm_predict_binomial('help')
         """
     elif message in ['usage', 'help', '?']:
 
@@ -713,5 +733,84 @@ ORDER BY w.id;
        """
     else:
         help_string = "No such option. Use {schema_madlib}.glm_predict('help')"
+
+    return help_string.format(schema_madlib=schema_madlib)
+
+
+# ============================================================================
+# Help messages for specialized prediction functions 
+# ============================================================================
+def glm_predict_poisson_help_msg(schema_madlib, message, **kwargs):
+    """ Help message for glm predict function
+
+    @param message A string, the help message indicator
+
+    Returns:
+      A string, contains the help message
+    """
+    if message in ['usage', 'help', '?', '']:
+
+        help_string = """
+------------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------------
+SELECT {schema_madlib}.glm_predict_poisson(
+    coef,            -- array of coefficients derived from glm() function
+    col_ind_var,     -- array of independent variables for new predictors
+    link             -- string indicating the link function specifid in glm()
+);
+
+------------------------------------------------------------------
+                        OUTPUT
+------------------------------------------------------------------
+The output is a table with one column which gives the estimated conditional
+mean for the new predictors, rounded to the nearest integral value.
+
+For more details on glm predict functions:
+    SELECT {schema_madlib}.glm_predict('usage')
+
+For examples:
+    SELECT {schema_madlib}.glm_predict('example')
+    """
+    else:
+        help_string = "No such option. Use {schema_madlib}.glm_predict_poisson('help')"
+
+    return help_string.format(schema_madlib=schema_madlib)
+
+
+def glm_predict_binomial_help_msg(schema_madlib, message, **kwargs):
+    """ Help message for glm predict function
+
+    @param message A string, the help message indicator
+
+    Returns:
+      A string, contains the help message
+    """
+    if message in ['usage', 'help', '?', '']:
+
+        help_string = """
+------------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------------
+SELECT {schema_madlib}.glm_predict_binomial(
+    coef,            -- array of coefficients derived from glm() function
+    col_ind_var,     -- array of independent variables for new predictors
+    link             -- string indicating the link function specifid in glm()
+);
+
+------------------------------------------------------------------
+                        OUTPUT
+------------------------------------------------------------------
+The output is a table with one column which gives the estimated output category
+of the dependent variable as a boolean value.
+
+For more details on glm predict functions:
+    SELECT {schema_madlib}.glm_predict('usage')
+
+For examples:
+    SELECT {schema_madlib}.glm_predict('example')
+    """
+    else:
+        help_string = "No such option. Use {schema_madlib}.glm_predict_binomial('help')"
 
     return help_string.format(schema_madlib=schema_madlib)

@@ -97,6 +97,11 @@ GLMAccumulator<Container,Family,Link>::operator<<(
     // useful to have clear error messages in case of infinite input values.
     if (!std::isfinite(y)) {
         warning("Dependent variables are not finite.");
+    //domain check for y
+    } else if (!Family::in_range(y)) {
+        std::stringstream err_msg;
+        err_msg << "Some y values were not found to be in the right range. " << Family::get_y_range();
+        throw std::runtime_error(err_msg.str());
     } else if (!dbal::eigen_integration::isfinite(x)) {
         warning("Design matrix is not finite.");
     } else if (x.size() > std::numeric_limits<uint16_t>::max()) {

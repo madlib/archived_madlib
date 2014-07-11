@@ -30,6 +30,8 @@ public:
 
         return (y * theta - b) / a + c;
     }
+    static std::string get_y_range() { return "y can be between negative infinity and positive infinity"; }
+    static bool in_range(double y) { return true; }
 };
 
 class Poisson {
@@ -47,6 +49,12 @@ public:
 
         return (y * theta - b) / a + c;
     }
+    static std::string get_y_range() { return "y should be an integer between 0 and positive infinity"; }
+    static bool in_range(double y) { 
+        double intpart;
+        return (modf(y, &intpart)==0.0 && (y >= 0.0 
+                                        && y <= std::numeric_limits<double>::max()));
+    }
 };
 
 class Gamma {
@@ -61,6 +69,9 @@ public:
 
 	return (y * theta - b) / a + c;
     }
+    static std::string get_y_range() { return "y should be between 0 and positive infinity"; }
+    static bool in_range(double y) { return (y >= 0.0 
+                                          && y <= std::numeric_limits<double>::max()); }
 };
 
 class Inverse_gaussian {
@@ -75,6 +86,9 @@ public:
 
 	return (y * theta - b) / a + c;
     }
+    static std::string get_y_range() { return "y should be between 0 and positive infinity"; }
+    static bool in_range(double y) { return (y >= 0.0 
+                                          && y <= std::numeric_limits<double>::max()); }
 };
 
 class Binomial {
@@ -88,6 +102,11 @@ public:
         double b = 0;
         double c = log(1 - mu);
         return (y * theta - b) / a + c;
+    }
+    static std::string get_y_range() { return "y should be a boolean value or a boolean expression"; }
+    static bool in_range(double y) { 
+        double intpart;
+        return (modf(y, &intpart)==0.0 && (y == 0.0 || y == 1.0));
     }
 };
 

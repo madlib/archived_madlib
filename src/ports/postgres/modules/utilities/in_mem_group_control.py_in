@@ -114,29 +114,10 @@ class GroupIterationController:
             for state in ret_states:
                 self.new_states[state[self.kwargs['col_grp_key']]] = None
 
-            ############################
-            # add the grouping join key
-            if not self.is_group_null:
-                # make a copy of the state table and add join attributes
-                converted_source_table = _unique_string()
-                plpy.execute("""
-                    CREATE TEMP TABLE {converted_source_table} AS
-                    SELECT
-                        *,
-                        array_to_string(ARRAY[{grouping_str}],
-                                        ',') AS {col_grp_key}
-                    FROM {rel_source}
-                    """.format(converted_source_table=converted_source_table,
-                               **self.kwargs))
-                self.kwargs.update(rel_source=converted_source_table)
-
         self.inWith = True
         return self
 
-
-    def __exit__(self, type, value, tb):
-        self.inWith = False
-
+    def final(self):
         insert_plan = plpy.prepare("""
             INSERT INTO {rel_state}
             SELECT
@@ -164,8 +145,9 @@ class GroupIterationController:
 
         plpy.execute(insert_plan, [self.failed_grp_keys, [None]])
 
-        if not self.is_group_null:
-            plpy.execute('DROP TABLE IF EXISTS ' + self.kwargs['rel_source'])
+
+    def __exit__(self, type, value, tb):
+        self.inWith = False
 
 
     def test(self, condition):
@@ -263,7 +245,14 @@ class GroupIterationController:
             FROM
                 {rel_args} AS _args
             LEFT OUTER JOIN
-                {rel_source} AS _src
+                (
+                    SELECT 
+                        *,
+                        array_to_string(ARRAY[{grouping_str}],
+                                        ','
+                                       ) AS {col_grp_key}
+                    FROM {rel_source}
+                ) AS _src
             ON TRUE
             JOIN
                 (
