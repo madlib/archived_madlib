@@ -9,6 +9,7 @@
 
 #include "family.hpp"
 #include "link.hpp"
+#include <modules/convex/newton.hpp>
 
 namespace madlib {
 
@@ -39,19 +40,15 @@ public:
     void reset();
     bool empty() const { return this->num_rows == 0; }
 
-    uint16_type num_features;
-    ColumnVector_type beta;
-
     uint64_type num_rows;
     bool_type terminated;
     double_type loglik;
-    ColumnVector_type X_trans_W_Y;
-    Matrix_type X_trans_W_X;
-
-    Matrix_type xcov;
-
-    double_type dispersion;
+    double_type dispersion; // to calculate loglik
     double_type dispersion_accum; // to accumulate the dispersion
+
+    convex::Newton<Container,GLMAccumulator> optimizer;
+
+    Matrix_type vcov;
 };
 
 // ------------------------------------------------------------------------

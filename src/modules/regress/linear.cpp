@@ -71,15 +71,14 @@ linregr_final::run(AnyType& args) {
 
     AnyType tuple;
     LinearRegression result(state);
-    Matrix resultVcov = result.vcov;
     tuple << result.coef
-		  << result.r2
-		  << result.stdErr
-		  << result.tStats
+          << result.r2
+          << result.stdErr
+          << result.tStats
           << (state.numRows > state.widthOfX ? result.pValues : Null())
           << sqrt(result.conditionNo)
-          << (int64_t)state.numRows
-          << resultVcov;
+          << static_cast<uint64_t>(state.numRows)
+          << result.vcov;
     return tuple;
 }
 // -----------------------------------------------------------------------

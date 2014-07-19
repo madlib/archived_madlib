@@ -1,0 +1,747 @@
+/* ----------------------------------------------------------------------- *//**
+ * @file multiresponseglm.sql_in
+ *
+ * @brief SQL functions for multinomial regression
+ * @date July 2014
+ *
+ * @sa For a brief introduction to multinomial regression, see the
+ *     module description \ref grp_multinom.
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_multinom
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#predict">Prediction Function</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul>
+</div>
+
+@brief Multinomial regression is to model the conditional distribution of the multinomial
+response variable using a linear combination of predictors.
+
+In statistics, multinomial  regression is a classification method that generalizes binomial regression to multiclass problems, i.e. with more than two possible discrete outcomes. That is, it is a model that is used to predict the probabilities of the different possible outcomes of a categorically distributed dependent variable, given a set of independent variables (which may be real-valued, binary-valued, categorical-valued, etc.).
+
+@anchor train
+@par Training Function
+The multinomial regression training function has the following syntax:
+<pre class="syntax">
+multinom(source_table,
+         model_table,
+         dependent_varname,
+         independent_varname,
+         ref_category,
+         link_func,
+         grouping_col,
+         optim_params,
+         verbose
+        )
+</pre>
+
+\b Arguments
+<DL class="arglist">
+  <DT>source_table</DT>
+  <DD>VARCHAR. Name of the table containing the training data.</DD>
+
+  <DT>model_table</DT>
+  <DD>VARCHAR. Name of the generated table containing the model.
+
+    The model table produced by multinom() contains the following columns:
+
+    <table class="output">
+      <tr>
+        <th>&lt;...&gt;</th>
+        <td>Grouping columns, if provided in input. This could be multiple columns depending on the \c grouping_col input.</td>
+      </tr>
+
+      <tr>
+        <th>category</th>
+        <td>VARCHAR. String representation of category value.</td>
+      </tr>
+
+      <tr>
+        <th>coef</th>
+        <td>FLOAT8[]. Vector of the coefficients in linear predictor.</td>
+      </tr>
+
+      <tr>
+        <th>log_likelihood</th>
+        <td>FLOAT8. The log-likelihood \f$ l(\boldsymbol \beta) \f$. The value will be the same across categories within the same group.</td>
+      </tr>
+
+      <tr>
+        <th>std_err</th>
+        <td>FLOAT8[]. Vector of the standard errors of the coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>z_stats</th>
+        <td>FLOAT8[]. Vector of the z-statistics of the coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>p_values</th>
+        <td>FLOAT8[]. Vector of the p-values of the coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>num_rows_processed</th>
+        <td>BIGINT. Number of rows processed.</td>
+      </tr>
+
+      <tr>
+        <th>num_rows_skipped</th>
+        <td>BIGINT. Number of rows skipped due to missing values or failures.</td>
+      </tr>
+
+      <tr>
+        <th>num_iterations</th>
+        <td>INTEGER. Number of iterations actually completed. This would be different
+          from the \c nIterations argument if a \c tolerance parameter is provided and the
+          algorithm converges before all iterations are completed.</td>
+      </tr>
+    </table>
+
+    A summary table named \<model_table\>_summary is also created at the same time, which has the following columns:
+     <table class="output">
+
+    <tr>
+      <th>method</th>
+      <td>VARCHAR. String describes the model: 'multinom'.</td>
+    </tr>
+
+    <tr>
+      <th>source_table</th>
+      <td>VARCHAR. Data source table name.</td>
+    </tr>
+
+    <tr>
+      <th>model_table</th>
+      <td>VARCHAR. Model table name.</td>
+    </tr>
+
+    <tr>
+      <th>dependent_varname</th>
+      <td>VARCHAR. Expression for dependent variable.</td>
+    </tr>
+
+    <tr>
+      <th>independent_varname</th>
+      <td>VARCHAR. Expression for independent variables.</td>
+    </tr>
+
+    <tr>
+      <th>ref_category</th>
+      <td>VARCHAR. String representation of reference category.</td>
+    </tr>
+
+    <tr>
+      <th>link_func</th>
+      <td>VARCHAR. String that contains link function parameters: only 'logit' is implemented now</td>
+    </tr>
+
+    <tr>
+      <th>grouping_col</th>
+      <td>VARCHAR. String representation of grouping columns.</td>
+    </tr>
+
+    <tr>
+      <th>optimizer_params</th>
+      <td>VARCHAR. String that contains optimizer parameters, and has the form of 'optimizer=..., max_iter=..., tolerance=...'.</td>
+    </tr>
+
+    <tr>
+      <th>num_all_groups</th>
+      <td>INTEGER. Number of groups in glm training.</td>
+    </tr>
+
+    <tr>
+      <th>num_failed_groups</th>
+      <td>INTEGER. Number of failed groups in glm training.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_processed</th>
+      <td>BIGINT. Total number of rows processed in all groups.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_skipped</th>
+      <td>BIGINT. Total number of rows skipped in all groups due to missing values or failures.</td>
+    </tr>
+
+   </table>
+  </DD>
+
+  <DT>dependent_varname</DT>
+  <DD>VARCHAR. Name of the dependent variable column.</DD>
+
+  <DT>independent_varname</DT>
+  <DD>VARCHAR. Expression list to evaluate for the
+    independent variables. An intercept variable is not assumed. It is common to
+    provide an explicit intercept term by including a single constant \c 1 term in
+    the independent variable list.</DD>
+
+  <DT>link_function (optional)</DT>
+  <DD>VARCHAR, default: 'logit'. Parameters for link function. Currently, we support logit.
+  </DD>
+
+  <DT>ref_category (optional)</DT>
+  <DD>VARCHAR, default: '0'. Parameters to specify the reference category.
+  </DD>
+
+  <DT>grouping_col (optional)</DT>
+  <DD>VARCHAR, default: NULL. An expression list used to group
+    the input dataset into discrete groups, running one regression per group.
+    Similar to the SQL "GROUP BY" clause. When this value is NULL, no
+    grouping is used and a single model is generated.</DD>
+
+  <DT>optim_params (optional)</DT>
+  <DD>VARCHAR, default: 'max_iter=100,optimizer=irls,tolerance=1e-6'.
+    Parameters for optimizer. Currently, we support
+    tolerance=[tolerance for relative error between log-likelihoods],
+    max_iter=[maximum iterations to run], optimizer=irls.</DD>
+
+  <DT>verbose (optional)</DT>
+  <DD>BOOLEAN, default: FALSE. Provides verbose output of the results of training.</DD>
+</DL>
+
+<dd>@note For p-values, we just return the computation result directly.
+Other statistical packages, like 'R', produce the same result, but on printing the
+result to screen, another format function is used and any p-value that is
+smaller than the machine epsilon (the smallest positive floating-point number
+'x' such that '1 + x != 1') will be printed on screen as "< xxx" (xxx is the
+value of the machine epsilon). Although the result may look different, they are
+in fact the same.
+</dd>
+
+@anchor predict
+@par Prediction Function
+Multinomial regression prediction function has the following format:
+<pre class="syntax">
+multinom_predict(model_table,
+                 predict_table,
+                 predicted_val_tab,
+                 predict_type
+                )
+</pre>
+\b Arguments
+<DL class="arglist">
+  <DT>model_table</DT>
+  <DD>TEXT. Name of the generated table containing the model, which is the output table from
+            multinom().</DD>
+
+  <DT>predict_table</DT>
+  <DD>TEXT. The name of the table containing the data to predict on. The table must contain
+            id column as the primary key.</DD>
+
+  <DT>predicted_val_tab</DT>
+  <DD>TEXT. Name of the generated table containing the predicted values.
+
+    The model table produced by multinom_predict contains the following columns:
+
+    <table class="output">
+      <tr>
+        <th>id</th>
+        <td>SERIAL. Column to identify the predicted value.</td>
+      </tr>
+
+      <tr>
+        <th>category</th>
+        <td>TEXT. Available if the predicted type = 'response'. Column contains the predicted
+                  categories</td>
+      </tr>
+
+      <tr>
+        <th>category_value</th>
+        <td>FLOAT8. The predicted probability for the specific category_value.</td>
+      </tr>
+    </table>
+
+  <DT>predict_type</DT>
+  <DD>TEXT. Either 'response' or 'probability'. Using 'response' will give the predicted category with
+            the largest probability. Using probability will give the predicted probabilities for all
+            categories</DD>
+</DL>
+
+
+@anchor examples
+@examp
+
+-# Create the training data table.
+<pre class="example">
+DROP TABLE IF EXISTS test3;
+CREATE TABLE test3 (
+    feat1 INTEGER,
+    feat2 INTEGER,
+    cat INTEGER
+);
+INSERT INTO test3(feat1, feat2, cat) VALUES
+(1,35,1),
+(2,33,0),
+(3,39,1),
+(1,37,1),
+(2,31,1),
+(3,36,0),
+(2,36,1),
+(2,31,1),
+(2,41,1),
+(2,37,1),
+(1,44,1),
+(3,33,2),
+(1,31,1),
+(2,44,1),
+(1,35,1),
+(1,44,0),
+(1,46,0),
+(2,46,1),
+(2,46,2),
+(3,49,1),
+(2,39,0),
+(2,44,1),
+(1,47,1),
+(1,44,1),
+(1,37,2),
+(3,38,2),
+(1,49,0),
+(2,44,0),
+(3,61,2),
+(1,65,2),
+(3,67,1),
+(3,65,2),
+(1,65,2),
+(2,67,2),
+(1,65,2),
+(1,62,2),
+(3,52,2),
+(3,63,2),
+(2,59,2),
+(3,65,2),
+(2,59,0),
+(3,67,2),
+(3,67,2),
+(3,60,2),
+(3,67,2),
+(3,62,2),
+(2,54,2),
+(3,65,2),
+(3,62,2),
+(2,59,2),
+(3,60,2),
+(3,63,2),
+(3,65,2),
+(2,63,1),
+(2,67,2),
+(2,65,2),
+(2,62,2);
+</pre>
+-# Run the multilogistic regression function.
+<pre class="example">
+DROP TABLE IF EXISTS test3_output;
+DROP TABLE IF EXISTS test3_output_summary;
+SELECT madlib.multinom('test3',
+                       'test3_output',
+                       'cat',
+                       'ARRAY[1, feat1, feat2]',
+                       '0',
+                       'logit'
+                       );
+</pre>
+
+-# View the regression results.
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x on
+SELECT * FROM test3_output;
+</pre>
+
+Result:
+<pre class="result">
+-[ RECORD 1 ]------+------------------------------------------------------------
+category           | 1
+coef               | {1.45474045165731,0.084995618282504,-0.0172383499512136}
+log_likelihood     | -39.1475993094045
+std_err            | {2.13085878785549,0.585023211942952,0.0431489262260687}
+z_stats            | {0.682701481650677,0.145285890452484,-0.399508202380224}
+p_values           | {0.494795493298706,0.884485154314181,0.689518781152604}
+num_rows_processed | 57
+num_rows_skipped   | 0
+iteration          | 6
+-[ RECORD 2 ]------+------------------------------------------------------------
+category           | 2
+coef               | {-7.1290816775109,0.876487877074751,0.127886153038661}
+log_likelihood     | -39.1475993094045
+std_err            | {2.52105418324135,0.639578886139654,0.0445760103748678}
+z_stats            | {-2.82781771407425,1.37041402721253,2.86894569440347}
+p_values           | {0.00468664844488755,0.170557695812408,0.00411842502754068}
+num_rows_processed | 57
+num_rows_skipped   | 0
+iteration          | 6
+</pre>
+
+-# Predicting dependent variable using multinomial model.
+(This example uses the original data table to perform the prediction. Typically
+a different test dataset with the same features as the original training dataset
+would be used for prediction.)
+
+<pre class="example">
+\\x off
+-- Add the id column for prediction function
+ALTER TABLE test3 ADD COLUMN id SERIAL;
+-- Predict probabilities for all categories using the original data
+SELECT multinom_predict('test3_out','test3', 'test3_prd_prob', 'probability');
+-- Display the predicted value
+SELECT * FROM test3_prd_prob;
+</pre>
+
+<pre class="example">
+-- Display predicted counts (which are predicted mean values rounded to the nearest integral value) on the original dataset
+SELECT w.id, madlib.glm_predict_poisson(coef, ARRAY[1, "wool_B", "tension_M", "tension_H"]::float8[],'log') as mu
+FROM warpbreaks_dummy w, glm_model m
+</pre>
+
+@anchor background
+@par Technical Background
+When link = 'logit', multinomial logistic regression
+models the outcomes of categorical dependent random variables (denoted \f$ Y
+\in \{ 0,1,2 \ldots k \} \f$). The model assumes that the conditional mean of
+the dependent categorical variables is the logistic function of an affine
+combination of independent variables (usually denoted \f$ \boldsymbol x \f$).
+That is,
+\f[
+    E[Y \mid \boldsymbol x] = \sigma(\boldsymbol c^T \boldsymbol x)
+\f]
+for some unknown vector of coefficients \f$ \boldsymbol c \f$ and where \f$
+\sigma(x) = \frac{1}{1 + \exp(-x)} \f$ is the logistic function. Multinomial
+logistic regression finds the vector of coefficients \f$ \boldsymbol c \f$ that
+maximizes the likelihood of the observations.
+
+Let
+- \f$ \boldsymbol y \in \{ 0,1 \}^{n \times k} \f$ denote the vector of observed
+dependent variables, with \f$ n \f$ rows and \f$ k \f$ columns, containing the
+observed values of the   dependent variable,
+
+- \f$ X \in \mathbf R^{n \times k} \f$ denote the design matrix with \f$ k \f$
+  columns and \f$ n \f$ rows, containing all observed vectors of independent
+  variables \f$ \boldsymbol x_i \f$ as rows.
+
+By definition,
+\f[
+    P[Y = y_i | \boldsymbol x_i]
+    =   \sigma((-1)^{y_i} \cdot \boldsymbol c^T \boldsymbol x_i)
+    \,.
+\f]
+Maximizing the likelihood
+\f$ \prod_{i=1}^n \Pr(Y = y_i \mid \boldsymbol x_i) \f$
+is equivalent to maximizing the log-likelihood
+\f$ \sum_{i=1}^n \log \Pr(Y = y_i \mid \boldsymbol x_i) \f$, which simplifies to
+\f[
+    l(\boldsymbol c) =
+        -\sum_{i=1}^n \log(1 + \exp((-1)^{y_i}
+            \cdot \boldsymbol c^T \boldsymbol x_i))
+    \,.
+\f]
+The Hessian of this objective is \f$ H = -X^T A X \f$ where
+\f$ A = \text{diag}(a_1, \dots, a_n) \f$ is the diagonal matrix with
+\f$
+    a_i = \sigma(\boldsymbol c^T \boldsymbol x)
+          \cdot
+          \sigma(-\boldsymbol c^T \boldsymbol x)
+    \,.
+\f$
+Since \f$ H \f$ is non-positive definite, \f$ l(\boldsymbol c) \f$ is convex.
+There are many techniques for solving convex optimization problems. Currently,
+logistic regression in MADlib can use:
+- Iteratively Reweighted Least Squares
+
+We estimate the standard error for coefficient \f$ i \f$ as
+\f[
+    \mathit{se}(c_i) = \left( (X^T A X)^{-1} \right)_{ii}
+    \,.
+\f]
+The Wald z-statistic is
+\f[
+    z_i = \frac{c_i}{\mathit{se}(c_i)}
+    \,.
+\f]
+
+The Wald \f$ p \f$-value for coefficient \f$ i \f$ gives the probability (under
+the assumptions inherent in the Wald test) of seeing a value at least as extreme
+as the one observed, provided that the null hypothesis (\f$ c_i = 0 \f$) is
+true. Letting \f$ F \f$ denote the cumulative density function of a standard
+normal distribution, the Wald \f$ p \f$-value for coefficient \f$ i \f$ is
+therefore
+\f[
+    p_i = \Pr(|Z| \geq |z_i|) = 2 \cdot (1 - F( |z_i| ))
+\f]
+where \f$ Z \f$ is a standard normally distributed random variable.
+
+The odds ratio for coefficient \f$ i \f$ is estimated as \f$ \exp(c_i) \f$.
+
+The condition number is computed as \f$ \kappa(X^T A X) \f$ during the iteration
+immediately <em>preceding</em> convergence (i.e., \f$ A \f$ is computed using
+the coefficients of the previous iteration). A large condition number (say, more
+than 1000) indicates the presence of significant multicollinearity.
+
+The multinomial logistic regression uses a default reference category of zero,
+and the regression coefficients in the output are in the order described below.
+For a problem with
+\f$ K \f$ dependent variables \f$ (1, ..., K) \f$ and \f$ J \f$ categories \f$ (0, ..., J-1)
+\f$, let \f$ {m_{k,j}} \f$ denote the coefficient for dependent variable \f$ k
+\f$ and  category \f$ j \f$.   The output is \f$ {m_{k_1, j_0}, m_{k_1, j_1}
+\ldots m_{k_1, j_{J-1}}, m_{k_2, j_0}, m_{k_2, j_1}, \ldots  m_{k_2, j_{J-1}} \ldots m_{k_K, j_{J-1}}} \f$.
+The order is NOT CONSISTENT with the  multinomial regression marginal effect
+calculation with function <em>marginal_mlogregr</em>.   This is deliberate
+because the interfaces of all multinomial regressions (robust, clustered, ...)
+will be moved to match that used in marginal.
+
+
+
+@anchor literature
+@literature
+
+A collection of nice write-ups, with valuable pointers into
+further literature:
+
+[1] Annette J. Dobson: An Introduction to Generalized Linear Models, Second Edition.  Nov 2001
+
+[2] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
+    2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
+
+[3] Scott A. Czepiel: Maximum Likelihood Estimation
+        of Logistic Regression Models: Theory and Implementation,
+        Retrieved Jul 12 2012, http://czep.net/stat/mlelr.pdf
+
+@anchor related
+@par Related Topics
+
+File multiresponseglm.sql_in documenting the multinomial regression functions
+
+\ref grp_logreg
+
+@internal
+@sa Namespace multinom (documenting the driver/outer loop implemented in
+    Python), Namespace
+    \ref madlib::modules::glm documenting the implementation in C++
+@endinternal
+
+*/
+------------------------------------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__multinom_result_type CASCADE;
+CREATE TYPE MADLIB_SCHEMA.__multinom_result_type AS (
+        coef double precision[][],
+        loglik double precision,
+        std_err double precision[][],
+        z_stats double precision[][],
+        p_values double precision[][],
+        num_rows_processed bigint
+);
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__multinom_merge_states(
+        state1 MADLIB_SCHEMA.bytea8,
+        state2 MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'multi_response_glm_merge_states'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__multinom_final(
+        state MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'multi_response_glm_final'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__multinom_logit_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8,
+        smallint)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'multi_response_glm_multinom_logit_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__multinom_logit_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8, smallint);
+CREATE AGGREGATE MADLIB_SCHEMA.__multinom_logit_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8,
+        /*+ numer of categor.*/ smallint) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__multinom_logit_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__multinom_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__multinom_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__multinom_result(
+        /*+ state */ MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.__multinom_result_type
+AS 'MODULE_PATHNAME', 'multi_response_glm_result_z_stats'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__multinom_loglik_diff(
+        /*+ state1 */ MADLIB_SCHEMA.bytea8,
+        /*+ state2 */ MADLIB_SCHEMA.bytea8)
+RETURNS double precision
+AS 'MODULE_PATHNAME', 'multi_response_glm_loglik_diff'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    ref_category        varchar,
+    link_func           varchar,
+    grouping_col        varchar,
+    optim_params        varchar,
+    verbose             boolean
+) RETURNS void AS $$
+PythonFunction(glm, multinom, multinom)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-- entry functions with default values
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    ref_category        varchar,
+    link_func           varchar,
+    grouping_col        varchar,
+    optim_params        varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.multinom($1, $2, $3, $4, $5, $6, $7, $8, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    ref_category        varchar,
+    link_func           varchar,
+    grouping_col        varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.multinom($1, $2, $3, $4, $5, $6, $7, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    ref_category        varchar,
+    link_func           varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.multinom($1, $2, $3, $4, $5, $6, NULL, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    ref_category        varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.multinom($1, $2, $3, $4, $5, NULL, NULL, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.multinom($1, $2, $3, $4, NULL, NULL, NULL, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-- Help messages -------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom(
+    message    TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(glm, multinom, multinom_help_msg)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom()
+RETURNS TEXT
+AS $$
+    SELECT MADLIB_SCHEMA.multinom(NULL::TEXT);
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+------------------------------------------------------------------------------
+--------- prediction function ------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom_predict(
+    model_table         varchar,
+    predict_table       varchar,
+    predicted_value_tab varchar,
+    predict_type        varchar
+) RETURNS void AS $$
+PythonFunction(glm, multinom, multinom_predict)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom_predict(
+    model_table         varchar,
+    predict_table       varchar,
+    predicted_value_tab varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.multinom($1,$2,$3,NULL);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+-- Help messages -------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom_predict(
+    message    TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(glm, multinom, multinom_predict_help_msg)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.multinom_predict()
+RETURNS TEXT
+AS $$
+    SELECT MADLIB_SCHEMA.multinom_predict(NULL::TEXT);
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');

@@ -237,8 +237,11 @@ struct TypeTraits<std::string> {
     WITH_TYPE_CLASS( dbal::SimpleType );
     WITH_MUTABILITY( dbal::Immutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
-    WITH_TO_PG_CONVERSION(PointerGetDatum(cstring_to_text_with_len(value.data(), value.size())));
-    WITH_TO_CXX_CONVERSION(std::string(VARDATA_ANY(value), VARSIZE_ANY(value) - VARHDRSZ));
+    WITH_TO_PG_CONVERSION(PointerGetDatum(
+            cstring_to_text_with_len(value.data(),
+                                     static_cast<int>(value.size()))));
+    WITH_TO_CXX_CONVERSION(std::string(VARDATA_ANY(value),
+                                       VARSIZE_ANY(value) - VARHDRSZ));
 };
 
 template <>
@@ -548,7 +551,6 @@ struct TypeTraits<dbal::eigen_integration::Matrix>
     // MappedMatrix instead.
 };
 
-/*
 template<class Derived>
 struct TypeTraits<Eigen::MatrixBase<Derived> > {
     typedef Eigen::MatrixBase<Derived> value_type;
@@ -587,7 +589,7 @@ struct TypeTraits<
 
 template<class XprType, int BlockRows, bool InnerPanel, bool HasDirectAccess>
 struct TypeTraits<
-    Eigen::Block<XprType, BlockRows, *//* BlockCols *//* 1, InnerPanel,
+    Eigen::Block<XprType, BlockRows, /* BlockCols */ 1, InnerPanel,
         HasDirectAccess> > {
 
     typedef Eigen::Block<XprType, BlockRows, 1, InnerPanel,
@@ -600,7 +602,7 @@ struct TypeTraits<
     WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
     // No need to support retrieving this type from the backend. Use
     // MappedColumnVector instead.
-};*/
+};
 
 template <>
 struct TypeTraits<dbal::eigen_integration::SparseColumnVector> {

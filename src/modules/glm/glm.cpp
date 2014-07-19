@@ -39,7 +39,7 @@ typedef GLMAccumulator<MutableRootContainer> MutableGLMState;
     } \
  \
     if (state.empty()) { \
-        state.num_features = static_cast<uint16_t>(x.size()); \
+        state.optimizer.num_coef = static_cast<uint16_t>(x.size()); \
         state.resize(); \
         if (!args[3].isNull()) { \
             GLMState prev_state = args[3].getAs<ByteString>(); \
@@ -160,41 +160,41 @@ glm_binomial_logit_transition::run(AnyType& args) {
     DEFINE_GLM_TRANSITION(MutableGLMBinomialLogitState);
 }
 // ------------------------------------------------------------------------
-typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Log>
-    MutableGLMInverse_gaussianLogState;
+typedef GLMAccumulator<MutableRootContainer,InverseGaussian,Log>
+    MutableGLMInverseGaussianLogState;
 
 AnyType
 glm_inverse_gaussian_log_transition::run(AnyType& args) {
-    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianLogState);
+    DEFINE_GLM_TRANSITION(MutableGLMInverseGaussianLogState);
 }
 
 // ------------------------------------------------------------------------
 
-typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Identity>
-    MutableGLMInverse_gaussianIdentityState;
+typedef GLMAccumulator<MutableRootContainer,InverseGaussian,Identity>
+    MutableGLMInverseGaussianIdentityState;
 
 AnyType
 glm_inverse_gaussian_identity_transition::run(AnyType& args) {
-    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianIdentityState);
+    DEFINE_GLM_TRANSITION(MutableGLMInverseGaussianIdentityState);
 }
 
 // ------------------------------------------------------------------------
 
-typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Inverse>
-    MutableGLMInverse_gaussianInverseState;
+typedef GLMAccumulator<MutableRootContainer,InverseGaussian,Inverse>
+    MutableGLMInverseGaussianInverseState;
 
 AnyType
 glm_inverse_gaussian_inverse_transition::run(AnyType& args) {
-    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianInverseState);
+    DEFINE_GLM_TRANSITION(MutableGLMInverseGaussianInverseState);
 }
 
 // ------------------------------------------------------------------------
-typedef GLMAccumulator<MutableRootContainer,Inverse_gaussian,Sqr_inverse>
-    MutableGLMInverse_gaussianSqr_inverseState;
+typedef GLMAccumulator<MutableRootContainer,InverseGaussian,SqrInverse>
+    MutableGLMInverseGaussianSqrInverseState;
 
 AnyType
 glm_inverse_gaussian_sqr_inverse_transition::run(AnyType& args) {
-    DEFINE_GLM_TRANSITION(MutableGLMInverse_gaussianSqr_inverseState);
+    DEFINE_GLM_TRANSITION(MutableGLMInverseGaussianSqrInverseState);
 }
 
 // ------------------------------------------------------------------------
@@ -258,12 +258,12 @@ glm_result_t_stats::run(AnyType& args) {
     result.std_err = result.std_err * sqrt(result.dispersion);
     result.z_stats = result.coef.cwiseQuotient(result.std_err);
 
-    for (Index i = 0; i < state.num_features; i++) {
+    uint64_t n = state.num_rows;
+    uint16_t p = state.optimizer.num_coef;
+    for (Index i = 0; i < p; i++) {
         result.p_values(i) = 2. * prob::cdf(
                 boost::math::complement(
-                    prob::students_t(
-                        static_cast<double>(state.num_rows - state.num_features)
-                        ),
+                    prob::students_t(static_cast<double>(n - p)),
                     std::fabs(result.z_stats(i))
                     ));
     }
@@ -382,12 +382,12 @@ AnyType glm_predict_poisson::run(AnyType &args) {
         throw std::runtime_error(
             "Coefficients and independent variables are of incompatible length");
     double dot = vec1.dot(vec2);
-    
+
     if (link.compare("identity")==0) return(round(dot));
     if (link.compare("log")==0) return(round(exp(dot)));
-    if (link.compare("sqrt")==0) return(round(dot*dot)); 
+    if (link.compare("sqrt")==0) return(round(dot*dot));
 
-    throw std::runtime_error("Invalid link function!"); 
+    throw std::runtime_error("Invalid link function!");
 }
 
 } // namespace glm

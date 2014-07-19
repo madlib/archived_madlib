@@ -145,7 +145,7 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
     else {
         /* try to insert as either a new or replacement entry */
         for (i = 0; i < (int)transval->max_mfvs; i++) {
-            if ((i == (int)transval->next_mfv)) {
+            if (i == (int)transval->next_mfv) {
                 /* room for new */
                 transblob = mfv_transval_append(transblob, newdatum);
                 transval = (mfvtransval *)VARDATA(transblob);
@@ -572,7 +572,7 @@ bytea *mfvsketch_merge_c(bytea *transblob1, bytea *transblob2)
          cnt++) {
         Datum iDatum, jDatum;
 
-	if (i < transval1->next_mfv &&
+    if (i < transval1->next_mfv &&
             (j == transval2->next_mfv
              || transval1->mfvs[i].cnt >= transval2->mfvs[j].cnt)) {
           /* next item comes from transval1 */

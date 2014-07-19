@@ -14,53 +14,28 @@ class GroupIterationController:
     @brief Abstraction for implementing in-memory iteration controller for
     SQL aggregate with STYPE=madlib.bytea8 (e.g. DynamicStruct) in PL/Python
 
-    This class encapsulates handling of the inter-iteration state. The design
-    goal is to avoid any conversion between backend-native types and those of
-    procedureal languages like PL/Python. Therefore, the expectation is that
-
-    *** all "template" parameters are passed as PL/Python arguments ***,
-
-    whereas non-template arguments are provided in an argument table. Here,
-    "template" arguments are those parameters that cannot be SQL parameters,
-
-    *** such as function, table and column names ***.
-
     The inter-state iteration table contains:
+    - Columns that are provided as grouping arguments
     - <tt>_grouping_cols <em>text</em></tt>
-        - List of columns that are provided as grouping arguments
+        - Text representation of all grouping columns
     - <tt>_iteration <em>integer</em></tt> - The 0-based iteration number
     - <tt>_state <em>self.kwargs.stateType</em></tt>
         - The state (after iteration \c <tt>_iteration</tt>)
     - and the actual grouping columns typed and named as in source table
     """
 
-    def __init__(self, rel_args, rel_state, stateType,
-            temporaryTables = True,
-            schema_madlib = "MADLIB_SCHEMA_MISSING",
-            verbose = False,
-            grouping_str = "NULL",
-            col_grp_iteration="_iteration",
-            col_grp_state="_state",
-            **kwargs):
-        self.temporaryTables = temporaryTables
-        self.verbose = verbose
-        self.inWith = False
+    def __init__(self, arg_dict):
+        self.schema_madlib = arg_dict['schema_madlib']
+        self.in_with = False
         self.iteration = -1
-        self.is_group_null = True if kwargs["grouping_col"] is None else False
-        self.kwargs = kwargs
+        self.is_group_null = True if arg_dict["grouping_col"] is None else False
+        self.kwargs = arg_dict
         self.kwargs.update(
-            unqualified_rel_state=rel_state,
-            rel_args=('pg_temp.' if temporaryTables else '') + rel_args,
-            rel_state=rel_state,
-            stateType=stateType.format(schema_madlib=schema_madlib),
-            schema_madlib=schema_madlib,
-            grouping_str=grouping_str,
+            state_type=self.schema_madlib+".bytea8",
             col_grp_null=_unique_string(),
             col_grp_key=_unique_string(),
-            col_grp_iteration=col_grp_iteration,
-            col_grp_state=col_grp_state,
-            grouping_col="NULL" if kwargs["grouping_col"] is None \
-                    else kwargs["grouping_col"],
+            grouping_col="NULL" if arg_dict["grouping_col"] is None \
+                    else arg_dict["grouping_col"],
             )
 
         self.new_states = {}
@@ -80,18 +55,17 @@ class GroupIterationController:
                         else "{grouping_col}").format(**self.kwargs)
             plpy.execute("""
                 DROP TABLE IF EXISTS {rel_state};
-                CREATE {temp} TABLE {unqualified_rel_state} AS (
+                CREATE TEMPORARY TABLE {rel_state} AS (
                     SELECT
                         array_to_string(ARRAY[{grouping_str}],
                                         ',') AS {col_grp_key},
                         0::integer AS {col_grp_iteration},
-                        NULL::{stateType} AS {col_grp_state},
+                        NULL::{state_type} AS {col_grp_state},
                         {group_col}
                     FROM {rel_source}
                     GROUP BY {groupby_str}
                 );
                 """.format(group_col=group_col, groupby_str=groupby_str,
-                           temp='TEMPORARY' if self.temporaryTables else '',
                            **self.kwargs))
 
             ############################
@@ -114,7 +88,7 @@ class GroupIterationController:
             for state in ret_states:
                 self.new_states[state[self.kwargs['col_grp_key']]] = None
 
-        self.inWith = True
+        self.in_with = True
         return self
 
     def final(self):
@@ -147,7 +121,7 @@ class GroupIterationController:
 
 
     def __exit__(self, type, value, tb):
-        self.inWith = False
+        self.in_with = False
 
 
     def test(self, condition):
@@ -170,22 +144,20 @@ class GroupIterationController:
                 CAST(({condition}) AS BOOLEAN) AS _expression,
                 {col_grp_key}
             FROM
-                {rel_args} AS _args
-            LEFT OUTER JOIN (
-                    (
-                        SELECT
-                            unnest($1) AS {col_grp_key},
-                            unnest($2) AS _state_previous
-                    ) sub1
+            (
+                (
+                    SELECT
+                        unnest($1) AS {col_grp_key},
+                        unnest($2) AS _state_previous
+                ) sub1
                 JOIN
-                    (
-                        SELECT
-                            unnest($3) AS {col_grp_key},
-                            unnest($4) AS _state_current
-                    ) sub2
+                (
+                    SELECT
+                        unnest($3) AS {col_grp_key},
+                        unnest($4) AS _state_current
+                ) sub2
                 USING ({col_grp_key})
-            ) AS subq1
-            ON TRUE
+            ) subq1
             """.format(condition=condition, **self.kwargs),
             ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)] * 2)
 
@@ -243,23 +215,20 @@ class GroupIterationController:
                 {iteration} AS {col_grp_iteration},
                 ({newState}) AS {col_grp_state}
             FROM
-                {rel_args} AS _args
-            LEFT OUTER JOIN
-                (
-                    SELECT 
-                        *,
-                        array_to_string(ARRAY[{grouping_str}],
-                                        ','
-                                       ) AS {col_grp_key}
-                    FROM {rel_source}
-                ) AS _src
-            ON TRUE
+            (
+                SELECT
+                    *,
+                    array_to_string(ARRAY[{grouping_str}],
+                                    ','
+                                   ) AS {col_grp_key}
+                FROM {rel_source}
+            ) AS _src
             JOIN
-                (
-                    SELECT
-                        unnest($1) AS {col_grp_key},
-                        unnest($2) AS {col_grp_state}
-                ) AS {rel_state}
+            (
+                SELECT
+                    unnest($1) AS {col_grp_key},
+                    unnest($2) AS {col_grp_state}
+            ) AS {rel_state}
             {using_str}
             {groupby_str}
             """.format(

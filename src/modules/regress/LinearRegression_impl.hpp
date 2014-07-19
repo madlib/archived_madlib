@@ -215,7 +215,7 @@ LinearRegression::compute(
     double rss = tss - ess;
 
     // Variance is also called the mean square error
-	double variance = rss / static_cast<double>(inState.numRows - inState.widthOfX);
+    double variance = rss / static_cast<double>(inState.numRows - inState.widthOfX);
 
     // Vector of standard errors and t-statistics: For efficiency reasons, we
     // want to return these by reference, so we need to bind to db memory
@@ -245,8 +245,10 @@ LinearRegression::compute(
 
     // Matrix of variance-covariance matrix : For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
-    vcov.rebind(allocator.allocateArray<double>(inState.widthOfX * inState.widthOfX),
-                inState.widthOfX, inState.widthOfX);
+    vcov.rebind(allocator.allocateArray<double>(inState.widthOfX,
+                                                inState.widthOfX),
+                inState.widthOfX,
+                inState.widthOfX);
     vcov = variance * inverse_of_X_transp_X;
 
     // Vector of p-values: For efficiency reasons, we want to return this
@@ -265,8 +267,8 @@ LinearRegression::compute(
 }
 
 /*
-	Robust Linear Regression: Huber-White Sandwich estimator
-*/
+ * Robust Linear Regression: Huber-White Sandwich estimator
+ */
 
 template <class Container>
 inline
@@ -292,9 +294,10 @@ void
 RobustLinearRegressionAccumulator<Container>::bind(ByteStream_type& inStream) {
     inStream >> numRows >> widthOfX;
     uint16_t actualWidthOfX = widthOfX.isNull() ? static_cast<uint16_t>(0) : static_cast<uint16_t>(widthOfX);
-    inStream	>> ols_coef.rebind(actualWidthOfX)
-							>> X_transp_X.rebind(actualWidthOfX, actualWidthOfX)
-							>> X_transp_r2_X.rebind(actualWidthOfX, actualWidthOfX);
+    inStream
+        >> ols_coef.rebind(actualWidthOfX)
+        >> X_transp_X.rebind(actualWidthOfX, actualWidthOfX)
+        >> X_transp_r2_X.rebind(actualWidthOfX, actualWidthOfX);
 }
 
 /**
@@ -308,7 +311,7 @@ inline
 RobustLinearRegressionAccumulator<Container>&
 RobustLinearRegressionAccumulator<Container>::operator<<(const tuple_type& inTuple) {
 
-		// Inputs
+    // Inputs
     const MappedColumnVector& x = std::get<0>(inTuple);
     const double& y = std::get<1>(inTuple);
     const MappedColumnVector& coef = std::get<2>(inTuple);
@@ -336,7 +339,7 @@ RobustLinearRegressionAccumulator<Container>::operator<<(const tuple_type& inTup
     double r = y - trans(ols_coef)*x;
 
     // The following matrices are symmetric, so it is sufficient to
-		// only fill a triangular part
+    // only fill a triangular part
     triangularView<Lower>(X_transp_X) += x * trans(x);
     triangularView<Lower>(X_transp_r2_X) += r * r * x * trans(x);
 
@@ -407,14 +410,14 @@ RobustLinearRegression::compute(
     // Precompute (X^T * X)^+
     Matrix inverse_of_X_transp_X = decomposition.pseudoInverse();
 
-		// Calculate the robust variance covariance matrix as:
-		// (X^T X)^-1  X^T diag(r1^2,r2^2....rn^2)X  (X^T X)^-1
-		// Where r_1, r_2 ... r_n are the residuals
-		// Note: X_transp_r2_X calcualtes X^T diag(r1^2,r2^2....rn^2)X
+    // Calculate the robust variance covariance matrix as:
+    // (X^T X)^-1  X^T diag(r1^2,r2^2....rn^2)X  (X^T X)^-1
+    // Where r_1, r_2 ... r_n are the residuals
+    // Note: X_transp_r2_X calcualtes X^T diag(r1^2,r2^2....rn^2)X
 
-		Matrix robust_var_cov = inState.X_transp_r2_X.triangularView<Eigen::StrictlyLower>();
-		robust_var_cov = robust_var_cov + trans(inState.X_transp_r2_X);
-		robust_var_cov = inverse_of_X_transp_X * robust_var_cov * inverse_of_X_transp_X;
+    Matrix robust_var_cov = inState.X_transp_r2_X.template triangularView<Eigen::StrictlyLower>();
+    robust_var_cov = robust_var_cov + trans(inState.X_transp_r2_X);
+    robust_var_cov = inverse_of_X_transp_X * robust_var_cov * inverse_of_X_transp_X;
 
     // Vector of standard errors and t-statistics: For efficiency reasons, we
     // want to return these by reference, so we need to bind to db memory

@@ -76,7 +76,7 @@ template <ViewMode Mode, typename Derived>
 inline
 typename Eigen::MatrixBase<Derived>::template TriangularViewReturnType<Mode>::Type
 static triangularView(Eigen::MatrixBase<Derived>& mat) {
-    return mat.triangularView<Mode>();
+    return mat.template triangularView<Mode>();
 }
 
 template <typename Derived>

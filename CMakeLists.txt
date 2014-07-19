@@ -89,8 +89,9 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # - long long is not part of the C++ 1998/2003 standard, but it is such a
     # common (and useful) extension that we do not want to hear warnings about
     # it.
-    # FIXME: -msse2 should only be added on i386
-    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -msse2 -fstrict-aliasing" CACHE STRING
+    # FIXME: SSE2 may cause failues in Greenplum when using some Eigen operations. Tracker no.74929244
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -msse2 -fstrict-aliasing"
+        CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
 
     # We want to include some header files as system header files in order to
@@ -195,7 +196,9 @@ include(OSXUtils)
 # -- Add subdirectories --------------------------------------------------------
 
 add_subdirectory(src)
-add_subdirectory(doc)
+if(CMAKE_COMPILER_IS_GNUCC AND CMAKE_COMPILER_IS_GNUCXX)
+    add_subdirectory(doc) #e.g., Clang/Clang++ does not work
+endif(CMAKE_COMPILER_IS_GNUCC AND CMAKE_COMPILER_IS_GNUCXX)
 add_subdirectory(deploy)
 
 # -- Install path for specific madlib version ----------------------------------

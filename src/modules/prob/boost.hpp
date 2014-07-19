@@ -317,7 +317,6 @@ struct NonNegativeIntegerDomainCheck : public IntegerDomainCheck<Distribution> {
  *
  * https://svn.boost.org/trac/boost/ticket/6937
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::bernoulli_distribution<RealType, Policy> >
   : public IntegerDomainCheck<
@@ -376,7 +375,6 @@ struct DomainCheck<boost::math::bernoulli_distribution<RealType, Policy> >
  *
  * https://svn.boost.org/trac/boost/ticket/6937
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::binomial_distribution<RealType, Policy> >
   : public IntegerDomainCheck<
@@ -456,7 +454,6 @@ struct DomainCheck<boost::math::binomial_distribution<RealType, Policy> >
  * FIXME: No boost bug filed so far
  * Boost does not catch the case where lambda is non-finite.
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::exponential_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -522,7 +519,6 @@ struct DomainCheck<boost::math::exponential_distribution<RealType, Policy> >
  * Boost does not catch the case where the location or scale parameters are
  * non-finite.
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::extreme_value_distribution<RealType, Policy> >
   : public RealDomainCheck<
@@ -584,7 +580,6 @@ struct DomainCheck<boost::math::extreme_value_distribution<RealType, Policy> >
  *
  * https://svn.boost.org/trac/boost/ticket/6937
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::fisher_f_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -623,7 +618,6 @@ struct DomainCheck<boost::math::fisher_f_distribution<RealType, Policy> >
  * For the gamma distribution, boost's pdf always returns 0 for x = 0. That is
  * wrong.
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::gamma_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -665,7 +659,6 @@ struct DomainCheck<boost::math::gamma_distribution<RealType, Policy> >
  *
  * https://svn.boost.org/trac/boost/ticket/6937
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::geometric_distribution<RealType, Policy> >
   : public NonNegativeIntegerDomainCheck<
@@ -709,7 +702,6 @@ struct DomainCheck<boost::math::geometric_distribution<RealType, Policy> >
 /**
  * @brief Boost only accepts a limited range for random variates
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::hypergeometric_distribution<RealType, Policy> >
   : public NonNegativeIntegerDomainCheck<
@@ -752,7 +744,6 @@ struct DomainCheck<boost::math::hypergeometric_distribution<RealType, Policy> >
 /**
  * @brief Boost returns a small non-zero value for quantile(0) instead of 0
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::inverse_gamma_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -786,7 +777,6 @@ struct DomainCheck<boost::math::inverse_gamma_distribution<RealType, Policy> >
  * FIXME: No boost bug filed so far
  * Boost does not catch the case where location or scale are not finite.
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::lognormal_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -840,7 +830,6 @@ struct DomainCheck<boost::math::lognormal_distribution<RealType, Policy> >
  * Also, we want to raise an error if the success probability is 0, because the
  * distribution is not well-defined in that case.
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::negative_binomial_distribution<RealType, Policy> >
   : public NonNegativeIntegerDomainCheck<
@@ -914,7 +903,6 @@ struct DomainCheck<boost::math::negative_binomial_distribution<RealType, Policy>
  *
  * FIXME: No boost bug filed so far
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::non_central_beta_distribution<RealType, Policy> >
   : public ZeroOneDomainCheck<
@@ -968,7 +956,6 @@ struct DomainCheck<boost::math::non_central_beta_distribution<RealType, Policy> 
  *
  * FIXME: No boost bug filed so far
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::non_central_chi_squared_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -1011,7 +998,6 @@ struct DomainCheck<boost::math::non_central_chi_squared_distribution<RealType, P
  *
  * FIXME: No boost bug filed so far
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::non_central_f_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -1055,7 +1041,6 @@ struct DomainCheck<boost::math::non_central_f_distribution<RealType, Policy> >
  * For the Pareto distribution, boost sometimes returns max_value instead
  * of infinity. We override that.
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::pareto_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -1120,7 +1105,6 @@ struct DomainCheck<boost::math::pareto_distribution<RealType, Policy> >
  *
  * https://svn.boost.org/trac/boost/ticket/6937
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::poisson_distribution<RealType, Policy> >
   : public NonNegativeIntegerDomainCheck<
@@ -1156,7 +1140,6 @@ struct DomainCheck<boost::math::poisson_distribution<RealType, Policy> >
  * FIXME: No boost bug filed so far
  * Boost does not catch the case where sigma is NaN.
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::rayleigh_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -1223,7 +1206,6 @@ struct DomainCheck<boost::math::rayleigh_distribution<RealType, Policy> >
  * https://svn.boost.org/trac/boost/ticket/6938
  * https://svn.boost.org/trac/boost/ticket/6939
  */
-template <>
 template <class RealType, class Policy>
 struct DomainCheck<boost::math::weibull_distribution<RealType, Policy> >
   : public PositiveDomainCheck<
@@ -1302,7 +1284,6 @@ struct DomainCheck<boost::math::weibull_distribution<RealType, Policy> >
 
 
 #define DOMAIN_CHECK_OVERRIDE(dist, check) \
-    template <> \
     template <class RealType, class Policy> \
     struct DomainCheck<boost::math::dist ## _distribution<RealType, Policy> > \
       : public check<boost::math::dist ## _distribution<RealType, Policy> > { };

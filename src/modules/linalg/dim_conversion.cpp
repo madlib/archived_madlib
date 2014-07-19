@@ -21,7 +21,8 @@ namespace madlib {
 namespace modules {
 namespace linalg {
 
-AnyType array_to_1d::run(AnyType & args) {
+AnyType
+array_to_1d::run(AnyType & args) {
     if (args[0].isNull()) { return args[0]; }
     ArrayHandle<double> in_array = args[0].getAs<ArrayHandle<double> >();
     if (in_array.size() == 0) { return args[0]; }
@@ -43,8 +44,8 @@ AnyType array_to_1d::run(AnyType & args) {
     return out_array;
 }
 
-AnyType array_to_2d::run(AnyType & args)
-{
+AnyType
+array_to_2d::run(AnyType & args) {
     if (args[0].isNull()) return args[0];
     ArrayHandle<double> in_array = args[0].getAs<ArrayHandle<double> >();
     if (in_array.size() == 0) return args[0];
@@ -62,6 +63,23 @@ AnyType array_to_2d::run(AnyType & args)
     memcpy(out_array.ptr(), in_array.ptr() + 2, sizeof(double) * (in_array.size() - 2));
 
     return out_array;
+}
+
+using namespace madlib::dbal::eigen_integration;
+
+AnyType
+get_row_from_2d_array::run(AnyType & args) {
+    MappedMatrix input = args[0].getAs<MappedMatrix>();
+    int index = args[1].getAs<int>() - 1; // database index starts from 1
+    if (index < 0 or index >= input.cols()) {
+        std::stringstream err_msg;
+        err_msg << "Out-of-bound index: " << index << " >= " << input.cols();
+        throw std::runtime_error(err_msg.str());
+    }
+    MutableNativeColumnVector ret(this->allocateArray<double>(input.rows()));
+    ret = input.col(static_cast<Index>(index));
+
+    return ret;
 }
 
 }

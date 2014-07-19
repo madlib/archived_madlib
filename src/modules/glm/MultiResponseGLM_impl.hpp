@@ -1,11 +1,11 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file GLM_impl.hpp
+ * @file MultiResponseGLM_impl.hpp
  *
  *//* ----------------------------------------------------------------------- */
 
-#ifndef MADLIB_MODULES_GLM_GLM_IMPL_HPP
-#define MADLIB_MODULES_GLM_GLM_IMPL_HPP
+#ifndef MADLIB_MODULES_GLM_MULTIRESPONSEGLM_IMPL_HPP
+#define MADLIB_MODULES_GLM_MULTIRESPONSEGLM_IMPL_HPP
 
 #include <dbconnector/dbconnector.hpp>
 #include <boost/math/distributions.hpp>
@@ -22,7 +22,7 @@ using namespace dbal::eigen_integration;
 
 template <class Container, class Family, class Link>
 inline
-GLMAccumulator<Container,Family,Link>::GLMAccumulator(
+MultiResponseGLMAccumulator<Container,Family,Link>::MultiResponseGLMAccumulator(
         Init_type& inInitialization)
   : Base(inInitialization), optimizer(inInitialization) {
 
@@ -36,11 +36,10 @@ GLMAccumulator<Container,Family,Link>::GLMAccumulator(
 template <class Container, class Family, class Link>
 inline
 void
-GLMAccumulator<Container,Family,Link>::reset() {
+MultiResponseGLMAccumulator<Container,Family,Link>::reset() {
     num_rows = 0;
     terminated = false;
     loglik = 0.;
-    dispersion_accum = 0.;
     optimizer.reset();
 }
 
@@ -58,14 +57,15 @@ GLMAccumulator<Container,Family,Link>::reset() {
 template <class Container, class Family, class Link>
 inline
 void
-GLMAccumulator<Container,Family,Link>::bind(
+MultiResponseGLMAccumulator<Container,Family,Link>::bind(
         ByteStream_type& inStream) {
+
     inStream
+        >> num_features
+        >> num_categories
         >> num_rows
         >> terminated
         >> loglik
-        >> dispersion
-        >> dispersion_accum
         >> optimizer;
 
     // bind vcov and optimizer.hessian onto the same memory as we don't need them
@@ -80,54 +80,76 @@ GLMAccumulator<Container,Family,Link>::bind(
  */
 template <class Container, class Family, class Link>
 inline
-GLMAccumulator<Container,Family,Link>&
-GLMAccumulator<Container,Family,Link>::operator<<(
+MultiResponseGLMAccumulator<Container,Family,Link>&
+MultiResponseGLMAccumulator<Container,Family,Link>::operator<<(
         const tuple_type& inTuple) {
+
     const MappedColumnVector& x = std::get<0>(inTuple);
-    const double& y = std::get<1>(inTuple);
+    const int& y = static_cast<int>(std::get<1>(inTuple));
+    // convert y to an indicator vector
+    ColumnVector vecY(num_categories-1);
+    vecY.fill(0);
+    if (y != 0) { vecY(y - 1) = 1; }
+
     // The following checks were introduced with MADLIB-138. It still seems
     // useful to have clear error messages in case of infinite input values.
-    if (!std::isfinite(y)) {
-        warning("Dependent variables are not finite.");
-    //domain check for y
-    } else if (!Family::in_range(y)) {
-        std::stringstream err_msg;
-        err_msg << "Dependent variables are out of range: "
-            << Family::out_of_range_err_msg();
-        throw std::runtime_error(err_msg.str());
-    } else if (!dbal::eigen_integration::isfinite(x)) {
+    if (!dbal::eigen_integration::isfinite(x)) {
         warning("Design matrix is not finite.");
     } else if (x.size() > std::numeric_limits<uint16_t>::max()) {
         warning("Number of independent variables cannot be "
             "larger than 65535.");
-    } else if (optimizer.num_coef != static_cast<uint16_t>(x.size())) {
+    } else if (num_features != static_cast<uint16_t>(x.size())) {
         warning("Inconsistent numbers of independent variables.");
     } else {
         // normal case
+        uint16_t N = num_features;
+        uint16_t C = static_cast<uint16_t>(num_categories - 1);
+        ColumnVector mu(C);
+        ColumnVector ita(C);
+        Matrix G_prime(C, C);
+        Matrix V(C, C);
+
+        // initialize ita and mu in the first iteration
         if (optimizer.beta.norm() == 0.) {
-            double mu = Link::init(y);
-            double ita = Link::link_func(mu);
-            double G_prime = Link::mean_derivative(ita);
-            double V = Family::variance(mu);
-            double w = G_prime * G_prime / V;
-            dispersion_accum += (y - mu) * (y - mu) / V;
-            loglik += Family::loglik(y, mu, dispersion);
-            optimizer.hessian += x * trans(x) * w; // X_trans_W_X
-            optimizer.grad -= x * w * ita; // X_trans_W_Y
+            Link::init(mu);
+            Link::link_func(mu,ita);
         } else {
-            double ita = trans(x) * optimizer.beta;
-            double mu = Link::mean_func(ita);
-            double G_prime = Link::mean_derivative(ita);
-            double V = Family::variance(mu);
-            double w = G_prime * G_prime / V;
-            dispersion_accum += (y - mu) * (y - mu) / V;
-            loglik += Family::loglik(y, mu, dispersion);
-            optimizer.hessian += x * trans(x) * w; // X_trans_W_X
-            optimizer.grad -= x * (y - mu) * G_prime / V; // X_trans_W_Y
+            for (int i = 0; i < ita.size(); i ++) {
+                ita(i) = trans(x) * optimizer.beta.segment(i*N, N);
+            }
+            Link::mean_func(ita, mu);
+        }
+
+        // intermediate values
+        Link::mean_derivative(ita, G_prime);
+        Family::variance(mu, V);
+
+        // log-likelihood
+        loglik += Family::loglik(vecY, mu, 1.);
+
+        // calcualte X_trans_W_X
+        Matrix GtVinvG(trans(G_prime) * V.inverse() * G_prime);
+        Matrix XXt(x * trans(x));
+        for (int i = 0; i < C; i ++) {
+            for (int j = 0; j < C; j ++) {
+                for (int x_i = 0; x_i < num_features; x_i ++) {
+                   for (int x_j = 0; x_j < num_features; x_j ++) {
+                        optimizer.hessian(i*num_features + x_i,
+                                          j*num_features + x_j)
+                                += GtVinvG(i,j) * XXt(x_i,x_j);
+                   }
+                }
+            }
+        }
+
+        // calculate X_trans_W_Y
+        ColumnVector YVinvG(trans(vecY-mu) * V.inverse() * G_prime);
+        for (int i = 0; i < C; i ++) {
+            optimizer.grad.segment(i*N, N) -= YVinvG(i) * x;
         }
         num_rows ++;
         return *this;
-    }
+    } // all tests passed and we were in the else
 
     // error case
     terminated = true;
@@ -140,13 +162,13 @@ GLMAccumulator<Container,Family,Link>::operator<<(
 template <class Container, class Family, class Link>
 template <class C, class F, class L>
 inline
-GLMAccumulator<Container,Family,Link>&
-GLMAccumulator<Container,Family,Link>::operator<<(
-        const GLMAccumulator<C,F,L>& inOther) {
+MultiResponseGLMAccumulator<Container,Family,Link>&
+MultiResponseGLMAccumulator<Container,Family,Link>::operator<<(
+        const MultiResponseGLMAccumulator<C,F,L>& inOther) {
     if (this->empty()) {
         *this = inOther;
     } else if (inOther.empty()) {
-    } else if (optimizer.num_coef != inOther.optimizer.num_coef) {
+    } else if (num_features != inOther.num_features) {
         warning("Inconsistent numbers of independent variables.");
         terminated = true;
     } else {
@@ -154,7 +176,6 @@ GLMAccumulator<Container,Family,Link>::operator<<(
         loglik += inOther.loglik;
         optimizer.grad += inOther.optimizer.grad;
         optimizer.hessian += inOther.optimizer.hessian;
-        dispersion_accum += inOther.dispersion_accum;
     }
 
     return *this;
@@ -166,9 +187,9 @@ GLMAccumulator<Container,Family,Link>::operator<<(
 template <class Container, class Family, class Link>
 template <class C, class F, class L>
 inline
-GLMAccumulator<Container,Family,Link>&
-GLMAccumulator<Container,Family,Link>::operator=(
-        const GLMAccumulator<C,F,L>& inOther) {
+MultiResponseGLMAccumulator<Container,Family,Link>&
+MultiResponseGLMAccumulator<Container,Family,Link>::operator=(
+        const MultiResponseGLMAccumulator<C,F,L>& inOther) {
     this->copy(inOther);
     return *this;
 }
@@ -179,21 +200,20 @@ GLMAccumulator<Container,Family,Link>::operator=(
 template <class Container, class Family, class Link>
 inline
 void
-GLMAccumulator<Container,Family,Link>::apply() {
+MultiResponseGLMAccumulator<Container,Family,Link>::apply() {
     if (!dbal::eigen_integration::isfinite(optimizer.hessian) ||
             !dbal::eigen_integration::isfinite(optimizer.grad)) {
         warning("Hessian or gradient is not finite.");
         terminated = true;
     } else {
         optimizer.apply();
-        dispersion = dispersion_accum / static_cast<double>(num_rows);
     }
-}
 
+}
 // -----------------------------------------------------------------------
 
 template <class Container>
-GLMResult::GLMResult(const GLMAccumulator<Container>& state) {
+MultiResponseGLMResult::MultiResponseGLMResult(const MultiResponseGLMAccumulator<Container>& state) {
     compute(state);
 }
 
@@ -202,28 +222,31 @@ GLMResult::GLMResult(const GLMAccumulator<Container>& state) {
  */
 template <class Container>
 inline
-GLMResult&
-GLMResult::compute(const GLMAccumulator<Container>& state) {
+MultiResponseGLMResult&
+MultiResponseGLMResult::compute(const MultiResponseGLMAccumulator<Container>& state) {
+    typedef Eigen::Map<Matrix> MMap;
+    typedef MMap::Scalar Scalar;
     // Vector of coefficients: For efficiency reasons, we want to return this
     // by reference, so we need to bind to db memory
     Allocator& allocator = defaultAllocator();
-    uint64_t n = state.num_rows;
-    uint16_t p = state.optimizer.num_coef;
-    coef.rebind(allocator.allocateArray<double>(p));
-    std_err.rebind(allocator.allocateArray<double>(p));
-    z_stats.rebind(allocator.allocateArray<double>(p));
-    p_values.rebind(allocator.allocateArray<double>(p));
+    Index N = static_cast<Index>(state.num_features);
+    Index C = static_cast<Index>(state.num_categories - 1);
+    coef.rebind(allocator.allocateArray<double>(C, N), N, C);
+    std_err.rebind(allocator.allocateArray<double>(C, N), N, C);
+    z_stats.rebind(allocator.allocateArray<double>(C, N), N, C);
+    p_values.rebind(allocator.allocateArray<double>(C, N), N, C);
 
+    // computation
     loglik = state.loglik;
-    coef = state.optimizer.beta;
-    dispersion = state.dispersion *
-            static_cast<double>(n) / static_cast<double>(n - p);
-    std_err = state.vcov.diagonal().cwiseSqrt();
+    coef = MMap(const_cast<Scalar*>(state.optimizer.beta.data()), N, C);
+    Matrix tmp_sd(state.vcov.diagonal().cwiseSqrt());
+    tmp_sd.resize(N, C);
+    std_err = tmp_sd;
     z_stats = coef.cwiseQuotient(std_err);
-    for (Index i = 0; i < p; i ++) {
-        p_values(i) = 2. * prob::cdf(prob::normal(), -std::abs(z_stats(i)));
+    for (Index i = 0; i < N*C; i ++) {
+        p_values(i) = 2. * prob::cdf( prob::normal(), -std::abs(z_stats(i)));
     }
-    num_rows_processed = n;
+    num_rows_processed = state.num_rows;
 
     return *this;
 }
@@ -234,4 +257,4 @@ GLMResult::compute(const GLMAccumulator<Container>& state) {
 
 } // namespace madlib
 
-#endif // defined(MADLIB_MODULES_GLM_GLM_IMPL_HPP)
+#endif // defined(MADLIB_MODULES_GLM_MULTIRESPONSEGLM_IMPL_HPP)

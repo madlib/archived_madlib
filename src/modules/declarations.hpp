@@ -10,6 +10,7 @@
 #include "prob/prob.hpp"
 #include "regress/regress.hpp"
 #include "glm/glm.hpp"
+#include "glm/multi_response_glm.hpp"
 #include "linear_systems/linear_systems.hpp"
 #include "sample/sample.hpp"
 #include "stats/stats.hpp"

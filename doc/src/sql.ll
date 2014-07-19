@@ -3,7 +3,7 @@
  *
  * A simple flex file for use in companion with sql.yy. Use case: Documenting
  * .sql files with tools like Doxygen.
- * 
+ *
  * Revision History:
  * 0.2: Florian Schoppmann, 16 Jan 2011, Converted to C++
  * 0.1:          "        , 10 Jan 2011, Initial version.
@@ -48,21 +48,26 @@
 
 /* C++ Code */
 %{
-	/* We define COMPILING_SCANNER in order to know in sql.parser.hh whether we are compiling
-	 * the parser or the scanner */
-	#define COMPILING_SCANNER 1
-	
-	#include "sql.parser.hh"
+    #if defined(__GNUC__)
+        #pragma GCC diagnostic ignored "-Wconversion"
+        #pragma GCC diagnostic ignored "-Wtype-limits"
+    #endif
 
-	#include <string>
+    /* We define COMPILING_SCANNER in order to know in sql.parser.hh whether we are compiling
+     * the parser or the scanner */
+    #define COMPILING_SCANNER 1
+    
+    #include "sql.parser.hh"
 
-	/* import the parser's token type into a local typedef */
-	typedef bison::SQLParser::token	token;
-	
-	/* YY_USER_ACTION is called from the lex() function, which has the signature
-	 * and name as defined by macro YY_DECL. yylval, yylloc, and driver are
-	 * arguments. */
-	#define YY_USER_ACTION preScannerAction(yylval, yylloc, driver);
+    #include <string>
+
+    /* import the parser's token type into a local typedef */
+    typedef bison::SQLParser::token    token;
+    
+    /* YY_USER_ACTION is called from the lex() function, which has the signature
+     * and name as defined by macro YY_DECL. yylval, yylloc, and driver are
+     * arguments. */
+    #define YY_USER_ACTION preScannerAction(yylval, yylloc, driver);
 %}
 
 /* Definitions */
@@ -96,9 +101,9 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
 
 
 
-%%	/* Rules */
+%%    /* Rules */
 
-	/* Ignore spaces */
+    /* Ignore spaces */
 {SPACE}
 
 {COMMENT} {
@@ -139,15 +144,15 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
 }
 
 <sDOLLAR_STRING_LITERAL>{
-	{DOLLARQUOTE} {
-		if (strncmp(yytext + 1, stringLiteralQuotation, yyleng - 1) == 0) {
-			yylval->str = "\"<omitted by lexer>\"";
-			yy_pop_state();
-			free(stringLiteralQuotation);
-			stringLiteralQuotation = NULL;
-			return token::STRING_LITERAL;
-		}
-	}
+    {DOLLARQUOTE} {
+        if (strncmp(yytext + 1, stringLiteralQuotation, yyleng - 1) == 0) {
+            yylval->str = "\"<omitted by lexer>\"";
+            yy_pop_state();
+            free(stringLiteralQuotation);
+            stringLiteralQuotation = NULL;
+            return token::STRING_LITERAL;
+        }
+    }
     /* Speed up the lexer by matching large chunks of text if possible */
     [^$]*
     "$"
@@ -158,64 +163,64 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
 {CREATE_AGGREGATE} { BEGIN(sAGG_DECL); return token::CREATE_AGGREGATE; }
 
 <sFUNC_DECL,sAGG_DECL>"(" {
-	if (YY_START == sFUNC_DECL)
-		BEGIN(sFUNC_ARGLIST);
-	else
-		BEGIN(sAGG_ARGLIST);
+    if (YY_START == sFUNC_DECL)
+        BEGIN(sFUNC_ARGLIST);
+    else
+        BEGIN(sAGG_ARGLIST);
 
-	return '(';
+    return '(';
 }
 <sFUNC_ARGLIST,sAGG_ARGLIST>")" {
-	if (YY_START == sFUNC_ARGLIST)
-		BEGIN(sFUNC_OPTIONS);
-	else
-		BEGIN(sAGG_OPTIONS);
+    if (YY_START == sFUNC_ARGLIST)
+        BEGIN(sFUNC_OPTIONS);
+    else
+        BEGIN(sAGG_OPTIONS);
 
-	return ')';
+    return ')';
 }
 
-	/* We disallow using the following keywords as argument names */
+    /* We disallow using the following keywords as argument names */
 <sFUNC_ARGLIST,sFUNC_OPTIONS,sAGG_ARGLIST,sAGG_OPTIONS>{
-	"IN" return token::IN;
-	"OUT" return token::OUT;
-	"INOUT" return token::INOUT;
-	
-	"BIT" return token::BIT;
-	"CHARACTER" return token::CHARACTER;
-	"DOUBLE" return token::DOUBLE;
-	"PRECISION" return token::PRECISION;
-	"TIME" return token::TIME;
-	"WITH" return token::WITH;
-	"WITHOUT" return token::WITHOUT;
-	"VOID" return token::VOID;
-	"VARYING" return token::VARYING;
-	"ZONE" return token::ZONE;
-
-	"RETURNS" return token::RETURNS;
-	"SETOF" return token::SETOF;
-	
-	"AS" return token::AS;
-	"LANGUAGE" return token::LANGUAGE;
-	"IMMUTABLE" return token::IMMUTABLE;
-	"STABLE" return token::STABLE;
-	"VOLATILE" return token::VOLATILE;
-	"CALLED"{SPACE}"ON"{SPACE}"NULL"{SPACE}"INPUT" return token::CALLED_ON_NULL_INPUT;
-	"RETURNS"{SPACE}"NULL"{SPACE}"ON"{SPACE}"NULL"{SPACE}"INPUT"|"STRICT" {
-		return token::RETURNS_NULL_ON_NULL_INPUT; }
-	("EXTERNAL"{SPACE})?"SECURITY"{SPACE}"INVOKER" return token::SECURITY_INVOKER;
-	("EXTERNAL"{SPACE})?"SECURITY"{SPACE}"DEFINER" return token::SECURITY_DEFINER;
+    "IN" return token::IN;
+    "OUT" return token::OUT;
+    "INOUT" return token::INOUT;
     
+    "BIT" return token::BIT;
+    "CHARACTER" return token::CHARACTER;
+    "DOUBLE" return token::DOUBLE;
+    "PRECISION" return token::PRECISION;
+    "TIME" return token::TIME;
+    "WITH" return token::WITH;
+    "WITHOUT" return token::WITHOUT;
+    "VOID" return token::VOID;
+    "VARYING" return token::VARYING;
+    "ZONE" return token::ZONE;
+
+    "RETURNS" return token::RETURNS;
+    "SETOF" return token::SETOF;
+    
+    "AS" return token::AS;
+    "LANGUAGE" return token::LANGUAGE;
+    "IMMUTABLE" return token::IMMUTABLE;
+    "STABLE" return token::STABLE;
+    "VOLATILE" return token::VOLATILE;
+    "CALLED"{SPACE}"ON"{SPACE}"NULL"{SPACE}"INPUT" return token::CALLED_ON_NULL_INPUT;
+    "RETURNS"{SPACE}"NULL"{SPACE}"ON"{SPACE}"NULL"{SPACE}"INPUT"|"STRICT" {
+        return token::RETURNS_NULL_ON_NULL_INPUT; }
+    ("EXTERNAL"{SPACE})?"SECURITY"{SPACE}"INVOKER" return token::SECURITY_INVOKER;
+    ("EXTERNAL"{SPACE})?"SECURITY"{SPACE}"DEFINER" return token::SECURITY_DEFINER;
+
     "DEFAULT" return token::DEFAULT;
 }
 
-	/* We disallow using the following keywords as argument names */
+    /* We disallow using the following keywords as argument names */
 <sAGG_ARGLIST,sAGG_OPTIONS>{
-	"SFUNC" return token::SFUNC;
-	"PREFUNC" return token::PREFUNC;
-	"FINALFUNC" return token::FINALFUNC;
-	"STYPE" return token::STYPE;
-	"INITCOND" return token::INITCOND;
-	"SORTOP" return token::SORTOP;
+    "SFUNC" return token::SFUNC;
+    "PREFUNC" return token::PREFUNC;
+    "FINALFUNC" return token::FINALFUNC;
+    "STYPE" return token::STYPE;
+    "INITCOND" return token::INITCOND;
+    "SORTOP" return token::SORTOP;
 }
 
 <sFUNC_DECL,sFUNC_ARGLIST,sFUNC_OPTIONS,sAGG_DECL,sAGG_ARGLIST,sAGG_OPTIONS>{
@@ -225,13 +230,13 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
     }
 
     {QUOTED_IDENTIFIER} {
-		yytext[yyleng - 1] = 0;
-		yylval->str = strdup(yytext + 1);
-		return token::IDENTIFIER;
-	}
-	{IDENTIFIER} { yylval->str = strlowerdup(yytext); return token::IDENTIFIER; }
-    
-	{INTEGER} {
+        yytext[yyleng - 1] = 0;
+        yylval->str = strdup(yytext + 1);
+        return token::IDENTIFIER;
+    }
+    {IDENTIFIER} { yylval->str = strlowerdup(yytext); return token::IDENTIFIER; }
+
+    {INTEGER} {
         yylval->str = strdup(yytext);
         return token::INTEGER_LITERAL;
     }
@@ -240,7 +245,7 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
         return token::FLOAT_LITERAL;
     }
     {STRING_LITERAL} {
-    	/* String literals in single quotes */
+        /* String literals in single quotes */
         yytext[0] = yytext[yyleng - 1] = '"';
         yylval->str = strdup(yytext);
         return token::STRING_LITERAL;
@@ -252,13 +257,13 @@ FLOATING_POINT_LITERAL ([[:digit:]]+"."[[:digit:]]*|"."[[:digit:]]+){EXPONENT}?|
         strncpy(stringLiteralQuotation, yytext + 1, yyleng - 1);
         yy_push_state(sDOLLAR_STRING_LITERAL);
     }
-    
-	[^;] { return yytext[0]; }
+
+    [^;] { return yytext[0]; }
 }
 
 ";" { BEGIN(INITIAL); return ';'; }
 
-	/* Default action if nothing else applies: consume next character and do nothing */
+    /* Default action if nothing else applies: consume next character and do nothing */
 .|\n { BEGIN(INITIAL); }
 
 %%
@@ -271,39 +276,39 @@ namespace bison {
  * the header file). */
 
 SQLScanner::SQLScanner(std::istream *arg_yyin, std::ostream *arg_yyout) :
-	SQLFlexLexer(arg_yyin, arg_yyout), stringLiteralQuotation(NULL), oldLength(0) {
-	/* only has an effect if %option debug or flex -d is used */
-	set_debug(1);
+    SQLFlexLexer(arg_yyin, arg_yyout), stringLiteralQuotation(NULL), oldLength(0) {
+    /* only has an effect if %option debug or flex -d is used */
+    set_debug(1);
 }
 
 SQLScanner::~SQLScanner() {
 }
 
 char *SQLScanner::strlowerdup(const char *inString) {
-	char *returnStr = strdup(inString);
-	for (int i = 0; returnStr[i]; i++)
-		returnStr[i] = tolower(returnStr[i]);
-	return returnStr;
+    char *returnStr = strdup(inString);
+    for (int i = 0; returnStr[i]; i++)
+        returnStr[i] = tolower(returnStr[i]);
+    return returnStr;
 }
 
 void SQLScanner::preScannerAction(SQLParser::semantic_type * /* yylval */,
-	SQLParser::location_type *yylloc, SQLDriver * /* driver */) {
-	
-	yylloc->step();
+    SQLParser::location_type *yylloc, SQLDriver * /* driver */) {
     
+    yylloc->step();
+
     // Start at oldLength: We don't want to count preserved text more than once
-	for (size_t i = oldLength; i < yyleng; i++) {
-		if (yytext[i] == '\r' &&
+    for (size_t i = oldLength; i < yyleng; i++) {
+        if (yytext[i] == '\r' &&
                 static_cast<size_t>(i + 1) < yyleng &&
                 yytext[i + 1] == '\n') {
-			i++; yylloc->lines(1);
-		} else if (yytext[i] == '\r' || yytext[i] == '\n') {
-			yylloc->lines(1);
-		} else {
-			yylloc->columns(1);
-		}
-	}
-    
+            i++; yylloc->lines(1);
+        } else if (yytext[i] == '\r' || yytext[i] == '\n') {
+            yylloc->lines(1);
+        } else {
+            yylloc->columns(1);
+        }
+    }
+
     // Reset oldLength. more() needs to be called if yytext is to be preserved
     // again
     oldLength = 0;

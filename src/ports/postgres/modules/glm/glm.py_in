@@ -24,53 +24,21 @@ from utilities.validate_args import output_tbl_valid
 from utilities.validate_args import cols_in_tbl_valid
 from collections import defaultdict
 
+
 # ========================================================================
 
 
-def __compute_glm(schema_madlib, rel_args, rel_state, rel_source,
-                      dep_col, ind_col, family, link, grouping_col,
-                      grouping_str, col_grp_iteration, col_grp_state, verbose, **kwargs):
+def __compute_glm(arg_dict):
     """
     Compute Generalized Linear Model coefficients
 
     This method serves as an interface to different optimization algorithms.
     By default, iteratively reweighted least squares is used.
 
-    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
-    @param rel_args Stores parameters that are needed by optimizers:
-                        max_iter and tolerance
-    @param rel_state Store the iteration states
-    @param rel_source Name of relation containing the training data
-    @param dep_col Name of dependent column in training data
-    @param ind_col Name of independent column in training data (of type
-                   DOUBLE PRECISION[])
-    @param optimizer Name of the optimizer. 'newton' or 'irls': Iteratively
-                     reweighted least squares
-    @param grouping_col String of comma delimited group-by columns
-    @param grouping_str string of comma delimited group-by columns (casted)
-    @param kwargs We allow the caller to specify additional arguments (all of
-           which will be ignored though). The purpose of this is to allow the
-           caller to unpack a dictionary whose element set is a superset of
-           the required arguments by this function.
-
     @return Number of iterations that has been run
     """
 
-    iterationCtrl = GroupIterationController(
-        rel_args=rel_args,
-        rel_state=rel_state,
-        stateType=schema_madlib + ".bytea8",
-        verbose=verbose,
-        schema_madlib=schema_madlib,  # Identifiers start here
-        rel_source=rel_source,
-        ind_col=ind_col,
-        dep_col=dep_col,
-        family=family,
-        link=link,
-        grouping_col=grouping_col,
-        grouping_str=grouping_str,
-        col_grp_iteration=col_grp_iteration,
-        col_grp_state=col_grp_state)
+    iterationCtrl = GroupIterationController(arg_dict)
 
     with iterationCtrl as it:
         it.iteration = 0
@@ -84,19 +52,21 @@ def __compute_glm(schema_madlib, rel_args, rel_state, rel_source,
                 """)
             if it.test(
                     """
-                    {iteration} >= _args.max_iter
+                    {iteration} >= {max_iter}
                     OR {schema_madlib}.__glm_loglik_diff(
-                        _state_previous, _state_current) < _args.tolerance
+                        _state_previous, _state_current) < {tolerance}
                     """):
                 it.final()
                 break
+
     return iterationCtrl.iteration
 
 # ========================================================================
 
 
-def glm(schema_madlib, source_table, model_table, dependent_varname, independent_varname,
-    family_params=None, grouping_col=None, optim_params=None,verbose=False, **kwargs):
+def glm(schema_madlib, source_table, model_table, dependent_varname,
+        independent_varname, family_params=None, grouping_col=None,
+        optim_params=None, verbose=False, **kwargs):
 
     """
     Train Genralized Linear Model
@@ -154,7 +124,7 @@ def __glm_validate_args(schema_madlib, tbl_source, tbl_output, dep_col,
                            'num_processed', 'num_missing_rows_skipped',
                            'variance_covariance', 'dispersion', 't_stats')))
         if len(intersect) > 0:
-            plpy.error("GLM error: Conflicted grouping column name.\n"
+            plpy.error("GLM error: Conflicting grouping column name.\n"
                        "Predefined name(s) {0} are not allow!".format(
                             ', '.join(intersect)))
 
@@ -195,20 +165,19 @@ def __extract_family_params(schema_madlib, family_params):
 
 # ========================================================================
 
-def __extract_optim_params(schema_madlib, optim_params):
-    optim_params_defaults = dict(max_iter=100, optimizer='irls', tolerance=1e-6)
+def __extract_optim_params(schema_madlib, optim_params, module='GLM'):
+    default_dict = dict(max_iter=100,optimizer='irls',tolerance=1e-6)
     optim_params_types = dict(max_iter=int, optimizer=str, tolerance=float)
     optim_params_dict = extract_keyvalue_params(optim_params,
                                                 optim_params_types,
-                                                optim_params_defaults)
-    if optim_params_dict["max_iter"] <= 0:
-        plpy.error("GLM error: max_iter must be positive!")
+                                                default_dict)
 
-    if optim_params_dict["optimizer"] != "irls":
-        plpy.error("GLM error: optimizer must be irls!")
-
-    if optim_params_dict["tolerance"] <= 0:
-        plpy.error("GLM error; tolerane must be positive!")
+    if optim_params_dict['max_iter'] <= 0:
+        plpy.error("{0} error: max_iter must be positive!".format(module))
+    if optim_params_dict['optimizer'] != 'irls':
+        plpy.error("{0} error: optimizer must be irls!".format(module))
+    if optim_params_dict['tolerance'] <= 0:
+        plpy.error("{0} error: tolerane must be positive!".format(module))
 
     return optim_params_dict
 
@@ -230,28 +199,16 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
        plpy.execute("SET client_min_messages TO warning")
 
     args = {'schema_madlib': schema_madlib,
-            'tbl_source': tbl_source,
+            'rel_source': tbl_source,
             'tbl_output': tbl_output,
             'dep_col': dep_col,
             'ind_col': ind_col,
-            'tbl_glm_args': __unique_string(),
-            'tbl_glm_state': __unique_string(),
+            'rel_state': __unique_string(),
             'col_grp_iteration': __unique_string(),
-            'col_grp_state': __unique_string(),
-            'irls': "__glm_result"}
-
+            'col_grp_state': __unique_string()
+           }
     args.update(optim_params)
     args.update(family_params)
-
-    plpy.execute("select {schema_madlib}.create_schema_pg_temp()".format(**args))
-    plpy.execute(
-        """
-        DROP TABLE IF EXISTS pg_temp.{tbl_glm_args};
-        CREATE TABLE pg_temp.{tbl_glm_args} AS
-        SELECT
-            {max_iter} AS max_iter,
-            {tolerance} AS tolerance
-        """.format(**args))
 
     # return an array of dict
     # each dict has two elements: iteration number, and grouping value array
@@ -264,23 +221,18 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
     else:
         grouping_col = None
         grouping_str = "NULL"
+    args['grouping_col'] = grouping_col
+    args['grouping_str'] = grouping_str
 
     # for binomial distribution, the dependent variable is of type boolean.
     # it's cast to type integer here so that it can later be type cast to
     # double precision before computation begins.
-
     if family_params['family'] == 'binomial':
-        dep_col = "(" + dep_col + ")::integer"
+        args['dep_col'] = "(" + dep_col + ")::integer"
+    dep_col_name = dep_col
 
-    iteration_run = __compute_glm(schema_madlib, args["tbl_glm_args"],
-                                      args["tbl_glm_state"], tbl_source,
-                                      dep_col, ind_col,
-                                      args["family"], args["link"],
-                                      grouping_col=grouping_col,
-                                      grouping_str=grouping_str,
-                                      col_grp_iteration=args["col_grp_iteration"],
-                                      col_grp_state=args["col_grp_state"],
-                                      verbose=verbose)
+    ######## REAL COMPUTATION
+    iteration_run = __compute_glm(args)
 
     # output table
     grouping_str1 = "" if grouping_col is None else grouping_col + ","
@@ -332,14 +284,14 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
                         {schema_madlib}.{glm_result}({col_grp_state}) AS result,
                         {col_grp_iteration}
                     FROM
-                        {tbl_glm_state}
+                        {rel_state}
                 ) t
                 JOIN
                 (
                     SELECT
                         {grouping_str1}
                         max({col_grp_iteration}) AS {col_grp_iteration}
-                    FROM {tbl_glm_state}
+                    FROM {rel_state}
                     GROUP BY {grouping_str2}
                 ) s
                 USING ({grouping_str1} {col_grp_iteration})
@@ -349,7 +301,7 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
                 SELECT
                     {grouping_str1}
                     count(*) AS num_rows
-                FROM {tbl_source}
+                FROM {rel_source}
                 GROUP BY {grouping_str2}
             ) q2
             {using_str}
@@ -388,10 +340,12 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
         CREATE TABLE {tbl_output}_summary AS
         SELECT
             'glm'::varchar                      AS method,
-            '{tbl_source}'::varchar             AS source_table,
+            '{rel_source}'::varchar             AS source_table,
             '{tbl_output}'::varchar             AS out_table,
-            '{dep_col}'::varchar                AS dependent_varname,
-            '{ind_col}'::varchar                AS independent_varname,
+            $madlib_super_quote${dcol}$madlib_super_quote$::varchar
+                                                AS dependent_varname,
+            $madlib_super_quote${ind_col}$madlib_super_quote$::varchar
+                                                AS independent_varname,
             'family={family}, ' ||
             'link={link}'::varchar              AS family_params,
             {g_str}::text                       AS grouping_col,
@@ -403,12 +357,12 @@ def __glm_compute(schema_madlib, tbl_source, tbl_output, dep_col, ind_col,
             {total_rows_processed}::bigint      AS total_rows_processed,
             {total_rows_skipped}::bigint        AS total_rows_skipped
         """.format(g_str="'" + grouping_col + "'" if grouping_col else "NULL",
+                   dcol=dep_col_name,
                    **args))
 
     # clean up
     plpy.execute("""
-        DROP TABLE IF EXISTS pg_temp.{tbl_glm_args};
-        DROP TABLE IF EXISTS pg_temp.{tbl_glm_state}
+        DROP TABLE IF EXISTS pg_temp.{rel_state}
         """.format(**args))
     plpy.execute("SET client_min_messages TO " + old_msg_level)
 
@@ -433,7 +387,7 @@ def glm_help_msg(schema_madlib, message, **kwargs):
 ------------------------------------------------------------------
 Generalized Linear Model:
 
-Function to fit a generalized linear model, relating responses to linear combinations 
+Function to fit a generalized linear model, relating responses to linear combinations
 of predictor variables.
 
 For details on function usage:
@@ -644,7 +598,7 @@ SELECT {schema_madlib}.glm_predict(
 ------------------------------------------------------------------
 The output is a table with one column which gives the estimated conditional
 means for the new predictors.
-	"""
+        """
     elif message in ['example', 'examples']:
 
         help_string = """
@@ -738,7 +692,7 @@ ORDER BY w.id;
 
 
 # ============================================================================
-# Help messages for specialized prediction functions 
+# Help messages for specialized prediction functions
 # ============================================================================
 def glm_predict_poisson_help_msg(schema_madlib, message, **kwargs):
     """ Help message for glm predict function

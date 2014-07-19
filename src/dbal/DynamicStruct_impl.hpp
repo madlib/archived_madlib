@@ -376,8 +376,8 @@ template <class Derived, class Container>
 template <class OtherDerived>
 DynamicStruct<Derived, Container, Mutable>&
 DynamicStruct<Derived, Container, Mutable>::copy(
-    const DynamicStruct<OtherDerived, typename OtherDerived::Container_type>&
-        inOtherStruct) {
+        const DynamicStruct<OtherDerived, typename OtherDerived::Container_type>
+            &inOtherStruct) {
 
     if (this->size() != inOtherStruct.size()) {
         this->setSize(inOtherStruct.size());
@@ -385,8 +385,9 @@ DynamicStruct<Derived, Container, Mutable>::copy(
     }
 
     // We now have enough space to copy everything from inOtherStruct
-    std::copy(inOtherStruct.ptr(), inOtherStruct.ptr() + this->size(),
-        this->ptr());
+    std::copy(inOtherStruct.ptr(),
+              inOtherStruct.ptr() + this->size(),
+              this->ptr());
 
     mSizeIsLocked = false;
     this->resize();
