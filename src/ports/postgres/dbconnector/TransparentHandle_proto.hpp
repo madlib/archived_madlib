@@ -28,6 +28,7 @@ public:
     TransparentHandle(val_type* inPtr);
 
     val_type* ptr() const;
+    bool isNull() const { return mPtr == NULL; }
 
 protected:
     val_type *mPtr;
@@ -49,6 +50,7 @@ public:
 
     // Import the const version as well
     using Base::ptr;
+    using Base::isNull;
     val_type* ptr();
 
 protected:

@@ -98,9 +98,9 @@ def __ordinal_validate_args(schema_madlib, source_table, model_table,
     __glm_validate_args(schema_madlib, source_table, model_table,
         dependent_varname, independent_varname, grouping_col)
 
-    if link_func is not None and link_func not in ('logit'):
+    if link_func is not None and link_func not in ('logit','probit'):
         plpy.error("Ordinal error: Invalid link function!\n"
-                   "Only 'logit' is supported.")
+                   "Only 'logit' and 'probit' are supported.")
 
     category_list = plpy.execute("""
         SELECT array_agg(category ORDER BY category) AS category_list
@@ -129,7 +129,12 @@ def __ordinal_validate_args(schema_madlib, source_table, model_table,
                    "please use glm() binomial family instead.")
 
     category_list = [str(c) for c in category_list]
-    order_list = cat_order.split('<')
+
+    if cat_order is None:
+        order_list = sorted(category_list)
+    else:
+        order_list = [c.strip() for c in cat_order.split('<')] 
+    
     if len(order_list)!=len(category_list):
         plpy.error("Ordinal error: category order specification is not valid!")
 
@@ -352,7 +357,7 @@ def ordinal_help_msg(schema_madlib, message, **kwargs):
 ----------------------------------------------------------------
 Ordinal Linear Model:
 
-Currently only logit link functions are supported.
+Currently logit and probit link functions are supported.
 
 For more details on function usage:
     SELECT {schema_madlib}.ordinal('usage')
@@ -403,7 +408,7 @@ A summary table named <out_table>_summary is also created at the same time, whic
     dependent_varname    varchar, -- the dependent variable
     independent_varname  varchar, -- the independent variable
     category_list        varchar, -- ordered categories used for training
-    link_func            varchar, -- link function
+    link_func            varchar, -- link function: logit and probit supported
     grouping_col         varchar  -- grouping columns used in the regression
     optimizer_params     varchar, -- 'optimizer=...,max_iter=...,tolerance=...'
     num_all_groups       integer, -- how many groups
@@ -481,7 +486,7 @@ INSERT INTO test3(feat1, feat2, cat) VALUES
 (2,65,2),
 (2,62,2);
 
--- Run the multilogistic regression function.
+-- Run the ordinal logistic regression function.
 DROP TABLE IF EXISTS test3_output;
 DROP TABLE IF EXISTS test3_output_summary;
 SELECT madlib.ordinal('test3',
@@ -537,17 +542,17 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
  
     ind_var = plpy.execute("""
                 SELECT independent_varname FROM {model_table}_summary
-                """.format(**locals()))[0]['independent_varname']
+                """.format(model_table=model_table))[0]['independent_varname']
     cate_list = plpy.execute("""
                 SELECT category_list FROM {model_table}_summary
-                """.format(**locals()))[0]['category_list']
+                """.format(model_table=model_table))[0]['category_list']
     cate_list = cate_list.split(',')
     cate_list_len = len(cate_list)
     cate_list_len_minus_one = cate_list_len - 1
 
     group_var = plpy.execute("""
                 SELECT grouping_col FROM {model_table}_summary
-            """.format(**locals()))[0]['grouping_col']
+            """.format(model_table=model_table))[0]['grouping_col']
     if group_var is not None:
         cols_in_tbl_valid(predict_table, _string_to_array(group_var), 'ordinal_predict')
         group_var = group_var.split(',')
@@ -563,7 +568,16 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
         grp_clause2 = ", " + grp_clause2
         grp_clause3 = " AND ".join(["subq2.{c} = subq3.{c}".format(c=c) for c in group_var]) 
         grp_clause3 = "WHERE " + grp_clause3
-
+    
+    link_func = plpy.execute("""
+                SELECT link_func FROM {model_table}_summary
+            """.format(model_table=model_table))[0]['link_func']
+    if link_func == "logit":
+        link_clause = "exp(gamma)/(1+exp(gamma))"
+    elif link_func == "probit":
+        link_clause = "{schema_madlib}.normal_cdf(gamma)".format(schema_madlib=schema_madlib)
+    else:
+        plpy.error("Invalid link function!\n")
 
     if predict_type == 'probability': 
         score_format = '\n'.join([
@@ -591,7 +605,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                     (
                         SELECT 
                             id, 
-                            exp(gamma)/(1+exp(gamma)) as cumpr, 
+                            {link_clause} as cumpr, 
                             category, 
                             idx
                         FROM 
@@ -666,7 +680,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                                         (
                                             SELECT 
                                                 id, 
-                                                exp(gamma)/(1+exp(gamma)) as cumpr, 
+                                                {link_clause} as cumpr, 
                                                 category, 
                                                 idx
                                             FROM 
@@ -732,7 +746,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                                 (
                                     SELECT 
                                         id, 
-                                        exp(gamma)/(1+exp(gamma)) as cumpr, 
+                                        {link_clause} as cumpr, 
                                         category, 
                                         idx
                                     FROM 
@@ -815,8 +829,8 @@ For a small example on using the function:
 ------------------------------------------------------------------
 SELECT {schema_madlib}.ordinal_predict(
     model_table,            -- Name of the table containing the output of ordinal() 
-    predict_table,          -- Name of the table containing new data
-    predicted_value_tab     -- Name of the table storing the result of predicted values
+    predict_table_input,    -- Name of the table containing new data
+    output_table,           -- Name of the table storing the result of predicted values
     predict_type            -- Support two types: "reponse" or "probability"
     verbose                 -- Whether verbose is displayed
 );

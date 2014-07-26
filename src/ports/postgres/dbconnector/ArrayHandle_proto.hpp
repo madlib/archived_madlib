@@ -20,6 +20,7 @@ public:
 
     ArrayHandle(const ArrayType *inArray);
     
+    bool isNull() const { return mArray == NULL; }
     const T* ptr() const;
     size_t size() const;
     size_t dims() const;
@@ -44,6 +45,7 @@ public:
       : Base(inArray) { }
     
     using Base::ptr;
+    using Base::isNull;
     using Base::array;
     using Base::dims;
     using Base::sizeOfDim;

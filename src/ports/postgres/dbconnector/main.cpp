@@ -26,14 +26,14 @@ bool AnyType::sLazyConversionToDatum = false;
 namespace {
 
 // No need to export these names to other translation units.
-#if defined(DEBUG)
+#ifndef NDEBUG
 OutputStreamBuffer<INFO, utils::MallocAllocator> gOutStreamBuffer;
 OutputStreamBuffer<WARNING, utils::MallocAllocator> gErrStreamBuffer;
 #endif
 
 }
 
-#if defined(DEBUG)
+#ifndef NDEBUG
 /**
  * @brief Informational output stream
  */

@@ -23,7 +23,8 @@ namespace glm {
 typedef OrdinalAccumulator<RootContainer> OrdinalState;
 typedef OrdinalAccumulator<MutableRootContainer> OrdinalMutableState;
 
-
+// Logit link
+// ------------------------------------------------------------------------
 typedef OrdinalAccumulator<MutableRootContainer,Multinomial,OrdinalLogit>
     MutableOrdinalLogitState;
 
@@ -45,6 +46,43 @@ ordinal_logit_transition::run(AnyType& args) {
         state.num_features = static_cast<uint16_t>(x.size());
         state.num_categories = args[4].getAs<uint16_t>();
         state.optimizer.num_coef = static_cast<uint16_t>(state.num_features + (state.num_categories-1));
+        state.resize();
+        if (!args[3].isNull()) {
+            OrdinalState prev_state = args[3].getAs<ByteString>();
+            state = prev_state;
+            state.reset();
+        }
+    }
+    state << OrdinalMutableState::tuple_type(x, y);
+    return state.storage();
+}
+
+// ------------------------------------------------------------------------
+
+// Probit link
+// ------------------------------------------------------------------------
+typedef OrdinalAccumulator<MutableRootContainer,Multinomial,OrdinalProbit>
+    MutableOrdinalProbitState;
+
+AnyType
+ordinal_probit_transition::run(AnyType& args) {
+    MutableOrdinalProbitState state = args[0].getAs<MutableByteString>();
+    if (state.terminated || args[1].isNull() || args[2].isNull()) {
+        return args[0];
+    }
+    double y = args[1].getAs<double>();
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+    if (state.empty()) {
+        state.num_features = static_cast<uint16_t>(x.size());
+        state.num_categories = args[4].getAs<uint16_t>();
+        state.optimizer.num_coef = static_cast<uint16_t>(
+                state.num_features + (state.num_categories-1));
         state.resize();
         if (!args[3].isNull()) {
             OrdinalState prev_state = args[3].getAs<ByteString>();

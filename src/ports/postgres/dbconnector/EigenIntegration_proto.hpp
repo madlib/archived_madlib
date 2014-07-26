@@ -15,14 +15,6 @@ namespace eigen_integration {
 
 // Specializations for DBMS-specific types
 
-template <>
-HandleMap<const Matrix, ArrayHandle<double> >::HandleMap(
-    const ArrayHandle<double>& inHandle);
-
-template <>
-HandleMap<Matrix, MutableArrayHandle<double> >::HandleMap(
-    const MutableArrayHandle<double>& inHandle);
-
 typedef HandleMap<const ColumnVector, ArrayHandle<double> > NativeColumnVector;
 typedef HandleMap<ColumnVector, MutableArrayHandle<double> >
     MutableNativeColumnVector;

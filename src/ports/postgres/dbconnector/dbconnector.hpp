@@ -230,7 +230,7 @@ namespace dbconnector {
 
 namespace postgres {
 
-#if defined(DEBUG) 
+#ifndef NDEBUG
 extern std::ostream dbout;
 extern std::ostream dberr;
 #endif
@@ -238,7 +238,7 @@ extern std::ostream dberr;
 
 } // namespace dbconnector
 
-#if defined(DEBUG)
+#ifndef NDEBUG
 // Import MADlib global variables into madlib namespace
 using dbconnector::postgres::dbout;
 using dbconnector::postgres::dberr;

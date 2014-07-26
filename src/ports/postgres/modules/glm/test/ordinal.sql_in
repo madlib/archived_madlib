@@ -6,12 +6,12 @@
  * The values given by the multinomial logistic regression were cross checked
  * with the function clm() in R ordinal package.
  *
- * example: clm(cat ~ feat1 + feat2, data=dat, link="logit")
+ * example: polr(cat ~ feat1 + feat2, data=dat, link="logit")
  *
  */
 
+-- create table for training
 DROP TABLE IF EXISTS multinom_test;
-
 CREATE TABLE multinom_test (
     feat1 INTEGER,
     feat2 INTEGER,
@@ -221,16 +221,15 @@ INSERT INTO multinom_test(feat1, feat2, cat, g) VALUES
 (2,65,2,'B'),
 (2,62,2,'B');
 
+-- training function for logit link
 SELECT ordinal(
     'multinom_test',
     'ordinal_out',
     'cat',
     'ARRAY[feat1, feat2]',
     '0<1<2',
-    'logit',
-    NULL,
-    NULL,
-    TRUE);
+    'logit'
+    );
 
 \x on
 SELECT * FROM ordinal_out;
@@ -245,10 +244,109 @@ SELECT assert(
 )
 FROM ordinal_out;
 
-ALTER TABLE multinom_test ADD COLUMN id SERIAL;
+-- create table for prediction
+DROP TABLE IF EXISTS multinom_to_prd;
+CREATE TABLE multinom_to_prd (
+    feat1 INTEGER,
+    feat2 INTEGER,
+    id INTEGER,
+    g CHAR
+);
+
+INSERT INTO multinom_to_prd(feat1, feat2, id, g) VALUES
+(1,35,1,'A'),
+(2,33,2,'A'),
+(3,39,3,'B'),
+(1,37,4,'B');
+
+-- prediction function
 SELECT ordinal_predict(
 	'ordinal_out',
-	'multinom_test',
+	'multinom_to_prd',
 	'ordinal_prd',
-	'probability',
-	TRUE);
+	'probability'
+	);
+
+SELECT assert(
+    relative_error(prob, ARRAY[0.5342011, 0.4278446, 0.2375883, 0.5062776])< 1e-4, 
+	'Ordinal regression prediction: Wrong results'
+)
+FROM (SELECT array_agg("0" ORDER BY id) as prob FROM ordinal_prd)subq;
+
+-- training function for logit link of grouping case
+DROP TABLE IF EXISTS ordinal_out, ordinal_out_summary;
+SELECT ordinal(
+    'multinom_test',
+    'ordinal_out',
+    'cat',
+    'ARRAY[feat1, feat2]',
+    '0<1<2',
+    'logit',
+    'g'
+    );
+
+\x on
+SELECT * FROM ordinal_out;
+SELECT * FROM ordinal_out_summary;
+\x off
+
+SELECT assert(
+	relative_error(coef_threshold, ARRAY[2.3497, 3.7680]) < 1e-4 AND
+	relative_error(coef_feature, ARRAY[0.59758, 0.04845]) < 1e-4 AND
+	relative_error(log_likelihood, -154.6991) < 1e-4, 
+	'Ordinal regression with IRLS optimizer (test grouping case): Wrong results'
+)
+FROM ordinal_out
+WHERE g='A';
+
+DROP TABLE IF EXISTS ordinal_prd;
+SELECT ordinal_predict(
+	'ordinal_out',
+	'multinom_to_prd',
+	'ordinal_prd',
+	'probability'
+	);
+
+SELECT assert(
+    relative_error(prob, ARRAY[0.5141240, 0.3907468])< 1e-4, 
+	'Ordinal regression prediction: Wrong results'
+)
+FROM (SELECT array_agg("0" ORDER BY id) as prob FROM ordinal_prd where id=1 OR id=2)subq;
+
+-- install-check for ordinal probit
+DROP TABLE IF EXISTS ordinal_out, ordinal_out_summary;
+SELECT ordinal(
+    'multinom_test',
+    'ordinal_out',
+    'cat',
+    'ARRAY[feat1, feat2]',
+    '0<1<2',
+    'probit'
+    );
+
+\x on
+SELECT * FROM ordinal_out;
+SELECT * FROM ordinal_out_summary;
+\x off
+
+SELECT assert(
+	relative_error(coef_threshold, ARRAY[1.5104, 2.2577]) < 1e-4 AND
+	relative_error(coef_feature, ARRAY[.31431, .03215]) < 1e-4 AND
+	relative_error(log_likelihood, -191.9912) < 1e-4, 
+	'Ordinal regression with IRLS optimizer (test): Wrong results'
+)
+FROM ordinal_out;
+
+DROP TABLE IF EXISTS ordinal_prd;
+SELECT ordinal_predict(
+	'ordinal_out',
+	'multinom_to_prd',
+	'ordinal_prd',
+	'probability'
+    );
+
+SELECT assert(
+    relative_error(prob, ARRAY[0.5281595, 0.4288294, 0.2461692, 0.5025270])< 1e-4, 
+	'Ordinal regression prediction: Wrong results'
+)
+FROM (SELECT array_agg("0" ORDER BY id) as prob FROM ordinal_prd)subq;

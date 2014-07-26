@@ -17,6 +17,9 @@ namespace eigen_integration {
 
 // Specializations for DBMS-specific types
 
+// ------------------------------------------------------------------------
+// HandleMap::HandleMap()
+// ------------------------------------------------------------------------
 /**
  * @brief Initialize HandleMap backed by the given handle
  *
@@ -45,6 +48,33 @@ HandleMap<Matrix, MutableArrayHandle<double> >::HandleMap(
         inHandle.sizeOfDim(0)),
     mMemoryHandle(inHandle) { }
 
+/**
+ * @brief Construct the HandleMap as one-dimensional vector
+ *
+ * This constructor uses size() method in ArrayHandle to determine the length.
+ */
+template <>
+inline
+HandleMap<const ColumnVector, ArrayHandle<double> >::HandleMap(
+    const ArrayHandle<double>& inHandle)
+  : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
+    mMemoryHandle(inHandle) { }
+
+/**
+ * @brief Construct the HandleMap as one-dimensional vector
+ *
+ * This constructor uses size() method in ArrayHandle to determine the length.
+ */
+template <>
+inline
+HandleMap<ColumnVector, MutableArrayHandle<double> >::HandleMap(
+    const MutableArrayHandle<double>& inHandle)
+  : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
+    mMemoryHandle(inHandle) { }
+
+// ------------------------------------------------------------------------
+// HandleMap::rebind()
+// ------------------------------------------------------------------------
 /**
  * @brief Rebind HandleMap to a different one-dimensional array
  */

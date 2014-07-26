@@ -8,6 +8,7 @@
  * @brief Ordinal linear model: Transition function
  */
 DECLARE_UDF(glm, ordinal_logit_transition)
+DECLARE_UDF(glm, ordinal_probit_transition)
 
 /**
  * @brief Ordinal linear model: State merge function

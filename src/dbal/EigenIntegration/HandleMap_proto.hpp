@@ -34,14 +34,8 @@ public:
     inline HandleMap()
       : Base(NULL, 1, 1), mMemoryHandle(NULL) { }
 
-    /**
-     * @brief Initialize HandleMap backed by the given handle
-     *
-     * This constructor requires that Handle has a size() method, which is
-     * called to determine the length of the vector.
-     */
     inline HandleMap(const Handle &inHandle)
-      : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
+      : Base(const_cast<Scalar*>(inHandle.ptr()), 1, 1),
         mMemoryHandle(inHandle) { }
 
     template <class Derived>
@@ -102,6 +96,7 @@ public:
     HandleMap& rebind(Index inSize);
     HandleMap& rebind(Index inRows, Index inCols);
     const Handle &memoryHandle() const;
+    bool isNull() const { return mMemoryHandle.isNull(); }
 
 protected:
     Handle mMemoryHandle;

@@ -24,6 +24,11 @@ HandleMap<EigenType, Handle, MapOptions>&
 HandleMap<EigenType, Handle, MapOptions>::operator=(
     const HandleMap& other) {
 
+    madlib_assert(this->rows() == other.rows() &&
+                  this->cols() == other.cols(),
+        std::runtime_error("HandleMap::operator= found unmatched dimensions. "
+                           "To change dimensions, use rebind()"));
+
     Base::operator=(other);
     return *this;
 }

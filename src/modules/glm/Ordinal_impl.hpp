@@ -115,115 +115,68 @@ OrdinalAccumulator<Container,Family,Link>::operator<<(
             throw std::domain_error(
                 "The sum of number of independent variables and number of "
                  "categories cannot be larger than 11584.");
+        ColumnVector mu(C);
+        ColumnVector ita(C);
+        Matrix G_prime(C, C);
+        Matrix V(C, C);
+
         if (optimizer.beta.norm() == 0.) {
             // beta is 0 in the first iteration
-            ColumnVector mu(C);
-            ColumnVector ita(C);
-            Matrix G_prime(C, C);
-            Matrix V(C, C);
-
             Link::init(mu);
             Link::link_func(mu,ita);
-            Link::mean_derivative(ita, G_prime);
-            Family::variance(mu, V);
-
-            loglik += Family::loglik(vecY, mu, 1);
-
-            // calcualte X_trans_W_X
-            Matrix GtVinvG(trans(G_prime)*V.inverse()*G_prime);
-            ColumnVector h_vec(C);
-            h_vec.fill(0);
-            for (int i=0;i<C;i++)
-                for (int j=0;j<C;j++)
-                     h_vec(i) += G_prime(i,j);
-            
-            Matrix GtVinvhXt(trans(G_prime)*V.inverse()*h_vec*trans(x));
-            GtVinvhXt = -1*GtVinvhXt;
-            Matrix XhtVinvG(x*trans(h_vec)*V.inverse()*G_prime);
-            XhtVinvG = -1*XhtVinvG;
-            Matrix htVinvhXXt(x*trans(x));
-            double temp  = trans(h_vec)*V.inverse()*h_vec;
-            htVinvhXXt = temp * htVinvhXXt;
-
-            for (int i=0;i<C;i++) 
-                for (int j=0;j<C;j++)
-                    optimizer.hessian(i,j) += GtVinvG(i,j);
-            for (int i=0;i<C;i++)
-                for (int j=C;j<(C+N);j++)
-                    optimizer.hessian(i,j) += GtVinvhXt(i,j-C);
-
-            for (int i=C;i<(C+N);i++)
-                for (int j=0;j<C;j++)
-                    optimizer.hessian(i,j) += XhtVinvG(i-C,j);
-
-            for (int i=C;i<(C+N);i++)
-                for (int j=C;j<(C+N);j++)
-                    optimizer.hessian(i,j) += htVinvhXXt(i-C,j-C);
-
-            // calculate X_trans_W_Y
-            ColumnVector YVinvG(trans(vecY - mu)*V.inverse()*G_prime);
-            ColumnVector YVinvhX(x);
-            temp = trans(vecY - mu)*V.inverse()*h_vec;
-            YVinvhX = -1*temp * YVinvhX;
-
-            optimizer.grad.segment(0, C) += YVinvG;
-            optimizer.grad.segment(C, N) += YVinvhX;
-        
         } else {
             //beta has non-zero value
-            ColumnVector ita(C);
-            ColumnVector mu(C);
-            Matrix G_prime(C, C);
-            Matrix V(C, C);
-
             double Xtbeta = trans(x)*optimizer.beta.segment(C,N);
-            
             for (int i=0; i<ita.size(); i++) 
                 ita(i) = optimizer.beta(i) - Xtbeta;
-            
-
             Link::mean_func(ita, mu);
-            Link::mean_derivative(ita, G_prime);
-            Family::variance(mu, V);
-
-            loglik += Family::loglik(vecY, mu,1);
-
-            // calcualte X_trans_W_X
-            Matrix GtVinvG(trans(G_prime)*V.inverse()*G_prime);
-            ColumnVector h_vec(C);
-            h_vec.fill(0);
-            for (int i=0;i<C;i++)
-                for (int j=0;j<C;j++)
-                     h_vec(i) += G_prime(i,j);
-            Matrix GtVinvhXt(trans(G_prime)*V.inverse()*h_vec*trans(x));
-            GtVinvhXt = -1*GtVinvhXt;
-            Matrix XhtVinvG(x*trans(h_vec)*V.inverse()*G_prime);
-            XhtVinvG = -1*XhtVinvG;
-            Matrix htVinvhXXt(x*trans(x));
-            double temp  = trans(h_vec)*V.inverse()*h_vec;
-            htVinvhXXt = temp * htVinvhXXt;
-
-            for (int i=0;i<C;i++) 
-                for (int j=0;j<C;j++)
-                    optimizer.hessian(i,j) += GtVinvG(i,j);
-            for (int i=0;i<C;i++)
-                for (int j=C;j<(C+N);j++)
-                    optimizer.hessian(i,j) += GtVinvhXt(i,j-C);
-            for (int i=C;i<(C+N);i++)
-                for (int j=0;j<C;j++)
-                    optimizer.hessian(i,j) += XhtVinvG(i-C,j);
-            for (int i=C;i<(C+N);i++)
-                for (int j=C;j<(C+N);j++)
-                    optimizer.hessian(i,j) += htVinvhXXt(i-C,j-C);
- 
-            // calculate X_trans_W_Y
-            ColumnVector YVinvG(trans(vecY - mu)*V.inverse()*G_prime);
-            ColumnVector YVinvhX(x);
-            temp = trans(vecY - mu)*V.inverse()*h_vec;
-            YVinvhX = -temp * YVinvhX;
-            optimizer.grad.segment(0, C) += YVinvG;
-            optimizer.grad.segment(C, N) += YVinvhX;
        }
+
+        Link::mean_derivative(ita, G_prime);
+        Family::variance(mu, V);
+        loglik += Family::loglik(vecY, mu, 1);
+        Matrix Vinv(V.inverse());
+        
+        // calcualte X_trans_W_X
+        Matrix GtVinvG(trans(G_prime)*Vinv*G_prime);
+        ColumnVector h_vec(C);
+        h_vec.fill(0);
+        for (int i=0;i<C;i++)
+            for (int j=0;j<C;j++)
+                 h_vec(i) += G_prime(i,j);
+        
+        Matrix GtVinvhXt(trans(G_prime)*Vinv*h_vec*trans(x));
+        GtVinvhXt = -1*GtVinvhXt;
+        Matrix XhtVinvG(x*trans(h_vec)*Vinv*G_prime);
+        XhtVinvG = -1*XhtVinvG;
+        Matrix htVinvhXXt(x*trans(x));
+        double temp  = trans(h_vec)*Vinv*h_vec;
+        htVinvhXXt = temp * htVinvhXXt;
+
+        for (int i=0;i<C;i++) 
+            for (int j=0;j<C;j++)
+                optimizer.hessian(i,j) += GtVinvG(i,j);
+        for (int i=0;i<C;i++)
+            for (int j=C;j<(C+N);j++)
+                optimizer.hessian(i,j) += GtVinvhXt(i,j-C);
+
+        for (int i=C;i<(C+N);i++)
+            for (int j=0;j<C;j++)
+                optimizer.hessian(i,j) += XhtVinvG(i-C,j);
+
+        for (int i=C;i<(C+N);i++)
+            for (int j=C;j<(C+N);j++)
+                optimizer.hessian(i,j) += htVinvhXXt(i-C,j-C);
+
+        // calculate X_trans_W_Y
+        ColumnVector YVinvG(trans(vecY - mu)*Vinv*G_prime);
+        ColumnVector YVinvhX(x);
+        temp = trans(vecY - mu)*Vinv*h_vec;
+        YVinvhX = -1*temp * YVinvhX;
+
+        optimizer.grad.segment(0, C) += YVinvG;
+        optimizer.grad.segment(C, N) += YVinvhX;
+
         num_rows ++;
         return *this;
     } // all tests passed and we were in the else

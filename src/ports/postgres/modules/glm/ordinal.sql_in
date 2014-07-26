@@ -168,12 +168,12 @@ ordinal(source_table,
 
     <tr>
       <th>cat_order</th>
-      <td>VARCHAR. String representation of category order.</td>
+      <td>VARCHAR. String representation of category order. Default is the sorted categories in data using python sort</td>
     </tr>
 
     <tr>
       <th>link_func</th>
-      <td>VARCHAR. String that contains link function parameters: only 'logit' is implemented now</td>
+      <td>VARCHAR. String that contains link function parameters: 'logit' and 'probit' links are implemented now</td>
     </tr>
 
     <tr>
@@ -189,12 +189,12 @@ ordinal(source_table,
 
     <tr>
       <th>num_all_groups</th>
-      <td>INTEGER. Number of groups in glm training.</td>
+      <td>INTEGER. Number of groups in ordinal regression training.</td>
     </tr>
 
     <tr>
       <th>num_failed_groups</th>
-      <td>INTEGER. Number of failed groups in glm training.</td>
+      <td>INTEGER. Number of failed groups in ordinal regression training.</td>
     </tr>
 
     <tr>
@@ -223,7 +223,7 @@ ordinal(source_table,
   </DD>
 
   <DT>link_function (optional)</DT>
-  <DD>VARCHAR, default: 'logit'. Parameters for link function. Currently, we support logit.
+  <DD>VARCHAR, default: 'logit'. Parameters for link function. Currently, we support logit and probit.
   </DD>
 
   <DT>grouping_col (optional)</DT>
@@ -256,8 +256,8 @@ Ordinal regression prediction function has the following format:
 <pre class="syntax">
 ordinal_predict(
                     model_table,
-                    predict_table,
-                    predicted_val_tab,
+                    predict_table_input,
+                    output_table,
                     predict_type,
                     verbose
                )
@@ -268,11 +268,11 @@ ordinal_predict(
   <DD>TEXT. Name of the generated table containing the model, which is the output table from
             ordinal().</DD>
 
-  <DT>predict_table</DT>
+  <DT>predict_table_input</DT>
   <DD>TEXT. The name of the table containing the data to predict on. The table must contain
             id column as the primary key.</DD>
 
-  <DT>predicted_val_tab</DT>
+  <DT>output_table</DT>
   <DD>TEXT. Name of the generated table containing the predicted values.
 
     The model table produced by ordinal_predict contains the following columns:
@@ -434,7 +434,7 @@ The function ordinal() fit the ordinal response model using a cumulative link mo
 \f[
 \gamma_{ij} = \Pr(Y_i \le j)= \pi_{i1} +...+ \pi_{ij} . 
 \f]
-Initially we will consider the logit link. The logit function is defined as \f$ \mbox{logit}(\pi) = \log[\pi/(1-\pi)] \f$ and cumulative logits are defined as:
+Next we will consider the logit link for illustration purpose. The logit function is defined as \f$ \mbox{logit}(\pi) = \log[\pi/(1-\pi)] \f$ and cumulative logits are defined as:
 \f[
 \mbox{logit}(\gamma_{ij})=\mbox{logit}(\Pr(Y_i \le j))=\log \frac{\Pr(Y_i \le j)}{1-\Pr(Y_i\le j)}, \vspace{1in} j=1,...,J−1
 \f]
@@ -503,7 +503,6 @@ LANGUAGE C IMMUTABLE STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 ------------------------------------------------------------------------
-------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordinal_logit_transition(
         MADLIB_SCHEMA.bytea8,
@@ -528,6 +527,36 @@ CREATE AGGREGATE MADLIB_SCHEMA.__ordinal_logit_agg(
 
     STYPE=MADLIB_SCHEMA.bytea8,
     SFUNC=MADLIB_SCHEMA.__ordinal_logit_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__ordinal_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__ordinal_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordinal_probit_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8,
+        smallint)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'ordinal_probit_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__ordinal_probit_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8, smallint);
+CREATE AGGREGATE MADLIB_SCHEMA.__ordinal_probit_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8,
+        /*+ numer of categor.*/ smallint) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__ordinal_probit_transition,
     m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__ordinal_merge_states,')
     FINALFUNC=MADLIB_SCHEMA.__ordinal_final,
     INITCOND=''
@@ -618,6 +647,16 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
     cat_order           varchar
 ) RETURNS void AS $$
     SELECT MADLIB_SCHEMA.ordinal($1, $2, $3, $4, $5, NULL, NULL, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.ordinal($1, $2, $3, $4, NULL, NULL, NULL, NULL, FALSE);
 $$ LANGUAGE sql
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
