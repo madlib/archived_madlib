@@ -148,6 +148,40 @@ public:
     }
 };
 
+// ------------------------------------------------------------
+
+class OrdinalLogit {
+public:
+    static void init(ColumnVector &mu) {
+        mu.fill(1./static_cast<double>(mu.size()+1)); // later we may consider to use y to initialize mu
+    }
+    static void link_func(const ColumnVector &mu, ColumnVector &ita) {
+        ColumnVector sum_vec(mu.size());
+	sum_vec(0) = mu(0);
+	for (int i=1;i<mu.size();i++)
+	  sum_vec(i) = sum_vec(i-1) + mu(i);
+	for (int i=0;i<mu.size();i++) 
+          ita(i) = log(sum_vec(i)/(1-sum_vec(i)));
+        
+    }
+    static void mean_func(const ColumnVector &ita, ColumnVector &mu) {
+        mu(0) = exp(ita(0))/(1+exp(ita(0)));
+	for(int i=1;i<ita.size();i++) 
+           mu(i) = exp(ita(i))/(1+exp(ita(i)))- exp(ita(i-1))/(1+exp(ita(i-1)));
+        
+    }
+    static void mean_derivative(const ColumnVector &ita, Matrix &mu_prime) {
+        mu_prime.fill(0);
+	for(int i=0;i<ita.size();i++) {
+          for(int j=0;j<=i;j++) {
+             if(i==j) { mu_prime(i,j)=exp(ita(i))/(1+exp(ita(i)))/(1+exp(ita(i))); }
+             else if(i==(j+1)) { mu_prime(i,j)=-exp(ita(j))/(1+exp(ita(j)))/(1+exp(ita(j))); }
+	     else { mu_prime(i,j)=0; }
+          }
+        }
+    }
+};
+
 } // namespace glm
 
 } // namespace modules

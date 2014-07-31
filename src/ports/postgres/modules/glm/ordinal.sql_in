@@ -1,0 +1,686 @@
+/* ----------------------------------------------------------------------- *//**
+ * @file ordinal.sql_in
+ *
+ * @brief SQL functions for ordinal regression
+ * @date July 2014
+ *
+ * @sa For a brief introduction to ordinal regression, see the
+ *     module description \ref grp_ordinal.
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_ordinal
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#predict">Prediction Function</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#background">Model Details</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul>
+</div>
+
+@brief Regression to model data with ordinal response variable.
+
+In statistics, ordinal regression is a type of regression analysis 
+used for predicting an ordinal variable, i.e. a variable whose 
+value exists on an arbitrary scale where only the relative ordering 
+between different values is significant. The two most common types 
+of ordinal regression models are ordered logit, which applies to 
+data that meet the proportional odds assumption, and ordered probit.
+
+@anchor train
+@par Training Function
+The ordinal regression training function has the following syntax:
+<pre class="syntax">
+ordinal(source_table,
+         model_table,
+         dependent_varname,
+         independent_varname,
+         cat_order,
+         link_func,
+         grouping_col,
+         optim_params,
+         verbose
+        )
+</pre>
+
+\b Arguments
+<DL class="arglist">
+  <DT>source_table</DT>
+  <DD>VARCHAR. Name of the table containing the training data.</DD>
+
+  <DT>model_table</DT>
+  <DD>VARCHAR. Name of the generated table containing the model.
+
+    The model table produced by ordinal() contains the following columns:
+
+    <table class="output">
+      <tr>
+        <th>&lt;...&gt;</th>
+        <td>Grouping columns, if provided in input. This could be 
+            multiple columns depending on the \c grouping_col input.</td>
+      </tr>
+
+      <tr>
+        <th>coef_threshold</th>
+        <td>FLOAT8[]. Vector of the threshold coefficients in linear predictor. 
+            The threshold coefficients are the intercepts specific to each categorical levels</td>
+      </tr>
+
+      <tr>
+        <th>std_err_threshold</th>
+        <td>FLOAT8[]. Vector of the threshold standard errors 
+            of the threshold coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>z_stats_threshold</th>
+        <td>FLOAT8[]. Vector of the threshold z-statistics of 
+            the thresholdcoefficients.</td>
+      </tr>
+
+      <tr>
+        <th>p_values_threshold</th>
+        <td>FLOAT8[]. Vector of the threshold p-values of the threshold coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>log_likelihood</th>
+        <td>FLOAT8. The log-likelihood \f$ l(\boldsymbol \beta) \f$. The value will 
+            be the same across categories within the same group.</td>
+      </tr>
+
+      <tr>
+        <th>coef_feature</th>
+        <td>FLOAT8[]. Vector of the feature coefficients in linear predictor. The 
+            feature coefficients are the coefficients for the independent variables. 
+            They are the same across categories.</td>
+      </tr>
+
+      <tr>
+        <th>std_err_feature</th>
+        <td>FLOAT8[]. Vector of the feature standard errors of the feature coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>z_stats_feature</th>
+        <td>FLOAT8[]. Vector of the feature z-statistics of the feature coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>p_values_feature</th>
+        <td>FLOAT8[]. Vector of the feature p-values of the feature coefficients.</td>
+      </tr>
+
+      <tr>
+        <th>num_rows_processed</th>
+        <td>BIGINT. Number of rows processed.</td>
+      </tr>
+
+      <tr>
+        <th>num_rows_skipped</th>
+        <td>BIGINT. Number of rows skipped due to missing values or failures.</td>
+      </tr>
+
+      <tr>
+        <th>num_iterations</th>
+        <td>INTEGER. Number of iterations actually completed. This would be different
+          from the \c nIterations argument if a \c tolerance parameter is provided and the
+          algorithm converges before all iterations are completed.</td>
+      </tr>
+    </table>
+
+    A summary table named \<model_table\>_summary is also created at the same time, which has the following columns:
+     <table class="output">
+
+    <tr>
+      <th>method</th>
+      <td>VARCHAR. String describes the model: 'ordinal'.</td>
+    </tr>
+
+    <tr>
+      <th>source_table</th>
+      <td>VARCHAR. Data source table name.</td>
+    </tr>
+
+    <tr>
+      <th>model_table</th>
+      <td>VARCHAR. Model table name.</td>
+    </tr>
+
+    <tr>
+      <th>dependent_varname</th>
+      <td>VARCHAR. Expression for dependent variable.</td>
+    </tr>
+
+    <tr>
+      <th>independent_varname</th>
+      <td>VARCHAR. Expression for independent variables. The independent variables 
+          should not include intercept term. Otherwise there will be an error message 
+          indicating Hessian matrix is not finite. In that case, the user should 
+          drop the intercept and rerun the function agian.</td>
+    </tr>
+
+    <tr>
+      <th>cat_order</th>
+      <td>VARCHAR. String representation of category order.</td>
+    </tr>
+
+    <tr>
+      <th>link_func</th>
+      <td>VARCHAR. String that contains link function parameters: only 'logit' is implemented now</td>
+    </tr>
+
+    <tr>
+      <th>grouping_col</th>
+      <td>VARCHAR. String representation of grouping columns.</td>
+    </tr>
+
+    <tr>
+      <th>optimizer_params</th>
+      <td>VARCHAR. String that contains optimizer parameters, and has the form 
+          of 'optimizer=..., max_iter=..., tolerance=...'.</td>
+    </tr>
+
+    <tr>
+      <th>num_all_groups</th>
+      <td>INTEGER. Number of groups in glm training.</td>
+    </tr>
+
+    <tr>
+      <th>num_failed_groups</th>
+      <td>INTEGER. Number of failed groups in glm training.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_processed</th>
+      <td>BIGINT. Total number of rows processed in all groups.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_skipped</th>
+      <td>BIGINT. Total number of rows skipped in all groups due to missing values or failures.</td>
+    </tr>
+
+   </table>
+  </DD>
+
+  <DT>dependent_varname</DT>
+  <DD>VARCHAR. Name of the dependent variable column.</DD>
+
+  <DT>independent_varname</DT>
+  <DD>VARCHAR. Expression list to evaluate for the
+    independent variables. The intercept should not be included here since the cumulative probability
+    force to have intercepts for each category level.</DD>
+
+  <DT>cat_order</DT>
+  <DD>VARCHAR, String that represents the order of category. The order is specified by charactor '<'.
+  </DD>
+
+  <DT>link_function (optional)</DT>
+  <DD>VARCHAR, default: 'logit'. Parameters for link function. Currently, we support logit.
+  </DD>
+
+  <DT>grouping_col (optional)</DT>
+  <DD>VARCHAR, default: NULL. An expression list used to group
+    the input dataset into discrete groups, running one regression per group.
+    Similar to the SQL "GROUP BY" clause. When this value is NULL, no
+    grouping is used and a single model is generated.</DD>
+
+  <DT>optim_params (optional)</DT>
+  <DD>VARCHAR, default: 'max_iter=100,optimizer=irls,tolerance=1e-6'.
+    Parameters for optimizer. Currently, we support
+    tolerance=[tolerance for relative error between log-likelihoods],
+    max_iter=[maximum iterations to run], optimizer=irls.</DD>
+
+  <DT>verbose (optional)</DT>
+  <DD>BOOLEAN, default: FALSE. Provides verbose output of the results of training.</DD>
+</DL>
+
+<dd>@note To calculate the standard error the coefficient, we are using the square root of the diagnal
+elements of the expected Fisher information matrix, which is a by-product of iteratively reweighted
+least square. This method is used in the original ordinal regression paper by McCullagh(1980). In some
+software like Stata, the standard error is calculated by the observed information matrix, which is supported
+by Efron and Hinkley (1978). In R, polr() uses the approximated observed information matrix while the
+optimization is achieved by first order optimization method. Therefore, there will be some difference on
+standard error, z-stats and p-value from other software.</dd>
+
+@anchor predict
+@par Prediction Function
+Ordinal regression prediction function has the following format:
+<pre class="syntax">
+ordinal_predict(
+                    model_table,
+                    predict_table,
+                    predicted_val_tab,
+                    predict_type,
+                    verbose
+               )
+</pre>
+\b Arguments
+<DL class="arglist">
+  <DT>model_table</DT>
+  <DD>TEXT. Name of the generated table containing the model, which is the output table from
+            ordinal().</DD>
+
+  <DT>predict_table</DT>
+  <DD>TEXT. The name of the table containing the data to predict on. The table must contain
+            id column as the primary key.</DD>
+
+  <DT>predicted_val_tab</DT>
+  <DD>TEXT. Name of the generated table containing the predicted values.
+
+    The model table produced by ordinal_predict contains the following columns:
+
+    <table class="output">
+      <tr>
+        <th>id</th>
+        <td>SERIAL. Column to identify the predicted value.</td>
+      </tr>
+
+      <tr>
+        <th>category</th>
+        <td>TEXT. Available if the predicted type = 'response'. Column contains the predicted
+                  categories</td>
+      </tr>
+
+      <tr>
+        <th>category_value</th>
+        <td>FLOAT8. The predicted probability for the specific category_value.</td>
+      </tr>
+    </table>
+
+  <DT>predict_type</DT>
+  <DD>TEXT. Either 'response' or 'probability'. Using 'response' will give the predicted category with
+            the largest probability. Using probability will give the predicted probabilities for all
+            categories</DD>
+  
+  <DT>verbose</DT>
+  <DD>BOOLEAN. Whether verbose is displayed</DD>
+</DL>
+
+
+@anchor examples
+@examp
+
+-# Create the training data table.
+<pre class="example">
+DROP TABLE IF EXISTS test3;
+CREATE TABLE test3 (
+    feat1 INTEGER,
+    feat2 INTEGER,
+    cat INTEGER
+);
+INSERT INTO test3(feat1, feat2, cat) VALUES
+(1,35,1),
+(2,33,0),
+(3,39,1),
+(1,37,1),
+(2,31,1),
+(3,36,0),
+(2,36,1),
+(2,31,1),
+(2,41,1),
+(2,37,1),
+(1,44,1),
+(3,33,2),
+(1,31,1),
+(2,44,1),
+(1,35,1),
+(1,44,0),
+(1,46,0),
+(2,46,1),
+(2,46,2),
+(3,49,1),
+(2,39,0),
+(2,44,1),
+(1,47,1),
+(1,44,1),
+(1,37,2),
+(3,38,2),
+(1,49,0),
+(2,44,0),
+(3,61,2),
+(1,65,2),
+(3,67,1),
+(3,65,2),
+(1,65,2),
+(2,67,2),
+(1,65,2),
+(1,62,2),
+(3,52,2),
+(3,63,2),
+(2,59,2),
+(3,65,2),
+(2,59,0),
+(3,67,2),
+(3,67,2),
+(3,60,2),
+(3,67,2),
+(3,62,2),
+(2,54,2),
+(3,65,2),
+(3,62,2),
+(2,59,2),
+(3,60,2),
+(3,63,2),
+(3,65,2),
+(2,63,1),
+(2,67,2),
+(2,65,2),
+(2,62,2);
+</pre>
+-# Run the multilogistic regression function.
+<pre class="example">
+DROP TABLE IF EXISTS test3_output;
+DROP TABLE IF EXISTS test3_output_summary;
+SELECT madlib.ordinal('test3',
+                       'test3_output',
+                       'cat',
+                       'ARRAY[feat1, feat2]',
+                       '0<1<2',
+                       'logit'
+                       );
+</pre>
+
+-# View the regression results.
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x on
+SELECT * FROM test3_output;
+</pre>
+
+Result:
+<pre class="result">
+-[ RECORD 1 ]------+-------------------------------------------
+coef_threshold     | {4.12831944358935,6.55999442887089}
+std_err_threshold  | {1.3603408170882,1.54843501580999}
+z_stats_threshold  | {3.03476848722806,4.23653195768075}
+p_values_threshold | {0.00240720390579325,2.26998625331282e-05}
+log_likelihood     | -42.1390192418541
+coef_feature       | {0.574822563129293,0.108115645059558}
+std_err_feature    | {0.394064908788145,0.0276025960683975}
+z_stats_feature    | {1.45870020473791,3.91686509456046}
+p_values_feature   | {0.144647639733733,8.9707915817562e-05}
+num_rows_processed | 57
+num_rows_skipped   | 0
+iteration          | 7
+</pre>
+
+-# Predicting dependent variable using ordinal model.
+(This example uses the original data table to perform the prediction. Typically
+a different test dataset with the same features as the original training dataset
+would be used for prediction.)
+
+<pre class="example">
+\\x off
+-- Add the id column for prediction function
+ALTER TABLE test3 ADD COLUMN id SERIAL;
+-- Predict probabilities for all categories using the original data 
+SELECT ordinal_predict('test3_output','test3', 'test3_prd_prob', 'probability');
+-- Display the predicted value
+SELECT * FROM test3_prd_prob;
+</pre>
+
+@anchor background
+@par Model Details
+
+The function ordinal() fit the ordinal response model using a cumulative link model. The ordinal reponse variable, denoted by \f$ Y_i \f$, can fall in \f$ j = 1,.. , J\f$ categories. Then \f$ Y_i \f$ follows a multinomial distribution with parameter \f$\pi\f$ where \f$\pi_{ij}\f$ denote the probability that the \f$i\f$th observation falls in response category \f$j\f$. We define the cumulative probabilities as
+\f[
+\gamma_{ij} = \Pr(Y_i \le j)= \pi_{i1} +...+ \pi_{ij} . 
+\f]
+Initially we will consider the logit link. The logit function is defined as \f$ \mbox{logit}(\pi) = \log[\pi/(1-\pi)] \f$ and cumulative logits are defined as:
+\f[
+\mbox{logit}(\gamma_{ij})=\mbox{logit}(\Pr(Y_i \le j))=\log \frac{\Pr(Y_i \le j)}{1-\Pr(Y_i\le j)}, \vspace{1in} j=1,...,J−1
+\f]
+so that the cumulative logits are defined for all but the last category.
+
+A cumulative link model with a logit link, or simply cumulative logit model is a regression model for cumulative logits:
+\f[
+\mbox{logit}(\gamma_{ij}) = \theta_j - x^T_i \beta
+\f]
+where \f$x_i\f$ is a vector of explanatory variables for the \f$i\f$th observation and \f$\beta\f$ is the corresponding set of regression parameters. The \f$\{\theta_j\}\f$ parameters provide each cumulative logit (for each \f$j\f$) with its own intercept. A key point is that the regression part \f$x^T_i\beta\f$ is independent of \f$j\f$, so \f$\beta\f$ has the same effect for each of the J − 1 cumulative logits. Note that \f$x^T_i\beta\f$  does not contain an intercept, since the \f$\{\theta_j\}\f$ act as intercepts. For small values of \f$x^T_i\beta\f$ the response is likely to fall in the first category and for large values of \f$x^T_i\beta\f$ the response is likely to fall in the last category. The horizontal displacements of the curves are given by the values of \f$\{\theta_j\}\f$.
+
+@anchor literature
+@literature
+
+A collection of nice write-ups, with valuable pointers into further literature:
+
+[1] Peter McCullagh: Regression Models for Ordinal Data, Journal of the Royal Statistical Society. Series B (Methodological), Volume 42, Issue 2 (1980), 109-142
+
+[2] Rune Haubo B Christensen: Analysis of ordinal data with cumulative link models -- estimation with the R-package ordinal. cran.r-project.org/web/packages/ordinal/vignettes/clm_intro.pdf
+
+@anchor related
+@par Related Topics
+
+File ordinal.sql_in documenting the ordinal regression functions
+
+@internal
+@sa Namespace ordinal (documenting the driver/outer loop implemented in
+    Python), Namespace
+    \ref madlib::modules::glm documenting the implementation in C++
+@endinternal
+
+*/
+------------------------------------------------------------------------
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__ordinal_result_type CASCADE;
+CREATE TYPE MADLIB_SCHEMA.__ordinal_result_type AS (
+        coef_alpha double precision[],
+        std_err_alpha double precision[],
+        z_stats_alpha double precision[],
+        p_values_alpha double precision[],
+        loglik double precision,
+        coef_beta double precision[],
+        std_err_beta double precision[],
+        z_stats_beta double precision[],
+        p_values_beta double precision[],
+        num_rows_processed bigint
+);
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordinal_merge_states(
+        state1 MADLIB_SCHEMA.bytea8,
+        state2 MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'ordinal_merge_states'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordinal_final(
+        state MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'ordinal_final'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordinal_logit_transition(
+        MADLIB_SCHEMA.bytea8,
+        double precision,
+        double precision[],
+        MADLIB_SCHEMA.bytea8,
+        smallint)
+RETURNS MADLIB_SCHEMA.bytea8
+AS 'MODULE_PATHNAME', 'ordinal_logit_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__ordinal_logit_agg(
+        double precision, double precision[], MADLIB_SCHEMA.bytea8, smallint);
+CREATE AGGREGATE MADLIB_SCHEMA.__ordinal_logit_agg(
+        /*+ y */                double precision,
+        /*+ x */                double precision[],
+        /*+ previous_state */   MADLIB_SCHEMA.bytea8,
+        /*+ numer of categor.*/ smallint) (
+
+    STYPE=MADLIB_SCHEMA.bytea8,
+    SFUNC=MADLIB_SCHEMA.__ordinal_logit_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__ordinal_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__ordinal_final,
+    INITCOND=''
+);
+
+------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordinal_result(
+        /*+ state */ MADLIB_SCHEMA.bytea8)
+RETURNS MADLIB_SCHEMA.__ordinal_result_type
+AS 'MODULE_PATHNAME', 'ordinal_result'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__ordinal_loglik_diff(
+        /*+ state1 */ MADLIB_SCHEMA.bytea8,
+        /*+ state2 */ MADLIB_SCHEMA.bytea8)
+RETURNS double precision
+AS 'MODULE_PATHNAME', 'ordinal_loglik_diff'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    cat_order           varchar,
+    link_func           varchar,
+    grouping_col        varchar,
+    optim_params        varchar,
+    verbose             boolean
+) RETURNS void AS $$
+PythonFunction(glm, ordinal, ordinal)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-- entry functions with default values
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    cat_order           varchar,
+    link_func           varchar,
+    grouping_col        varchar,
+    optim_params        varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.ordinal($1, $2, $3, $4, $5, $6, $7, $8, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    cat_order           varchar,
+    link_func           varchar,
+    grouping_col        varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.ordinal($1, $2, $3, $4, $5, $6, $7, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    cat_order           varchar,
+    link_func           varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.ordinal($1, $2, $3, $4, $5, $6, NULL, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
+    source_table        varchar,
+    model_table         varchar,
+    dependent_varname   varchar,
+    independent_varname varchar,
+    cat_order           varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.ordinal($1, $2, $3, $4, $5, NULL, NULL, NULL, FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-- Help messages -------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal(
+    message    TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(glm, ordinal, ordinal_help_msg)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal()
+RETURNS TEXT
+AS $$
+    SELECT MADLIB_SCHEMA.ordinal(NULL::TEXT);
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+------------------------------------------------------------------------------
+--------- prediction function ------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal_predict(
+    model_table         varchar,
+    predict_table       varchar,
+    predicted_value_tab varchar,
+    predict_type        varchar,
+    verbose             boolean
+) RETURNS void AS $$
+PythonFunction(glm, ordinal, ordinal_predict)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal_predict(
+    model_table         varchar,
+    predict_table       varchar,
+    predicted_value_tab varchar,
+    predict_type        varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.ordinal_predict($1,$2,$3,$4,FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal_predict(
+    model_table         varchar,
+    predict_table       varchar,
+    predicted_value_tab varchar
+) RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.ordinal_predict($1,$2,$3,NULL,FALSE);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+-- Help messages -------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal_predict(
+    message    TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(glm, ordinal, ordinal_predict_help_msg)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.ordinal_predict()
+RETURNS TEXT
+AS $$
+    SELECT MADLIB_SCHEMA.ordinal_predict(NULL::TEXT);
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');

@@ -155,6 +155,7 @@ Inverse-Gaussian & $-\psi$ & $\sqrt{2\theta}$ & $-\frac{1}{2}\left[\log_e(\pi\ps
 \end{table}
 
 \subsection{Multivariate response family}
+\label{subsec::multinomreg}
 Instead of a single scalar number, some response variable follows a multivariate distribution (i.e. the response variable is a vector instead of a scalar number). One example is multinomial GLM where the response variable is an indictor vector containing zeros and ones to dummy code the corresponding categories. For illustration purpose, in this section, we are discussing multinomial GLM. However, other distributions can be easily extended.
 
 Let $J$ denote the number of categories, $y_i=(y_{i1}, y_{i2}, ..., y_{i(J-1)})^T$ be the indicator vector for $i$th subject where each $y_{ij}$ is the binary indicator whether subject $i$ is in categories $j$, $\mu_{ij}$ will be the probabilty subject $i$ is in category $j$. Therefore, we can have the log likelihood as below,
@@ -185,13 +186,13 @@ Denote the coefficient to be $\beta_{kj}$ where $k$ stands for the $k$th predict
 where $G^\prime_j$ is the $j$th column of $G^\prime$.
 \begin{align*}
 \frac{\partial^2 l_i}{\partial\beta_{kj} \partial\beta_{lh}} &= -x_{il} (G^\prime_h)^T V^{-1} \triangledown \triangledown^T b(\theta_i) V^{-1} G^\prime_j x_{ik} \\
-& = x_{il} (G^\prime_h)^T V^{-1} G^\prime_j x_{ik}
+& = -x_{il} (G^\prime_h)^T V^{-1} G^\prime_j x_{ik}
 \end{align*}
 
 As a entire vector $\beta$,
 \begin{align*}
 \triangledown_\beta l_i &= \left((y_i - \mu_i)^T V^{-1} G^\prime(\mu_i) \right)^T \otimes X_i \\
-\triangledown \triangledown^T_\beta l_i & = - \left( [G^\prime(\mu_i)]^T V^{-1} [G^\prime(\mu_i)] \right) \otimes (X_i X_i^T)
+E\left[\triangledown \triangledown^T_\beta l_i\right] & = - \left( [G^\prime(\mu_i)]^T V^{-1} [G^\prime(\mu_i)] \right) \otimes (X_i X_i^T)
 \end{align*}
 where $X_i = (x_{i1}, x_{i2}, ... , x_{ip})^T$.
 
@@ -199,6 +200,49 @@ Finally, we can use the below update equation for Newton-Raphson method,
 \[
 \beta^{k+1} = \beta^k + \left\{ \sum_{i=1}^I\left([G^\prime(\mu_i)]^T V^{-1} [G^\prime(\mu_i)] \right) \otimes (X_i X_i^T)\right\}^{-1}\sum_{i=1}^I\left\{\left((y_i - \mu_i)^T V^{-1} G^\prime(\mu_i) \right)^T \otimes X_i\right\}
 \]
+
+\subsection{Ordinal logistic regression}
+In statistics, the ordered logit model (also ordered logistic regression or proportional odds model), is a regression model for ordinal dependent variables. For example, if one question on a survey is to be answered by a choice among "poor", "fair", "good", "very good", and "excellent", and the purpose of the analysis is to see how well that response can be predicted by the responses to other questions, some of which may be quantitative, then ordered logistic regression may be used. It can be thought of as an extension of the logistic regression model that applies to dichotomous dependent variables, allowing for more than two (ordered) response categories.
+
+The model we implement here only applies to data that meet the proportional odds assumption, the meaning of which can be exemplified as follows.
+
+\[
+\log\left( \frac{\Pr(Y_i \le j)}{1-\Pr(Y_i \le j)} \right) = \alpha_j - \beta_1 x_{i1} - \beta_2 x_{i2} - ... - \beta_p x_{ip}
+\]
+where $\Pr(Y_i \le j)$ is the cumulative probability that the $i$th subject belongs to the first $j$th categories; $\alpha_j$ is category-specific intercept and $\beta_k$ is feature-specific coefficient. Using the notation in the subsection \ref{subsec::multinomreg}, the link function is
+\[
+g\left([\mu_1, \mu_2, ..., \mu_{J-1}]^T\right) = \left[\log\left(\frac{\mu_1}{1-\mu_1}\right), \log\left(\frac{\mu_1+\mu_2}{1-\mu_1-\mu_2}\right), ..., \log\left(\frac{\mu_1+\mu_2+...+\mu_{J-1}}{1-\mu_1-\mu_2-...-\mu_{J-1}}\right)\right]^T
+\] 
+Then the inverse of link function G is,
+\begin{align*}
+G\left([\eta_1, \eta_2, ..., \eta_{J-1}]^T\right) & = \left[\frac{\exp(\eta_1)}{1+\exp(\eta_1)}, \frac{\exp(\eta_2)}{1+\exp(\eta_2)} - \frac{\exp(\eta_1)}{1+\exp(\eta_1)},\right. \\
+						  &    \left. ..., \frac{\exp(\eta_{J-1})}{1+\exp(\eta_{J-1})} - \frac{\exp(\eta_{J-2})}{1+\exp(\eta_{J-2})}\right]^T
+\end{align*}
+Its derivative matrix $G^\prime$ is
+\begin{align*}
+G^\prime & = \left[\frac{\partial \mu}{\partial \eta_1}, \frac{\partial \mu}{\partial \eta_2}, ..., \frac{\partial \mu}{\partial \eta_{J-1}}\right] \\
+& = \left[ \begin{array}{ccccc}
+	      \frac{\exp(\eta_1)}{(1+\exp(\eta_1))^2} & 0 & 0 & ... & 0 \\
+	     -\frac{\exp(\eta_1)}{(1+\exp(\eta_1))^2} & \frac{\exp(\eta_2)}{(1+\exp(\eta_2))^2} & 0 & ... & 0 \\
+	     0 & -\frac{\exp(\eta_2)}{(1+\exp(\eta_2))^2} & \frac{\exp(\eta_3)}{(1+\exp(\eta_3))^2} & ... & 0 \\
+	     \vdots & \vdots & \vdots & ... & \vdots \\
+	     0 & 0 & 0 & ... & \frac{\exp(\eta_{J-1})}{(1+\exp(\eta_{J-1}))^2}
+	   \end{array} \right]
+\end{align*}
+
+Define $h_i = \sum_{j=1}^{J-1} \frac{\partial \mu_i}{\partial \eta_{ij}}$, then as a entire coefficient vector $\gamma = [\alpha_1, \alpha_2, ..., \alpha_{J-1}, \beta_1, \beta_2, ..., \beta_p]^T$,
+\begin{align*}
+\triangledown_\gamma l_i &= \left[ \begin{array}{c}
+					\left\{(y_i - \mu_i)^T V^{-1} G_i^{\prime} \right\}^T \\
+					-(y_i - \mu_i)^T V^{-1} h_i X_i
+				   \end{array} \right] \\
+E\left[\triangledown \triangledown^T_\gamma l_i\right] & = - \left[ \begin{array}{cc}
+							(G_i^\prime)^T V^{-1} G_i^\prime & -(G_i^\prime)^T V^{-1} h_i X_i^T \\
+							-X_i h_i^T V^{-1} G_i & h_i^T V^{-1} h_i X_iX_i^T
+						      \end{array} 
+						\right]
+\end{align*}
+where $X_i = (x_{i1}, x_{i2}, ... , x_{ip})^T$, $G_i^\prime = G^\prime(\eta_{i1},\eta_{i2},...,\eta_{iJ-1})$. We can then implement Newton-Raphson method using above gradient and Hessian matrix.
 
 \subsection{Implementation}
 Some implementation tips.

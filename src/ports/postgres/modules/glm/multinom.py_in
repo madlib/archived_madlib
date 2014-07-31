@@ -514,7 +514,7 @@ SELECT * from test3_output;
 # ===============================================================================
 
 def multinom_predict(schema_madlib, model_table, predict_table,
-                        predicted_value_tab, predict_type, **kwargs):
+                        predicted_value_tab, predict_type, verbose, **kwargs):
     """
     Compute the predicted value for multinomial regresssion
 
@@ -524,6 +524,7 @@ def multinom_predict(schema_madlib, model_table, predict_table,
     @param predict_table Name of table containing new data to predict
     @param predicted_value_tab Name of table to output the predict value
     @param predict_type Type of predict value: 'response' or 'probabilities'
+    @param verbose whether the verbose is displayed
     @param kwargs We allow the caller to specify additional arguments (all of
            which will be ignored though). The purpose of this is to allow the
            caller to unpack a dictionary whose element set is a superset of
@@ -531,11 +532,15 @@ def multinom_predict(schema_madlib, model_table, predict_table,
     """
 
     ##  Validate the argument
-
     input_tbl_valid(model_table, 'multinom_predict')
     input_tbl_valid(predict_table, 'multinom_predict')
     output_tbl_valid(predicted_value_tab, 'multinom_predict')
-    cols_in_tbl_valid(predict_table, _string_to_array("id"), 'GLM')
+    cols_in_tbl_valid(predict_table, _string_to_array("id"), 'multinom_predict')
+
+    if verbose:
+       plpy.execute("SET client_min_messages TO info")
+    else:
+       plpy.execute("SET client_min_messages TO warning")
 
     if predict_type is None:
         predict_type = 'response'
@@ -551,6 +556,19 @@ def multinom_predict(schema_madlib, model_table, predict_table,
             """.format(**locals()))[0]['category_list']
     cate_list = cate_list.split(',')
 
+    group_var = plpy.execute("""
+                SELECT grouping_col FROM {model_table}_summary
+            """.format(**locals()))[0]['grouping_col']
+    if group_var is not None:
+        cols_in_tbl_valid(predict_table, _string_to_array(group_var), 'multinom_predict')
+        group_var = group_var.split(',')
+
+    if group_var is None:
+        grp_clause = ""
+    else:
+        grp_clause = " AND ".join(["{predict_table}.{c} = {model_table}.{c}".format(c=c, predict_table=predict_table, model_table=model_table) for c in group_var])
+        grp_clause = "WHERE " + grp_clause
+
     if predict_type == 'response':
                 plpy.execute("""
                 CREATE TABLE {predicted_value_tab} AS
@@ -559,10 +577,12 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                 (SELECT GREATEST(0, max_score) as max_score, id
                  FROM (SELECT max({schema_madlib}.array_dot(coef, {ind_var}::float8[])) AS max_score, id
                        FROM {predict_table}, {model_table}
+                       {grp_clause}
                        GROUP BY id) subq) subq2
                 LEFT JOIN
                 (SELECT {schema_madlib}.array_dot(coef, {ind_var}::float8[]) score, id, category::TEXT
                  FROM {predict_table}, {model_table}
+                 {grp_clause}
                  UNION
                  SELECT 0 AS score, id, '{ref_category}' AS category
                  FROM {predict_table}) subq3
@@ -614,6 +634,7 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                             FROM
                                 {predict_table},
                                 {model_table}
+                            {grp_clause}
                             UNION
                                 SELECT
                                     1. AS score,
@@ -680,7 +701,8 @@ SELECT {schema_madlib}.multinom_predict(
     model_table,            -- Name of the table containing the output of multinom()
     predict_table,          -- Name of the table containing new data
     predicted_value_tab     -- Name of the table storing the result of predicted values
-    predict_type            -- Support two types: "reponse" or "probability"
+    predict_type,           -- Support two types: "reponse" or "probability"
+    verbose                 -- Whether verbose is diplayed, default is FALSE
 );
 
 ------------------------------------------------------------------
