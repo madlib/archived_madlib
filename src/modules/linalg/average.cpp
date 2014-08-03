@@ -103,7 +103,14 @@ public:
 AnyType
 avg_vector_transition::run(AnyType& args) {
     AvgVectorState<MutableArrayHandle<double> > state = args[0];
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    if (args[1].isNull()) { return args[0]; }
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
     if (state.numRows == 0)
         state.initialize(*this, static_cast<uint32_t>(x.size()));
@@ -148,7 +155,14 @@ avg_vector_final::run(AnyType& args) {
 AnyType
 normalized_avg_vector_transition::run(AnyType& args) {
     AvgVectorState<MutableArrayHandle<double> > state = args[0];
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    if (args[1].isNull()) { return args[0]; }
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
 
     if (state.numRows == 0)
         state.initialize(*this, static_cast<uint32_t>(x.size()));

@@ -21,6 +21,9 @@ namespace madlib {
 namespace modules {
 namespace linalg {
 
+using namespace dbal;
+using namespace dbal::eigen_integration;
+
 AnyType
 array_to_1d::run(AnyType & args) {
     if (args[0].isNull()) { return args[0]; }
@@ -65,8 +68,6 @@ array_to_2d::run(AnyType & args) {
     return out_array;
 }
 
-using namespace madlib::dbal::eigen_integration;
-
 AnyType
 get_row_from_2d_array::run(AnyType & args) {
     MappedMatrix input = args[0].getAs<MappedMatrix>();
@@ -82,6 +83,99 @@ get_row_from_2d_array::run(AnyType & args) {
     return ret;
 }
 
+// ----------------------------------------------------------------------
+
+namespace {
+
+struct Deconstruct2DArrayContext {
+    // Assumption: mat is the transpose of the 2-D array in database
+    NativeMatrix mat;
+    Index curr_col;
+};
+
+} // namespace
+
+void*
+deconstruct_2d_array::SRF_init(AnyType &args) {
+    Deconstruct2DArrayContext *uctx = new Deconstruct2DArrayContext;
+    ArrayHandle<double> in_array = args[0].getAs<ArrayHandle<double> >();
+    if (in_array.dims() < 2) {
+        uctx->mat.rebind(in_array, in_array.size(), 1);
+    } else {
+        uctx->mat.rebind(in_array);
+    }
+    uctx->curr_col = 0;
+
+    return uctx;
 }
+
+AnyType
+deconstruct_2d_array::SRF_next(void *user_fctx, bool *is_last_call) {
+    try {
+        Deconstruct2DArrayContext *uctx =
+                reinterpret_cast<Deconstruct2DArrayContext*>(user_fctx);
+        if (uctx->mat.rows() == 0 ||
+                uctx->curr_col >= uctx->mat.cols()) {
+            *is_last_call = true;
+            return Null();
+        }
+
+        AnyType tuple;
+        tuple << static_cast<int>(uctx->curr_col + 1);
+        for (Index i = 0; i < uctx->mat.rows(); i ++) {
+            tuple << uctx->mat(i, uctx->curr_col);
+        }
+        uctx->curr_col ++;
+
+        return tuple;
+    } catch (...) {
+        *is_last_call = true;
+        return Null();
+    }
 }
+
+void*
+deconstruct_lower_triangle::SRF_init(AnyType &args) {
+    Deconstruct2DArrayContext *uctx = new Deconstruct2DArrayContext;
+    ArrayHandle<double> in_array = args[0].getAs<ArrayHandle<double> >();
+    if (in_array.dims() < 2) {
+        uctx->mat.rebind(in_array, in_array.size(), 1);
+    } else {
+        uctx->mat.rebind(in_array);
+    }
+    uctx->curr_col = 0;
+
+    return uctx;
 }
+
+AnyType
+deconstruct_lower_triangle::SRF_next(void *user_fctx, bool *is_last_call) {
+    try {
+        Deconstruct2DArrayContext *uctx =
+                reinterpret_cast<Deconstruct2DArrayContext*>(user_fctx);
+        if (uctx->mat.rows() == 0 ||
+                uctx->mat.rows() != uctx->mat.cols() ||
+                uctx->curr_col >= uctx->mat.cols()) {
+            *is_last_call = true;
+            return Null();
+        }
+
+        AnyType tuple;
+        tuple << static_cast<int>(uctx->curr_col + 1);
+        for (Index i = 0; i <= uctx->curr_col; i ++) {
+            tuple << uctx->mat(i, uctx->curr_col);
+        }
+        uctx->curr_col ++;
+
+        return tuple;
+    } catch (...) {
+        *is_last_call = true;
+        return Null();
+    }
+}
+
+} // linalg
+
+} // modules
+
+} // madlib

@@ -8,6 +8,7 @@
 import plpy
 from time import time
 from utilities.utilities import __mad_version
+from utilities.utilities import __unique_string
 
 version_wrapper = __mad_version()
 _get_vector = version_wrapper.select_vecfunc()
@@ -65,7 +66,7 @@ def correlation(schema_madlib, source_table, output_table, target_col_names):
     plpy.info(output_text_mesasge)
     # ---- Output message ----
 
-    return _populate_output_table(source_table, output_table, _existing_target_cols)
+    return _populate_output_table(schema_madlib, source_table, output_table, _existing_target_cols)
 
 
 # -----------------------------------------------------------------------
@@ -169,13 +170,14 @@ def _analyze_target_cols(target_cols):
 # -----------------------------------------------------------------------
 # Create and populate output table
 # -----------------------------------------------------------------------
-def _populate_output_table(source_table, output_table, col_names):
+def _populate_output_table(schema_madlib, source_table, output_table, col_names):
     """
     Creates a relation with the appropriate number of columns given a list of
     column names and populates with the correlation coefficients. If the table
     already exists, then it is dropped before creating.
 
     Args:
+        @param schema_madlib    Schema of madlib
         @param source_table     Name of source table
         @param output_table     Name of output table
         @param _target_cols     Name of all columns to place in output table
@@ -184,46 +186,88 @@ def _populate_output_table(source_table, output_table, col_names):
         Tuple (output table name, number of columns, time for computation)
     """
     start = time()
+    col_len = len(col_names)
+    col_names_str = ",".join(col_names)
+    temp_table = __unique_string()
 
-    nCols = len(col_names)
-    all_corr = ['ARRAY[%s] AS column_position' % (str(range(1, nCols+1))[1:-1]),
-                'ARRAY[%s] AS variable' % (str(col_names)[1:-1])]
-    all_unnest = ['unnest(column_position) AS column_position',
-                  'unnest(variable) AS variable']
-
-    # Logic for the loop below:
-    #   if col_names=['col1', 'col2', 'col3'] build strings to produce a matrix:
-    #        ARRAY[1.0, corr(col1, col2), corr(col1, col3)] AS col1
-    #        ARRAY[NULL, 1.0, corr(col2, col3)] AS col2,
-    #        ARRAY[NULL, NULL, 1.0] as col3,
-    for col_index, col_name in enumerate(col_names):
-        corr_str_list = ['NULL'] * col_index + ['1.0']
-        corr_str_list.extend(['corr({0}, {1})'.format(col_names[col_index],
-                                                      col_names[row_index])
-                              for row_index in range(col_index+1, nCols)])
-
-        all_corr.append('ARRAY[%s] AS %s' % (', '.join(corr_str_list), col_name))
-        all_unnest.append('unnest(%s) AS %s' % (col_name, col_name))
-
-    all_corr_str = ',\n\t\t'.join(all_corr)
-    all_unnest_str = ',\n\t'.join(all_unnest)
-
-    plpy.execute('DROP TABLE IF EXISTS %s' % output_table)
     plpy.execute("""
+        DROP TABLE IF EXISTS {temp_table};
+        CREATE TABLE {temp_table} AS
+        SELECT
+            tot_cnt,
+            count(*) AS non_null_cnt,
+            mean,
+            {schema_madlib}.correlation_agg(x, mean) as cor_mat
+        FROM
+        (
+            SELECT ARRAY[{col_names_str}]::float8[] AS x
+            FROM {source_table}
+        ) src1,
+        (
+            SELECT
+                count(*) AS tot_cnt,
+                {schema_madlib}.avg(x) AS mean
+            FROM
+            (
+                SELECT ARRAY[{col_names_str}]::float8[] AS x
+                FROM {source_table}
+            ) src2
+        ) subq
+        WHERE NOT {schema_madlib}.array_contains_null(x)
+        GROUP BY tot_cnt, mean
+        """.format(**locals()))
+
+    # FIXME create summary table
+    q_summary = """
+        DROP TABLE IF EXISTS {output_table}_summary;
+        CREATE TABLE {output_table}_summary AS
+        SELECT
+            'correlation'::varchar      AS method,
+            '{source_table}'::varchar   AS source,
+            '{col_names_str}'::varchar  AS column_names,
+            '{output_table}'::varchar   AS output_table,
+            non_null_cnt                AS total_rows_processed,
+            tot_cnt - non_null_cnt      AS total_rows_skipped,
+            mean                        AS mean_vector
+        FROM {temp_table}
+        """.format(**locals())
+
+    # create output table
+    as_list = "deconstructed(column_position integer"
+    for k,c in enumerate(col_names):
+        if k % 10 == 0:
+            as_list += "\n                "
+        as_list += ", {c} float8".format(c=c)
+    as_list += ")"
+
+    output_plan = plpy.prepare("""
+        DROP TABLE IF EXISTS {output_table};
         CREATE TABLE {output_table} AS
         SELECT
-            {all_unnest_str}
-        FROM (
+            *
+        FROM
+        (
             SELECT
-                {all_corr_str}
+                generate_series(1, {num_cols}) AS column_position,
+                unnest($1) AS variable
+        ) variable_subq
+        JOIN
+        (
+            SELECT
+                *
             FROM
-                {source_table}
-        ) t
-        m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED RANDOMLY')
-        """.format(source_table=source_table,
-                   output_table=output_table,
-                   all_unnest_str=all_unnest_str,
-                   all_corr_str=all_corr_str))
+                {schema_madlib}.__deconstruct_lower_triangle(
+                    (SELECT cor_mat FROM {temp_table})
+                )
+                AS {as_list}
+        ) matrix_subq
+        USING (column_position)
+        """.format(num_cols=len(col_names), **locals()), ["varchar[]"])
+
+    plpy.execute(output_plan, [col_names])
+
+    plpy.execute("DROP TABLE {temp_table}".format(**locals()))
+
     end = time()
     return (output_table, len(col_names), end - start)
 

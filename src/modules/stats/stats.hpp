@@ -17,3 +17,4 @@
 #include "robust_variance_coxph.hpp"
 #include "clustered_variance_coxph.hpp"
 #include "coxph_improved.hpp"
+#include "correlation.hpp"
