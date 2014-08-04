@@ -111,27 +111,22 @@ deconstruct_2d_array::SRF_init(AnyType &args) {
 
 AnyType
 deconstruct_2d_array::SRF_next(void *user_fctx, bool *is_last_call) {
-    try {
-        Deconstruct2DArrayContext *uctx =
-                reinterpret_cast<Deconstruct2DArrayContext*>(user_fctx);
-        if (uctx->mat.rows() == 0 ||
-                uctx->curr_col >= uctx->mat.cols()) {
-            *is_last_call = true;
-            return Null();
-        }
-
-        AnyType tuple;
-        tuple << static_cast<int>(uctx->curr_col + 1);
-        for (Index i = 0; i < uctx->mat.rows(); i ++) {
-            tuple << uctx->mat(i, uctx->curr_col);
-        }
-        uctx->curr_col ++;
-
-        return tuple;
-    } catch (...) {
+    Deconstruct2DArrayContext *uctx =
+            reinterpret_cast<Deconstruct2DArrayContext*>(user_fctx);
+    if (uctx->mat.rows() == 0 ||
+            uctx->curr_col >= uctx->mat.cols()) {
         *is_last_call = true;
         return Null();
     }
+
+    AnyType tuple;
+    tuple << static_cast<int>(uctx->curr_col + 1);
+    for (Index i = 0; i < uctx->mat.rows(); i ++) {
+        tuple << uctx->mat(i, uctx->curr_col);
+    }
+    uctx->curr_col ++;
+
+    return tuple;
 }
 
 void*
@@ -150,28 +145,23 @@ deconstruct_lower_triangle::SRF_init(AnyType &args) {
 
 AnyType
 deconstruct_lower_triangle::SRF_next(void *user_fctx, bool *is_last_call) {
-    try {
-        Deconstruct2DArrayContext *uctx =
-                reinterpret_cast<Deconstruct2DArrayContext*>(user_fctx);
-        if (uctx->mat.rows() == 0 ||
-                uctx->mat.rows() != uctx->mat.cols() ||
-                uctx->curr_col >= uctx->mat.cols()) {
-            *is_last_call = true;
-            return Null();
-        }
-
-        AnyType tuple;
-        tuple << static_cast<int>(uctx->curr_col + 1);
-        for (Index i = 0; i <= uctx->curr_col; i ++) {
-            tuple << uctx->mat(i, uctx->curr_col);
-        }
-        uctx->curr_col ++;
-
-        return tuple;
-    } catch (...) {
+    Deconstruct2DArrayContext *uctx =
+            reinterpret_cast<Deconstruct2DArrayContext*>(user_fctx);
+    if (uctx->mat.rows() == 0 ||
+            uctx->mat.rows() != uctx->mat.cols() ||
+            uctx->curr_col >= uctx->mat.cols()) {
         *is_last_call = true;
         return Null();
     }
+
+    AnyType tuple;
+    tuple << static_cast<int>(uctx->curr_col + 1);
+    for (Index i = 0; i <= uctx->curr_col; i ++) {
+        tuple << uctx->mat(i, uctx->curr_col);
+    }
+    uctx->curr_col ++;
+
+    return tuple;
 }
 
 } // linalg
