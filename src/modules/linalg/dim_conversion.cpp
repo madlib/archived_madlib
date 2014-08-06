@@ -99,10 +99,12 @@ void*
 deconstruct_2d_array::SRF_init(AnyType &args) {
     Deconstruct2DArrayContext *uctx = new Deconstruct2DArrayContext;
     ArrayHandle<double> in_array = args[0].getAs<ArrayHandle<double> >();
-    if (in_array.dims() < 2) {
+    if (in_array.dims() == 2) {
+        uctx->mat.rebind(in_array);
+    } else if (in_array.dims() < 2) {
         uctx->mat.rebind(in_array, in_array.size(), 1);
     } else {
-        uctx->mat.rebind(in_array);
+        throw std::runtime_error("2-D array expected");
     }
     uctx->curr_col = 0;
 
@@ -133,10 +135,13 @@ void*
 deconstruct_lower_triangle::SRF_init(AnyType &args) {
     Deconstruct2DArrayContext *uctx = new Deconstruct2DArrayContext;
     ArrayHandle<double> in_array = args[0].getAs<ArrayHandle<double> >();
-    if (in_array.dims() < 2) {
-        uctx->mat.rebind(in_array, in_array.size(), 1);
+    if (in_array.dims() != 2) {
+        throw std::runtime_error("symmetric 2-D array expected");
     } else {
         uctx->mat.rebind(in_array);
+    }
+    if (uctx->mat.rows() != uctx->mat.cols()) {
+        throw std::runtime_error("symmetric 2-D array expected");
     }
     uctx->curr_col = 0;
 
@@ -148,7 +153,6 @@ deconstruct_lower_triangle::SRF_next(void *user_fctx, bool *is_last_call) {
     Deconstruct2DArrayContext *uctx =
             reinterpret_cast<Deconstruct2DArrayContext*>(user_fctx);
     if (uctx->mat.rows() == 0 ||
-            uctx->mat.rows() != uctx->mat.cols() ||
             uctx->curr_col >= uctx->mat.cols()) {
         *is_last_call = true;
         return Null();

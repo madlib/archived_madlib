@@ -908,16 +908,10 @@ typedef struct __sr_ctx{
     int32_t curcall;
 } sr_ctx;
 
-void * __mlogregr_format::SRF_init(AnyType &args)
-{
-    sr_ctx * ctx = new sr_ctx;
-
-    if(args[0].isNull() || args[1].isNull() ||
-       args[2].isNull() || args[3].isNull()){
-        ctx->maxcall = 1;
-        ctx->curcall = -1;
-        return ctx;
-    }
+void *
+__mlogregr_format::SRF_init(AnyType &args) {
+    sr_ctx *ctx = new sr_ctx;
+    ctx->curcall = 0;
 
     MutableArrayHandle<double> inarray = NULL;
     try{
@@ -936,14 +930,15 @@ void * __mlogregr_format::SRF_init(AnyType &args)
     ctx->num_category = num_category - 1;
     ctx->num_feature = num_feature;
     ctx->ref_category = ref_category;
-    ctx->curcall = 0;
 
-    if(num_feature * (num_category - 1) != static_cast<int32_t>(inarray.size())){
-        ctx->maxcall = 0;
+    if (num_feature * (num_category - 1) !=
+            static_cast<int32_t>(inarray.size())) {
+        throw std::runtime_error("num_feature * (num_category - 1) != "
+                "inarray.size()");
     }
 
-    if(ref_category >= num_category){
-        ctx->maxcall = 0;
+    if (ref_category >= num_category){
+        throw std::runtime_error("ref_category >= num_category");
     }
 
     return ctx;
@@ -952,35 +947,27 @@ void * __mlogregr_format::SRF_init(AnyType &args)
 AnyType __mlogregr_format::SRF_next(void * user_fctx, bool * is_last_call)
 {
     sr_ctx * ctx = (sr_ctx *) user_fctx;
-    if (ctx->maxcall == 0) {
+    if (ctx->curcall >= ctx->maxcall) {
         *is_last_call = true;
         return Null();
     }
 
-    if(ctx->maxcall == 1 and ctx->curcall == -1){
-        ctx->maxcall =0;
-        return Null();
+    MutableArrayHandle<double> outarray =
+        allocateArray<double, dbal::FunctionContext,
+            dbal::DoZero, dbal::ThrowBadAlloc>(ctx->num_feature);
+    for(int i = 0; i < ctx->num_feature; i++) {
+        outarray[i] = ctx->inarray[i * ctx->num_category + ctx->curcall];
     }
 
-    try{
-        MutableArrayHandle<double> outarray =
-            allocateArray<double, dbal::FunctionContext,
-                dbal::DoZero, dbal::ThrowBadAlloc>(ctx->num_feature);
-        for(int i = 0; i < ctx->num_feature; i++)
-            outarray[i] = ctx->inarray[i * ctx->num_category + ctx->curcall];
+    AnyType tuple;
+    tuple << (ctx->curcall < ctx->ref_category
+            ? ctx->curcall
+            : ctx->curcall + 1)
+          << outarray;
 
-        AnyType tuple;
-        tuple << (ctx->curcall < ctx->ref_category ? ctx->curcall : ctx->curcall + 1) << outarray;
+    ctx->curcall++;
 
-        ctx->curcall++;
-        ctx->maxcall--;
-
-        return tuple;
-    }catch(...){
-        ctx->maxcall = 0;
-        return Null();
-    }
-
+    return tuple;
 }
 
 } // namespace regress

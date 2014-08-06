@@ -481,7 +481,15 @@ FunctionInformation::getReturnTupleDesc(FunctionCallInfo fcinfo) {
                 // So there is no need to release the TupleDesc
                 get_call_result_type(fcinfo, /* resultTypeId */ NULL,
                     &returnTupDesc);
+            } MADLIB_PG_DEFAULT_CATCH_AND_END_TRY;
 
+            if (returnTupDesc == NULL) {
+                throw std::runtime_error("MADLIB-870: C++ abstract layer has "
+                        "not supported UDFs that return RECORD type without "
+                        "tuple described at call time");
+            }
+
+            MADLIB_PG_TRY {
                 if (!polymorphic) {
                     // Since the function is not polymorphic, we can store the
                     // tuple description for other calls
