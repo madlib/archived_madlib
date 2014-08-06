@@ -913,6 +913,7 @@ def parseConnectionStr(connectionStr):
 def main(argv):
 
     parser = argparse.ArgumentParser(
+        prog="madpack",
         description='MADlib package manager (' + rev + ')',
         argument_default=False,
         formatter_class=argparse.RawTextHelpFormatter,

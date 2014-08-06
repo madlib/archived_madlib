@@ -45,14 +45,19 @@ The correlation function has the following syntax:
 <pre class="syntax">
 correlation( source_table,
              output_table,
-             target_cols
+             target_cols,
+             verbose
            )
 </pre>
+
 <dl class="arglist">
+
 <dt>source_table</dt>
 <dd>TEXT. The name of the data containing the input data.</dd>
+
 <dt>output_table</dt>
-<dd>TEXT. The name of the table where the cross-correlation matrix will be saved. The output is a table with N+2 columns and N rows, where N is the number of
+<dd>TEXT. The name of the table where the cross-correlation matrix will be saved.
+The output is a table with N+2 columns and N rows, where N is the number of
 target columns. It contains the following columns.
 <table class="output">
 <tr>
@@ -64,9 +69,9 @@ target columns. It contains the following columns.
 <td>The second column contains the row-header for the variables.</td>
 </tr>
 <tr>
-<th>remaining columns</th>
+<th><...></th>
 <td>The remainder of the table is the NxN correlation matrix for the pairs of
-numeric '<em>source_table</em>' columns.</td>
+numeric 'source_table' columns.</td>
 </tr>
 </table>
 The output table is arranged as a lower-triangular matrix with the upper
@@ -74,11 +79,35 @@ triangle set to NULL and the diagonal elements set to 1.0. To obtain the result
 from the '<em>output_table</em>' in this matrix format ensure to order the
 elements using the '<em>column_position</em>', as shown in the example below.
 <pre class="example">
-SELECT * FROM output_table ORDER BY column_position;
+SELECT * FROM :output_table ORDER BY column_position;
 </pre>
+
+In addition to output table, a summary table named \<output_table\>_summary
+is also created at the same time, which has the following columns:
+<table class="output">
+<tr><th>method</th><td>'correlation'</td></tr>
+<tr><th>source_table</th><td>VARCHAR. The data source table name.</td></tr>
+<tr><th>output_table</th><td>VARCHAR. The model table name.</td></tr>
+<tr><th>column_names</th><td>VARCHAR. Column names used for correlation computation.</td></tr>
+<tr><th>mean_vector</th><td>FLOAT8[]. Vector where each is the mean of a column.</td></tr>
+<tr>
+  <th>total_rows_processed</th>
+  <td>BIGINT. Total numbers of rows processed.</td>
+</tr>
+<tr>
+  <th>total_rows_skipped</th>
+  <td>BIGINT. Total numbers of rows skipped due to missing values or failures.</td>
+</tr>
+</table>
 </dd>
+
 <dt>target_cols (optional)</dt>
-<dd>TEXT, default: '*'. A comma-separated list of the columns to correlate. If NULL or <tt>'*'</tt>, results are produced for all numeric columns.</dd>
+<dd>TEXT, default: '*'. A comma-separated list of the columns to correlate.
+If NULL or <tt>'*'</tt>, results are produced for all numeric columns.</dd>
+
+<dt>verbose (optional)</dt>
+<dd>BOOLEAN, default: FALSE. Verbose if TRUE.</dd>
+
 </dl>
 
 
@@ -97,24 +126,23 @@ CREATE TABLE example_data(
     id SERIAL, outlook TEXT,
     temperature FLOAT8, humidity FLOAT8,
     windy TEXT, class TEXT);
-COPY example_data FROM STDIN WITH DELIMITER '|';
-  1 | sunny    |          85 |       85 | false | Don't Play
-  2 | sunny    |          80 |       90 | true  | Don't Play
-  3 | overcast |          83 |       78 | false | Play
-  4 | rain     |          70 |       96 | false | Play
-  5 | rain     |          68 |       80 | false | Play
-  6 | rain     |          65 |       70 | true  | Don't Play
-  7 | overcast |          64 |       65 | true  | Play
-  8 | sunny    |          72 |       95 | false | Don't Play
-  9 | sunny    |          69 |       70 | false | Play
- 10 | rain     |          75 |       80 | false | Play
- 11 | sunny    |          75 |       70 | true  | Play
- 12 | overcast |          72 |       90 | true  | Play
- 13 | overcast |          81 |       75 | false | Play
- 14 | rain     |          71 |       80 | true  | Don't Play
- 15 |          |         100 |      100 | true  |
- 16 |          |         110 |      100 | true  |
-\\.
+INSERT INTO example_data VALUES
+(1, 'sunny', 85, 85, 'false', 'Dont Play'),
+(2, 'sunny', 80, 90, 'true', 'Dont Play'),
+(3, 'overcast', 83, 78, 'false', 'Play'),
+(4, 'rain', 70, 96, 'false', 'Play'),
+(5, 'rain', 68, 80, 'false', 'Play'),
+(6, 'rain', 65, 70, 'true', 'Dont Play'),
+(7, 'overcast', 64, 65, 'true', 'Play'),
+(8, 'sunny', 72, 95, 'false', 'Dont Play'),
+(9, 'sunny', 69, 70, 'false', 'Play'),
+(10, 'rain', 75, 80, 'false', 'Play'),
+(11, 'sunny', 75, 70, 'true', 'Play'),
+(12, 'overcast', 72, 90, 'true', 'Play'),
+(13, 'overcast', 81, 75, 'false', 'Play'),
+(14, 'rain', 71, 80, 'true', 'Dont Play'),
+(15, NULL, 100, 100, 'true', NULL),
+(16, NULL, 110, 100, 'true', NULL);
 </pre>
 
 -# Run the correlation() function on the data set.
@@ -171,15 +199,15 @@ LANGUAGE C IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation_merge(
-    left_state          double precision[],
-    right_state         double precision[]
+    left_state  double precision[],
+    right_state double precision[]
 ) RETURNS double precision[] AS
     'MODULE_PATHNAME', 'correlation_merge_states'
 LANGUAGE C IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation_final(
-    state          double precision[]
+    state       double precision[]
 ) RETURNS double precision[] AS
     'MODULE_PATHNAME', 'correlation_final'
 LANGUAGE C IMMUTABLE
@@ -203,9 +231,9 @@ CREATE AGGREGATE MADLIB_SCHEMA.correlation_agg(
 DROP TYPE IF EXISTS MADLIB_SCHEMA.correlation_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.correlation_result AS
 (
-    output_table      	TEXT,
-    row_count       	INT4,
-    duration        	FLOAT8
+    output_table text,
+    row_count    integer,
+    duration     double precision
 );
 
 -----------------------------------------------------------------------
@@ -213,39 +241,48 @@ CREATE TYPE MADLIB_SCHEMA.correlation_result AS
 -----------------------------------------------------------------------
 /* @brief Compute a correlation matrix for a table with optional target columns specified
 
-   @param source_table      Name of source relation containing the data
-   @param output_table      Name of output table name to store the correlation
-   @param target_cols       String with comma separated list of columns for which cross-correlation is desired
+   @param source_table Name of source relation containing the data
+   @param output_table Name of output table name to store the correlation
+   @param target_cols  String with comma separated list of columns for which cross-correlation is desired
+   @param verbose      Flag to determine verbosity
 
    @usage
    <pre> SELECT MADLIB_SCHEMA.correlation (
          '<em>source_table</em>', '<em>output_table</em>',
          '<em>target_cols</em>'
      );
-     SELECT * FROM '<em>output_table</em>' order by '<em>colum_position</em>';
+     SELECT * FROM '<em>output_table</em>' ORDER BY '<em>colum_position</em>';
    </pre>
 */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation(
-    source_table 		VARCHAR,		-- input table name
-    output_table 		VARCHAR,		-- output table name
-    target_cols 		VARCHAR 		-- comma separated list of output cols
-                                        -- (default = '*')
-)
-RETURNS MADLIB_SCHEMA.correlation_result AS $$
-    PythonFunctionBodyOnly(`stats', `correlation')
-    return correlation.correlation(schema_madlib, source_table, output_table, target_cols)
+    source_table varchar, --  input table name
+    output_table varchar, -- output table name
+    target_cols  varchar, -- comma separated list of output cols (default = '*')
+    verbose      boolean  -- flag to determine verbosity
+) RETURNS MADLIB_SCHEMA.correlation_result AS $$
+    PythonFunction(stats, correlation, correlation)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 -----------------------------------------------------------------------
--- Overloaded function
+-- Overloaded functions
 -----------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation(
-    source_table 		VARCHAR,		-- input table name
-    output_table 		VARCHAR		-- output table name
+    source_table varchar, --  input table name
+    output_table varchar, -- output table name
+    target_cols  varchar  -- comma separated list of output cols (default = '*')
 )
 RETURNS MADLIB_SCHEMA.correlation_result AS $$
-	select MADLIB_SCHEMA.correlation($1, $2, NULL)
+    select MADLIB_SCHEMA.correlation($1, $2, $3, FALSE)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation(
+    source_table varchar, --  input table name
+    output_table varchar  -- output table name
+) RETURNS MADLIB_SCHEMA.correlation_result AS $$
+    select MADLIB_SCHEMA.correlation($1, $2, NULL)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -253,19 +290,18 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 -- Help functions
 -----------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation(
-    input_message       TEXT
-)
-RETURNS TEXT AS $$
+    input_message       text
+) RETURNS TEXT AS $$
     PythonFunctionBodyOnly(`stats', `correlation')
     return correlation.correlation_help_message(schema_madlib, input_message)
 $$ LANGUAGE plpythonu IMMUTABLE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
-
+-----------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation()
-RETURNS TEXT AS $$
+RETURNS text AS $$
     PythonFunctionBodyOnly(`stats', `correlation')
     return correlation.correlation_help_message(schema_madlib, None)
 $$ LANGUAGE plpythonu IMMUTABLE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 -------------------------------------------------------------------------
