@@ -40,6 +40,7 @@ struct HandleTraits<ArrayHandle<double> > {
     typedef utils::Reference<double, uint64_t> ReferenceToUInt64;
     typedef utils::Reference<double, int64_t> ReferenceToInt64;
     typedef utils::Reference<double, uint32_t> ReferenceToUInt32;
+    typedef utils::Reference<double, int32_t> ReferenceToInt32;
     typedef utils::Reference<double, uint16_t> ReferenceToUInt16;
     typedef utils::Reference<double, bool> ReferenceToBool;
     typedef utils::Reference<double> ReferenceToDouble;
@@ -59,6 +60,7 @@ struct HandleTraits<MutableArrayHandle<double> > {
     typedef utils::MutableReference<double, uint64_t> ReferenceToUInt64;
     typedef utils::MutableReference<double, int64_t> ReferenceToInt64;
     typedef utils::MutableReference<double, uint32_t> ReferenceToUInt32;
+    typedef utils::MutableReference<double, int32_t> ReferenceToInt32;
     typedef utils::MutableReference<double, uint16_t> ReferenceToUInt16;
     typedef utils::MutableReference<double, bool> ReferenceToBool;
     typedef utils::MutableReference<double> ReferenceToDouble;

@@ -32,8 +32,8 @@ struct LMFModel {
      * necessary for a matrix, so that it can perform operations. These are
      * stored in the HandleMap.
      */
-    static inline uint32_t arraySize(const uint16_t inRowDim, 
-            const uint16_t inColDim, const uint16_t inMaxRank) {
+    static inline uint32_t arraySize(const int32_t inRowDim,
+            const int32_t inColDim, const int32_t inMaxRank) {
         return (inRowDim + inColDim) * inMaxRank;
     }
 

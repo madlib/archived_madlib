@@ -18,8 +18,8 @@ namespace modules {
 namespace convex {
 
 struct MatrixIndex {
-    uint16_t i;
-    uint16_t j;
+    int32_t i;
+    int32_t j;
 };
 
 } // namespace convex

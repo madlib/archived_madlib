@@ -54,17 +54,21 @@ lmf_igd_transition::run(AnyType &args) {
             state = previousState;
         } else {
             // configuration parameters
-            uint16_t rowDim = args[5].getAs<uint16_t>();
-            if (rowDim == 0) {
-                throw std::runtime_error("Invalid parameter: row_dim = 0");
+            int32_t rowDim = args[5].getAs<int32_t>();
+            if (rowDim <= 0) {
+                throw std::runtime_error("Invalid parameter: row_dim <= 0");
             }
-            uint16_t columnDim = args[6].getAs<uint16_t>();
-            if (columnDim == 0) {
-                throw std::runtime_error("Invalid parameter: column_dim = 0");
+            int32_t columnDim = args[6].getAs<int32_t>();
+            if (columnDim <= 0) {
+                throw std::runtime_error("Invalid parameter: column_dim <= 0");
             }
-            uint16_t maxRank = args[7].getAs<uint16_t>();
-            if (maxRank == 0) {
-                throw std::runtime_error("Invalid parameter: max_rank = 0");
+            int32_t maxRank = args[7].getAs<int32_t>();
+            if (maxRank <= 0) {
+                throw std::runtime_error("Invalid parameter: max_rank <= 0");
+            }
+            if (maxRank >= rowDim || maxRank >= columnDim) {
+                throw std::runtime_error("Invalid parameter: "
+                        "max_rank >= row_dim || max_rank >= column_dim");
             }
             double stepsize = args[8].getAs<double>();
             if (stepsize <= 0.) {
@@ -72,8 +76,8 @@ lmf_igd_transition::run(AnyType &args) {
             }
             double scaleFactor = args[9].getAs<double>();
             if (scaleFactor <= 0.) {
-                throw std::runtime_error("Invalid parameter: scale_factor <= "
-                        "0.0");
+                throw std::runtime_error("Invalid parameter: "
+                        "scale_factor <= 0.0");
             }
 
             state.allocate(*this, rowDim, columnDim, maxRank);
@@ -87,8 +91,8 @@ lmf_igd_transition::run(AnyType &args) {
 
     // tuple
     LMFTuple tuple;
-    tuple.indVar.i = args[1].getAs<uint16_t>();
-    tuple.indVar.j = args[2].getAs<uint16_t>();
+    tuple.indVar.i = args[1].getAs<int32_t>();
+    tuple.indVar.j = args[2].getAs<int32_t>();
     if (tuple.indVar.i == 0 || tuple.indVar.j == 0) {
         throw std::runtime_error("Invalid parameter: [col_row] = 0 or "
                 "[col_column] = 0 in table [rel_source]");

@@ -58,8 +58,8 @@ public:
     /**
      * @brief Allocating the incremental gradient state.
      */
-    inline void allocate(const Allocator &inAllocator, uint16_t inRowDim,
-            uint16_t inColDim, uint16_t inMaxRank) {
+    inline void allocate(const Allocator &inAllocator, int32_t inRowDim,
+            int32_t inColDim, int32_t inMaxRank) {
         mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
                 dbal::DoZero, dbal::ThrowBadAlloc>(
                 arraySize(inRowDim, inColDim, inMaxRank));
@@ -108,8 +108,8 @@ public:
         task.RMSE = sqrt(algo.loss / static_cast<double>(algo.numRows));
     }
 
-    static inline uint32_t arraySize(const uint16_t inRowDim, 
-            const uint16_t inColDim, const uint16_t inMaxRank) {
+    static inline uint32_t arraySize(const int32_t inRowDim,
+            const int32_t inColDim, const int32_t inMaxRank) {
         return 8 + 2 * LMFModel<Handle>::arraySize(inRowDim, inColDim, inMaxRank);
     }
 
@@ -158,9 +158,9 @@ private:
 
 public:
     struct TaskState {
-        typename HandleTraits<Handle>::ReferenceToUInt16 rowDim;
-        typename HandleTraits<Handle>::ReferenceToUInt16 colDim;
-        typename HandleTraits<Handle>::ReferenceToUInt16 maxRank;
+        typename HandleTraits<Handle>::ReferenceToInt32 rowDim;
+        typename HandleTraits<Handle>::ReferenceToInt32 colDim;
+        typename HandleTraits<Handle>::ReferenceToInt32 maxRank;
         typename HandleTraits<Handle>::ReferenceToDouble stepsize;
         typename HandleTraits<Handle>::ReferenceToDouble scaleFactor;
         LMFModel<Handle> model;
