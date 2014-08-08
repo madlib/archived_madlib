@@ -829,7 +829,9 @@ def __db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
             if portid == 'hawq' and algoname in ('svec'):
                 continue
 
-            if module in modset and len(modset[module]) > 0 and algoname not in modset[module]:
+            # run only algo specified
+            if module in modset and len(modset[module]) > 0 \
+                    and algoname not in modset[module]:
                 continue
 
             # Set file names
@@ -934,7 +936,7 @@ def main(argv):
                   version        : compare and print MADlib version (binaries vs database objects)
                   install-check  : test all installed modules
 
-                  (upgrade and uninstall are currently unavailable for the HAWQ port)"""
+                  (uninstall is currently unavailable for the HAWQ port)"""
     choice_list = ['install', 'update',  'upgrade',  'uninstall',
                    'reinstall', 'version', 'install-check']
 
@@ -1122,6 +1124,9 @@ def main(argv):
     ###
     # COMMAND: uninstall/reinstall
     ###
+    if args.command[0] in ('uninstall', 'reinstall') and portid == 'hawq':
+        __info("uninstall is currently unavailable for the HAWQ port", True)
+
     if args.command[0] in ('uninstall', 'reinstall') and portid != 'hawq':
         if __get_rev_num(dbrev) == ['0']:
             __info("Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
@@ -1274,6 +1279,17 @@ def main(argv):
         caseset = (set([test.strip() for test in args.testcase.split(',')])
                    if args.testcase != "" else set())
 
+        modset = {}
+        for case in caseset:
+            if case.find('/') > -1:
+                [mod, algo] = case.split('/')
+                if mod not in modset:
+                    modset[mod] = []
+                if algo not in modset[mod]:
+                    modset[mod].append(algo)
+            else:
+                modset[case] = []
+
         # Loop through all modules
         for moduleinfo in portspecs['modules']:
 
@@ -1281,7 +1297,7 @@ def main(argv):
             module = moduleinfo['name']
 
             # Skip if doesn't meet specified modules
-            if len(caseset) > 0 and module not in caseset:
+            if modset is not None and len(modset) > 0 and module not in modset:
                 continue
 
             __info("> - %s" % module, verbose)
@@ -1326,6 +1342,11 @@ def main(argv):
                     print("TEST CASE RESULT|Module: " + module +
                           "|" + os.path.basename(sqlfile) +
                           "|SKIP|Time: 0 milliseconds")
+                    continue
+
+                # run only algo specified
+                if module in modset and len(modset[module]) > 0 \
+                        and algoname not in modset[module]:
                     continue
 
                 # Set file names

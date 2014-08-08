@@ -944,8 +944,8 @@ __mlogregr_format::SRF_init(AnyType &args) {
     return ctx;
 }
 
-AnyType __mlogregr_format::SRF_next(void * user_fctx, bool * is_last_call)
-{
+AnyType
+__mlogregr_format::SRF_next(void * user_fctx, bool * is_last_call) {
     sr_ctx * ctx = (sr_ctx *) user_fctx;
     if (ctx->curcall >= ctx->maxcall) {
         *is_last_call = true;
