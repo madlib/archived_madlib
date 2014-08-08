@@ -126,7 +126,7 @@ static ArrayType* construct_md_array_zero
     int32       dataoffset;
     int         i;
     int         nelems;
-    Datum       theDatum;
+    Datum       theDatum = Datum(0);
     (void) elmbyval;
     if (ndims < 0)              /* we do allow zero-dimension arrays */
         ereport(ERROR,

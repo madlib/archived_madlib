@@ -47,8 +47,8 @@ endif (NOT BOOST_TAR_SOURCE)
 # specify an alternative path to the Eigen tarball:
 # -DEIGEN_TAR_SOURCE=/path/to/eigen-x.x.x.tar.gz
 
-set(EIGEN_VERSION "3.1.2")
-set(EIGEN_TAR_MD5 bb639388192cb80f1ee797f5dbdbe74f)
+set(EIGEN_VERSION "3.2.2")
+set(EIGEN_TAR_MD5 f8817c258b1495cb474d412e528aedb6)
 set(EIGEN_MPL2_ONLY TRUE)
 
 set(EIGEN_TAR "eigen-${EIGEN_VERSION}.tar.gz")

@@ -570,13 +570,11 @@ struct TypeTraits<Eigen::MatrixBase<Derived> > {
     // MappedColumnVector or MappedMatrix instead.
 };
 
-template<class XprType, int BlockRows, int BlockCols, bool InnerPanel,
-    bool HasDirectAccess>
+template<class XprType, int BlockRows, int BlockCols, bool InnerPanel>
 struct TypeTraits<
-    Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel, HasDirectAccess> > {
+    Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel> > {
 
-    typedef Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel,
-        HasDirectAccess> value_type;
+    typedef Eigen::Block<XprType, BlockRows, BlockCols, InnerPanel> value_type;
 
     WITH_OID( FLOAT8ARRAYOID );
     WITH_TYPE_CLASS( dbal::ArrayType );
@@ -587,13 +585,11 @@ struct TypeTraits<
     // MappedMatrix instead.
 };
 
-template<class XprType, int BlockRows, bool InnerPanel, bool HasDirectAccess>
+template<class XprType, int BlockRows, bool InnerPanel>
 struct TypeTraits<
-    Eigen::Block<XprType, BlockRows, /* BlockCols */ 1, InnerPanel,
-        HasDirectAccess> > {
+    Eigen::Block<XprType, BlockRows, /* BlockCols */ 1, InnerPanel> > {
 
-    typedef Eigen::Block<XprType, BlockRows, 1, InnerPanel,
-        HasDirectAccess> value_type;
+    typedef Eigen::Block<XprType, BlockRows, 1, InnerPanel> value_type;
 
     WITH_OID( FLOAT8ARRAYOID );
     WITH_TYPE_CLASS( dbal::ArrayType );

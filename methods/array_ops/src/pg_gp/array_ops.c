@@ -52,66 +52,93 @@ static Datum General_Array_to_Element(ArrayType *v, Datum exta_val, float8 init_
         Datum(*element_function)(Datum,Oid,Datum,Oid,Datum,Oid),
         Datum(*finalize_function)(Datum,int,Oid));
 
-static Datum noop_finalize(Datum elt,int size,Oid element_type);
-static Datum average_finalize(Datum elt,int size,Oid element_type);
-static Datum average_root_finalize(Datum elt,int size,Oid element_type);
+static inline Datum noop_finalize(Datum elt,int size,Oid element_type);
+static inline Datum average_finalize(Datum elt,int size,Oid element_type);
+static inline Datum average_root_finalize(Datum elt,int size,Oid element_type);
 
-static Datum element_add(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_sub(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_mult(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_div(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_set(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_sqrt(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_dot(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_contains(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_max(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_min(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_sum(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_diff(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
-static Datum element_sum_sqr(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_add(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_sub(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_mult(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_div(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_set(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_sqrt(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_dot(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_contains(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_max(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_min(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_sum(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_diff(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_sum_sqr(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
 
 static ArrayType* array_to_float8_array(ArrayType *a);
 
-static int64 datum_int64_cast(Datum elt, Oid element_type);
-static Datum int64_datum_cast(int64 result, Oid result_type);
-static float8 datum_float8_cast(Datum elt, Oid element_type);
-static Datum float8_datum_cast(float8 result, Oid result_type);
+static inline int64 datum_int64_cast(Datum elt, Oid element_type);
+static inline Datum int64_datum_cast(int64 result, Oid result_type);
+static inline float8 datum_float8_cast(Datum elt, Oid element_type);
+static inline Datum float8_datum_cast(float8 result, Oid result_type);
 
-static Datum element_op(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type, float8 (*op)(float8, float8, float8));
+static inline Datum element_op(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type,
+        float8 (*op)(float8, float8, float8));
 
-static float8 float8_add(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_sub(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_mult(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_div(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_set(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_sqrt(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_dot(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_contains(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_max(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_min(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_sum(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_diff(float8 op1, float8 op2, float8 opt_op);
-static float8 float8_sum_sqr(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_add(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_sub(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_mult(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_div(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_set(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_sqrt(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_dot(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_contains(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_max(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_min(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_sum(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_diff(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_sum_sqr(float8 op1, float8 op2, float8 opt_op);
 
 /*
  * Implementation of operations on float8 type
  */
-float8 float8_add(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_add(float8 op1, float8 op2, float8 opt_op){
     (void) op2;
     return op1 + opt_op;
 }
 
-float8 float8_sub(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_sub(float8 op1, float8 op2, float8 opt_op){
     (void) op2;
     return op1 - opt_op;
 }
 
-float8 float8_mult(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_mult(float8 op1, float8 op2, float8 opt_op){
     (void) op2;
     return op1 * opt_op;
 }
 
-int64 int64_div(int64 num, int64 denom){
+static
+inline
+int64
+int64_div(int64 num, int64 denom){
     if (denom == 0) {
         ereport(ERROR, (errcode(ERRCODE_DIVISION_BY_ZERO),
             errmsg("division by zero is not allowed"),
@@ -120,7 +147,10 @@ int64 int64_div(int64 num, int64 denom){
     return num / denom;
 }
 
-float8 float8_div(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_div(float8 op1, float8 op2, float8 opt_op){
     (void) op2;
     if (opt_op == 0) {
         ereport(ERROR, (errcode(ERRCODE_DIVISION_BY_ZERO),
@@ -130,13 +160,19 @@ float8 float8_div(float8 op1, float8 op2, float8 opt_op){
     return op1 / opt_op;
 }
 
-float8 float8_set(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_set(float8 op1, float8 op2, float8 opt_op){
     (void) op2;
     (void) op1;
     return opt_op;
 }
 
-float8 float8_sqrt(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_sqrt(float8 op1, float8 op2, float8 opt_op){
     (void) op2;
     (void) opt_op;
     if (op1 < 0) {
@@ -147,34 +183,55 @@ float8 float8_sqrt(float8 op1, float8 op2, float8 opt_op){
     return sqrt(op1);
 }
 
-float8 float8_dot(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_dot(float8 op1, float8 op2, float8 opt_op){
     return op2 + op1 * opt_op;
 }
 
-float8 float8_contains(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_contains(float8 op1, float8 op2, float8 opt_op){
     return op2 + (((op1 == opt_op) || (opt_op == 0))? 0 : 1);
 }
 
-float8 float8_max(float8 op1, float8 op2, float8 opt_op) {
+static
+inline
+float8
+float8_max(float8 op1, float8 op2, float8 opt_op) {
     (void) opt_op;
     return (op1 > op2) ? op1:op2;
 }
 
-float8 float8_min(float8 op1, float8 op2, float8 opt_op) {
+static
+inline
+float8
+float8_min(float8 op1, float8 op2, float8 opt_op) {
      (void) opt_op;
      return (op1 < op2) ? op1: op2;
 }
 
-float8 float8_sum(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_sum(float8 op1, float8 op2, float8 opt_op){
     (void) opt_op;
     return op1 + op2;
 }
 
-float8 float8_diff(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_diff(float8 op1, float8 op2, float8 opt_op){
     return op2 + (op1 - opt_op) * (op1 - opt_op);
 }
 
-float8 float8_sum_sqr(float8 op1, float8 op2, float8 opt_op){
+static
+inline
+float8
+float8_sum_sqr(float8 op1, float8 op2, float8 opt_op){
     (void) opt_op;
     return op2 + op1 * op1;
 }
@@ -302,8 +359,10 @@ array_stddev(PG_FUNCTION_ARGS){
 
     ArrayType *x = PG_GETARG_ARRAYTYPE_P(0);
 
-    Datum mean = General_Array_to_Element(x, Float8GetDatum(0), 0.0, element_sum, average_finalize);
-    Datum res = General_Array_to_Element(x, mean, 0.0, element_diff, average_root_finalize);
+    Datum mean = General_Array_to_Element(x, Float8GetDatum(0), 0.0,
+            element_sum, average_finalize);
+    Datum res = General_Array_to_Element(x, mean, 0.0,
+            element_diff, average_root_finalize);
 
     PG_FREE_IF_COPY(x, 0);
 
@@ -320,7 +379,8 @@ array_mean(PG_FUNCTION_ARGS){
 
     ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
 
-    Datum res = General_Array_to_Element(v, Float8GetDatum(0), 0.0, element_sum, average_finalize);
+    Datum res = General_Array_to_Element(v, Float8GetDatum(0), 0.0,
+            element_sum, average_finalize);
 
     PG_FREE_IF_COPY(v, 0);
 
@@ -337,7 +397,8 @@ array_sum_big(PG_FUNCTION_ARGS){
 
     ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
 
-    Datum res = General_Array_to_Element(v, Float8GetDatum(0), 0.0, element_sum, noop_finalize);
+    Datum res = General_Array_to_Element(v, Float8GetDatum(0), 0.0,
+            element_sum, noop_finalize);
 
     PG_FREE_IF_COPY(v, 0);
 
@@ -355,7 +416,8 @@ array_sum(PG_FUNCTION_ARGS){
     ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
     Oid element_type = ARR_ELEMTYPE(v);
 
-    Datum res = General_Array_to_Element(v, Float8GetDatum(0), 0.0, element_sum, noop_finalize);
+    Datum res = General_Array_to_Element(v, Float8GetDatum(0), 0.0,
+            element_sum, noop_finalize);
 
     PG_FREE_IF_COPY(v, 0);
 
@@ -372,7 +434,8 @@ array_min(PG_FUNCTION_ARGS){
 
     ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
     Oid element_type = ARR_ELEMTYPE(v);
-    Datum res = General_Array_to_Element(v, Float8GetDatum(0), get_float8_infinity(), element_min, noop_finalize);
+    Datum res = General_Array_to_Element(v, Float8GetDatum(0), get_float8_infinity(),
+            element_min, noop_finalize);
 
     PG_FREE_IF_COPY(v, 0);
 
@@ -390,7 +453,8 @@ array_max(PG_FUNCTION_ARGS){
     ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
     Oid element_type = ARR_ELEMTYPE(v);
 
-    Datum res = General_Array_to_Element(v, Float8GetDatum(0), -get_float8_infinity(), element_max, noop_finalize);
+    Datum res = General_Array_to_Element(v, Float8GetDatum(0), -get_float8_infinity(),
+            element_max, noop_finalize);
 
     PG_FREE_IF_COPY(v, 0);
 
@@ -418,7 +482,8 @@ array_dot(PG_FUNCTION_ARGS){
 }
 
 /*
- * This function checks if each non-zero element in the right array equals to the element with the same index in the left array.
+ * This function checks if each non-zero element in the right array equals to
+ * the element with the same index in the left array.
  */
 PG_FUNCTION_INFO_V1(array_contains);
 Datum
@@ -715,7 +780,8 @@ array_normalize(PG_FUNCTION_ARGS){
 
     ArrayType *v = array_to_float8_array(arg);
 
-    Datum norm_sqr = General_Array_to_Element(v, Float8GetDatum(0), 0.0, element_sum_sqr, noop_finalize);
+    Datum norm_sqr = General_Array_to_Element(v, Float8GetDatum(0), 0.0,
+            element_sum_sqr, noop_finalize);
 
     if (DatumGetFloat8(norm_sqr) == 0.) {
         elog(WARNING, "No non-zero elements found, returning the input array.");
@@ -747,6 +813,8 @@ bool array_contains_null(PG_FUNCTION_ARGS){
 // ------------------------------------------------------------------------
 // finalize functions
 // ------------------------------------------------------------------------
+static
+inline
 Datum
 noop_finalize(Datum elt,int size,Oid element_type){
     (void) size; /* avoid warning about unused parameter */
@@ -754,6 +822,8 @@ noop_finalize(Datum elt,int size,Oid element_type){
     return elt;
 }
 
+static
+inline
 Datum
 average_finalize(Datum elt,int size,Oid element_type){
     float8 value = datum_float8_cast(elt, element_type);
@@ -764,6 +834,8 @@ average_finalize(Datum elt,int size,Oid element_type){
     return Float8GetDatum(value/(float8)size);
 }
 
+static
+inline
 Datum
 average_root_finalize(Datum elt,int size,Oid element_type){
     float8 value = datum_float8_cast(elt, element_type);
@@ -780,7 +852,9 @@ average_root_finalize(Datum elt,int size,Oid element_type){
  * Type cast functions
  * -----------------------------------------------------------------------
 */
-inline int64
+static
+inline
+int64
 datum_int64_cast(Datum elt, Oid element_type) {
     switch(element_type){
         case INT2OID:
@@ -799,7 +873,9 @@ datum_int64_cast(Datum elt, Oid element_type) {
     return 0;
 }
 
-inline Datum
+static
+inline
+Datum
 int64_datum_cast(int64 res, Oid result_type) {
     Datum result = Int64GetDatum(res);
     switch(result_type){
@@ -822,7 +898,9 @@ int64_datum_cast(int64 res, Oid result_type) {
  * Type cast functions
  * -----------------------------------------------------------------------
 */
-inline float8
+static
+inline
+float8
 datum_float8_cast(Datum elt, Oid element_type) {
     switch(element_type){
         case INT2OID:
@@ -849,7 +927,9 @@ datum_float8_cast(Datum elt, Oid element_type) {
     return 0.0;
 }
 
-inline Datum
+static
+inline
+Datum
 float8_datum_cast(float8 res, Oid result_type) {
     Datum result = Float8GetDatum(res);
     switch(result_type){
@@ -878,8 +958,12 @@ float8_datum_cast(float8 res, Oid result_type) {
 /*
  *    Template for element-wise help functions
  */
+static
+inline
 Datum
-element_op(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type, float8 (*op)(float8, float8, float8)) {
+element_op(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type,
+        float8 (*op)(float8, float8, float8)) {
     if (op == float8_div &&
             (result_type == INT2OID ||
              result_type == INT4OID ||
@@ -902,16 +986,22 @@ element_op(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt
  * Add (elt1-flag)^2 to result.
  */
 
+static
+inline
 Datum
-element_diff(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+element_diff(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_diff);
 }
 
 /*
  * Add elt1 to result.
  */
+static
+inline
 Datum
-element_sum(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+element_sum(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_sum);
 }
 
@@ -919,8 +1009,11 @@ element_sum(Datum element, Oid elt_type, Datum result, Oid result_type, Datum op
  * Return min2(elt1, result).
  * First element if flag == 0
  */
+static
+inline
 Datum
-element_min(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+element_min(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_min);
 }
 
@@ -928,80 +1021,110 @@ element_min(Datum element, Oid elt_type, Datum result, Oid result_type, Datum op
  * Return max2(elt1, result).
  * First element if flag == 0
  */
+static
+inline
 Datum
-element_max(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+element_max(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_max);
 }
 
 /*
  * Add elt1*elt2 to result.
  */
+static
+inline
 Datum
-element_dot(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+element_dot(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_dot);
 }
 
 /*
  * result++ if elt1 == elt2 or elt2 == 0.
  */
+static
+inline
 Datum
-element_contains(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+element_contains(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_contains);
 }
 
 /*
  * Assign result to be elt2.
  */
-inline Datum
-element_set(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+static
+inline
+Datum
+element_set(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_set);
 }
 
 /*
  * Assign result to be (elt1 + elt2).
  */
-inline Datum
-element_add(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+static
+inline
+Datum
+element_add(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_add);
 }
 
 /*
  * Assign result to be (elt1 - elt2).
  */
-inline Datum
-element_sub(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+static
+inline
+Datum
+element_sub(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_sub);
 }
 
 /*
  * Assign result to be (elt1 * elt2).
  */
-inline Datum
-element_mult(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+static
+inline
+Datum
+element_mult(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_mult);
 }
 
 /*
  * Assign result to be (elt1 / elt2).
  */
-inline Datum
-element_div(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+static
+inline
+Datum
+element_div(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_div);
 }
 
 /*
  * Assign result to be sqrt(elt1).
  */
-inline Datum
-element_sqrt(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+static
+inline
+Datum
+element_sqrt(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_sqrt);
 }
 
 /*
  * add elt1 * elt1 to result.
  */
-inline Datum
-element_sum_sqr(Datum element, Oid elt_type, Datum result, Oid result_type, Datum opt_elt, Oid opt_type){
+static
+inline
+Datum
+element_sum_sqr(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_sum_sqr);
 }
 // ------------------------------------------------------------------------
