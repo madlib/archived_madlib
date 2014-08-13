@@ -444,30 +444,29 @@ AnyType::getAsDatum(FunctionCallInfo inFnCallInfo,
                 "Internal composite type has more elements than backend "
                 "composite type.");
 
-        std::vector<Datum> values;
-        std::vector<char> nulls;
+        Datum* values = new Datum[targetTupleDesc->natts];
+        bool* nulls = new bool[targetTupleDesc->natts];
 
-        for (uint16_t pos = 0; pos < mChildren.size(); ++pos) {
+        for (size_t pos = 0; pos < mChildren.size(); ++pos) {
             Oid targetTypeID = targetTupleDesc->attrs[pos]->atttypid;
 
-            values.push_back(mChildren[pos].getAsDatum(inFnCallInfo,
-                targetTypeID));
-            nulls.push_back(mChildren[pos].isNull());
+            values[pos] = mChildren[pos].getAsDatum(inFnCallInfo, targetTypeID);
+            nulls[pos] = mChildren[pos].isNull();
         }
         // All elements that have not been initialized will be set to Null
-        for (uint16_t pos = static_cast<uint16_t>(mChildren.size());
+        for (size_t pos = mChildren.size();
             pos < static_cast<size_t>(targetTupleDesc->natts);
             ++pos) {
 
-            values.push_back(Datum(0));
-            nulls.push_back(true);
+            values[pos]=Datum(0);
+            nulls[pos]=true;
         }
 
         HeapTuple heapTuple = madlib_heap_form_tuple(targetTupleDesc,
-            &values[0], reinterpret_cast<bool*>(&nulls[0]));
-        // BACKEND: HeapTupleGetDatum is a macro that will not cause an
-        // exception
+                values, nulls);
+        // BACKEND: HeapTupleGetDatum is a macro that will not cause exceptions
         returnValue = HeapTupleGetDatum(heapTuple);
+
     } else /* if (!targetIsComposite) */ {
         if (mTypeID != InvalidOid && inTargetTypeID != mTypeID) {
             std::stringstream errorMsg;
