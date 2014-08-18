@@ -1,0 +1,294 @@
+import plpy
+
+import pyxb
+from binding import *
+import binding
+from pyxb.utils.domutils import BindingDOMSupport as bds
+
+from formula import Formula
+
+from datetime import datetime
+from time import tzname, daylight
+from utilities.utilities import current_user
+from utilities.utilities import madlib_version
+from glm.glm import __extract_family_params as extract_family_params
+
+
+class PMMLBuilder(object):
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        self.schema_madlib = schema_madlib
+        self.model_table = model_table
+        self.model_type = model_type
+        self.name_spec = name_spec
+        self.pmml_str = None
+
+    def _construct_formula(self):
+        self.formula = Formula(self.y_str, self.x_str, self.n_coef)
+        if self.name_spec is not None:
+            self.formula.rename(self.name_spec, self.n_coef)
+
+    def _query_summary_table(self):
+        raise NotImplementedError
+
+    def _query_output_table(self):
+        raise NotImplementedError
+
+    def _build_header(self):
+        user = current_user()
+        extension = Extension(name='user', value_=user, extender='MADlib')
+        application = Application(name='MADlib',
+                                  version=madlib_version(self.schema_madlib))
+        now = datetime.now()
+        copyright = "Copyright (c) {year} {user}".format(year=now.year, user=user)
+        timestamp = Timestamp(str(now) + " " + tzname[daylight])
+        self.header = Header(extension, application, timestamp, copyright=copyright)
+
+    def _build_data_dictionary(self):
+        data_field_forest =      [DataField(name=self.formula.y,
+                                            optype=self.y_optype,
+                                            dataType=self.y_data_type)]
+        data_field_forest.extend([DataField(name=x_i,
+                                            optype='continuous',
+                                            dataType='double')
+                                  for x_i in self.formula.x])
+        data_field_forest.extend([DataField(name=k,
+                                            optype='categorical',
+                                            dataType='string')
+                                  for k in self.grouping_keys])
+
+        self.data_dictionary = DataDictionary(*data_field_forest,
+                numberOfFields=len(data_field_forest))
+
+    def _build_model(self):
+        if self.grouping_keys == []: # no grouping
+            self.model = self._create_single_model(self.coef0)
+        else: # grouping
+            # MiningSchema
+            mining_field_forest = \
+                    [MiningField(name=self.formula.y, usageType='predicted')]
+            mining_field_forest.extend(
+                    [MiningField(name=x_i) for x_i in self.formula.x])
+            mining_field_forest.extend(
+                    [MiningField(name=k) for k in self.grouping_keys])
+            grouping_mining_schema = MiningSchema(*mining_field_forest)
+
+            # Segmentation
+            segment_forest = []
+            for g in self.grouped_coefs: # one segment for each row in output table
+                predicate_forest = \
+                        [SimplePredicate(field=k, value_=g[k], operator='equal')
+                         for k in self.grouping_keys]
+                if len(predicate_forest) == 1:
+                    predicate = predicate_forest[0]
+                else:
+                    predicate = CompoundPredicate(*predicate_forest,
+                                                  booleanOperator='and')
+                single_model = self._create_single_model(g['coef'])
+                segment_forest.append(Segment(predicate, single_model))
+            segmentation = Segmentation(*segment_forest,
+                                        multipleModelMethod='selectFirst')
+
+            # MiningModel
+            self.model = MiningModel(grouping_mining_schema,
+                                     segmentation,
+                                     functionName=self.function)
+
+    def _format(self, pmml):
+        """Returns a pretty-printed XML string for the given PMML.
+        """
+        # avoid ns:xxx prefix
+        bds.SetDefaultNamespace(binding.Namespace)
+        declaration = "<?xml version=\"1.0\" standalone=\"yes\"?>\n"
+        xml = pmml.toDOM().toprettyxml(indent="  ")
+        self.pmml_str = declaration + "\n".join(xml.split("\n")[1:])
+
+    def query(self):
+        self._query_summary_table()
+        self._query_output_table()
+
+    def build(self):
+        self._construct_formula()
+        self._build_header()
+        self._build_data_dictionary()
+        self._build_model()
+        pmml = PMML(self.header, self.data_dictionary, self.model, version='4.0')
+        self._format(pmml)
+
+
+class RegressionPMMLBuilder(PMMLBuilder):
+    # Below predict_spec_dict is used to specify the prediction type that
+    # user want to obtain, e.g. logistic regression can output probility
+    # or categories. May consider to add argument to pmml(). For now, below
+    # is the default
+    PREDICT_SPEC_DICT = {
+            'logregr': {'function_name': 'classification',
+                        'y_optype':      'categorical',
+                        'y_data_type':   'boolean'},
+            'linregr': {'function_name': 'regression',
+                        'y_optype':      'continuous',
+                        'y_data_type':   'double'}
+            }
+
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        PMMLBuilder.__init__(self, schema_madlib, model_type, model_table, name_spec)
+
+    def _query_summary_table(self):
+        self.summary_query = """
+                SELECT grouping_col, dependent_varname, independent_varname
+                FROM {model_table}_summary
+                """.format(**self.__dict__)
+        self.summary = plpy.execute(self.summary_query)[0]
+
+        self.y_str = self.summary['dependent_varname']
+        self.x_str = self.summary['independent_varname']
+        self.grouping_col = self.summary['grouping_col']
+        self.grouping_str = '' if self.grouping_col is None \
+                else self.grouping_col + ','
+        self.predict_spec = self.__class__.PREDICT_SPEC_DICT[self.model_type]
+        self.function = self.predict_spec['function_name']
+        self.y_optype = self.predict_spec['y_optype']
+        self.y_data_type = self.predict_spec['y_data_type']
+
+    def _query_output_table(self):
+        self.output_query = """
+                SELECT {grouping_str} coef
+                FROM {model_table}
+                """.format(**self.__dict__)
+        self.output = plpy.execute(self.output_query)
+        self.grouped_coefs = self.output
+        self.coef0 = self.output[0]['coef']
+        self.n_coef = len(self.coef0)
+        self.grouping_keys = [k for k in self.output[0] if k != 'coef']
+
+    def _create_single_model(self, coef):
+        # fields and predictors
+        mining_field_forest = \
+                [MiningField(name=self.formula.y, usageType='predicted')]
+        numeric_predictor_forest = []
+        for i, e in enumerate(coef):
+            mining_field_forest.append(MiningField(name=self.formula.x[i]))
+            numeric_predictor_forest.append(
+                    NumericPredictor(name=self.formula.x[i], coefficient=e))
+
+        # schema and tables
+        mining_schema = MiningSchema(*mining_field_forest)
+        if self.function == 'regression':
+            regression_table_forest = \
+                    [RegressionTable(*numeric_predictor_forest, intercept='0')]
+            return RegressionModel(mining_schema,
+                                   *regression_table_forest,
+                                   functionName=self.function)
+        elif self.function == 'classification':
+            regression_table_forest = [
+                    RegressionTable(*numeric_predictor_forest,
+                                    targetCategory=True, intercept='0'),
+                    RegressionTable(targetCategory=False, intercept='0')]
+            return RegressionModel(mining_schema,
+                                   *regression_table_forest,
+                                   functionName=self.function,
+                                   normalizationMethod='softmax')
+
+
+class GeneralRegressionPMMLBuilder(RegressionPMMLBuilder):
+    PREDICT_SPEC_DICT = {
+            'binomial':         {'function_name': 'classification',
+                                 'y_optype':      'categorical',
+                                 'y_data_type':   'boolean',
+                                 'distribution':  'binomial'},
+            'gamma':            {'function_name': 'regression',
+                                 'y_optype':      'continuous',
+                                 'y_data_type':   'double',
+                                 'distribution':  'gamma'},
+            'poisson':          {'function_name': 'regression',
+                                 'y_optype':      'continuous',
+                                 'y_data_type':   'integer',
+                                 'distribution':  'poisson'},
+            'inverse_gaussian': {'function_name': 'regression',
+                                 'y_optype':      'continuous',
+                                 'y_data_type':   'double',
+                                 'distribution':  'igauss'}
+            }
+
+    LINK_SPEC_DICT = {
+            'inverse':          {'linkFunction':  'power',
+                                 'linkParameter': '-1'},
+            'log':              {'linkFunction':  'log'},
+            'identity':         {'linkFunction':  'identity'},
+            'probit':           {'linkFunction':  'probit'},
+            'logit':            {'linkFunction':  'logit'},
+            'sqrt':             {'linkFunction':  'power',
+                                 'linkParameter': '0.5'},
+            'sqr_inverse':      {'linkFunction':  'power',
+                                 'linkParameter': '-2'}
+            }
+
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        PMMLBuilder.__init__(self, schema_madlib, model_type, model_table, name_spec)
+
+    def _query_summary_table(self):
+        self.summary_query = """
+                SELECT
+                    grouping_col,
+                    dependent_varname,
+                    independent_varname,
+                    family_params
+                FROM {model_table}_summary
+                """.format(**self.__dict__)
+        self.summary = plpy.execute(self.summary_query)[0]
+
+        self.y_str = self.summary['dependent_varname']
+        self.x_str = self.summary['independent_varname']
+        self.grouping_col = self.summary['grouping_col']
+        self.grouping_str = '' if self.grouping_col is None \
+                else self.grouping_col + ','
+        self.family_params_dict = extract_family_params(self.schema_madlib,
+                                  self.summary['family_params'])
+        self.family = self.family_params_dict['family']
+        self.link = self.family_params_dict['link']
+        self.link_spec = self.__class__.LINK_SPEC_DICT[self.link]
+        self.predict_spec = self.__class__.PREDICT_SPEC_DICT[self.family]
+        self.function = self.predict_spec['function_name']
+        self.y_optype = self.predict_spec['y_optype']
+        self.distribution = self.predict_spec['distribution']
+        self.y_data_type = self.predict_spec['y_data_type']
+
+    def _create_single_model(self, coef):
+        # fields and predictors
+        mining_field_forest = \
+                [MiningField(name=self.formula.y, usageType='predicted')]
+        parameter_list_forest = [Parameter(name='p0', label='Intercept')]
+        ppcell_forest = []
+        predictor_forest = []
+        pcell_forest = [PCell(parameterName='p0', beta='0', df='1')]
+        for i, e in enumerate(coef):
+            mining_field_forest.append(MiningField(name=self.formula.x[i]))
+            parameter_list_forest.append(Parameter(name="p"+str(i+1),
+                                                   label=self.formula.x[i]))
+            ppcell_forest.append(PPCell(value_="1", predictorName=self.formula.x[i],
+                                        parameterName="p"+str(i+1)))
+
+            pcell_attrib = dict(parameterName="p"+str(i+1), beta=e, df='1')
+            if self.function=='classification':
+                pcell_attrib['targetCategory'] = True
+            pcell_forest.append(PCell(**pcell_attrib))
+            predictor_forest.append(Predictor(name=self.formula.x[i]))
+
+        # schema and tables
+        mining_schema = MiningSchema(*mining_field_forest)
+        parameter_list = ParameterList(*parameter_list_forest)
+        factor_list = FactorList()
+        covariate_list = CovariateList(*predictor_forest)
+        ppmatrix = PPMatrix(*ppcell_forest)
+        parammatrix = ParamMatrix(*pcell_forest)
+
+        return GeneralRegressionModel(mining_schema,
+                                      parameter_list,
+                                      factor_list,
+                                      covariate_list,
+                                      ppmatrix,
+                                      parammatrix,
+                                      targetVariableName=self.formula.y,
+                                      modelType='generalizedLinear',
+                                      distribution=self.distribution,
+                                      functionName=self.function,
+                                      **self.link_spec)
