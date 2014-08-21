@@ -35,8 +35,9 @@ MADlib incorporates material from the following third-party components
 2. [`Boost 1.46.1 (or newer)`](http://www.boost.org/) "provides peer-reviewed portable C++ source libraries"
 3. [`CERN ROOT`](http://root.cern.ch/) "is an object oriented framework for large scale data analysis"
 4. [`doxypy 0.4.2`](http://code.foosel.org/doxypy) "is an input filter for Doxygen"
-5. [`Eigen 3.0.3`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
+5. [`Eigen 3.2.2`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
 6. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "is a YAML parser and emitter for Python"
+7. [`PyXB 1.2.3`](http://pyxb.sourceforge.net/) "is a Python library for XML Schema Bindings"
 
 Licensing
 ==========
@@ -51,11 +52,15 @@ Changes between MADlib versions are described in the
 Papers and Talks
 =================
 * [`MAD Skills : New Analysis Practices for Big Data (VLDB 2009)`](http://db.cs.berkeley.edu/papers/vldb09-madskills.pdf)
+* [`Hybrid In-Database Inference for Declarative Information Extraction (SIGMOD 2011)`](http://www.cise.ufl.edu/~daisyw/sigmod11.pdf)
+* [`Towards a Unified Architecture for In-Database Analytics (SIGMOD 2012)`](http://www.cs.stanford.edu/~chrismre/papers/bismarck-full.pdf)
+* [`The MADlib Analytics Library or MAD Skills, the SQL (VLDB 2012)`](http://www.eecs.berkeley.edu/Pubs/TechRpts/2012/EECS-2012-38.html)
 
 
 Related Software
 =================
-* [`PivotalR`](https://github.com/madlib-internal/PivotalR) - PivotalR also lets the user run the functions of the open-source big-data machine learning
+* [`PivotalR`](https://github.com/madlib-internal/PivotalR) - PivotalR also
+lets the user run the functions of the open-source big-data machine learning
 package `MADlib` directly from R.
 * [`PyMADlib`](https://github.com/gopivotal/pymadlib) - PyMADlib is a python
 wrapper for MADlib, which brings you the power and flexibility of python

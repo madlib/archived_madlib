@@ -9,12 +9,22 @@ from formula import Formula
 
 from datetime import datetime
 from time import tzname, daylight
+from collections import defaultdict
+
 from utilities.utilities import current_user
 from utilities.utilities import madlib_version
 from glm.glm import __extract_family_params as extract_family_params
+from utilities.validate_args import cols_in_tbl_valid
 
 
 class PMMLBuilder(object):
+    """This generic class for PMML export for any model with grouping support.
+
+    The _construct_predict_spec method will set up PMML model attribute based
+    on expected prediction type: regression or classification. Current
+    implementation uses default prediction type for each model. In the future,
+    the function may support user specification.
+    """
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
         self.schema_madlib = schema_madlib
         self.model_table = model_table
@@ -22,16 +32,40 @@ class PMMLBuilder(object):
         self.name_spec = name_spec
         self.pmml_str = None
 
-    def _construct_formula(self):
-        self.formula = Formula(self.y_str, self.x_str, self.n_coef)
-        if self.name_spec is not None:
-            self.formula.rename(self.name_spec, self.n_coef)
+    def _validate_output_table(self):
+        cols_in_tbl_valid(self.model_table,
+                          self.__class__.OUTPUT_COLS,
+                          'PMML')
+
+    def _validate_summary_table(self):
+        cols_in_tbl_valid(self.model_table + '_summary',
+                          self.__class__.SUMMARY_COLS,
+                          'PMML')
 
     def _query_summary_table(self):
-        raise NotImplementedError
+        summary_str = ', '.join(self.__class__.SUMMARY_COLS)
+        summary_query = """
+                SELECT {summary_str}
+                FROM {model_table}_summary
+                """.format(summary_str=summary_str, **self.__dict__)
+        self.summary = plpy.execute(summary_query)[0]
 
     def _query_output_table(self):
         raise NotImplementedError
+
+    def _parse_summary(self):
+        raise NotImplementedError
+
+    def _parse_output(self):
+        raise NotImplementedError
+
+    def _construct_predict_spec(self):
+        raise NotImplementedError
+
+    def _construct_formula(self):
+        self.formula = Formula(self.y_str, self.x_str, self.n_coef)
+        if self.name_spec is not None:
+            self.formula.rename(self.name_spec)
 
     def _build_header(self):
         user = current_user()
@@ -44,7 +78,8 @@ class PMMLBuilder(object):
         self.header = Header(extension, application, timestamp, copyright=copyright)
 
     def _build_data_dictionary(self):
-        data_field_forest =      [DataField(name=self.formula.y,
+        data_field_forest =      [DataField(*self.y_value_forest,
+                                            name=self.formula.y,
                                             optype=self.y_optype,
                                             dataType=self.y_data_type)]
         data_field_forest.extend([DataField(name=x_i,
@@ -96,30 +131,39 @@ class PMMLBuilder(object):
     def _format(self, pmml):
         """Returns a pretty-printed XML string for the given PMML.
         """
-        # avoid ns:xxx prefix
-        bds.SetDefaultNamespace(binding.Namespace)
+        bds.SetDefaultNamespace(binding.Namespace) # avoid ns:xxx prefix
         declaration = "<?xml version=\"1.0\" standalone=\"yes\"?>\n"
         xml = pmml.toDOM().toprettyxml(indent="  ")
         self.pmml_str = declaration + "\n".join(xml.split("\n")[1:])
 
     def query(self):
+        # summary table
+        self._validate_summary_table()
         self._query_summary_table()
+        self._parse_summary()
+
+        # output table
+        self._validate_output_table()
         self._query_output_table()
+        self._parse_output()
 
     def build(self):
+        self._construct_predict_spec()
         self._construct_formula()
+
         self._build_header()
         self._build_data_dictionary()
         self._build_model()
         pmml = PMML(self.header, self.data_dictionary, self.model, version='4.0')
+
         self._format(pmml)
 
 
 class RegressionPMMLBuilder(PMMLBuilder):
-    # Below predict_spec_dict is used to specify the prediction type that
-    # user want to obtain, e.g. logistic regression can output probility
-    # or categories. May consider to add argument to pmml(). For now, below
-    # is the default
+    """Builder class for PMML model 'RegressionModel'.
+
+    Current implementation supports linear regression and logistic regression model.
+    """
     PREDICT_SPEC_DICT = {
             'logregr': {'function_name': 'classification',
                         'y_optype':      'categorical',
@@ -128,69 +172,130 @@ class RegressionPMMLBuilder(PMMLBuilder):
                         'y_optype':      'continuous',
                         'y_data_type':   'double'}
             }
+    OUTPUT_COLS = ['coef']
+    SUMMARY_COLS = ['grouping_col', 'dependent_varname', 'independent_varname']
 
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        PMMLBuilder.__init__(self, schema_madlib, model_type, model_table, name_spec)
+        PMMLBuilder.__init__(self,
+                schema_madlib, model_type, model_table, name_spec)
+        self.mining_schema = None
 
-    def _query_summary_table(self):
-        self.summary_query = """
-                SELECT grouping_col, dependent_varname, independent_varname
-                FROM {model_table}_summary
-                """.format(**self.__dict__)
-        self.summary = plpy.execute(self.summary_query)[0]
-
+    def _parse_summary(self):
         self.y_str = self.summary['dependent_varname']
         self.x_str = self.summary['independent_varname']
         self.grouping_col = self.summary['grouping_col']
         self.grouping_str = '' if self.grouping_col is None \
                 else self.grouping_col + ','
-        self.predict_spec = self.__class__.PREDICT_SPEC_DICT[self.model_type]
-        self.function = self.predict_spec['function_name']
-        self.y_optype = self.predict_spec['y_optype']
-        self.y_data_type = self.predict_spec['y_data_type']
 
     def _query_output_table(self):
-        self.output_query = """
+        output_query = """
                 SELECT {grouping_str} coef
                 FROM {model_table}
                 """.format(**self.__dict__)
-        self.output = plpy.execute(self.output_query)
+        self.output = plpy.execute(output_query)
+
+    def _parse_output(self):
         self.grouped_coefs = self.output
         self.coef0 = self.output[0]['coef']
         self.n_coef = len(self.coef0)
         self.grouping_keys = [k for k in self.output[0] if k != 'coef']
 
-    def _create_single_model(self, coef):
-        # fields and predictors
-        mining_field_forest = \
-                [MiningField(name=self.formula.y, usageType='predicted')]
+    def _construct_predict_spec(self):
+        self.predict_spec = self.__class__.PREDICT_SPEC_DICT[self.model_type]
+        self.function = self.predict_spec['function_name']
+        self.y_value_forest = []
+        if self.function == 'classification':
+            self.y_value_forest.extend([Value(value_='True'), Value(value_='False')])
+        self.y_optype = self.predict_spec['y_optype']
+        self.y_data_type = self.predict_spec['y_data_type']
+
+    def _build_mining_schema(self):
+        if self.mining_schema is None:
+            mining_field_forest = \
+                    [MiningField(name=self.formula.y, usageType='predicted')]
+            for i, x_i in enumerate(self.formula.x):
+                mining_field_forest.append(MiningField(name=x_i))
+            self.mining_schema =  MiningSchema(*mining_field_forest)
+
+    def _create_numeric_predictors(self, coef):
         numeric_predictor_forest = []
         for i, e in enumerate(coef):
-            mining_field_forest.append(MiningField(name=self.formula.x[i]))
             numeric_predictor_forest.append(
                     NumericPredictor(name=self.formula.x[i], coefficient=e))
+        return numeric_predictor_forest
 
-        # schema and tables
-        mining_schema = MiningSchema(*mining_field_forest)
+    def _create_model_regression(self, numeric_predictor_forest):
+        regression_table_forest = \
+                [RegressionTable(*numeric_predictor_forest, intercept='0')]
+        return RegressionModel(self.mining_schema,
+                               *regression_table_forest,
+                               functionName=self.function)
+
+    def _create_model_classification(self, numeric_predictor_forest):
+        regression_table_forest = [
+                RegressionTable(*numeric_predictor_forest,
+                        targetCategory=True, intercept='0'),
+                RegressionTable(targetCategory=False, intercept='0')]
+        return RegressionModel(self.mining_schema,
+                               *regression_table_forest,
+                               functionName=self.function,
+                               normalizationMethod='softmax')
+
+    def _create_single_model(self, coef):
+        self._build_mining_schema()
+        numeric_predictor_forest = self._create_numeric_predictors(coef)
+
         if self.function == 'regression':
-            regression_table_forest = \
-                    [RegressionTable(*numeric_predictor_forest, intercept='0')]
-            return RegressionModel(mining_schema,
-                                   *regression_table_forest,
-                                   functionName=self.function)
+            return self._create_model_regression(numeric_predictor_forest)
         elif self.function == 'classification':
-            regression_table_forest = [
-                    RegressionTable(*numeric_predictor_forest,
-                                    targetCategory=True, intercept='0'),
-                    RegressionTable(targetCategory=False, intercept='0')]
-            return RegressionModel(mining_schema,
-                                   *regression_table_forest,
-                                   functionName=self.function,
-                                   normalizationMethod='softmax')
+            return self._create_model_classification(numeric_predictor_forest)
 
 
 class GeneralRegressionPMMLBuilder(RegressionPMMLBuilder):
+    """Builder class for PMML model 'GeneralRegressionModel'.
+    """
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        RegressionPMMLBuilder.__init__(self,
+                schema_madlib, model_type, model_table, name_spec)
+        self.parameter_list = None
+        self.covariate_list = None
+        self.ppmatrix = None
+
+    def _build_parameter_list(self):
+        if self.parameter_list is None:
+            parameter_forest = [Parameter(name='p0', label='Intercept')]
+            for i, x_i in enumerate(self.formula.x):
+                parameter_forest.append(Parameter(name="p"+str(i+1), label=x_i))
+            self.parameter_list = ParameterList(*parameter_forest)
+
+    def _build_covariate_list(self):
+        if self.covariate_list is None:
+            predictor_forest = []
+            for i, x_i in enumerate(self.formula.x):
+                predictor_forest.append(Predictor(name=x_i))
+            self.covariate_list = CovariateList(*predictor_forest)
+
+    def _build_ppmatrix(self):
+        if self.ppmatrix is None:
+            ppcell_forest = []
+            for i, x_i in enumerate(self.formula.x):
+                ppcell_forest.append(PPCell(value_="1",
+                                            predictorName=x_i,
+                                            parameterName="p"+str(i+1)))
+            self.ppmatrix = PPMatrix(*ppcell_forest)
+
+
+class GLMPMMLBuilder(GeneralRegressionPMMLBuilder):
+    """Builder class for PMML modelType='generalizedLinear'.
+
+    Current implementaion supports GLM Gaussian, Binomial, Gamma, Poisson
+    Inverse Gaussian.
+    """
     PREDICT_SPEC_DICT = {
+            'gaussian':         {'function_name': 'regression',
+                                 'y_optype':      'continuous',
+                                 'y_data_type':   'double',
+                                 'distribution':  'normal'},
             'binomial':         {'function_name': 'classification',
                                  'y_optype':      'categorical',
                                  'y_data_type':   'boolean',
@@ -208,7 +313,6 @@ class GeneralRegressionPMMLBuilder(RegressionPMMLBuilder):
                                  'y_data_type':   'double',
                                  'distribution':  'igauss'}
             }
-
     LINK_SPEC_DICT = {
             'inverse':          {'linkFunction':  'power',
                                  'linkParameter': '-1'},
@@ -221,74 +325,223 @@ class GeneralRegressionPMMLBuilder(RegressionPMMLBuilder):
             'sqr_inverse':      {'linkFunction':  'power',
                                  'linkParameter': '-2'}
             }
+    SUMMARY_COLS = ['grouping_col',
+                    'dependent_varname',
+                    'independent_varname',
+                    'family_params'
+                    ]
 
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        PMMLBuilder.__init__(self, schema_madlib, model_type, model_table, name_spec)
+        GeneralRegressionPMMLBuilder.__init__(self,
+                schema_madlib, model_type, model_table, name_spec)
 
-    def _query_summary_table(self):
-        self.summary_query = """
-                SELECT
-                    grouping_col,
-                    dependent_varname,
-                    independent_varname,
-                    family_params
-                FROM {model_table}_summary
-                """.format(**self.__dict__)
-        self.summary = plpy.execute(self.summary_query)[0]
-
+    def _parse_summary(self):
         self.y_str = self.summary['dependent_varname']
         self.x_str = self.summary['independent_varname']
         self.grouping_col = self.summary['grouping_col']
         self.grouping_str = '' if self.grouping_col is None \
                 else self.grouping_col + ','
-        self.family_params_dict = extract_family_params(self.schema_madlib,
-                                  self.summary['family_params'])
+        self.family_params_dict = extract_family_params(
+                self.schema_madlib, self.summary['family_params'])
         self.family = self.family_params_dict['family']
         self.link = self.family_params_dict['link']
         self.link_spec = self.__class__.LINK_SPEC_DICT[self.link]
+
+    def _construct_predict_spec(self):
         self.predict_spec = self.__class__.PREDICT_SPEC_DICT[self.family]
         self.function = self.predict_spec['function_name']
+        self.y_value_forest = []
+        if self.function == 'classification' and self.family == 'binomial':
+            self.y_value_forest.extend([Value(value_='True'), Value(value_='False')])
         self.y_optype = self.predict_spec['y_optype']
         self.distribution = self.predict_spec['distribution']
         self.y_data_type = self.predict_spec['y_data_type']
 
     def _create_single_model(self, coef):
-        # fields and predictors
-        mining_field_forest = \
-                [MiningField(name=self.formula.y, usageType='predicted')]
-        parameter_list_forest = [Parameter(name='p0', label='Intercept')]
-        ppcell_forest = []
-        predictor_forest = []
-        pcell_forest = [PCell(parameterName='p0', beta='0', df='1')]
-        for i, e in enumerate(coef):
-            mining_field_forest.append(MiningField(name=self.formula.x[i]))
-            parameter_list_forest.append(Parameter(name="p"+str(i+1),
-                                                   label=self.formula.x[i]))
-            ppcell_forest.append(PPCell(value_="1", predictorName=self.formula.x[i],
-                                        parameterName="p"+str(i+1)))
+        self._build_mining_schema()
+        self._build_parameter_list()
+        self._build_covariate_list()
+        self._build_ppmatrix()
 
+        # pcells
+        pcell_attrib0 = dict(parameterName='p0', beta='0', df='1')
+        if self.function == 'classification':
+            pcell_attrib0['targetCategory'] = True
+        pcell_forest = [PCell(**pcell_attrib0)]
+        for i, e in enumerate(coef):
             pcell_attrib = dict(parameterName="p"+str(i+1), beta=e, df='1')
-            if self.function=='classification':
+            if self.function == 'classification':
                 pcell_attrib['targetCategory'] = True
             pcell_forest.append(PCell(**pcell_attrib))
-            predictor_forest.append(Predictor(name=self.formula.x[i]))
 
-        # schema and tables
-        mining_schema = MiningSchema(*mining_field_forest)
-        parameter_list = ParameterList(*parameter_list_forest)
-        factor_list = FactorList()
-        covariate_list = CovariateList(*predictor_forest)
-        ppmatrix = PPMatrix(*ppcell_forest)
-        parammatrix = ParamMatrix(*pcell_forest)
-
-        return GeneralRegressionModel(mining_schema,
-                                      parameter_list,
-                                      factor_list,
-                                      covariate_list,
-                                      ppmatrix,
-                                      parammatrix,
+        return GeneralRegressionModel(self.mining_schema,
+                                      self.parameter_list,
+                                      FactorList(),
+                                      self.covariate_list,
+                                      self.ppmatrix,
+                                      ParamMatrix(*pcell_forest),
                                       targetVariableName=self.formula.y,
                                       modelType='generalizedLinear',
                                       distribution=self.distribution,
                                       functionName=self.function,
                                       **self.link_spec)
+
+
+class MultiClassRegressionPMMLBuilder(GeneralRegressionPMMLBuilder):
+    """Base builder class for Multinomial logistic and Ordinal.
+    """
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        GeneralRegressionPMMLBuilder.__init__(self,
+                schema_madlib, model_type, model_table, name_spec)
+
+    def _construct_predict_spec(self):
+        self.function = 'classification'
+        self.y_value_forest = [Value(value_=x_i) for x_i in self.cate_list]
+        self.y_optype = 'categorical'
+        self.y_data_type = 'string'
+
+
+class OrdinalRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
+    """Builder class for PMML modelType='ordinalMultinomial'.
+
+    The signs of feature coefficients are different between PMML and madlib.ordinal()
+    output.
+    """
+    OUTPUT_COLS = ['coef_threshold', 'coef_feature']
+    SUMMARY_COLS = ['grouping_col',
+                    'dependent_varname',
+                    'independent_varname',
+                    'link_func',
+                    'category_list']
+
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        MultiClassRegressionPMMLBuilder.__init__(self,
+                schema_madlib, model_type, model_table, name_spec)
+
+    def _parse_summary(self):
+        self.y_str = self.summary['dependent_varname']
+        self.x_str = self.summary['independent_varname']
+        self.grouping_col = self.summary['grouping_col']
+        self.grouping_str = '' if self.grouping_col is None \
+                else self.grouping_col + ','
+        self.link = self.summary['link_func']
+        self.cate_list = self.summary['category_list'].split(',')
+
+    def _query_output_table(self):
+        self.output_query = """
+                SELECT
+                    {grouping_str}
+                    coef_feature || coef_threshold as coef,
+                    coef_feature
+                FROM {model_table}
+                """.format(**self.__dict__)
+        self.output = plpy.execute(self.output_query)
+
+    def _parse_output(self):
+        self.grouped_coefs = self.output
+        self.coef0 = self.output[0]['coef']
+        self.n_coef = len(self.output[0]['coef_feature'])
+        self.grouping_keys = [k for k in self.output[0]
+                              if k not in ('coef','coef_feature')]
+
+    def _create_single_model(self, coef):
+        coef_threshold = coef[self.formula.n_coef:]
+        coef_feature = coef[:self.formula.n_coef]
+
+        self._build_mining_schema()
+        self._build_parameter_list()
+        self._build_covariate_list()
+        self._build_ppmatrix()
+
+        # pcells
+        pcell_forest = []
+        for i, e in enumerate(coef_threshold):
+            pcell_forest.append(PCell(parameterName='p0',
+                    beta=e, df='1', targetCategory=self.cate_list[i]))
+        for i, e in enumerate(coef_feature):
+            # -e is used
+            pcell_forest.append(PCell(parameterName="p"+str(i+1), beta=-e, df='1'))
+
+        return GeneralRegressionModel(self.mining_schema,
+                                      self.parameter_list,
+                                      FactorList(),
+                                      self.covariate_list,
+                                      self.ppmatrix,
+                                      ParamMatrix(*pcell_forest),
+                                      targetVariableName=self.formula.y,
+                                      modelType='ordinalMultinomial',
+                                      functionName=self.function,
+                                      cumulativeLink=self.link)
+
+
+class MultinomRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
+    """Builder class for PMML modelType='multinomialLogistic'.
+    """
+    OUTPUT_COLS = ['category', 'coef']
+    SUMMARY_COLS = ['grouping_col',
+                    'dependent_varname',
+                    'independent_varname',
+                    'category_list',
+                    'ref_category']
+
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        MultiClassRegressionPMMLBuilder.__init__(self,
+                schema_madlib, model_type, model_table, name_spec)
+
+    def _parse_summary(self):
+        self.y_str = self.summary['dependent_varname']
+        self.x_str = self.summary['independent_varname']
+        self.grouping_col = self.summary['grouping_col']
+        self.grouping_str = '' if self.grouping_col is None \
+                else self.grouping_col + ','
+        self.cate_list = self.summary['category_list'].split(',')
+        self.ref_cate = self.summary['ref_category']
+
+    def _query_output_table(self):
+        self.output_query = """
+                SELECT
+                    {grouping_str}
+                    category,
+                    coef
+                FROM {model_table}
+                """.format(**self.__dict__)
+        self.output = plpy.execute(self.output_query)
+
+    def _parse_output(self):
+        self.grouping_keys = [k for k in self.output[0]
+                              if k not in ('coef','category')]
+        coef_dict = defaultdict(dict)
+        for r in self.output:
+            # extract grouping values as key
+            grp_val = tuple([r[k] for k in self.grouping_keys])
+            # grouping values -> { category -> coef}
+            coef_dict[grp_val].update({r['category']: r['coef']})
+        self.grouped_coefs = [dict(zip(self.grouping_keys, grp_val)+[('coef', coef)])
+                              for grp_val, coef in coef_dict.iteritems()]
+        self.coef0 = coef_dict.values()[0]
+        self.n_coef = len(self.coef0.values()[0])
+
+    def _create_single_model(self, coef):
+        self._build_mining_schema()
+        self._build_parameter_list()
+        self._build_covariate_list()
+        self._build_ppmatrix()
+
+        # pcells
+        pcell_forest = []
+        for cate, coef_per_cate in coef.iteritems():
+            pcell_forest.append(PCell(parameterName="p0",
+                    beta=0, df='1', targetCategory=cate))
+            for i, c in enumerate(coef_per_cate):
+                pcell_forest.append(PCell(parameterName="p"+str(i+1),
+                        beta=c, df='1', targetCategory=cate))
+
+        return GeneralRegressionModel(self.mining_schema,
+                                      self.parameter_list,
+                                      FactorList(),
+                                      self.covariate_list,
+                                      self.ppmatrix,
+                                      ParamMatrix(*pcell_forest),
+                                      targetVariableName=self.formula.y,
+                                      modelType='multinomialLogistic',
+                                      functionName=self.function)

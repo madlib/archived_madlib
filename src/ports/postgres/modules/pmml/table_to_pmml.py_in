@@ -8,39 +8,37 @@
 
 import plpy
 
-from builder import PMMLBuilder
 from builder import RegressionPMMLBuilder
-from builder import GeneralRegressionPMMLBuilder
+from builder import GLMPMMLBuilder
+from builder import OrdinalRegressionPMMLBuilder
+from builder import MultinomRegressionPMMLBuilder 
 
 from utilities.validate_args import input_tbl_valid
 from utilities.validate_args import cols_in_tbl_valid
 
+BUILDER_CLASS = {
+    'glm': 'GLMPMMLBuilder',
+    'multinom': 'MultinomRegressionPMMLBuilder',
+    'ordinal': 'OrdinalRegressionPMMLBuilder',
+    'logregr': 'RegressionPMMLBuilder',
+    'linregr': 'RegressionPMMLBuilder'
+}
 
 def table_to_pmml(schema_madlib, model_table, **kwargs):
     # parameter validation
     input_tbl_valid(model_table, 'PMML')
     input_tbl_valid(model_table + '_summary', 'PMML')
-    cols_in_tbl_valid(model_table, ['coef'], 'PMML')
-    cols_in_tbl_valid(model_table + '_summary',
-                      ['method',
-                       'grouping_col',
-                       'dependent_varname',
-                       'independent_varname'],
-                      'PMML')
+    cols_in_tbl_valid(model_table + '_summary', ['method'], 'PMML')
     model_type = plpy.execute("""
             SELECT method FROM {model_table}_summary
             """.format(**locals()))[0]['method']
-    if model_type not in ('linregr', 'logregr','glm'):
+    if model_type not in BUILDER_CLASS:
         plpy.error("Model {0} to PMML is not supported!".format(model_type))
 
     # construct builder
     name_spec = kwargs['name_spec'] if 'name_spec' in kwargs else None
-    if model_type == 'glm':
-        builder = GeneralRegressionPMMLBuilder(
-                schema_madlib, model_type, model_table, name_spec)
-    else:
-        builder = RegressionPMMLBuilder(
-                schema_madlib, model_type, model_table, name_spec)
+    builder = eval(BUILDER_CLASS[model_type])(schema_madlib, model_type,
+            model_table, name_spec)
 
     # query and build
     builder.query()
@@ -62,7 +60,10 @@ def pmml_help_msg(schema_madlib, **kwargs):
                         SUMMARY
 ----------------------------------------------------------------
 Implements the PMML XML standard to describe and exchange models
-produced by data mining and machine learning algorithms.
+produced by data mining and machine learning algorithms. Currently,
+pmml() supports linear regression, logistic regression, generalized
+linear model, multinomial logistic regression and ordinal linear
+regression model.
 
 ------------------------------------------------------------------
                         USAGE
