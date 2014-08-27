@@ -497,6 +497,143 @@ prune_model::run(AnyType &args) {
     return dt.storage(); /* the new pruned tree */
 }
 
+// ------------------------------------------------------------
+
+// Helper function for PivotalR
+// Convert the result into rpart's frame item in the result
+
+/*
+ * Fil a row of the frame matrix using data in tree
+ */
+void fill_row(MutableNativeMatrix &frame, Tree &dt, int me, int i,
+        int n_cats) {
+    if (dt.is_categorical(me)) {
+        frame(i,0) = dt.feature_indices(me);
+    } else {
+        if (dt.feature_indices(me) >= 0)
+            frame(i,0) = dt.feature_indices(me) + n_cats;
+        else
+            frame(i,0) = dt.feature_indices(me);
+    }
+    frame(i,5) = 1; // complexity is not needed in plotting
+    frame(i,6) = 1; // ncompete is not needed in plotting
+    frame(i,7) = 1; // nsurrogate is not needed in plotting
+
+    if (dt.is_regression) {
+        frame(i,1) = dt.predictions(me,3); // n
+        frame(i,2) = dt.predictions(me,0); // wt
+
+        double wt_tot = dt.predictions(me,0);
+        double y_avg = dt.predictions(me,1);
+        frame(i,3) = dt.predictions(me,2) -
+            y_avg * y_avg / wt_tot; // dev
+        frame(i,4) = y_avg / wt_tot; // yval
+    } else {
+        double total_records = dt.predictions.row(0).sum();
+        double n_records_innode = dt.predictions.row(me).sum();
+        int n_dep_levels = static_cast<int>(dt.predictions.cols());
+
+        // FIXME use weight sum as the total number
+        frame(i,1) = n_records_innode;
+        frame(i,2) = n_records_innode;
+        frame(i,3) = n_records_innode -
+            dt.predictions.row(me).maxCoeff();
+
+        int max_index = 0;
+        double max_val = 0;
+        for (int j = 0; j < n_dep_levels; ++j) {
+            if (dt.predictions(me,j) > max_val) {
+                max_index = j;
+                max_val = dt.predictions(me,j);
+            }
+        }
+        // start from 1 to be consistent with R convention
+        frame(i,4) = max_index + 1;
+        frame(i,8) = frame(i,4);
+        for (int j = 0; j < n_dep_levels; ++j) {
+            frame(i,9 + j) = dt.predictions(me,j);
+            frame(i,9 + j + n_dep_levels) =
+                dt.predictions(me,j) / n_records_innode;
+        }
+        frame(i,9 + 2 * n_dep_levels) = n_records_innode /
+            total_records;
+    }
+}
+
+// ------------------------------------------------------------
+
+/*
+ * Recursively transverse the tree in a depth first way,
+ * and fill all row of frame at the same time
+ */
+void transverse_tree(Tree &dt, MutableNativeMatrix &frame,
+        int me, int &row, int n_cats) {
+    if (me < dt.feature_indices.size() && dt.feature_indices(me) != dt.NON_EXISTING) {
+        fill_row(frame, dt, me, row++, n_cats);
+        transverse_tree(dt, frame, static_cast<int>(dt.falseChild(me)), row, n_cats);
+        transverse_tree(dt, frame, static_cast<int>(dt.trueChild(me)), row, n_cats);
+    }
+}
+
+// ------------------------------------------------------------
+
+AnyType convert_to_rpart_format::run(AnyType &args) {
+    Tree dt = args[0].getAs<ByteString>();
+    int n_cats = args[1].getAs<int>();
+
+    // number of nodes in the tree
+    int n_nodes = 0;
+    for (int i = 0; i < dt.feature_indices.size(); ++i) {
+        if (dt.feature_indices(i) != dt.NON_EXISTING) n_nodes++;
+    }
+
+    // number of columns in rpart frame
+    int n_col;
+    if (dt.is_regression) {
+        n_col = 8;
+    } else {
+        n_col = 10 + 2 * static_cast<int>(dt.predictions.cols());
+    }
+
+    MutableNativeMatrix frame(this->allocateArray<double>(
+                n_col, n_nodes), n_nodes, n_col);
+
+    int row = 0;
+    transverse_tree(dt, frame, 0, row, n_cats);
+
+    return frame;
+}
+
+// ------------------------------------------------------------
+
+// transverse the tree to get the internal nodes' split thresholds
+void transverse_tree_thresh(Tree &dt, MutableNativeColumnVector &thresh,
+        int me, int &row)
+{
+    if (dt.feature_indices(me) >= 0) {
+        thresh[row++] = dt.feature_thresholds(me);
+        transverse_tree_thresh(dt, thresh, static_cast<int>(dt.falseChild(me)), row);
+        transverse_tree_thresh(dt, thresh, static_cast<int>(dt.trueChild(me)), row);
+    }
+}
+
+// ------------------------------------------------------------
+
+AnyType get_split_thresholds::run(AnyType &args)
+{
+    Tree dt = args[0].getAs<ByteString>();
+    // number of internal nodes
+    int in_nodes = 0;
+    for (int i = 0; i < dt.feature_indices.size(); ++i) {
+        if (dt.feature_indices(i) >= 0) in_nodes++;
+    }
+
+    MutableNativeColumnVector thresh(this->allocateArray<double>(in_nodes));
+    int row = 0;
+    transverse_tree_thresh(dt, thresh, 0, row);
+    return thresh;
+}
+
 } // namespace recursive_partitioning
 } // namespace modules
 } // namespace madlib
