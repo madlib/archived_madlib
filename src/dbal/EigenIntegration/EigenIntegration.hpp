@@ -20,6 +20,7 @@ namespace dbal {
 
 namespace eigen_integration {
 
+typedef Eigen::VectorXi IntegerVector;
 typedef Eigen::VectorXd ColumnVector;
 typedef Eigen::RowVectorXd RowVector;
 typedef Eigen::MatrixXd Matrix;

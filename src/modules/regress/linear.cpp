@@ -18,21 +18,12 @@ namespace modules {
 
 namespace regress {
 
+// -----------------------------------------------------------------------
 // Linear regression
+// -----------------------------------------------------------------------
 typedef LinearRegressionAccumulator<RootContainer> LinRegrState;
 typedef LinearRegressionAccumulator<MutableRootContainer> MutableLinRegrState;
 
-// Robust regression
-typedef RobustLinearRegressionAccumulator<RootContainer> RobustLinRegrState;
-typedef RobustLinearRegressionAccumulator<MutableRootContainer> MutableRobustLinRegrState;
-
-// Heteroskedasticitic regression
-typedef HeteroLinearRegressionAccumulator<RootContainer> HeteroLinRegrState;
-typedef HeteroLinearRegressionAccumulator<MutableRootContainer>
-                                                    MutableHeteroLinRegrState;
-// -----------------------------------------------------------------------
-// Linear regression
-// -----------------------------------------------------------------------
 AnyType
 linregr_transition::run(AnyType& args) {
     MutableLinRegrState state = args[0].getAs<MutableByteString>();
@@ -87,6 +78,9 @@ linregr_final::run(AnyType& args) {
 // -----------------------------------------------------------------------
 // Robust linear regression variance estimate using the Huber-White estimator
 // -----------------------------------------------------------------------
+typedef RobustLinearRegressionAccumulator<RootContainer> RobustLinRegrState;
+typedef RobustLinearRegressionAccumulator<MutableRootContainer> MutableRobustLinRegrState;
+
 AnyType
 robust_linregr_transition::run(AnyType& args) {
     MutableRobustLinRegrState state = args[0].getAs<MutableByteString>();
@@ -151,6 +145,11 @@ robust_linregr_final::run(AnyType& args) {
 // This is the first step of the test and does not include correction for the
 // standard errors if the data is heteroskedastic.
 // -----------------------------------------------------------------------
+
+typedef HeteroLinearRegressionAccumulator<RootContainer> HeteroLinRegrState;
+typedef HeteroLinearRegressionAccumulator<MutableRootContainer>
+                                                    MutableHeteroLinRegrState;
+
 AnyType
 hetero_linregr_transition::run(AnyType& args) {
     MutableHeteroLinRegrState state = args[0].getAs<MutableByteString>();

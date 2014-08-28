@@ -1,0 +1,1295 @@
+/* ------------------------------------------------------------
+ *
+ * @file decision_tree.sql_in
+ *
+ * @brief SQL functions for decision tree
+ * @ @date July 2014
+ *
+ * @sa For a brief introduction to decision tree, see the
+ *     module description \ref grp_decision_tree
+ *
+ * ------------------------------------------------------------ */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_decision_tree
+
+<div class="toc"><b>Contents</b><ul>
+<li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#predict">Prediction Function</a></li>
+<li class="level1"><a href="#display">Display Function</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul></div>
+
+@brief Decision Trees.
+Decision trees use a tree-based predictive model to
+predict the value of a target variable based on several input variables.
+
+Decision trees are a supervised learning method that use a predictive model to
+predict the value of a target variable, based on several input variables. They
+use a tree-based representation of the model such that, the interior nodes of
+the tree correspond to the input variables, the edges of the nodes correspond to
+values that the input variables can take, and leaf nodes represent values of the
+target variable, given the values of the input variables, represented by the
+path from the root to the leaf nodes.
+
+@anchor train
+@par Training Function
+Decision tree training function has the following format:
+<pre class="syntax">
+tree_train(
+    training_table_name,
+    output_table_name,
+    id_col_name,
+    dependent_variable,
+    list_of_features,
+    list_of_features_to_exclude,
+    split_criterion,
+    grouping_cols,
+    weights,
+    max_depth,
+    min_split,
+    min_bucket,
+    num_splits,
+    pruning_params,
+    verbose
+    )
+</pre>
+\b arguments
+<dl class="arglist">
+  <dt>training_table_name</dt>
+  <dd>text. the name of the table containing the training data.</dd>
+
+  <dt>output_table_name</dt>
+  <dd>text. the name of the generated table containing the model.</dd>
+
+    the model table produced by the train function contains the following columns:
+
+    <table class="output">
+      <tr>
+        <th>&lt;...&gt;</th>
+        <td>text. grouping columns, if provided in input. this could be multiple columns
+          depending on the \c grouping_cols input.</td>
+      </tr>
+      <tr>
+        <th>tree</th>
+        <td>bytea8. trained decision tree model stored in a binary format.</td>
+      </tr>
+      <tr>
+        <th>cat_levels_in_text</th>
+        <td>TEXT[]. Ordered levels of categorical variables</td>
+      </tr>
+      <tr>
+        <th>cat_n_levels</th>
+        <td>INTEGER[]. Number of levels for each categorical variable</td>
+      </tr>
+
+      <tr>
+      <th>tree_depth</th>
+      <td>INTEGER. The maximum depth the tree obtained after training (root has depth 0)</td>
+      </tr>
+    </table>
+
+    A summary table named <em>\<model_table\>_summary</em> is also created at the same time, which has the following columns:
+     <table class="output">
+
+    <tr>
+    <th>method</th>
+    <td>'tree_train'</td>
+    </tr>
+
+    <tr>
+    <th>source_table</th>
+    <td>The data source table name.</td>
+    </tr>
+
+    <tr>
+    <th>model_table</th>
+    <td>The model table name.</td>
+    </tr>
+
+    <tr>
+    <th>id_col_name</th>
+    <td>The ID column name</td>
+    </tr>
+
+    <tr>
+    <th>dependent_varname</th>
+    <td>The dependent variable.</td>
+    </tr>
+
+    <tr>
+    <th>independent_varname</th>
+    <td>The independent variables</td>
+    </tr>
+
+      <tr>
+        <th>cat_features</th>
+        <td>TEXT. The list of categorical feature names as a comma-separated string.</td>
+      </tr>
+      <tr>
+        <th>con_features</th>
+        <td>TEXT. The list of continuous feature names as a comma-separated string.</td>
+      </tr>
+    <tr>
+    <th>grouping_col</th>
+    <td>Names of grouping columns.</td>
+    </tr>
+
+    <tr>
+    <th>num_all_groups</th>
+    <td>Number of groups in decision tree training.</td>
+    </tr>
+
+    <tr>
+    <th>num_failed_groups</th>
+    <td>Number of failed groups in decision tree training.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_processed</th>
+      <td>BIGINT. Total numbers of rows processed in all groups.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_skipped</th>
+      <td>BIGINT. Total numbers of rows skipped in all groups due to missing values or failures.</td>
+    </tr>
+
+    <tr>
+    <th>dependent_var_levels</th>
+    <td>For classification, the distinct levels of the dependent variable.</td>
+    </tr>
+
+    <tr>
+    <th>dependent_var_type</th>
+    <td>The type of dependent variable</td>
+    </tr>
+
+   </table>
+  </DD>
+
+  <DT>id_col_name</DT>
+  <DD>TEXT. Name of the column containing id information in the training data.</DD>
+
+  <DT>dependent_variable</DT>
+  <DD>TEXT. Name of the column that contains the output for
+  training. Boolean, integer and text are considered classification outputs,
+  while float values are considered regression outputs.</DD>
+
+  <DT>list_of_features</DT>
+  <DD>TEXT. Comma-separated string of column names to use as predictors. Can
+  also be a '*' implying all columns are to be used as predictors (except the
+  ones included in the next argument). Boolean, integer and text columns are
+  considered categorical columns.</DD>
+
+  <DT>list_of_features_to_exclude</DT>
+  <DD>TEXT. Comma-separated string of column names to exclude from the predictors
+      list. If the <em>dependent_variable</em> argument is an expression
+      (including cast of a column name), then this list should include the
+      columns that are included in the <em>dependent_variable</em> expression,
+      otherwise those columns will be included in the features
+      (resulting in meaningless trees).</DD>
+
+  <DT>split_criterion</DT>
+  <DD>TEXT, default = 'gini' for classification, 'mse' for regression.
+  Impurity function to compute the feature to use for the split.
+  Supported criteria are 'gini', 'entropy', 'misclassification' for
+  classification trees. For regression trees, split_criterion of 'mse'
+  is always used (irrespective of the input for this argument).
+  </DD>
+
+  <DT>grouping_cols (optional)</DT>
+  <DD>TEXT, default: NULL. Comma-separated list of column names to group the
+      data by. This will lead to creating multiple decision trees, one for
+      each group.</DD>
+
+  <DT>weights (optional)</DT>
+  <DD>TEXT. Column name containing weights for each observation</DD>
+
+  <DT>max_depth (optional)</DT>
+  <DD>INTEGER, default: 10. Maximum depth of any node of the final tree,
+      with the root node counted as depth 0.</DD>
+
+  <DT>min_split (optional)</DT>
+  <DD>INTEGER, default: 20. Minimum number of observations that must exist
+      in a node for a split to be attempted.</DD>
+
+  <DT>min_bucket (optional)</DT>
+  <DD>INTEGER, default: min_split/3. Minimum number of observations in any terminal
+      node. If only one of min_bucket or min_split is specified, min_split is
+      set to min_bucket*3 or min_bucket to min_split/3, as appropriate.</DD>
+
+  <DT>num_splits (optional)</DT>
+  <DD>INTEGER, default: 100. Continuous-valued features are binned into
+      discrete quantiles to compute split boundaries. This global parameter
+      is used to compute the resolution of splits for continuous features.
+      Higher number of bins will lead to better prediction,
+      but will also result in higher processing time.</DD>
+
+  <DT>pruning_params (optional)</DT>
+  <DD>TEXT. Comma-separated string of key-value pairs giving
+  the parameters for pruning the tree. The parameters currently accepted are:
+    <table class='output'>
+      <tr>
+      <th>cp</th>
+      <td><b>Not implemented yet.</b>
+        Default: 0.01. A split on a node is attempted only if it
+        decreases the overall lack of fit by a factor of 'cp', else the split is
+        pruned away.</td>
+      </tr>
+      <tr>
+      <th>n_folds</th>
+      <td><b>Not implemented yet</b>.
+        Default: 0 (= No cross-validation).
+        Number of cross-validation folds to use to compute the best value of
+        <em>cp</em>. To perform cross-validation, a positive value of
+        <em>n_folds</em> (greater than 2) should be given. An additional output
+        table <em>\<model_table\>_xval</em> is created containing the
+        values of <em>cp</em> evaluated and the cross-validation error value.
+        The tree returned in the output table corresponds to the <em>cp</em>
+        value with the lowest error.
+      </td>
+      </tr>
+      <tr>Note: Only one of <em>cp</em> or <em>n_folds</em> should be provided.
+      An error is returned if both parameters are provided.</tr>
+    </table>
+  </DD>
+
+  <DT>verbose (optional)</DT>
+  <DD>BOOLEAN, default: FALSE. Provides verbose output of the results of training.</DD>
+</DL>
+
+@anchor predict
+@par Prediction Function
+The prediction function is provided to estimate the conditional mean given a new
+predictor. It has the following syntax:
+<pre class="syntax">
+tree_predict(tree_model,
+             new_data_table,
+             output_table,
+             type)
+</pre>
+
+\b Arguments
+<DL class="arglist">
+  <DT>tree_model</DT>
+  <DD>TEXT. Name of the table containing the decision tree model.</DD>
+
+  <DT>new_data_table</DT>
+  <DD>TEXT. Name of the table containing prediction data.</DD>
+
+  <DT>output_table</DT>
+  <DD>TEXT. Name of the table to output prediction results to.</DD>
+
+  <DT>type</DT>
+  <DD>TEXT, optional, default: 'response'. For regression trees, the output is
+      always the predicted value of the dependent variable. For classification
+      trees, the <em>type</em> variable can be 'response', giving the
+      classification prediction as output, or 'prob', giving the class
+      probabilities as output. For each value of the dependent variable, a
+      column with the probabilities is added to the output table.
+  </DD>
+</DL>
+
+@anchor dispaly
+@par Display Function
+The display function is provided to output a graph representation of the
+decision tree. The output can either be in the popular 'dot' format that can
+be visualized using various programs including those in the GraphViz package, or
+in a simple text format. The details of the text format is outputted with the
+tree.
+<pre class="syntax">
+tree_display(tree_model)
+</pre>
+
+\b Arguments
+<DL class="arglist">
+    <DT>tree_model_name</DT>
+    <DD>TEXT. Name of the table containing the decision tree model.</DD>
+    <DT>result_dot_format</DT>
+    <DD>BOOLEAN, default = TRUE. Output can be either in a dot format or a text
+    format. If TRUE, the result is in the dot format, else output is in text format.</DD>
+</DL>
+
+The output is always returned as a 'TEXT'. For the dot format, the output can be
+redirected to a file on the client side and then rendered using visualization programs.
+
+@anchor examples
+@examp
+* Decision tree classification example *
+
+-# Prepare input data.
+<pre class="example">
+DROP TABLE IF EXISTS dt_golf;
+CREATE TABLE dt_golf (
+    id integer NOT NULL,
+    "OUTLOOK" text,
+    temperature double precision,
+    humidity double precision,
+    windy text,
+    class text
+) ;
+</pre>
+<pre class="example">
+COPY dt_golf (id,"OUTLOOK",temperature,humidity,windy,class) FROM stdin WITH DELIMITER '|';
+1|sunny|85|85|'false'|'Don''t Play'
+2|sunny|80|90|'true'|'Don''t Play'
+3|overcast|83|78|'false'|'Play'
+4|rain|70|96|'false'|'Play'
+5|rain|68|80|'false'|'Play'
+6|rain|65|70|'true'|'Don''t Play'
+7|overcast|64|65|'true'|'Play'
+8|sunny|72|95|'false'|'Don''t Play'
+9|sunny|69|70|'false'|'Play'
+10|rain|75|80|'false'|'Play'
+11|sunny|75|70|'true'|'Play'
+12|overcast|72|90|'true'|'Play'
+13|overcast|81|75|'false'|'Play'
+14|rain|71|80|'true'|'Don''t Play'
+\\.
+</pre>
+
+-# Run Decision tree train function.
+<pre class="example">
+SELECT madlib.tree_train('dt_golf',         -- source table
+                         'train_output',    -- output model table
+                         'id',              -- id column
+                         'class',           -- response
+                         '"OUTLOOK", temperature, humidity, windy',   -- features
+                         NULL::text,        -- exclude columns
+                         'gini',            -- split criterion
+                         NULL::text,        -- no grouping
+                         NULL::text,        -- no weights
+                         5,                 -- max depth
+                         3,                 -- min split
+                         1,                 -- min bucket
+                         10                 -- number of bins per continuous variable
+                         );
+</pre>
+
+-# Predict output categories for the same data as was used for input.
+<pre class="example">
+SELECT madlib.tree_predict('train_output',
+                           'dt_golf',
+                           'prediction_results',
+                           'response');
+SELECT * FROM prediction_results;
+</pre>
+Result:
+ id | estimated_class
+----+-----------------
+  1 | Don't Play
+  2 | Don't Play
+  3 | Play
+  4 | Play
+  5 | Play
+  6 | Don't Play
+  7 | Play
+  8 | Don't Play
+  9 | Play
+ 10 | Play
+ 11 | Play
+ 12 | Play
+ 13 | Play
+ 14 | Don't Play
+(14 rows)
+</pre>
+
+-# Obtain a dot format display of the tree
+<pre class="example">
+SELECT madlib.tree_display('train_output');
+</pre>
+Result:
+<pre class="result">
+digraph "Classification tree for dt_golf" {
+         subgraph "cluster0"{
+         label=""
+"g0_0" [label="\"OUTLOOK\"<={overcast}", shape=ellipse];
+"g0_0" -> "g0_1"[label="yes"];
+"g0_1" [label="\"Play\"",shape=box];
+"g0_0" -> "g0_2"[label="no"];
+"g0_2" [label="temperature<=75", shape=ellipse];
+"g0_2" -> "g0_5"[label="yes"];
+"g0_2" -> "g0_6"[label="no"];
+"g0_6" [label="\"Don't Play\"",shape=box];
+"g0_5" [label="temperature<=65", shape=ellipse];
+"g0_5" -> "g0_11"[label="yes"];
+"g0_11" [label="\"Don't Play\"",shape=box];
+"g0_5" -> "g0_12"[label="no"];
+"g0_12" [label="temperature<=70", shape=ellipse];
+"g0_12" -> "g0_25"[label="yes"];
+"g0_25" [label="\"Play\"",shape=box];
+"g0_12" -> "g0_26"[label="no"];
+"g0_26" [label="temperature<=72", shape=ellipse];
+"g0_26" -> "g0_53"[label="yes"];
+"g0_53" [label="\"Don't Play\"",shape=box];
+"g0_26" -> "g0_54"[label="no"];
+"g0_54" [label="\"Play\"",shape=box];
+
+         } //--- end of subgraph------------
+} //---end of digraph---------
+</pre>
+
+-# Obtain a text display of the tree
+<pre class="example">
+SELECT madlib.tree_display('train_output');
+</pre>
+Result:
+<pre class="result">
+-------------------------------------
+- Each node represented by 'id' inside ().
+- Leaf nodes have a * while internal nodes have the split condition at the end.
+- For each internal node (i), it's children will be at (2i+1) and (2i+2).
+- For each split the first indented child (2i+1) is the 'True' node and
+second indented child (2i+2) is the 'False' node.
+- Number of (weighted) rows for each response variable inside [].
+- Order of values = ['"Don\'t Play"', '"Play"']
+-------------------------------------
+(0)[ 5 9]  "OUTLOOK"<={overcast}
+  (1)[ 0 4]  *
+  (2)[ 5 5]  temperature<=75
+    (5)[ 3 5]  temperature<=65
+      (11)[ 1 0]  *
+      (12)[ 2 5]  temperature<=70
+        (25)[ 0 3]  *
+        (26)[ 2 2]  temperature<=72
+          (53)[ 2 0]  *
+          (54)[ 0 2]  *
+    (6)[ 2 0]  *
+-------------------------------------
+</pre>
+
+
+* Decision tree regression example *
+
+-# Prepare input data.
+<pre class="example">
+CREATE TABLE mt_cars (
+    id integer NOT NULL,
+    mpg double precision,
+    cyl integer,
+    disp double precision,
+    hp integer,
+    drat double precision,
+    wt double precision,
+    qsec double precision,
+    vs integer,
+    am integer,
+    gear integer,
+    carb integer
+) ;
+</pre>
+<pre class="example">
+COPY mt_cars (id,mpg,cyl,disp,hp,drat,wt,qsec,vs,am,gear,carb) FROM stdin WITH DELIMITER '|';
+1|18.7|8|360|175|3.15|3.44|17.02|0|0|3|2
+2|21|6|160|110|3.9|2.62|16.46|0|1|4|4
+3|24.4|4|146.7|62|3.69|3.19|20|1|0|4|2
+4|21|6|160|110|3.9|2.875|17.02|0|1|4|4
+5|17.8|6|167.6|123|3.92|3.44|18.9|1|0|4|4
+6|16.4|8|275.8|180|3.078|4.07|17.4|0|0|3|3
+7|22.8|4|108|93|3.85|2.32|18.61|1|1|4|1
+8|17.3|8|275.8|180|3.078|3.73|17.6|0|0|3|3
+9|21.4|6|258|110|3.08|3.215|19.44|1|0|3|1
+10|15.2|8|275.8|180|3.078|3.78|18|0|0|3|3
+11|18.1|6|225|105|2.768|3.46|20.22|1|0|3|1
+12|32.4|4|78.7|66|4.08|2.20|19.47|1|1|4|1
+13|14.3|8|360|245|3.21|3.578|15.84|0|0|3|4
+14|22.8|4|140.8|95|3.92|3.15|22.9|1|0|4|2
+15|30.4|4|75.7|52|4.93|1.615|18.52|1|1|4|2
+16|19.2|6|167.6|123|3.92|3.44|18.3|1|0|4|4
+17|33.9|4|71.14|65|4.22|1.835|19.9|1|1|4|1
+18|15.2|8|304|150|3.15|3.435|17.3|0|0|3|2
+19|10.4|8|472|205|2.93|5.25|17.98|0|0|3|4
+20|27.3|4|79|66|4.08|1.935|18.9|1|1|4|1
+21|10.4|8|460|215|3|5.424|17.82|0|0|3|4
+22|26|4|120.3|91|4.43|2.14|16.7|0|1|5|2
+23|14.7|8|440|230|3.23|5.345|17.42|0|0|3|4
+24|30.4|4|95.14|113|3.77|1.513|16.9|1|1|5|2
+25|21.5|4|120.1|97|3.70|2.465|20.01|1|0|3|1
+26|15.8|8|351|264|4.22|3.17|14.5|0|1|5|4
+27|15.5|8|318|150|2.768|3.52|16.87|0|0|3|2
+28|15|8|301|335|3.54|3.578|14.6|0|1|5|8
+29|13.3|8|350|245|3.73|3.84|15.41|0|0|3|4
+30|19.2|8|400|175|3.08|3.845|17.05|0|0|3|2
+31|19.7|6|145|175|3.62|2.77|15.5|0|1|5|6
+32|21.4|4|121|109|4.11|2.78|18.6|1|1|4|2
+\\.
+</pre>
+
+-# Run Decision Tree train function.
+<pre class="example">
+DROP TABLE IF EXISTS train_output, train_output_summary;
+SELECT madlib.tree_train('mt_cars',
+                         'train_output',
+                         'id',
+                         'mpg',
+                         '*',
+                         'id, hp, drat, am, gear, carb',  -- exclude columns
+                         'mse',
+                         NULL::text,
+                         NULL::text,
+                         10,
+                         8,
+                         3,
+                         10
+                         );
+</pre>
+
+-# Display the decision tree in dot format.
+<pre class="example">
+SELECT madlib.tree_display('train_output');
+</pre>
+Result:
+<pre class="result">
+digraph "Regression tree for mt_cars" {
+         subgraph "cluster0"{
+         label=""
+"g0_0" [label="wt<=2.2", shape=ellipse];
+"g0_0" -> "g0_1"[label="yes"];
+"g0_1" [label="30.0667",shape=box];
+"g0_0" -> "g0_2"[label="no"];
+"g0_2" [label="cyl<={8}", shape=ellipse];
+"g0_2" -> "g0_5"[label="yes"];
+"g0_2" -> "g0_6"[label="no"];
+"g0_5" [label="qsec<=17.42", shape=ellipse];
+"g0_5" -> "g0_11"[label="yes"];
+"g0_5" -> "g0_12"[label="no"];
+"g0_12" [label="13.325",shape=box];
+"g0_6" [label="cyl<={8,6}", shape=ellipse];
+"g0_6" -> "g0_13"[label="yes"];
+"g0_13" [label="19.7429",shape=box];
+"g0_6" -> "g0_14"[label="no"];
+"g0_14" [label="22.58",shape=box];
+"g0_11" [label="qsec<=16.9", shape=ellipse];
+"g0_11" -> "g0_23"[label="yes"];
+"g0_23" [label="14.78",shape=box];
+"g0_11" -> "g0_24"[label="no"];
+"g0_24" [label="16.84",shape=box];
+
+         } //--- end of subgraph------------
+} //---end of digraph---------
+</pre>
+
+-# Predict regression output for the same data and compare with original.
+<pre class="example">
+DROP TABLE IF EXISTS prediction_results;
+SELECT madlib.tree_predict('train_output',
+                           'mt_cars',
+                           'prediction_results',
+                           'response');
+SELECT id, mpg, estimated_mpg FROM prediction_results JOIN mt_cars on (id);
+</pre>
+Result:
+<pre class="result">
+ id | mpg  |  estimated_mpg
+----+------+------------------
+  1 | 18.7 |     18.78
+  2 |   21 |     21.7
+  3 | 24.4 |     29.26
+  4 |   21 |     21.7
+  5 | 17.8 |     18.78
+  6 | 16.4 |     14.46
+  7 | 22.8 |     21.7
+  8 | 17.3 |     14.46
+  9 | 21.4 |     21.7
+ 10 | 15.2 |     14.46
+ 11 | 18.1 |     18.78
+ 12 | 32.4 |     29.26
+ 13 | 14.3 |     14.46
+ 14 | 22.8 |     21.7
+ 15 | 30.4 |     29.26
+ 16 | 19.2 |     18.78
+ 17 | 33.9 |     29.26
+ 18 | 15.2 |     14.46
+ 19 | 10.4 |     14.46
+ 20 | 27.3 |     29.26
+ 21 | 10.4 |     14.46
+ 22 |   26 |     29.26
+ 23 | 14.7 |     14.46
+ 24 | 30.4 |     29.26
+ 25 | 21.5 |     21.7
+ 26 | 15.8 |     14.46
+ 27 | 15.5 |     14.46
+ 28 |   15 |     14.46
+ 29 | 13.3 |     14.46
+ 30 | 19.2 |     18.78
+ 31 | 19.7 |     18.78
+ 32 | 21.4 |     21.7
+(32 rows)
+</pre>
+
+@anchor related
+@par Related Topics
+
+File decision_tree.sql_in documenting the training function
+
+@internal
+@sa Namespace
+    \ref madlib::modules::recursive_partitioning documenting the implementation in C++
+@endinternal
+
+*/
+
+------------------------------------------------------------
+
+/**
+  * @brief Training of decision tree
+  *
+  * @param split_criterion Various options to compute the feature
+  *        to split a node. Available options are 'gini',
+  *        'cross-entropy', and 'misclassification'. The "cart"
+  *        algorithm provides an additional option of 'mse'.
+  * @param training_table_name Name of the table containing data.
+  * @param output_table_name Name of the table to output the model.
+  * @param id_col_name Name of column containing the id information
+  *        in training data.
+  * @param dependent_variable Name of the column that contains the
+  *        output for training. Boolean, integer and text are
+  *        considered classification outputs, while float values
+  *        are considered regression outputs.
+  * @param list_of_features List of column names (comma-separated string)
+  *        to use as predictors. Can also be a ‘*’ implying all columns
+  *        are to be used as predictors (except the ones included in
+  *        the next argument). Boolean, integer, and text columns are
+  *        considered categorical columns.
+  * @param list_of_features_to_exclude OPTIONAL. List of column names
+  *        (comma-separated string) to exlude from the predictors list.
+  * @param grouping_cols OPTIONAL. List of column names (comma-separated
+  *        string) to group the data by. This will lead to creating
+  *        multiple decision trees, one for each group.
+  * @param weights OPTIONAL. Column name containing weights for
+  *        each observation.
+  * @param max_depth OPTIONAL (Default = 10). Set the maximum depth
+  *        of any node of the final tree, with the root node counted
+  *        as depth 0.
+  * @param min_split OPTIONAL (Default = 20). Minimum number of
+  *        observations that must exist in a node for a split to
+  *        be attempted.
+  * @param min_bucket OPTIONAL (Default = minsplit/3). Minimum
+  *        number of observations in any terminal node. If only
+  *        one of minbucket or minsplit is specified, minsplit
+  *        is set to minbucket*3 or minbucket to minsplit/3, as
+  *        appropriate.
+  * @param num_splits optional (default = 100) number of bins to use
+  *        during binning. continuous-valued features are binned
+  *        into discrete bins (per the quartile values) to compute
+  *        split bound- aries. this global parameter is used to
+  *        compute the resolution of the bins. higher number of
+  *        bins will lead to higher processing time.
+  * @param pruning_params (default = 'cp=0.01') pruning parameter string
+  *         containing key-value pairs.
+  *        the keys can be:
+  *             cp (default = 0.01) a complexity parameter
+  *                  that determines that a split is attempted only if it
+  *                  decreases the overall lack of fit by a factor of ‘cp’.
+  *             n_folds (default = 0) number of cross-validation folds
+  * @param verbose optional (default = false) prints status
+  *        information on the splits performed and any other
+  *        information useful for debugging.
+  *
+  * see \ref grp_decision_tree for more details.
+  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT,
+    weights                     TEXT,
+    max_depth                   INTEGER,
+    min_split                   INTEGER,
+    min_bucket                  INTEGER,
+    num_splits                  INTEGER,
+    pruning_params              TEXT,
+    verbose                     BOOLEAN
+) RETURNS VOID AS $$
+    PythonFunctionBodyOnly(`recursive_partitioning', `decision_tree')
+    decision_tree.tree_train(
+        schema_madlib,
+        training_table_name,
+        output_table_name,
+        id_col_name,
+        dependent_variable,
+        list_of_features,
+        list_of_features_to_exclude,
+        split_criterion,
+        grouping_cols,
+        weights,
+        max_depth,
+        min_split,
+        min_bucket,
+        num_splits,
+        pruning_params,
+        verbose
+    )
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    message     TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(recursive_partitioning, decision_tree, tree_train_help_message)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train()
+RETURNS TEXT AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.tree_train('');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_con_splits_transition(
+    state           MADLIB_SCHEMA.bytea8,
+    con_features    DOUBLE PRECISION[],
+    n_per_seg       INTEGER,
+    num_splits      SMALLINT
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME', 'dst_compute_con_splits_transition'
+LANGUAGE c IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_con_splits_merge(
+    state1          MADLIB_SCHEMA.bytea8,
+    state2          MADLIB_SCHEMA.bytea8
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME', 'dst_compute_con_splits_merge'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA._dst_con_splits CASCADE;
+CREATE TYPE MADLIB_SCHEMA._dst_con_splits AS (
+    con_splits      DOUBLE PRECISION[][]
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_con_splits_final(
+    state           MADLIB_SCHEMA.bytea8
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME', 'dst_compute_con_splits_final'
+LANGUAGE c IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA._dst_compute_con_splits(
+    DOUBLE PRECISION[],
+    INTEGER,
+    SMALLINT
+);
+
+-- Returns a DOUBLE PRECISION[]
+CREATE AGGREGATE MADLIB_SCHEMA._dst_compute_con_splits(
+    /* continuous features */       DOUBLE PRECISION[],
+    /* sample number per segment */ INTEGER,
+    /* bin number to compute */     SMALLINT
+) (
+    SType = MADLIB_SCHEMA.BYTEA8,
+    SFunc = MADLIB_SCHEMA._dst_compute_con_splits_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `PreFunc = MADLIB_SCHEMA._dst_compute_con_splits_merge,')
+    FinalFunc = MADLIB_SCHEMA._dst_compute_con_splits_final,
+    InitCond = ''
+);
+
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_entropy_transition(
+    state           integer[],
+    encoded_dep_var integer, -- dependent variable as index
+    num_dep_var     integer  -- constant for the state size
+) RETURNS integer[] AS
+    'MODULE_PATHNAME', 'dst_compute_entropy_transition'
+LANGUAGE c IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_entropy_merge(
+    state1          integer[],
+    state2          integer[]
+) RETURNS integer[] AS
+    'MODULE_PATHNAME', 'dst_compute_entropy_merge'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_entropy_final(
+    state           integer[]
+) RETURNS double precision AS
+    'MODULE_PATHNAME', 'dst_compute_entropy_final'
+LANGUAGE c IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+-- COmpute the ordered levels for categorical variables
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA._dst_compute_entropy(
+        integer, integer) CASCADE;
+CREATE AGGREGATE MADLIB_SCHEMA._dst_compute_entropy(
+    /* encoded_dep_var */   integer, -- dependent variable as index
+    /* num_dep_var */       integer  -- constant for the state size
+) (
+    SType = integer[],
+    SFunc = MADLIB_SCHEMA._dst_compute_entropy_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `PreFunc = MADLIB_SCHEMA._dst_compute_entropy_merge,')
+    FinalFunc = MADLIB_SCHEMA._dst_compute_entropy_final
+);
+
+------------------------------------------------------------
+
+-- Translate the categorical variable values into the integer
+-- representation of the distinct levels
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._map_catlevel_to_int(
+    cat_values_in_text          TEXT[],     -- categorical variable value from each row
+    cat_levels_in_text          TEXT[],     -- all levels in text
+    cat_n_levels                INTEGER[]   -- number of levels for each categorical variable
+) RETURNS INTEGER[] AS
+    'MODULE_PATHNAME', 'map_catlevel_to_int'
+LANGUAGE c IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._initialize_decision_tree(
+    is_regression_tree  BOOLEAN,
+    impurity_function   TEXT,
+    num_response_labels SMALLINT
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME', 'initialize_decision_tree'
+LANGUAGE c IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._compute_leaf_stats_transition(
+    state                  MADLIB_SCHEMA.BYTEA8,
+    tree_state             MADLIB_SCHEMA.BYTEA8,
+    cat_features           INTEGER[],
+    con_features           DOUBLE PRECISION[],
+    response               DOUBLE PRECISION,
+    weight                 DOUBLE PRECISION,
+    cat_levels             INTEGER[],
+    con_splits             MADLIB_SCHEMA.BYTEA8,
+    n_response_labels      SMALLINT
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME', 'compute_leaf_stats_transition'
+LANGUAGE c IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._compute_leaf_stats_merge(
+    state1          MADLIB_SCHEMA.BYTEA8,
+    state2          MADLIB_SCHEMA.BYTEA8
+) RETURNS MADLIB_SCHEMA.bytea8 AS
+    'MODULE_PATHNAME', 'compute_leaf_stats_merge'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA._tree_result_type CASCADE;
+CREATE TYPE MADLIB_SCHEMA._tree_result_type AS (
+    tree_state      MADLIB_SCHEMA.BYTEA8,
+    finished        smallint -- 0 running, 1 finished, 2 failed
+);
+
+
+-- One step in the iteration
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA._compute_leaf_stats(
+    MADLIB_SCHEMA.bytea8,
+    INTEGER[],
+    DOUBLE PRECISION[],
+    DOUBLE PRECISION,
+    DOUBLE PRECISION,
+    INTEGER[],
+    MADLIB_SCHEMA.BYTEA8,
+    SMALLINT
+) CASCADE;
+
+CREATE AGGREGATE MADLIB_SCHEMA._compute_leaf_stats(
+    /* current tree state */        MADLIB_SCHEMA.bytea8,
+    /* categorical features */      INTEGER[],
+    /* continuous features */       DOUBLE PRECISION[],
+    /* response */                  DOUBLE PRECISION,
+    /* weights */                   DOUBLE PRECISION,
+    /* categorical level numbers */ INTEGER[],
+    /* continuous splits */         MADLIB_SCHEMA.BYTEA8,
+    /* number of dep levels */      SMALLINT
+) (
+    InitCond = '',
+    SType = MADLIB_SCHEMA.bytea8,
+    SFunc = MADLIB_SCHEMA._compute_leaf_stats_transition
+    m4_ifdef(`__POSTGRESQL__', `', `, PreFunc = MADLIB_SCHEMA._compute_leaf_stats_merge')
+);
+
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dt_apply(
+    tree            MADLIB_SCHEMA.bytea8,   -- previous tree
+    state           MADLIB_SCHEMA.bytea8,   -- current tree state returned by the train aggregate
+    con_splits      MADLIB_SCHEMA.BYTEA8,
+    min_split       SMALLINT,
+    min_bucket      SMALLINT,
+    max_depth       SMALLINT
+) RETURNS MADLIB_SCHEMA._tree_result_type AS
+    'MODULE_PATHNAME', 'dt_apply'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------
+
+-- a flattened representation of the tree used internally
+DROP TYPE IF EXISTS MADLIB_SCHEMA._flattened_tree CASCADE;
+CREATE TYPE MADLIB_SCHEMA._flattened_tree AS (
+    tree_depth          SMALLINt,
+    feature_indices     INTEGER[],
+    feature_thresholds  DOUBLE PRECISION[],
+    is_categorical      INTEGER[],
+    predictions         DOUBLE PRECISION[][]);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._print_decision_tree(
+    tree            MADLIB_SCHEMA.BYTEA8
+) RETURNS MADLIB_SCHEMA._flattened_tree AS
+    'MODULE_PATHNAME', 'print_decision_tree'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._predict_dt_response(
+    tree            MADLIB_SCHEMA.BYTEA8,
+    cat_features    INTEGER[],
+    con_features    DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION AS
+    'MODULE_PATHNAME', 'predict_dt_response'
+LANGUAGE C VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._predict_dt_prob(
+    tree            MADLIB_SCHEMA.BYTEA8,
+    cat_features    INTEGER[],
+    con_features    DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+    'MODULE_PATHNAME', 'predict_dt_prob'
+LANGUAGE C VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------
+
+/**
+  * @brief Use decision tree model to make predictions
+  *
+  * @param tree_model Name of the table containing the decision tree model
+  * @param new_data_table Name of table containing prediction data
+  * @param output_table Name of table to output prediction results
+  * @param type OPTIONAL (Default = 'response'). For regression trees,
+  *        'response', implies output is the predicted value. For
+  *        classification trees, this can be 'response', giving the
+  *        classification prediction as output, or ‘prob’, giving the
+  *        class probabilities as output (for two classes, only a
+  *        single probability value is output that corresponds to the
+  *        first class when the two classes are sorted by name; in
+  *        case of more than two classes, an array of class probabilities
+  *        (a probability of each class) is output).
+  *
+  * See \ref grp_decision_tree for more details.
+  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_predict(
+    tree_model                  TEXT,
+    new_data_table              TEXT,
+    output_table                TEXT,
+    type                        TEXT
+) RETURNS VOID AS $$
+    PythonFunctionBodyOnly(`recursive_partitioning', `decision_tree')
+    decision_tree.tree_predict(
+        schema_madlib,
+        tree_model,
+        new_data_table,
+        output_table,
+        type
+    )
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_predict(
+    message     TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(recursive_partitioning, decision_tree, tree_predict_help_message)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_predict()
+RETURNS TEXT AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.tree_predict('');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------
+
+------------------------------------------------------------
+
+/**
+  *@brief Display decision tree in dot or text format
+  *
+  *@param tree_model Name of the table containing the decision tree model
+  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_display(
+    model_table    TEXT,
+    dot_format     BOOLEAN
+) RETURNS VARCHAR AS $$
+    PythonFunctionBodyOnly(`recursive_partitioning', `decision_tree')
+    return decision_tree.tree_display(schema_madlib, model_table, dot_format)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_display(
+    model_table                  TEXT
+) RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.tree_display($1, True);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._display_decision_tree(
+  tree               MADLIB_SCHEMA.bytea8,
+  cat_features       TEXT[],
+  con_features       TEXT[],
+  cat_levels_in_text TEXT[],
+  cat_n_levels       INTEGER[],
+  dependent_levels   TEXT[],
+  id_prefix          TEXT
+)  RETURNS TEXT
+AS 'MODULE_PATHNAME', 'display_decision_tree'
+LANGUAGE C STRICT IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._display_text_decision_tree(
+  tree            MADLIB_SCHEMA.BYTEA8,
+  cat_features       TEXT[],
+  con_features       TEXT[],
+  cat_levels_in_text TEXT[],
+  cat_n_levels       INTEGER[]
+) RETURNS TEXT AS
+    'MODULE_PATHNAME', 'display_text_tree'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+------------------------------------------------------------
+
+-- Grouping support helper functions
+
+------------------------------------------------------------
+
+-- Store the categorical variable levels in memory
+DROP TYPE IF EXISTS MADLIB_SCHEMA._cat_levels_type CASCADE;
+CREATE TYPE MADLIB_SCHEMA._cat_levels_type AS (
+    grp_key                 TEXT,       -- grouping column values concatenated in a comma separated string
+    cat_levels_in_text      TEXT[],     -- The ordered origin levels
+    cat_n_levels            INTEGER[]   -- number of levels of each categorical variable
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._gen_cat_levels_set(
+    grp_keys                TEXT[],     -- all grp_key
+    cat_n_levels            INTEGER[],  -- all cat_level_n for all groups in one array
+    n_cat                   INTEGER,    -- number of categorical variables
+    cat_sorted_origin       TEXT[]      -- sorted origin text levels
+) RETURNS SETOF MADLIB_SCHEMA._cat_levels_type AS $$
+    n_grp = len(grp_keys)
+    if n_grp == 0:
+        return
+    count = 0
+    count1 = 0
+    for i in range(n_grp):
+        n_levels = sum(cat_n_levels[count:(count + n_cat)])
+        yield (grp_keys[i], cat_sorted_origin[count1:(count1 + n_levels)], cat_n_levels[count:(count + n_cat)])
+        count += n_cat
+        count1 += n_levels
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+-------------------------------------------------------------------------
+
+------------------------------------------------------------
+-- All derived functions of tree_train (created to set some arguments as optional)
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT,
+    weights                     TEXT,
+    max_depth                   INTEGER,
+    min_split                   INTEGER,
+    min_bucket                  INTEGER,
+    num_splits                  INTEGER,
+    pruning_params              TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                                    $11, $12, $13, $14, FALSE);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT,
+    weights                     TEXT,
+    max_depth                   INTEGER,
+    min_split                   INTEGER,
+    min_bucket                  INTEGER,
+    num_splits                  INTEGER
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                                    $11, $12, $13, 'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT,
+    weights                     TEXT,
+    max_depth                   INTEGER,
+    min_split                   INTEGER,
+    min_bucket                  INTEGER
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+        100::INTEGER, 'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT,
+    weights                     TEXT,
+    max_depth                   INTEGER,
+    min_split                   INTEGER
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+        ($11/3)::INTEGER, 100::INTEGER, 'cp=0.01'::TEXT,
+        FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT,
+    weights                     TEXT,
+    max_depth                   INTEGER
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        20::INTEGER, 6::INTEGER, 100::INTEGER, 'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT,
+    weights                     TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9,
+        10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+        'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT,
+    grouping_cols               TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8,
+        NULL::TEXT, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+        'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    split_criterion             TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7,
+        NULL::TEXT, NULL::TEXT, 10::INTEGER, 20::INTEGER,
+        6::INTEGER, 100::INTEGER, 'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6,
+        'gini'::TEXT, NULL::TEXT, NULL::TEXT, 10::INTEGER,
+        20::INTEGER, 6::INTEGER, 100::INTEGER, 'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5,
+        NULL::TEXT, 'gini'::TEXT, NULL::TEXT, NULL::TEXT,
+        10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+        'cp=0.01'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------

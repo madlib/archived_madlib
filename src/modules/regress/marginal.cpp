@@ -1,11 +1,9 @@
 /* ------------------------------------------------------
  *
- * @file logistic.cpp
+ * @file marginal.cpp
  *
- * @brief Logistic-Regression functions
+ * @brief Marginal effects for regression functions
  *
- * We implement the conjugate-gradient method and the iteratively-reweighted-
- * least-squares method.
  *
  *//* ----------------------------------------------------------------------- */
 #include <limits>
@@ -209,7 +207,7 @@ class MarginsLinregrInteractionState {
  */
 AnyType
 margins_linregr_int_transition::run(AnyType &args) {
-    // Early return because of an exception has been "thrown" 
+    // Early return because of an exception has been "thrown"
     // (actually "warning") in the previous invocations
     if (args[0].isNull())
         return Null();
@@ -465,7 +463,7 @@ class MarginsLogregrInteractionState {
  */
 AnyType
 margins_logregr_int_transition::run(AnyType &args) {
-    // Early return because of an exception has been "thrown" 
+    // Early return because of an exception has been "thrown"
     // (actually "warning") in the previous invocations
     if (args[0].isNull())
         return Null();
@@ -865,7 +863,7 @@ reindex(Index outer, Index inner, Index block) { return outer * block + inner; }
  */
 AnyType
 margins_mlogregr_int_transition::run(AnyType &args) {
-    // Early return because of an exception has been "thrown" 
+    // Early return because of an exception has been "thrown"
     // (actually "warning") in the previous invocations
     if (args[0].isNull())
         return Null();
@@ -886,7 +884,7 @@ margins_mlogregr_int_transition::run(AnyType &args) {
     }
 
     // The following check was added with MADLIB-138.
-    if (!dbal::eigen_integration::isfinite(f)) { 
+    if (!dbal::eigen_integration::isfinite(f)) {
         //throw std::domain_error("Design matrix is not finite.");
         warning("Design matrix is not finite.");
         return Null();

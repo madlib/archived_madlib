@@ -20,12 +20,18 @@ typedef HandleMap<ColumnVector, MutableArrayHandle<double> >
     MutableNativeColumnVector;
 typedef HandleMap<const Matrix, ArrayHandle<double> > NativeMatrix;
 typedef HandleMap<Matrix, MutableArrayHandle<double> > MutableNativeMatrix;
+typedef HandleMap<const IntegerVector, ArrayHandle<int> > NativeIntegerVector;
+typedef HandleMap<IntegerVector, MutableArrayHandle<int> >
+    MutableNativeIntegerVector;
 
 typedef HandleMap<const ColumnVector, TransparentHandle<double> > MappedColumnVector;
 typedef HandleMap<ColumnVector, TransparentHandle<double, Mutable> >
     MutableMappedColumnVector;
 typedef HandleMap<const Matrix, TransparentHandle<double> > MappedMatrix;
 typedef HandleMap<Matrix, TransparentHandle<double, Mutable> > MutableMappedMatrix;
+typedef HandleMap<const IntegerVector, TransparentHandle<int> > MappedIntegerVector;
+typedef HandleMap<IntegerVector, TransparentHandle<int, Mutable> >
+    MutableMappedIntegerVector;
 
 } // namespace eigen_integration
 

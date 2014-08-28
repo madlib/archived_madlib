@@ -24,3 +24,5 @@
 #include "linalg/matrix_op.hpp"
 #include "linalg/svd.hpp"
 #include "tsa/arima.hpp"
+#include "recursive_partitioning/decision_tree.hpp"
+#include "recursive_partitioning/feature_encoding.hpp"

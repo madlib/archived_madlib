@@ -32,6 +32,15 @@ struct DynamicStructType<eigen_integration::ColumnVector, IsMutable> {
 };
 
 template <bool IsMutable>
+struct DynamicStructType<eigen_integration::IntegerVector, IsMutable> {
+    typedef eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            eigen_integration::IntegerVector,
+            const eigen_integration::IntegerVector>::type,
+        TransparentHandle<int, IsMutable> > type;
+};
+
+template <bool IsMutable>
 struct DynamicStructType<eigen_integration::Matrix, IsMutable> {
     typedef eigen_integration::HandleMap<
         typename boost::mpl::if_c<IsMutable,
@@ -376,8 +385,7 @@ template <class Derived, class Container>
 template <class OtherDerived>
 DynamicStruct<Derived, Container, Mutable>&
 DynamicStruct<Derived, Container, Mutable>::copy(
-        const DynamicStruct<OtherDerived, typename OtherDerived::Container_type>
-            &inOtherStruct) {
+        const OtherDerived &inOtherStruct) {
 
     if (this->size() != inOtherStruct.size()) {
         this->setSize(inOtherStruct.size());

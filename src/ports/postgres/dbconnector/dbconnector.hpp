@@ -246,7 +246,7 @@ using dbconnector::postgres::dberr;
 
 // A wrapper function added as a workaround to fix MADLIB-769
 // To support grouping, we cannot throw an exception because
-// it will exit the process. Instead, we print a message and 
+// it will exit the process. Instead, we print a message and
 // set an internal status in the state variable in the C++ code.
 inline void warning(std::string msg){
     elog(WARNING, "%s", msg.c_str());

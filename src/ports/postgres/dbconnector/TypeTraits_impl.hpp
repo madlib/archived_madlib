@@ -151,7 +151,7 @@ struct TypeTraits<float>{
 template <>
 struct TypeTraits<int64_t> : public TypeTraitsBase<int64_t> {
     enum { oid = INT8OID };
-    enum { alignment = ALIGNOF_DOUBLE };
+    enum { alignment = ALIGNOF_LONG };
     WITH_TO_PG_CONVERSION( Int64GetDatum(value) );
     WITH_TO_CXX_CONVERSION( DatumGetInt64(value) );
 };
@@ -159,7 +159,7 @@ struct TypeTraits<int64_t> : public TypeTraitsBase<int64_t> {
 template <>
 struct TypeTraits<uint64_t> : public TypeTraitsBase<uint64_t> {
     enum { oid = INT8OID };
-    enum { alignment = ALIGNOF_DOUBLE };
+    enum { alignment = ALIGNOF_LONG };
     WITH_TO_PG_CONVERSION(
         Int64GetDatum((convertTo<uint64_t, int64_t>(value)))
     );
@@ -371,6 +371,7 @@ struct TypeTraits<MutableArrayHandle<double> > {
     );
 };
 
+// NativeColumnVector
 template <>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
@@ -383,7 +384,7 @@ struct TypeTraits<
 
     WITH_OID( FLOAT8ARRAYOID );
     WITH_TYPE_CLASS( dbal::ArrayType );
-    WITH_MUTABILITY( dbal::Mutable );
+    WITH_MUTABILITY( dbal::Immutable );
     WITH_DEFAULT_EXTENDED_TRAITS;
     WITH_TO_PG_CONVERSION( PointerGetDatum(value.memoryHandle().array()) );
     WITH_TO_CXX_CONVERSION(
@@ -392,6 +393,7 @@ struct TypeTraits<
     );
 };
 
+// MutableNativeColumnVector
 template <>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
@@ -416,51 +418,54 @@ struct TypeTraits<
     );
 };
 
-// FIXME: This looks gross. We want to express this without hurting our eyes.
-template <bool IsMutable>
+// NativeIntegerVector
+template <>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
-        typename boost::mpl::if_c<IsMutable,
-            dbal::eigen_integration::ColumnVector,
-            const dbal::eigen_integration::ColumnVector>::type,
-        TransparentHandle<double, IsMutable> > >
-  : public TypeTraitsBase<dbal::eigen_integration::HandleMap<
-        typename boost::mpl::if_c<IsMutable,
-            dbal::eigen_integration::ColumnVector,
-            const dbal::eigen_integration::ColumnVector>::type,
-        TransparentHandle<double, IsMutable> > > {
+        const dbal::eigen_integration::IntegerVector,
+        ArrayHandle<int> > > {
 
-    typedef TypeTraitsBase<dbal::eigen_integration::HandleMap<
-        typename boost::mpl::if_c<IsMutable,
-            dbal::eigen_integration::ColumnVector,
-            const dbal::eigen_integration::ColumnVector>::type,
-        TransparentHandle<double, IsMutable> > > Base;
-    typedef typename Base::value_type value_type;
+    typedef dbal::eigen_integration::HandleMap<
+        const dbal::eigen_integration::IntegerVector,
+        ArrayHandle<int> > value_type;
 
-    enum { oid = FLOAT8ARRAYOID };
-    enum { alignment = ALIGNOF_DOUBLE };
-    enum { isMutable = IsMutable };
-    enum { typeClass = dbal::ArrayType };
-
-    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) )
-    WITH_TO_CXX_CONVERSION((
-        NativeArrayToMappedVector<value_type>(value, needMutableClone)
-    ));
+    WITH_OID( INT4ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Immutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.memoryHandle().array()) );
+    WITH_TO_CXX_CONVERSION(
+        ArrayHandle<int>(reinterpret_cast<ArrayType*>(
+            madlib_DatumGetArrayTypeP(value)))
+    );
 };
 
+// MutableNativeIntegerVector
 template <>
-struct TypeTraits<dbal::eigen_integration::ColumnVector>
-  : public TypeTraitsBase<dbal::eigen_integration::ColumnVector> {
-    typedef dbal::eigen_integration::ColumnVector value_type;
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::IntegerVector,
+        MutableArrayHandle<int> > > {
 
-    enum { oid = FLOAT8ARRAYOID };
-    enum { isMutable = dbal::Immutable };
-    enum { typeClass = dbal::ArrayType };
-    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
-    // No need to support retrieving this type from the backend. Use
-    // MappedMatrix instead.
+    typedef dbal::eigen_integration::HandleMap<
+        dbal::eigen_integration::IntegerVector,
+        MutableArrayHandle<int> > value_type;
+
+    WITH_OID( INT4ARRAYOID );
+    WITH_TYPE_CLASS( dbal::ArrayType );
+    WITH_MUTABILITY( dbal::Mutable );
+    WITH_DEFAULT_EXTENDED_TRAITS;
+    WITH_TO_PG_CONVERSION( PointerGetDatum(value.memoryHandle().array()) );
+    WITH_TO_CXX_CONVERSION(
+        MutableArrayHandle<int>(reinterpret_cast<ArrayType*>(
+            needMutableClone
+                ? madlib_DatumGetArrayTypePCopy(value)
+                : madlib_DatumGetArrayTypeP(value)
+        ))
+    );
 };
 
+// NativeMatrix
 template <>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
@@ -483,6 +488,7 @@ struct TypeTraits<
     );
 };
 
+// MutableNativeMatrix
 template <>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
@@ -507,6 +513,72 @@ struct TypeTraits<
     );
 };
 
+// MappedColumnVector and MutableMappedColumnVector
+// FIXME: This looks gross. We want to express this without hurting our eyes.
+template <bool IsMutable>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::ColumnVector,
+            const dbal::eigen_integration::ColumnVector>::type,
+        TransparentHandle<double, IsMutable> > >
+  : public TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::ColumnVector,
+            const dbal::eigen_integration::ColumnVector>::type,
+        TransparentHandle<double, IsMutable> > > {
+
+    typedef TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::ColumnVector,
+            const dbal::eigen_integration::ColumnVector>::type,
+        TransparentHandle<double, IsMutable> > > Base;
+    typedef typename Base::value_type value_type;
+
+    enum { oid = FLOAT8ARRAYOID };
+    enum { alignment = MAXIMUM_ALIGNOF };
+    enum { isMutable = IsMutable };
+    enum { typeClass = dbal::ArrayType };
+
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) )
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedVector<value_type>(value, needMutableClone)
+    ));
+};
+
+// MappedIntegerVector and MutableMappedIntegerVector
+template <bool IsMutable>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::IntegerVector,
+            const dbal::eigen_integration::IntegerVector>::type,
+        TransparentHandle<int, IsMutable> > >
+  : public TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::IntegerVector,
+            const dbal::eigen_integration::IntegerVector>::type,
+        TransparentHandle<int, IsMutable> > > {
+
+    typedef TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::IntegerVector,
+            const dbal::eigen_integration::IntegerVector>::type,
+        TransparentHandle<int, IsMutable> > > Base;
+    typedef typename Base::value_type value_type;
+
+    enum { oid = INT4ARRAYOID };
+    enum { alignment = MAXIMUM_ALIGNOF };
+    enum { isMutable = IsMutable };
+    enum { typeClass = dbal::ArrayType };
+
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) )
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedVector<value_type>(value, needMutableClone)
+    ));
+};
+
+// MappedMatrix and MutableMappedMatrix
 template <bool IsMutable>
 struct TypeTraits<
     dbal::eigen_integration::HandleMap<
@@ -528,7 +600,7 @@ struct TypeTraits<
     typedef typename Base::value_type value_type;
 
     enum { oid = FLOAT8ARRAYOID };
-    enum { alignment = ALIGNOF_DOUBLE };
+    enum { alignment = MAXIMUM_ALIGNOF };
     enum { isMutable = IsMutable };
     enum { typeClass = dbal::ArrayType };
 
@@ -536,6 +608,35 @@ struct TypeTraits<
     WITH_TO_CXX_CONVERSION((
         NativeArrayToMappedMatrix<value_type>(value, needMutableClone)
     ))
+};
+
+// ------------------------------------------------------------------------
+// locally allocated structures require copying
+// ------------------------------------------------------------------------
+template <>
+struct TypeTraits<dbal::eigen_integration::ColumnVector>
+  : public TypeTraitsBase<dbal::eigen_integration::ColumnVector> {
+    typedef dbal::eigen_integration::ColumnVector value_type;
+
+    enum { oid = FLOAT8ARRAYOID };
+    enum { isMutable = dbal::Immutable };
+    enum { typeClass = dbal::ArrayType };
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // MappedColumnVector instead.
+};
+
+template <>
+struct TypeTraits<dbal::eigen_integration::IntegerVector>
+  : public TypeTraitsBase<dbal::eigen_integration::IntegerVector> {
+    typedef dbal::eigen_integration::IntegerVector value_type;
+
+    enum { oid = INT4ARRAYOID };
+    enum { isMutable = dbal::Immutable };
+    enum { typeClass = dbal::ArrayType };
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorToNativeArray(value)) );
+    // No need to support retrieving this type from the backend. Use
+    // MappedIntegerVector instead.
 };
 
 template <>

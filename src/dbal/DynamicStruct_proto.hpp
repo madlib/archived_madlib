@@ -188,8 +188,7 @@ protected:
     bool mSizeIsLocked;
 
     template <class OtherDerived> DynamicStruct& copy(
-        const DynamicStruct<OtherDerived, typename OtherDerived::Container_type>&
-            inOtherStruct);
+        const OtherDerived &inOtherStruct);
 };
 
 template <typename T, bool IsMutable>
@@ -223,6 +222,8 @@ struct DynamicStructType;
     typedef typename DynamicStructType<int16_t, isMutable>::type int16_type; \
     typedef typename DynamicStructType<ColumnVector, isMutable>::type \
         ColumnVector_type; \
+    typedef typename DynamicStructType<IntegerVector, isMutable>::type \
+        IntegerVector_type; \
     typedef typename DynamicStructType<Matrix, isMutable>::type Matrix_type
 
 

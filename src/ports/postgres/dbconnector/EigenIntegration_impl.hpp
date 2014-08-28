@@ -20,6 +20,7 @@ namespace eigen_integration {
 // ------------------------------------------------------------------------
 // HandleMap::HandleMap()
 // ------------------------------------------------------------------------
+// eigen_integration::NativeMatrix
 /**
  * @brief Initialize HandleMap backed by the given handle
  *
@@ -34,6 +35,7 @@ HandleMap<const Matrix, ArrayHandle<double> >::HandleMap(
         inHandle.sizeOfDim(0)),
     mMemoryHandle(inHandle) { }
 
+// eigen_integration::MutableNativeMatrix
 /**
  * @brief Initialize HandleMap backed by the given handle
  *
@@ -48,6 +50,7 @@ HandleMap<Matrix, MutableArrayHandle<double> >::HandleMap(
         inHandle.sizeOfDim(0)),
     mMemoryHandle(inHandle) { }
 
+// eigen_integration::NativeColumnVector
 /**
  * @brief Construct the HandleMap as one-dimensional vector
  *
@@ -60,6 +63,7 @@ HandleMap<const ColumnVector, ArrayHandle<double> >::HandleMap(
   : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
     mMemoryHandle(inHandle) { }
 
+// eigen_integration::MutableNativeColumnVector
 /**
  * @brief Construct the HandleMap as one-dimensional vector
  *
@@ -72,34 +76,36 @@ HandleMap<ColumnVector, MutableArrayHandle<double> >::HandleMap(
   : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
     mMemoryHandle(inHandle) { }
 
+// eigen_integration::NativeIntegerVector
+/**
+ * @brief Construct the HandleMap as one-dimensional vector
+ *
+ * This constructor uses size() method in ArrayHandle to determine the length.
+ */
+template <>
+inline
+HandleMap<const IntegerVector, ArrayHandle<int> >::HandleMap(
+    const ArrayHandle<int>& inHandle)
+  : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
+    mMemoryHandle(inHandle) { }
+
+// eigen_integration::MutableNativeIntegerVector
+/**
+ * @brief Construct the HandleMap as one-dimensional vector
+ *
+ * This constructor uses size() method in ArrayHandle to determine the length.
+ */
+template <>
+inline
+HandleMap<IntegerVector, MutableArrayHandle<int> >::HandleMap(
+    const MutableArrayHandle<int>& inHandle)
+  : Base(const_cast<Scalar*>(inHandle.ptr()), inHandle.size()),
+    mMemoryHandle(inHandle) { }
+
 // ------------------------------------------------------------------------
 // HandleMap::rebind()
 // ------------------------------------------------------------------------
-/**
- * @brief Rebind HandleMap to a different one-dimensional array
- */
-template <>
-inline
-HandleMap<const ColumnVector, ArrayHandle<double> >&
-HandleMap<const ColumnVector, ArrayHandle<double> >::rebind(
-    const ArrayHandle<double>& inHandle) {
-
-    return rebind(inHandle, inHandle.sizeOfDim(0));
-}
-
-/**
- * @brief Rebind HandleMap to a different one-dimensional array
- */
-template <>
-inline
-HandleMap<ColumnVector, MutableArrayHandle<double> >&
-HandleMap<ColumnVector, MutableArrayHandle<double> >::rebind(
-    const MutableArrayHandle<double>& inHandle) {
-
-    return rebind(inHandle, inHandle.sizeOfDim(0));
-}
-
-
+// eigen_integration::NativeMatrix
 /**
  * @brief Rebind HandleMap to a different two-dimensional array
  */
@@ -112,6 +118,7 @@ HandleMap<const Matrix, ArrayHandle<double> >::rebind(
     return rebind(inHandle, inHandle.sizeOfDim(1), inHandle.sizeOfDim(0));
 }
 
+// eigen_integration::MutableNativeMatrix
 /**
  * @brief Rebind HandleMap to a different two-dimensional array
  */
@@ -122,6 +129,58 @@ HandleMap<Matrix, MutableArrayHandle<double> >::rebind(
     const MutableArrayHandle<double>& inHandle) {
 
     return rebind(inHandle, inHandle.sizeOfDim(1), inHandle.sizeOfDim(0));
+}
+
+// eigen_integration::NativeColumnVector
+/**
+ * @brief Rebind HandleMap to a different one-dimensional array
+ */
+template <>
+inline
+HandleMap<const ColumnVector, ArrayHandle<double> >&
+HandleMap<const ColumnVector, ArrayHandle<double> >::rebind(
+    const ArrayHandle<double>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(0));
+}
+
+// eigen_integration::MutableNativeColumnVector
+/**
+ * @brief Rebind HandleMap to a different one-dimensional array
+ */
+template <>
+inline
+HandleMap<ColumnVector, MutableArrayHandle<double> >&
+HandleMap<ColumnVector, MutableArrayHandle<double> >::rebind(
+    const MutableArrayHandle<double>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(0));
+}
+
+// eigen_integration::NativeIntegerVector
+/**
+ * @brief Rebind HandleMap to a different one-dimensional array
+ */
+template <>
+inline
+HandleMap<const IntegerVector, ArrayHandle<int> >&
+HandleMap<const IntegerVector, ArrayHandle<int> >::rebind(
+    const ArrayHandle<int>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(0));
+}
+
+// eigen_integration::MutableNativeIntegerVector
+/**
+ * @brief Rebind HandleMap to a different one-dimensional array
+ */
+template <>
+inline
+HandleMap<IntegerVector, MutableArrayHandle<int> >&
+HandleMap<IntegerVector, MutableArrayHandle<int> >::rebind(
+    const MutableArrayHandle<int>& inHandle) {
+
+    return rebind(inHandle, inHandle.sizeOfDim(0));
 }
 
 } // namespace eigen_integration
@@ -235,6 +294,9 @@ SparseColumnVectorToLegacySparseVector(
     return svec_from_sparsedata(sdata, true /* trim */);
 }
 
+
+// ------------------------------------------------------------------------
+
 /**
  * @brief Convert an Eigen row or column vector to a one-dimensional
  *     PostgreSQL array
@@ -256,38 +318,25 @@ VectorToNativeArray(const Eigen::MatrixBase<Derived>& inVector) {
 }
 
 /**
- * @brief Convert a native array to [Mutable]MappedMatrix
+ * @brief Convert an Eigen matrix to a two-dimensional PostgreSQL array
  */
-template <class MatrixType>
-MatrixType
-NativeArrayToMappedMatrix(Datum inDatum, bool inNeedMutableClone) {
-    typedef typename MatrixType::Scalar Scalar;
+template <typename Derived>
+ArrayType*
+MatrixToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix) {
+    typedef typename Derived::Scalar T;
+    typedef typename Derived::Index Index;
 
-    ArrayType* array = reinterpret_cast<ArrayType*>(
-        madlib_DatumGetArrayTypeP(inDatum));
-    size_t arraySize = ARR_DIMS(array)[0] * ARR_DIMS(array)[1];
+    MutableArrayHandle<T> arrayHandle
+        = defaultAllocator().allocateArray<T>(
+            inMatrix.cols(), inMatrix.rows());
 
-    if (ARR_NDIM(array) != 2) {
-        std::stringstream errorMsg;
-        errorMsg << "Invalid type conversion to matrix. Expected two-"
-            "dimensional array but got " << ARR_NDIM(array)
-            << " dimensions.";
-        throw std::invalid_argument(errorMsg.str());
-    }
-        
-    Scalar* origData = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
-    Scalar* data;
+    T* ptr = arrayHandle.ptr();
+    // We use columnar storage, i.e., each column is a contiguous block
+    for (Index col = 0; col < inMatrix.cols(); ++col)
+        for (Index row = 0; row < inMatrix.rows(); ++row)
+            *(ptr++) = inMatrix(row, col);
 
-    if (inNeedMutableClone) {
-        data = reinterpret_cast<Scalar*>(
-            defaultAllocator().allocate<dbal::FunctionContext, dbal::DoNotZero,
-                dbal::ThrowBadAlloc>(sizeof(Scalar) * arraySize));
-        std::copy(origData, origData + arraySize, data);
-    } else {
-        data = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
-    }
-    
-    return MatrixType(data, ARR_DIMS(array)[1], ARR_DIMS(array)[0]);
+    return arrayHandle.array();
 }
 
 /**
@@ -314,7 +363,7 @@ NativeArrayToMappedVector(Datum inDatum, bool inNeedMutableClone) {
             << " dimensions.";
         throw std::invalid_argument(errorMsg.str());
     }
-    
+
     Scalar* origData = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
     Scalar* data;
 
@@ -326,32 +375,43 @@ NativeArrayToMappedVector(Datum inDatum, bool inNeedMutableClone) {
     } else {
         data = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
     }
-    
+
     return VectorType(data, arraySize);
 }
 
-
-
 /**
- * @brief Convert an Eigen matrix to a two-dimensional PostgreSQL array
+ * @brief Convert a native array to [Mutable]MappedMatrix
  */
-template <typename Derived>
-ArrayType*
-MatrixToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix) {
-    typedef typename Derived::Scalar T;
-    typedef typename Derived::Index Index;
+template <class MatrixType>
+MatrixType
+NativeArrayToMappedMatrix(Datum inDatum, bool inNeedMutableClone) {
+    typedef typename MatrixType::Scalar Scalar;
 
-    MutableArrayHandle<T> arrayHandle
-        = defaultAllocator().allocateArray<T>(
-            inMatrix.cols(), inMatrix.rows());
+    ArrayType* array = reinterpret_cast<ArrayType*>(
+        madlib_DatumGetArrayTypeP(inDatum));
+    size_t arraySize = ARR_DIMS(array)[0] * ARR_DIMS(array)[1];
 
-    T* ptr = arrayHandle.ptr();
-    // We use columnar storage, i.e., each column is a contiguous block
-    for (Index col = 0; col < inMatrix.cols(); ++col)
-        for (Index row = 0; row < inMatrix.rows(); ++row)
-            *(ptr++) = inMatrix(row, col);
+    if (ARR_NDIM(array) != 2) {
+        std::stringstream errorMsg;
+        errorMsg << "Invalid type conversion to matrix. Expected two-"
+            "dimensional array but got " << ARR_NDIM(array)
+            << " dimensions.";
+        throw std::invalid_argument(errorMsg.str());
+    }
 
-    return arrayHandle.array();
+    Scalar* origData = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
+    Scalar* data;
+
+    if (inNeedMutableClone) {
+        data = reinterpret_cast<Scalar*>(
+            defaultAllocator().allocate<dbal::FunctionContext, dbal::DoNotZero,
+                dbal::ThrowBadAlloc>(sizeof(Scalar) * arraySize));
+        std::copy(origData, origData + arraySize, data);
+    } else {
+        data = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
+    }
+
+    return MatrixType(data, ARR_DIMS(array)[1], ARR_DIMS(array)[0]);
 }
 
 } // namespace postgres

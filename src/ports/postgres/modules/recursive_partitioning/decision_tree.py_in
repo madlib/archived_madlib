@@ -1,0 +1,1708 @@
+# coding=utf-8
+"""
+@file decision_tree.py_in
+
+@brief Decision Tree: Driver functions
+
+@namespace decision_tree
+"""
+
+from __future__ import division
+import plpy
+from math import sqrt
+from operator import itemgetter
+from itertools import groupby
+from contextlib import contextmanager
+
+from stats.cox_prop_hazards import _get_seg_number
+from utilities.control import MinWarning
+from utilities.validate_args import get_cols
+from utilities.validate_args import get_cols_and_types
+from utilities.validate_args import _get_table_schema_names
+from utilities.validate_args import get_expr_type
+from utilities.validate_args import table_exists
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import is_var_valid
+from utilities.validate_args import _unquote_name
+from utilities.utilities import _assert
+from utilities.utilities import extract_keyvalue_params
+from utilities.utilities import __unique_string
+from utilities.utilities import split_quoted_delimited_str
+from utilities.utilities import py_list_to_sql_string
+
+# ------------------------------------------------------------
+
+
+@contextmanager
+def disable_optimizer():
+    """
+    Create a context manager that disables the optimizer (if enabled) and
+    then enables it back if disabled earlier
+    """
+    try:
+        try:
+            optimizer = plpy.execute("show optimizer")[0]["optimizer"]
+            optimizer_enabled = True if optimizer == 'on' else False
+        except:
+            optimizer_enabled = False
+        if optimizer_enabled:
+            plpy.notice("Disabling optimizer ...")
+            plpy.execute("set optimizer=off")
+        yield
+    finally:
+        if optimizer_enabled:
+            plpy.notice("Enabling optimizer ...")
+            plpy.execute("set optimizer=on")
+
+
+@contextmanager
+def disable_hashagg():
+    """
+    Create a context manager that disables the optimizer (if enabled) and
+    then enables it back if disabled earlier
+    """
+    try:
+        try:
+            enable_hashagg = plpy.execute("show enable_hashagg")[0]["enable_hashagg"]
+            hashagg_enabled = True if enable_hashagg == 'on' else False
+        except:
+            hashagg_enabled = False
+        if hashagg_enabled:
+            plpy.notice("Disabling hashagg ...")
+            plpy.execute("set enable_hashagg=off")
+        yield
+    finally:
+        if hashagg_enabled:
+            plpy.notice("Enabling hashagg ...")
+            plpy.execute("set enable_hashagg=on")
+
+
+def _tree_validate_args(
+        split_criterion, training_table_name, output_table_name,
+        id_col_name, list_of_features, dependent_variable,
+        list_of_features_to_exclude, grouping_cols, weights, max_depth,
+        min_split, min_bucket, n_bins, cp, n_folds):
+    """ Validate the arguments
+    """
+    if not split_criterion:
+        split_criterion = 'gini'
+    if (split_criterion.lower().strip() not in
+            ['mse', 'gini', 'cross-entropy', 'entropy',
+             'misclass', 'misclassification']):
+        plpy.error("Decision tree error: Invalid split_criterion.")
+
+    _assert(training_table_name and
+            training_table_name.strip().lower() not in ('null', ''),
+            "Decision tree error: Invalid data table.")
+    _assert(table_exists(training_table_name),
+            "Decision tree error: Data table is missing.")
+
+    _assert(not table_exists(output_table_name),
+            "Decision tree error: Output table already exists.")
+    _assert(not table_exists(output_table_name + "_summary"),
+            "Decision tree error: Output summary table already exists.")
+
+    _assert(columns_exist_in_table(training_table_name, [id_col_name]),
+            "Decision tree error: ID column does not exist.")
+
+    _assert(not (list_of_features is None or list_of_features.strip().lower() == ''),
+            "Decision tree error: Features to include is empty.")
+
+    _assert(not (dependent_variable is None or dependent_variable.strip().lower() == ''),
+            "Decision tree error: Dependent variable is empty.")
+
+    if list_of_features.strip() != '*':
+        _assert(is_var_valid(training_table_name, list_of_features),
+                "Decision tree error: Invalid feature list ({0})".
+                format(list_of_features))
+
+    _assert(is_var_valid(training_table_name, dependent_variable),
+            "Decision tree error: Invalid dependent variable ({0}).".
+            format(dependent_variable))
+
+    if (list_of_features.strip() and list_of_features.strip() == '*'
+            and list_of_features_to_exclude.strip()):
+        _assert(is_var_valid(training_table_name, list_of_features_to_exclude.strip()),
+                "Decision tree error: Some of the excluded features do not exist.")
+
+    if grouping_cols is not None and grouping_cols.strip() != '':
+        _assert(is_var_valid(training_table_name, grouping_cols),
+                "Decision tree error: Invalid grouping column argument.")
+
+    if weights is not None and weights.strip() != '':
+        _assert(is_var_valid(training_table_name, weights),
+                "Decision tree error: Invalid weights argument.")
+
+    _assert(max_depth > 0 and max_depth < 15,
+            "Decision tree error: max_depth must be positive and less than 15.")
+    _assert(min_split > 0, "Decision tree error: min_split must be positive.")
+    _assert(min_bucket > 0, "Decision tree error: min_bucket must be positive.")
+    _assert(n_bins > 1, "Decision tree error: number of bins must be at least 2.")
+    _assert(cp >= 0, "Decision tree error: cp must be non-negative.")
+    _assert(n_folds > 0, "Decision tree error: number of cross-validation "
+                         "folds must be non-negative.")
+# ------------------------------------------------------------
+
+
+def _get_features_to_use(schema_madlib, training_table_name,
+                         list_of_features, to_exclude, id_col, weights_col,
+                         dependent_variable, grouping_cols=None):
+    """ Expand '*' syntax and exclude some features
+
+    Ignore 'to_exclude' if 'list_of_features' is not '*'
+    """
+    cols = set(get_cols(training_table_name, schema_madlib))
+
+    # for some of the sets below we include the quoted name and the unquoted name
+    #  to allow user to provide either form. Both forms are added in the exclusion
+    #  list.
+    if grouping_cols:
+        group_set = set(split_quoted_delimited_str(grouping_cols))
+        group_set |= set(_unquote_name(i)
+                         for i in split_quoted_delimited_str(grouping_cols))
+    else:
+        group_set = set()
+    other_col_set = set([id_col, weights_col, dependent_variable])
+    other_col_set |= set(_unquote_name(i)
+                         for i in [id_col, weights_col, dependent_variable])
+
+    if list_of_features.strip() == '*':
+        return list(cols - set(split_quoted_delimited_str(to_exclude)) -
+                    group_set - other_col_set)
+    else:
+        features = (set(split_quoted_delimited_str(list_of_features)) -
+                    group_set - other_col_set)
+        return list(features)
+# ------------------------------------------------------------
+
+
+def _get_col_value(input_dict, col_name):
+    """Return value from dict where key could be quoted or unquoted name"""
+    return input_dict.get(
+        col_name, input_dict.get(_unquote_name(col_name)))
+# -------------------------------------------------------------------------
+
+
+def _classify_features(all_feature_names_types, features):
+    """ Returns
+    1) an array of categorical features (all casted to string)
+    2) an array of continuous features
+    3) an array of boolean categorical variables
+    """
+    # any column belonging to the following types are categorical
+    int_types = ['integer', 'smallint', 'bigint']
+    text_types = ['text', 'varchar', 'character varying', 'char', 'character']
+    boolean_types = ['boolean']
+    cat_types = int_types + text_types + boolean_types
+    classified_features = set(features)
+
+    cat_features = [col for col in features
+                    if _get_col_value(all_feature_names_types, col) in cat_types]
+    classified_features -= set(cat_features)
+    # continuous types - 'real' is cast to 'double precision' for uniformity
+    con_types = ['real', 'float8', 'double precision']
+    con_features = [col for col in classified_features
+                    if _get_col_value(all_feature_names_types, col) in con_types]
+
+    # In order to be able to form an array, all categorical variables
+    # will be casted into TEXT type, but GPDB cannot cast a boolean
+    # directly into a text. Thus, boolean type categorical variables
+    # needs special treatment: cast them into integers before casting
+    # into text.
+    boolean_cats = [col for col in features
+                    if _get_col_value(all_feature_names_types, col) in boolean_types]
+    return cat_features, con_features, boolean_cats
+# ------------------------------------------------------------
+
+
+def tree_train_help_message(schema_madlib, message, **kwargs):
+    """ Help message for Decision Tree
+    """
+    if not message:
+        help_string = """
+------------------------------------------------------------
+                        SUMMARY
+------------------------------------------------------------
+Functionality: Decision Tree
+
+Decision trees use a tree-based predictive model to
+predict the value of a target variable based on several input variables.
+
+For more details on the function usage:
+    SELECT {schema_madlib}.tree_train('usage');
+For an example on using this function:
+    SELECT {schema_madlib}.tree_train('example');
+        """
+    elif message.lower().strip() in ['usage', 'help', '?']:
+        help_string = """
+------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------
+SELECT {schema_madlib}.tree_train(
+    'training_table',       -- Data table name
+    'output_table',         -- Table name to store the tree model
+    'id_col_name',          -- Row ID, used in tree_predict
+    'dependent_variable',   -- The column to fit
+    'list_of_features',     -- Comma separated column names to be
+                                used as the predictors, can be '*'
+                                to include all columns except the
+                                dependent_variable
+    'features_to_exclude',  -- Comma separated column names to be
+                                excluded if list_of_features is '*'
+    'split_criterion',      -- How to split a node, options are
+                                'gini', 'misclassification' and
+                                'entropy' for classification, and
+                                'mse' for regression.
+    'grouping_cols',        -- Comma separated column names used to
+                                group the data. A decision tree model
+                                will be created for each group. Default
+                                is NULL
+    'weights',              -- A Column name containing weights for
+                                each observation. Default is NULL
+    max_depth,              -- Maximum depth of any node, default is 10
+    min_split,              -- Minimum number of observations that must
+                                exist in a node for a split to be
+                                attemped, default is 20
+    min_bucket,             -- Minimum number of observations in any
+                                terminal node, default is min_split/3
+    n_bins,                 -- Number of bins to find possible node
+                                split threshold values for continuous
+                                variables, default is 100 (Must be greater than 1)
+    pruning_params          -- (NOT IMPLEMENTED YET) A comma-separated text containing
+                                key=value pairs of parameters for pruning.
+                                Parameters accepted:
+                                    'cp' - complexity parameter with default=0.01,
+                                    'n_folds' - number of cross-validation folds
+                                        with default value of 0 (= no cross-validation)
+    verbose                 -- Boolean, whether to print more info,
+                              default is False
+);
+
+------------------------------------------------------------
+                        OUTPUT
+------------------------------------------------------------
+The output table ('output_table' above) has the following columns (
+quoted items are of text type.):
+    <grouping columns>      -- Grouping columns, only present when
+                                'grouping_cols' is not NULL or ''
+    tree                    -- The decision tree model as a binary string
+    cat_levels_in_text      -- Distinct levels (casted to text) of all
+                                categorical variables combined in a single array
+    cat_n_levels            -- Number of distinct levels of all categorical variables
+    tree_depth              -- Number of levels in the tree (root has level 0)
+
+The output summary table ('output_table_summary') has the following
+columns:
+    'method'                -- Method name: 'tree_train'
+    'source_table'          -- Data table name
+    'model_table'           -- Tree model table name
+    'dependent_varname'     -- Response variable column name
+    'independent_varnames'  -- Comma-separated feature column names
+    'cat_features'          -- Comma-separated column names of categorical variables
+    'con_features'          -- Comma-separated column names of continuous variables
+    'grouping_cols'         -- Grouping column names
+    num_all_groups          -- Number of groups
+    num_failed_groups       -- Number of groups for which training failed
+    total_rows_processed    -- Number of rows used in the model training
+    total_rows_skipped      -- Number of rows skipped because NULL values
+    dependent_var_levels    -- For classification, the distinct levels of
+                                the dependent variable
+    dependent_var_type      -- The type of dependent variable
+        """
+    elif message.lower().strip() in ['example', 'examples']:
+        help_string = """
+------------------------------------------------------------
+                        EXAMPLE
+------------------------------------------------------------
+DROP TABLE IF EXISTS dummy_dt_con_src CASCADE;
+CREATE TABLE dummy_dt_con_src (
+    id  INTEGER,
+    cat INTEGER[],
+    con FLOAT8[],
+    y   FLOAT8
+);
+
+INSERT INTO dummy_dt_src VALUES
+(1, '{0}'::INTEGER[], ARRAY[0], 0.5),
+(2, '{0}'::INTEGER[], ARRAY[1], 0.5),
+(3, '{0}'::INTEGER[], ARRAY[4], 0.5),
+(4, '{0}'::INTEGER[], ARRAY[4], 0.5),
+(5, '{0}'::INTEGER[], ARRAY[4], 0.5),
+(6, '{0}'::INTEGER[], ARRAY[5], 0.1),
+(7, '{0}'::INTEGER[], ARRAY[6], 0.1),
+(8, '{1}'::INTEGER[], ARRAY[9], 0.1);
+(9, '{1}'::INTEGER[], ARRAY[9], 0.1);
+(10, '{1}'::INTEGER[], ARRAY[9], 0.1);
+(11, '{1}'::INTEGER[], ARRAY[9], 0.1);
+
+DROP TABLE IF EXISTS tree_out, tree_out_summary;
+SELECT madlib.tree_train(
+    'dummy_dt_src',
+    'tree_out',
+    'id',
+    'y',
+    'cat, con',
+    '',
+    'mse',
+    NULL::Text,
+    NULL::Text,
+    3,
+    2,
+    1,
+    5);
+
+SELECT madlib.tree_display('tree_out');
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.tree_train('usage')"
+    return help_string.format(schema_madlib=schema_madlib)
+# ------------------------------------------------------------
+
+
+def _extract_pruning_params(pruning_params_str):
+    """
+    Args:
+        @param pruning_param: str, Parameters used for pruning the tree
+                                    cp = Cost-complexity for pruning
+                                    n_folds = Number of folds for cross-validation
+
+    Returns:
+        dict. A dictionary containing the pruning parameters
+    """
+    default_dict = dict(cp=0.01, n_folds=2)
+    params_types = dict(cp=float, n_folds=int)
+    pruning_params = extract_keyvalue_params(pruning_params_str,
+                                             params_types,
+                                             default_dict)
+    if pruning_params['cp'] < 0:
+        plpy.error("Decision Tree error: Cost-complexity ({0}) "
+                   "must be non-negative".format(pruning_params['cp']))
+    if pruning_params['n_folds'] <= 0:
+        plpy.error("Decision Tree error: Number of cross-validation folds ({0}) "
+                   "must be positive".format(pruning_params['n_folds']))
+    return pruning_params
+# ------------------------------------------------------------
+
+
+def tree_train(schema_madlib, training_table_name, output_table_name,
+               id_col_name, dependent_variable, list_of_features,
+               list_of_features_to_exclude, split_criterion='gini',
+               grouping_cols=None, weights='1', max_depth=10,
+               min_split=20, min_bucket=6, n_bins=100,
+               pruning_param=None, verbose=False
+               ):
+    """ Decision tree main training function
+
+    Args:
+        @param schema_madlib: str, MADlib schema name
+        @param training_table_name: str, source table name
+        @param output_table_name: str, model table name
+        @param id_col_name: str, id column name to uniquely identify each row
+        @param dependent_variable: str, dependent variable column name
+        @param list_of_features: str, Comma-separated list of feature column names,
+                                        can also be '*' implying all columns
+                                        except dependent_variable
+        @param list_of_features_to_exclude: str, features to exclude if '*' is used
+        @param split_criterion: str, Impurity function to use for splitting:
+                                  Classification: {'gini', 'entropy', 'misclass'}
+                                  Regression: 'mse'
+        @param grouping_cols: str, List of grouping columns to group the data
+        @param weights: str, Column name for weight for each tuple
+        @param max_depth: int, Maximum depth of the tree
+        @param min_split: int, Minimum tuples in a node before splitting it
+        @param min_bucket: int, Minimum tuples in each child before splitting a node
+        @param n_bins: int, Number of bins for quantizing a continuous variables
+        @param pruning_param: str, Parameters used for pruning the tree
+                                    cp = Cost-complexity for pruning
+                                    n_folds = Number of folds for cross-validation
+        @param verbose: str, Verbosity of output messages
+    """
+    msg_level = "'notice'" if verbose else "'warning'"
+
+    #### Set default values for optional arguments
+    max_depth = min(max_depth, 10)
+    min_split = 20 if (not min_split and not min_bucket) else min_split
+    min_bucket = min_split // 3 if not min_bucket else min_bucket
+    min_split = min_bucket * 3 if not min_split else min_split
+    n_bins = 100 if not n_bins else n_bins
+    split_criterion = 'gini' if not split_criterion else split_criterion
+    pruning_param = 'cp=0.01' if not pruning_param else pruning_param
+
+    pruning_param_dict = _extract_pruning_params(pruning_param)
+
+    with MinWarning(msg_level):
+        if grouping_cols is not None and grouping_cols.strip() == '':
+            grouping_cols = None
+        _tree_validate_args(
+            split_criterion, training_table_name, output_table_name,
+            id_col_name, list_of_features, dependent_variable,
+            list_of_features_to_exclude, grouping_cols, weights, max_depth,
+            min_split, min_bucket, n_bins,
+            pruning_param_dict['cp'], pruning_param_dict['n_folds'])
+
+        # weights column has be to validated to be present,
+        # hence default value allocation happens after
+        weights = '1' if not weights or not weights.strip() else weights.strip()
+
+        # expand "*" syntax and exclude some features
+        features = _get_features_to_use(schema_madlib, training_table_name,
+                                        list_of_features,
+                                        list_of_features_to_exclude,
+                                        id_col_name, weights,
+                                        dependent_variable, grouping_cols)
+        if len(features) == 0:
+            plpy.error("Decision tree error: No feature is selected for the model.")
+
+        all_cols_types = get_cols_and_types(training_table_name, schema_madlib)
+        cat_features, con_features, boolean_cats = _classify_features(
+            all_cols_types, features)
+
+        filter_null = _get_filter_str(schema_madlib, cat_features, con_features,
+                                      boolean_cats, dependent_variable,
+                                      grouping_cols)
+        # get all rows
+        n_all_rows = plpy.execute("""
+                select count(*) from {source_table}
+                """.format(source_table=training_table_name))[0]['count']
+
+        # Need the total number of records
+        is_classification, is_bool = _is_dep_categorical(training_table_name,
+                                                         dependent_variable)
+
+        if is_classification:
+            if split_criterion.lower().strip() == "mse":
+                plpy.error("Decision tree error: MSE is not a valid "
+                           "split criterion for classification.")
+            # For classifications, we also need to map dependent_variable to integers
+            n_rows, dep_list = _get_n_and_deplist(training_table_name,
+                                                  dependent_variable,
+                                                  filter_null)
+            dep_list.sort()
+            dep_col_str = ("case when " + dependent_variable +
+                           " then 'True' else 'False' end") if is_bool else dependent_variable
+            dep = ("(CASE " +
+                   "\n               ".join([
+                        "WHEN ({dep_col})::text = $${c}$$ THEN {i}".format(
+                            dep_col=dep_col_str, c=c, i=i)
+                        for i, c in enumerate(dep_list)]) +
+                   "\nEND)")
+            dep_n_levels = len(dep_list)
+        else:
+            if split_criterion.lower().strip() != "mse":
+                plpy.warning("Decision tree: Using MSE as split criterion as it "
+                             "is the only one supported for regression trees.")
+            n_rows = plpy.execute(
+                "SELECT count(*) FROM {source_table} where {filter_null}".format(
+                    source_table=training_table_name, filter_null=filter_null))[0]['count']
+            dep = dependent_variable
+            dep_n_levels = 1
+            dep_list = None
+
+        if grouping_cols is None:   # non-grouping case
+            # Find the bins, one dict containing two arrays: categorical
+            # bins, and continuous bins
+            bins = _get_bins(schema_madlib, training_table_name, cat_features,
+                             con_features, n_bins, dep, boolean_cats, n_rows,
+                             is_classification, dep_n_levels, filter_null)
+            # some features may be dropped because they have only one value
+            cat_features = bins['cat_features']
+
+            # Iterations for training the tree
+            tree_state = plpy.execute(
+                """
+                SELECT {schema_madlib}._initialize_decision_tree(
+                    {is_regression_tree},
+                    '{split_criterion}'::text,
+                    {dep_n_levels}::smallint)
+                    as tree_state, False as finished
+                """.format(schema_madlib=schema_madlib,
+                           is_regression_tree=not is_classification,
+                           split_criterion=split_criterion,
+                           dep_n_levels=dep_n_levels))[0]
+            plpy.notice("Starting tree building")
+            tree_depth = 0
+            while True:
+                tree_state = _one_step(
+                    schema_madlib, training_table_name,
+                    cat_features, con_features, boolean_cats, bins,
+                    n_bins, tree_state, weights, dep,
+                    min_split, min_bucket, max_depth, filter_null,
+                    dep_n_levels)
+                if tree_depth == 0:
+                    plpy.notice("Completed training of the root node.")
+                else:
+                    plpy.notice("Completed training of level {0}".format(tree_depth))
+                if tree_state['finished']:
+                    break
+                tree_depth += 1
+            _create_result_table(schema_madlib, tree_state['tree_state'],
+                                 bins, cat_features, con_features,
+                                 output_table_name, tree_depth)
+
+            _create_summary_table(
+                schema_madlib, split_criterion, training_table_name,
+                output_table_name, id_col_name, cat_features, con_features,
+                dependent_variable, [tree_state], is_classification, n_all_rows,
+                n_rows, dep_list)
+        else:
+            grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
+            grouping_cols_and_types = [(col, _get_col_value(all_cols_types, col))
+                                       for col in grouping_cols_list]
+            grouping_array_str = 'array_to_string(array[' + \
+                ','.join("(case when " + col + " then 'True' else 'False' end)::text"
+                         if col_type == 'boolean' else '(' + col + ')::text'
+                         for col, col_type in grouping_cols_and_types) + "], ',')"
+
+            # Find the bins for all groups
+            bins = _get_bins_grps(schema_madlib, training_table_name, cat_features,
+                                  con_features, n_bins, dep, boolean_cats,
+                                  grouping_cols, grouping_array_str, n_rows,
+                                  is_classification, dep_n_levels, filter_null)
+            cat_features = bins['cat_features']
+
+            # Load all groups tree state into memory
+            # Iterations for training the tree
+            tree_state = plpy.execute(
+                """
+                SELECT
+                    {schema_madlib}._initialize_decision_tree(
+                        {is_regression_tree},
+                        '{split_criterion}'::text,
+                        {dep_n_levels}::smallint)
+                    AS tree_state,
+                    0 AS finished
+                """.format(schema_madlib=schema_madlib,
+                           is_regression_tree=not is_classification,
+                           split_criterion=split_criterion,
+                           dep_n_levels=dep_n_levels))[0]
+            tree_states = []
+            for key in bins['grp_key_con']:
+                tree_state.update(grp_key=key)
+                tree_states.append(dict(tree_state))
+            plpy.notice("Started tree building for all groups")
+            tree_depth = 0
+            with disable_optimizer():
+                # we disable optimizer (ORCA) for platforms that use it
+                #  since ORCA doesn't provide an easy way to disable hashagg
+                with disable_hashagg():
+                    # we disable hashagg since large number of groups could
+                    # result in excessive memory usage.
+                    while True:
+                        tree_states = _one_step_for_grps(
+                            schema_madlib, training_table_name, cat_features,
+                            con_features, boolean_cats, bins, n_bins,
+                            tree_states, weights, grouping_cols,
+                            grouping_array_str, dep, min_split, min_bucket,
+                            max_depth, filter_null, dep_n_levels)
+
+                        if tree_depth == 0:
+                            plpy.notice("Completed training of the root node.")
+                        else:
+                            plpy.notice("Completed training of level {0}".format(tree_depth))
+
+                        if all(tree_state['finished'] for tree_state in tree_states):
+                            break
+                        tree_depth += 1
+            _create_grp_result_table(
+                schema_madlib, tree_states, bins, cat_features, con_features,
+                output_table_name, grouping_cols, grouping_array_str,
+                training_table_name, tree_depth)
+            _create_summary_table(
+                schema_madlib, split_criterion, training_table_name,
+                output_table_name, id_col_name, cat_features, con_features,
+                dependent_variable, tree_states, is_classification, n_all_rows,
+                n_rows, dep_list, grouping_cols)
+
+    return None
+# ------------------------------------------------------------
+
+
+def _get_n_and_deplist(training_table_name, dependent_variable, filter_null):
+    """
+    @brief Query the database for the total number of rows and
+    levels of dependent variable if the dependent variable is
+    categorical.
+    """
+    r = plpy.execute(
+        """
+        SELECT
+            sum(n_rows) as n_rows,
+            array_agg(dep) as dep
+        FROM (
+            SELECT
+                count(*) as n_rows,
+                {dependent_variable} as dep
+            FROM
+                {training_table_name}
+            WHERE {filter_null}
+            GROUP BY ({dependent_variable})
+        ) s
+        """.format(**locals()))[0]
+    return r['n_rows'], r['dep']
+# ------------------------------------------------------------
+
+
+def _is_dep_categorical(training_table_name, dependent_variable):
+    """
+    @brief Sample the dependent variable to check whether it is
+    a categorical variable.
+    """
+    sample_dep = plpy.execute("SELECT " + dependent_variable +
+                              " AS dep FROM " +
+                              training_table_name + " LIMIT 1")[0]['dep']
+    return (not isinstance(sample_dep, float), isinstance(sample_dep, bool))
+# ------------------------------------------------------------
+
+
+def _get_bins(schema_madlib, training_table_name, cat_features,
+              con_features, n_bins, dependent_variable, boolean_cats,
+              n_rows, is_classification, dep_n_levels, filter_null):
+    """ Compute the bins of all features
+
+    @param training_table_name Data source table
+    @param cat_features A list of strings, categorical column names
+    @param con_features A list of strings, continuous column names
+    @param n_bins Number of splits equals n_bins - 1
+    @param dependent_variable Will be needed when sorting the levels of
+    categorical variables
+    @param boolean_cats The categorical variables that are of boolean type
+    @param n_rows The total number of rows in the data table
+
+    return one dictionary containing two arrays: categorical and continuous
+    """
+    if len(con_features) > 0:
+        if n_bins > n_rows:
+            plpy.error("Decision tree error: Number of bins is larger than "
+                       "the number of data records.")
+        sample_size = n_bins * n_bins  # We use Spark's value here
+        # FIXME Hard coded number
+        if sample_size < 10000:
+            sample_size = 10000
+
+        # Compute the percentage of the sample.
+        # We sample a few more values to make sure we can get enough
+        # samples, otherwise the number of samples might be smaller
+        # than sample_size.
+        # Use design doc Eq. (2.1)
+        # FIXME Should also use this for the CoxPH module
+        actual_sample_size = sample_size + 14 + sqrt(196 + 28 * sample_size)
+        if actual_sample_size > n_rows:
+            actual_sample_size = n_rows
+        percentage = actual_sample_size / n_rows
+
+        # For continuous variables, use one function to compute
+        # the splits for all of them. Similar to the existing
+        # _compute_splits function in CoxPH module, but deal with
+        # multiple columns together.
+        con_split_str = ('{schema_madlib}._dst_compute_con_splits(array[' +
+                         ', '.join(con_features) +
+                         '], {sample_size}::integer, {n_bins}::smallint)'
+                         ).format(schema_madlib=schema_madlib,
+                                  sample_size=actual_sample_size,
+                                  n_bins=n_bins)
+        # The splits for continuous variables
+        con_splits = plpy.execute(
+            """
+            SELECT
+                {con_split_str} as con_splits
+            FROM {training_table}
+            WHERE random() <= {percentage} and {filter_null}
+            """.format(con_split_str=con_split_str,
+                       training_table=training_table_name,
+                       filter_null=filter_null,
+                       percentage=percentage))[0]
+    else:
+        con_splits = {'con_splits': []}   # no continuous features present
+
+    # For categorical variables, different from the continuous
+    # variable case, we scan the whole table to extract all the
+    # levels of the categorical variables, and at the same time
+    # sort the levels according to the entropy of the dependent
+    # variable.
+    # So this aggregate returns a composite type with two columns:
+    # col 1 is the array of ordered levels; col 2 is the number of
+    # levels in col1.
+
+    # TODO When n_bins is larger than 2^k - 1, where k is the number
+    # of levels of a given categrical feature, we can actually compute
+    # all combinations of levels and obtain a complete set of splits
+    # instead of using sorting to get an approximate set of splits. This
+    # can also be done in the following aggregate, but we may not need it
+    # in the initial draft. Implement this optimization only if it is
+    # necessary.
+
+    # We will use integer to represent levels of categorical variables.
+    # So before everything, we need to create a mapping from categorical
+    # variable levels to integers, and keep this mapping in the memory.
+    if len(cat_features) > 0:
+        if is_classification:
+            # For classifications
+            order_fun = \
+                "{schema_madlib}._dst_compute_entropy({dependent_variable}, {n})".format(
+                    schema_madlib=schema_madlib,
+                    dependent_variable=dependent_variable,
+                    n=dep_n_levels)
+        else:
+            # For regressions
+            order_fun = \
+                "AVG({dependent_variable})".format(dependent_variable=dependent_variable)
+
+        sql_cat_levels = """
+                SELECT
+                    '{{col}}' AS colname,
+                    levels
+                FROM (
+                    SELECT
+                        '{{col}}' AS colname,
+                        array_agg(levels ORDER BY dep_avg) AS levels
+                    FROM (
+                        SELECT
+                            ({{col}})::text AS levels,
+                            {order_fun} AS dep_avg
+                        FROM {training_table_name}
+                        WHERE {filter_null}
+                        GROUP BY {{col}}
+                    ) s
+                ) s1
+                where array_upper(levels, 1) > 1
+                """.format(training_table_name=training_table_name,
+                           order_fun=order_fun, filter_null=filter_null)
+
+        # Try to obtain all the levels in one scan of the table.
+        # () are needed when casting the categorical variables because
+        # they can be expressions.
+        sql_all_cats = ' UNION ALL '.join(
+            sql_cat_levels.format(col="(CASE WHEN " + col + " THEN 'True' ELSE 'False' END)"
+                                  if col in boolean_cats else col) for col in cat_features)
+
+        all_levels = plpy.execute(sql_all_cats)
+
+        if len(all_levels) != len(cat_features):
+            plpy.warning("Decision tree warning: Categorical columns with only "
+                         "one value are dropped from the tree model.")
+            use_cat_features = [row['colname'] for row in all_levels]
+            cat_features = [feature for feature in cat_features if feature in use_cat_features]
+
+        col_to_row = dict((row['colname'], i) for i, row in enumerate(all_levels))
+
+        return dict(
+            con=con_splits['con_splits'],
+            cat_origin=[level for col in cat_features
+                        for level in all_levels[col_to_row[col]]['levels']],
+            cat_n=[len(all_levels[col_to_row[col]]['levels'])
+                   for col in cat_features],
+            cat_features=cat_features)
+    else:
+        # categorical part is empty
+        return dict(
+            con=con_splits['con_splits'],
+            cat_origin=[],
+            cat_n=[],
+            cat_features=[])
+# ------------------------------------------------------------
+
+
+def _one_step(schema_madlib, training_table_name, cat_features,
+              con_features, boolean_cats, bins, n_bins, tree_state, weights,
+              dep_var, min_split, min_bucket, max_depth, filter_null, dep_n_levels):
+    """ One step of tree training
+
+    @param tree_state A big double precision array that conatins
+    (1) internal node: column and split value
+    (2) leaf node: the statistics described as a series of numbers
+    """
+    # The function _map_catlevel_to_int maps a categorical variable value to its
+    # integer representation. It returns an integer array.
+    # XXX cat_feature_str contains $5 and $2, and a SQL function
+    if len(cat_features) > 0:
+        cat_features_str = ('{0}._map_catlevel_to_int(array['.format(schema_madlib) +
+                            ', '.join("(CASE WHEN " + col + " THEN 'True' ELSE 'False' end)::text" if col in boolean_cats
+                                      else '(' + col + ')::text' for col in cat_features) + '], $3, $2)')
+    else:
+        cat_features_str = "NULL"
+
+    if len(con_features) > 0:
+        con_features_str = 'array[' + ', '.join(con_features) + ']'
+    else:
+        con_features_str = "NULL"
+
+    # The arguments of the aggregate (in the same order):
+    # 1. current tree state, madlib.bytea8
+    # 2. categorical features (integer format) in a single array
+    # 3. continuous features in a single array
+    # 4. weight value
+    # 5. categorical sorted levels (integer format) in a combined array
+    # 6. continuous splits
+    # 7. number of dependent levels
+    sql = """
+        SELECT (result).* from (
+            SELECT
+                {schema_madlib}._dt_apply($1,
+                    {schema_madlib}._compute_leaf_stats(
+                        $1,
+                        {cat_features_str},
+                        {con_features_str},
+                        {dep_var},
+                        {weights},
+                        $2,
+                        $4,
+                        {dep_n_levels}::smallint
+                    ),
+                    $4,
+                    {min_split}::smallint,
+                    {min_bucket}::smallint,
+                    {max_depth}::smallint
+                ) as result
+            from
+                {training_table_name}
+            where {filter_null}
+        ) s
+    """.format(**locals())
+
+    sql_plan = plpy.prepare(sql, [
+        '{0}.bytea8'.format(schema_madlib), 'integer[]', 'text[]',
+        '{0}.bytea8'.format(schema_madlib)])
+    # return a new tree state
+    result = plpy.execute(sql_plan, [tree_state['tree_state'], bins['cat_n'],
+                                     bins['cat_origin'], bins['con']])[0]
+    return result
+# ------------------------------------------------------------
+
+
+def _create_result_table(schema_madlib, tree_state, bins, cat_features,
+                         con_features, output_table_name, tree_depth):
+    """ Create the output table and the summary table
+
+    In the result table, we need the tree_state and also the categorical
+    sorted levels, which will be used in the printing and the prediction
+    functions.
+    """
+    # Need to figure out how to represent the final model
+    # in a table format.
+    if len(cat_features) > 0:
+        sql = """
+            create table {output_table} as
+                SELECT
+                    $1 as tree,
+                    $2 as cat_levels_in_text,
+                    $3 as cat_n_levels,
+                    {tree_depth} as tree_depth
+            """.format(output_table=output_table_name, tree_depth=tree_depth)
+        sql_plan = plpy.prepare(sql, [
+            '{schema_madlib}.bytea8'.format(schema_madlib=schema_madlib),
+            'text[]', 'integer[]'])
+        plpy.execute(sql_plan, [tree_state, bins['cat_origin'], bins['cat_n']])
+    else:
+        sql = """
+            create table {output_table} as
+                SELECT
+                    $1 as tree,
+                    NULL::text[] as cat_levels_in_text,
+                    NULL::integer[] as cat_n_levels,
+                    {tree_depth} as tree_depth
+            """.format(output_table=output_table_name,
+                       tree_depth=tree_depth)
+        sql_plan = plpy.prepare(sql, [
+            '{schema_madlib}.bytea8'.format(schema_madlib=schema_madlib)])
+        plpy.execute(sql_plan, [tree_state])
+# ------------------------------------------------------------
+
+
+def _get_bins_grps(
+        schema_madlib, training_table_name, cat_features,
+        con_features, n_bins, dependent_variable, boolean_cats,
+        grouping_cols, grouping_array_str, n_rows, is_classification,
+        dep_n_levels, filter_null):
+    """ Compute the bins for all features in each group
+
+    @brief Similar to _get_bins except that this is for multiple groups.
+    So please refer to the comments inside _get_bins for more related
+    information.
+
+    returns what _one_step_for_grps needs:
+    """
+    if len(con_features) > 0:
+        if n_bins > n_rows:
+            plpy.error("Decision tree error: Number of bins is larger than "
+                       "the number of data records.")
+        m = n_bins * n_bins   # sample size
+        # FIXME Hard coded number
+        if m < 10000:
+            m = 10000
+        n_seg = _get_seg_number()   # number of segments
+
+        grp_key_str = __unique_string()
+        n_per_seg_str = __unique_string()
+        grp_size_str = __unique_string()
+        random_str = __unique_string()
+
+        con_split_str = ('{schema_madlib}._dst_compute_con_splits(array[' +
+                         ', '.join(con_features) + ']::float8[], {n_per_seg}::integer,'
+                         '{n_bins}::smallint)').format(schema_madlib=schema_madlib,
+                                                       n_per_seg=n_per_seg_str,
+                                                       n_bins=n_bins)
+        sql = """
+                SELECT
+                    {grouping_array_str} as grp_key,
+                    {con_split_str} as con_splits
+                from (
+                    select
+                        src.*, grp_info.*, random() as {random_str}
+                    from
+                        {training_table_name} as src,
+                        (
+                            SELECT
+                                {grp_key_str}, {grp_size_str},
+                                (
+                                    case when {m} + 14. + sqrt(196. + 28*{m}) >= {grp_size_str}
+                                    then {grp_size_str}::double precision
+                                    else ({m} + 14. + sqrt(196. + 28*{m})) end
+                                ) as {n_per_seg_str}
+                            from (
+                                SELECT
+                                    {grouping_array_str} as {grp_key_str},
+                                    count(*) as {grp_size_str}
+                                from {training_table_name}
+                                group by {grouping_cols}
+                            ) s1
+                        ) grp_info
+                ) s
+                where
+                    {grouping_array_str} = {grp_key_str} and
+                    {random_str} <= ({m} + 14. + sqrt(196. + 28*{m})) / {grp_size_str} and
+                    {filter_null}
+                group by {grouping_cols}
+                """.format(**locals())
+
+        # splits is a list, each of whose elements is a dictionary.
+        # The dictionary contains 2 items:
+        # 1) grp_key - It is an array of text
+        # 2) con_splits - continuous split array
+        con_splits_all = plpy.execute(sql)   # multiple rows
+
+    if cat_features:
+        if is_classification:
+            # For classifications
+            order_fun = "{schema_madlib}._dst_compute_entropy({dependent_variable}, {n})".format(
+                schema_madlib=schema_madlib,
+                dependent_variable=dependent_variable,
+                n=dep_n_levels)
+        else:
+            order_fun = "avg({dependent_variable})".format(dependent_variable=dependent_variable)
+
+        sql_cat_levels = """
+                SELECT
+                    colname,
+                    levels,
+                    grp_key
+                from (
+                    SELECT
+                        grp_key,
+                        '{{col}}' as colname,
+                        array_agg(levels order by dep_avg) as levels
+                    from (
+                        SELECT
+                            {grouping_array_str} as grp_key,
+                            ({{col}})::text as levels,
+                            {order_fun} as dep_avg
+                        from {training_table_name}
+                        where {filter_null}
+                        group by {{col}}, {grouping_cols}
+                    ) s
+                    group by grp_key
+                ) s1
+                where array_upper(levels, 1) > 1
+                """.format(**locals())
+
+        sql_all_cats = ' union all '.join(
+            sql_cat_levels.format(
+                col=("(case when " + col + " then 'True' else 'False' end)"
+                     if col in boolean_cats else col))
+            for col in cat_features)
+
+        all_levels = plpy.execute(sql_all_cats)
+
+        use_cat_features = set([row['colname'] for row in all_levels])
+        if len(use_cat_features) != len(cat_features):
+            plpy.warning("Decision tree warning: Categorical columns with only "
+                         "one value are dropped from the tree model.")
+            cat_features = [feature for feature in cat_features if feature in use_cat_features]
+
+        grp_to_col_to_row = dict((grp_key, dict(
+            (row['colname'], row['levels']) for row in items))
+            for grp_key, items in groupby(all_levels, key=itemgetter('grp_key')))
+
+    if cat_features:
+        cat_items_list = [rows[col] for col in cat_features
+                          for grp_key, rows in grp_to_col_to_row.items()]
+        cat_n = [len(i) for i in cat_items_list]
+        cat_origin = [item for subl in cat_items_list for item in subl]
+        grp_key_cat=[grp_key for grp_key in grp_to_col_to_row]
+    else:
+        cat_n = []
+        cat_origin = []
+        grp_key_cat=[con_splits['grp_key'] for con_splits in con_splits_all]
+
+    if con_features:
+        con = [con_splits['con_splits'] for con_splits in con_splits_all]
+        grp_key_con=[con_splits['grp_key'] for con_splits in con_splits_all]
+    else:
+        con = []
+        grp_key_con=[grp_key for grp_key in grp_to_col_to_row]
+
+    return dict(con=con,
+                grp_key_con=grp_key_con,
+                cat_origin=cat_origin,
+                cat_n=cat_n,
+                cat_features=cat_features,
+                grp_key_cat=grp_key_cat)
+# ------------------------------------------------------------
+
+
+def _one_step_for_grps(
+        schema_madlib, training_table_name, cat_features,
+        con_features, boolean_cats, bins, n_bins, tree_states, weights,
+        grouping_cols, grouping_array_str, dep_var, min_split, min_bucket,
+        max_depth, filter_null, dep_n_levels):
+    """ One step of trees training with grouping support
+    """
+    # The function _map_catlevel_to_int maps a categorical variable value to its
+    # integer representation. It returns an integer array.
+    # XXX cat_feature_str contains $5 and $2, and a SQL function
+
+    # avoid name conflicts
+    grp_key = __unique_string()
+    tree_state = __unique_string()
+    con_splits = __unique_string()
+    cat_n_levels = __unique_string()
+    finished = __unique_string()
+    cat_levels_in_text = __unique_string()
+
+    if len(cat_features) > 0:
+        cat_features_str = (
+            '{schema_madlib}._map_catlevel_to_int(array[' +
+            ', '.join("(case when " + col + " then 'True' else 'False' end)::text"
+                      if col in boolean_cats
+                      else '(' + col + ')::text' for col in cat_features) +
+            '], {cat_levels_in_text}, {cat_n_levels})').format(**locals())
+    else:
+        cat_features_str = "NULL"
+
+    if len(con_features) > 0:
+        con_features_str = 'array[' + ', '.join(con_features) + ']'
+    else:
+        con_features_str = "NULL"
+
+    sql = """
+        SELECT grp_key, (result).* from (
+            SELECT
+                s1.grp_key,
+                {schema_madlib}._dt_apply(
+                    {tree_state},
+                    agg_result,
+                    {con_splits},
+                    {min_split}::smallint,
+                    {min_bucket}::smallint,
+                    {max_depth}::smallint) as result
+            from (
+                SELECT
+                    {grouping_array_str} as grp_key,
+                    {schema_madlib}._compute_leaf_stats(
+                            {tree_state},
+                            {cat_features_str},
+                            {con_features_str},
+                            {dep_var},
+                            {weights},
+                            {cat_n_levels},
+                            {con_splits},
+                            {dep_n_levels}::smallint
+                    ) as agg_result
+                from
+                    {training_table_name} as src,
+                    (
+                        SELECT
+                            grp_key            as {grp_key},
+                            finished           as {finished},
+                            tree_state         as {tree_state},
+                            con_splits         as {con_splits},
+                            cat_n_levels       as {cat_n_levels},
+                            cat_levels_in_text as {cat_levels_in_text}
+                        from
+                            (
+                                SELECT
+                                    unnest($1) as grp_key,
+                                    unnest($2) as finished,
+                                    unnest($3) as tree_state
+                            ) as tree_state_set
+                            join (
+                                SELECT
+                                    unnest($4) as grp_key,
+                                    unnest($9) as con_splits
+                            ) as con_splits
+                            using (grp_key)
+                            join
+                            {schema_madlib}._gen_cat_levels_set($5, $6, $7, $8) as cat_levels
+                            using (grp_key)
+                    ) as needed_data
+                    where {grouping_array_str} = {grp_key} and {finished} = 0 and {filter_null}
+                group by {grouping_cols}
+            ) s1
+            join (
+                SELECT
+                    grp_key,
+                    tree_state as {tree_state},
+                    con_splits as {con_splits}
+                from (
+                        SELECT
+                            unnest($1) as grp_key,
+                            unnest($3) as tree_state
+                    ) as tree_state_set
+                    join (
+                        SELECT
+                            unnest($4) as grp_key,
+                            unnest($9) as con_splits
+                    ) as con_splits
+                    using (grp_key)
+            ) s2
+            using (grp_key)
+        ) sub
+    """.format(**locals())
+    sql_plan = plpy.prepare(sql,
+                            ['text[]', 'integer[]',
+                             '{0}.bytea8[]'.format(schema_madlib),
+                             'text[]', 'text[]', 'integer[]', 'integer',
+                             'text[]', '{0}.bytea8[]'.format(schema_madlib)])
+
+    result = list(plpy.execute(sql_plan, [
+        [tree_state['grp_key'] for tree_state in tree_states],
+        [tree_state['finished'] for tree_state in tree_states],
+        [tree_state['tree_state'] for tree_state in tree_states],
+        bins['grp_key_con'],
+        bins['grp_key_cat'],
+        bins['cat_n'],
+        len(cat_features),
+        bins['cat_origin'],
+        bins['con']]))
+
+    # add the finished/errored states back into the result
+    # because the result only contains groups that are not
+    # finished in the previous iteration
+    result.extend(tree_state for tree_state in tree_states
+                  if tree_state['finished'] != 0)
+    return result
+# ------------------------------------------------------------
+
+
+def _create_grp_result_table(
+        schema_madlib, tree_states, bins, cat_features,
+        con_features, output_table_name, grouping_cols,
+        grouping_array_str, training_table_name, tree_depth):
+    """ Create the output table and the summary table for grouping
+    case.
+    """
+    grp_key = __unique_string()
+    tree_state = __unique_string()
+    cat_levels_in_text = __unique_string()
+    cat_n_levels = __unique_string()
+    cat_levels_val = cat_levels_in_text if cat_features else "NULL::TEXT[]"
+    cat_n_levels_val = cat_n_levels if cat_features else "NULL::INTEGER[]"
+
+    sql = """
+        CREATE TABLE {output_table_name} AS
+            SELECT
+                {grouping_cols},
+                {tree_state} as tree,
+                {cat_levels_val} as cat_levels_in_text,
+                {cat_n_levels_val} as cat_n_levels,
+                {tree_depth} as tree_depth
+            FROM (
+                SELECT
+                    {grouping_cols},
+                    {grouping_array_str} as {grp_key}
+                FROM {training_table_name}
+                group by {grouping_cols}
+            ) s1
+            JOIN (
+                SELECT
+                    unnest($1) as {grp_key},
+                    unnest($2) as {tree_state}
+            ) s2
+            USING ({grp_key})
+            """
+    if cat_features:
+        sql += """
+                JOIN (
+                    SELECT
+                        grp_key as {grp_key},
+                        cat_n_levels as {cat_n_levels},
+                        cat_levels_in_text as {cat_levels_in_text}
+                    FROM
+                        {schema_madlib}._gen_cat_levels_set($3, $4, $5, $6)
+
+                ) s3
+                USING ({grp_key})
+            """
+    sql = sql.format(**locals())
+    if cat_features:
+        sql_plan = plpy.prepare(
+            sql, ['text[]',
+                  '{schema_madlib}.bytea8[]'.format(schema_madlib=schema_madlib),
+                  'text[]', 'integer[]', 'integer', 'text[]'])
+        plpy.execute(sql_plan, [
+            [tree_state['grp_key'] for tree_state in tree_states],
+            [tree_state['tree_state'] for tree_state in tree_states],
+            bins['grp_key_cat'],
+            bins['cat_n'],
+            len(cat_features),
+            bins['cat_origin']])
+    else:
+        sql_plan = plpy.prepare(sql, [
+            'text[]',
+            '{schema_madlib}.bytea8[]'.format(schema_madlib=schema_madlib)])
+        plpy.execute(sql_plan, [
+            [tree_state['grp_key'] for tree_state in tree_states],
+            [tree_state['tree_state'] for tree_state in tree_states]])
+# ------------------------------------------------------------
+
+
+def _get_dep_type(data_table, dep):
+    """
+    @brief Obtain the dependent_variable type
+    """
+    table_schema_str, table_name = _get_table_schema_names(data_table)
+    dep_type = plpy.execute("""
+            SELECT data_type from information_schema.columns
+            where
+                table_name = '{table_name}' and
+                table_schema in {table_schema} and
+                column_name = '{dep}'
+            """.format(table_name=table_name,
+                       table_schema=table_schema_str,
+                       dep=dep))
+    if dep_type:
+        return dep_type[0]['data_type']
+    else:
+        return get_expr_type(dep, data_table)
+# ------------------------------------------------------------
+
+
+def _create_summary_table(
+        schema_madlib, split_criterion,
+        training_table_name, output_table_name, id_col_name,
+        cat_features, con_features, dependent_variable,
+        tree_states, is_classification, n_all_rows, n_rows,
+        dep_list, grouping_cols=None):
+    # dependent variables
+    features = ', '.join(cat_features + con_features)
+    dep_list_str = "NULL" if not dep_list else \
+                   "$dep_list$" + ','.join('"' + str(dep) + '"' for dep in dep_list) + "$dep_list$"
+    dep_type = _get_dep_type(training_table_name, dependent_variable)
+    cat_features_str = ','.join(cat_features)
+    con_features_str = ','.join(con_features)
+    if grouping_cols:
+        failed_groups = sum(row['finished'] != 1 for row in tree_states)
+        n_groups = len(tree_states)
+        grouping_cols_str = "'{0}'".format(grouping_cols)
+    else:
+        failed_groups = 1 if tree_states[0]['finished'] != 1 else 0
+        n_groups = 1
+        grouping_cols_str = "NULL"
+    n_rows_skipped = n_all_rows - n_rows
+
+    sql = """
+        create table {output_table_name}_summary as
+            SELECT
+                'tree_train'::text            as method,
+                '{is_classification}'::boolean as is_classification,
+                '{training_table_name}'::text as source_table,
+                '{output_table_name}'::text   as model_table,
+                '{id_col_name}'::text         as id_col_name,
+                '{dependent_variable}'::text  as dependent_varname,
+                '{features}'::text            as independent_varnames,
+                '{cat_features_str}'::text    as cat_features,
+                '{con_features_str}'::text    as con_features,
+                {grouping_cols_str}::text     as grouping_cols,
+                {n_groups}::integer           as num_all_groups,
+                {failed_groups}::integer      as num_failed_groups,
+                {n_rows}::integer             as total_rows_processed,
+                {n_rows_skipped}::integer     as total_rows_skipped,
+                {dep_list_str}::text          as dependent_var_levels,
+                '{dep_type}'::text            as dependent_var_type
+        """.format(**locals())
+    plpy.execute(sql)
+# ------------------------------------------------------------
+
+
+def _get_filter_str(schema_madlib, cat_features, con_features, boolean_cats,
+                    dependent_variable, grouping_cols):
+    if grouping_cols is not None:
+        g_filter = ' and '.join('(' + s.strip() + ') is not NULL' for s in grouping_cols.split(','))
+    else:
+        g_filter = None
+
+    if cat_features:
+        cat_filter = \
+            'NOT {schema_madlib}.array_contains_null({cat_features_array})'.format(
+                schema_madlib=schema_madlib,
+                cat_features_array='array[' + ','.join(
+                    '(' + cat + ')::text' if cat not in boolean_cats else
+                    "(case when " + cat + " then 'True' else 'False' end)::text"
+                    for cat in cat_features) + ']')
+    else:
+        cat_filter = None
+
+    if con_features:
+        con_filter = \
+            'NOT {schema_madlib}.array_contains_null({con_features_array})'.format(
+                schema_madlib=schema_madlib,
+                con_features_array='array[' + ','.join(con_features) + ']')
+    else:
+        con_filter = None
+
+    dep_filter = '(' + dependent_variable + ") is not NULL"
+    return ' and '.join(filter(None, [g_filter, cat_filter, con_filter, dep_filter]))
+# -------------------------------------------------------------------------
+
+
+def tree_predict(schema_madlib, model, source, output, pred_type='response'):
+    """
+    Args:
+        @param schema_madlib: str, Name of MADlib schema
+        @param model: str, Name of table containing the tree model
+        @param source: str, Name of table containing prediction data
+        @param output: str, Name of table to output the results
+        @param pred_type: str, The type of output required:
+                            'response' gives the actual response values,
+                            'prob' gives the probability of the classes in a
+                             classification tree.
+                          For regression tree, only type='response' is defined.
+
+    Returns:
+        None
+
+    Side effect:
+        Creates an output table containing the prediction for given source table
+
+    Throws:
+        None
+    """
+    # validations for inputs
+    _assert(source and source.strip().lower() not in ('null', ''),
+            "Decision tree error: Invalid data table name: {0}".format(source))
+    _assert(table_exists(source),
+            "Decision tree error: Data table ({0}) does not exist".format(source))
+    _assert(not table_is_empty(source),
+            "Decision tree error: Data table ({0}) is empty".format(source))
+    _assert(model and
+            model.strip().lower() not in ('null', ''),
+            "Decision tree error: Invalid model table name: {0}".format(model))
+    _assert(table_exists(model),
+            "Decision tree error: Model table ({0}) does not exist".format(model))
+    _assert(not table_is_empty(model),
+            "Decision tree error: Model table ({0}) is empty".format(model))
+    model_summary = model + "_summary"
+    _assert(table_exists(model_summary),
+            "Decision tree error: Model summary table ({0}) does not exist".format(model_summary))
+    _assert(not table_is_empty(model_summary),
+            "Decision tree error: Model summary table ({0}) is empty".format(model_summary))
+    _assert(output and
+            output.strip().lower() not in ('null', ''),
+            "Decision tree error: Invalid output table name: {0}".format(output))
+    _assert(not table_exists(output),
+            "Decision tree error: Output table ({0}) already exists".format(output))
+    _assert(
+        columns_exist_in_table(
+            model,
+            ["tree", "cat_levels_in_text", "cat_n_levels"],
+            schema_madlib),
+        "Decision tree error: Invalid model table ({0})".format(model))
+    _assert(
+        columns_exist_in_table(
+            model_summary,
+            ["grouping_cols", "id_col_name", "dependent_varname",
+             "cat_features", "con_features", "is_classification"],
+            schema_madlib),
+        "Decision tree error: Invalid model summary table ({0})".format(model_summary))
+
+    # obtain the cat_features and con_features from model table
+    model_elements = plpy.execute("SELECT * FROM {0}".format(model))[0]
+    summary_elements = plpy.execute("SELECT * FROM {0}".format(model_summary))[0]
+    cat_sorted_levels = model_elements["cat_levels_in_text"]
+    cat_n_levels = model_elements["cat_n_levels"]
+
+    cat_features = split_quoted_delimited_str(summary_elements["cat_features"])
+    con_features = split_quoted_delimited_str(summary_elements["con_features"])
+    id_col_name = summary_elements["id_col_name"]
+    grouping_cols_str = summary_elements["grouping_cols"]
+    dep_varname = summary_elements["dependent_varname"]
+    dep_levels = summary_elements["dependent_var_levels"]
+    is_classification = summary_elements["is_classification"]
+    dep_type = summary_elements['dependent_var_type']
+
+    # find which columns are of type boolean
+    boolean_cats = set([key for key, value in
+                        (get_cols_and_types(source, schema_madlib)).iteritems()
+                        if value == 'boolean'])
+
+    if len(cat_features) > 0:
+        cat_features_cast = []
+        for col in cat_features:
+            if col in boolean_cats:
+                cat_features_cast.append(
+                    "(case when " + col + " then 'True' else 'False' end)::text")
+            else:
+                cat_features_cast.append("(" + col + ")::text")
+        cat_features_str = (
+            "{schema_madlib}._map_catlevel_to_int(array[" +
+            ", ".join(cat_features_cast) +
+            "], {cat_sorted_levels}, {cat_n_levels})")
+        cat_features_str = cat_features_str.format(
+            schema_madlib=schema_madlib,
+            cat_sorted_levels=py_list_to_sql_string(cat_sorted_levels, "text[]"),
+            cat_n_levels=py_list_to_sql_string(cat_n_levels, "integer[]"))
+    else:
+        cat_features_str = "NULL"
+
+    if len(con_features) > 0:
+        con_features_str = 'array[' + ','.join(con_features) + ']'
+    else:
+        con_features_str = "NULL"
+
+    if not grouping_cols_str:
+        using_str = ""
+        join_str = ","
+    else:
+        using_str = "USING ( " + grouping_cols_str + ")"
+        join_str = "LEFT OUTER JOIN"
+
+    pred_name = ('"prob_{0}"' if pred_type == "prob" else
+                 '"estimated_{0}"').format(dep_varname.strip(' "'))
+
+    if not is_classification:
+        sql = """
+            CREATE TABLE {output} AS
+            SELECT {id_col_name},
+                   {schema_madlib}._predict_dt_response(
+                                tree,
+                                {cat_features_str}::INTEGER[],
+                                {con_features_str}::DOUBLE PRECISION[]) as {pred_name}
+            FROM {source} as s {join_str} {model} as m {using_str}
+            """
+    else:
+        if dep_type.lower() == "boolean":
+            # some platforms don't have text to boolean cast. We manually check the string.
+            dep_cast_str = ("(case {pred_name} when 'True' then "
+                            "True else False end)::BOOLEAN as {pred_name}")
+        else:
+            dep_cast_str = "{pred_name}::{dep_type}"
+        if pred_type == "response":
+            sql = """
+                CREATE TABLE {output} AS
+                    SELECT
+                        {id_col_name}
+                       , %s
+                    FROM (
+                         SELECT
+                            {id_col_name}
+                           ,
+                           ($sql${{ {dep_levels} }}$sql$::varchar[])[
+                               {schema_madlib}._predict_dt_response (
+                                   tree,
+                                   {cat_features_str}::INTEGER[],
+                                   {con_features_str}::DOUBLE PRECISION[]) + 1]::TEXT
+                           as {pred_name}
+                        FROM {source} as s {join_str} {model} as m {using_str}
+                    ) q
+                """ % (dep_cast_str)
+        else:
+            intermediate_col = __unique_string()
+            score_format = ', \n'.join([
+                '{interim}[{j}] as "estimated_prob_{c}"'.
+                format(j=i+1, c=c.strip(' "'), interim=intermediate_col)
+                for i, c in enumerate(split_quoted_delimited_str(dep_levels))])
+            sql = """
+                CREATE TABLE {output} AS
+                SELECT
+                    {id_col_name},
+                    {score_format}
+                    FROM (
+                        SELECT {id_col_name},
+                               {schema_madlib}._predict_dt_prob(tree,
+                                    {cat_features_str}::INTEGER[],
+                                    {con_features_str}::DOUBLE PRECISION[])
+                                        AS {intermediate_col}
+                        FROM {source} as s {join_str} {model} as m {using_str}
+                    ) q
+                """
+    sql = sql.format(**locals())
+    with MinWarning('warning'):
+        plpy.execute(sql)
+# -------------------------------------------------------------------------
+
+
+def tree_display(schema_madlib, model_table, dot_format=True):
+
+    summary = plpy.execute("SELECT * FROM {model_table}_summary".
+                           format(model_table=model_table))[0]
+    dep_levels = summary["dependent_var_levels"]
+    dep_levels = [''] if not dep_levels else split_quoted_delimited_str(dep_levels)
+    table_name = summary["source_table"]
+    is_regression = not summary["is_classification"]
+    cat_features_str = split_quoted_delimited_str(summary['cat_features'])
+    con_features_str = split_quoted_delimited_str(summary['con_features'])
+    grouping_cols = summary["grouping_cols"]
+    grouping_cols = '' if grouping_cols is None else grouping_cols + ','
+    grouped_trees = plpy.execute("SELECT {grouping_cols} "
+                                 "tree, cat_levels_in_text, cat_n_levels "
+                                 "FROM {model_table}".
+                                 format(model_table=model_table,
+                                        grouping_cols=grouping_cols))
+
+    return_str_list = []
+    if dot_format:
+        tree_type = ("Classification", "Regression")[is_regression]
+        return_str_list.append("digraph {0} {{".format(
+                               '"' + tree_type + ' tree for ' +
+                               str(table_name) + '"'))
+    else:
+        return_str_list.append("-------------------------------------")
+        return_str_list.append("- Each node represented by 'id' inside ().")
+        return_str_list.append("- Leaf nodes have a * while internal nodes "
+                               "have the split condition at the end.")
+        return_str_list.append("- For each internal node (i), it's children "
+                               "will be at (2i+1) and (2i+2)")
+        return_str_list.append("- For each split the first indented child (2i+1) "
+                               "is 'True' node and \n"
+                               "second indented child (2i+2) is 'False' node")
+        if is_regression:
+            return_str_list.append('- Number of rows and average response value inside [].')
+        else:
+            return_str_list.append('- Number of (weighted) rows for each response variable inside [].\n'
+                                   '- Order of values = {0}'.format(str(dep_levels)))
+        return_str_list.append("-------------------------------------")
+
+    with MinWarning('warning'):
+        for index, dtree in enumerate(grouped_trees):
+            grouping_keys = [k + ' = ' + str(dtree[k]) for k in dtree.keys()
+                             if k not in ('tree', 'cat_features', 'con_features',
+                                          'cat_n_levels', 'cat_levels_in_text')]
+            if grouping_keys:
+                group_name = "(" + ','.join(grouping_keys) + ")"
+            else:
+                group_name = ''
+            tree = dtree['tree']
+            if dtree['cat_levels_in_text']:
+                cat_levels_in_text = dtree['cat_levels_in_text']
+                cat_n_levels = dtree['cat_n_levels']
+            else:
+                cat_levels_in_text = []
+                cat_n_levels = []
+
+            if dot_format:
+                return_str_list.append('\t subgraph "cluster{0}"{{'.format(index))
+                return_str_list.append('\t label="{0}"'.format(group_name.replace('"', '\\"')))
+                sql = """
+                        SELECT {0}._display_decision_tree(
+                                    $1, $2, $3, $4, $5, $6, '{1}'
+                                ) as display_tree
+                      """.format(schema_madlib, "g" + str(index) + "_")
+                sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib),
+                                              'text[]', 'text[]', 'text[]',
+                                              'int[]', 'text[]'])
+                tree_display = plpy.execute(
+                    sql_plan, [tree, cat_features_str, con_features_str,
+                               cat_levels_in_text, cat_n_levels, dep_levels])[0]
+            else:
+                if group_name:
+                    return_str_list.append("--- Tree for {0} ---".format(group_name))
+                sql = """
+                        SELECT {0}._display_text_decision_tree(
+                                    $1, $2, $3, $4, $5) as display_tree
+                      """.format(schema_madlib)
+                sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib),
+                                              'text[]', 'text[]', 'text[]', 'int[]'])
+                tree_display = plpy.execute(
+                    sql_plan, [tree, cat_features_str, con_features_str,
+                               cat_levels_in_text, cat_n_levels])[0]
+            return_str_list.append(tree_display["display_tree"])
+            if dot_format:
+                return_str_list.append("\t } //--- end of subgraph------------")
+            else:
+                return_str_list.append("-------------------------------------")
+    if dot_format:
+        return_str_list.append("} //---end of digraph--------- ")
+    return ("\n".join(return_str_list))
+# -------------------------------------------------------------------------
+
+
+def tree_predict_help_message(schema_madlib, message, **kwargs):
+    """ Help message for Decision Tree predict
+    """
+    if not message:
+        help_string = """
+------------------------------------------------------------
+                        SUMMARY
+------------------------------------------------------------
+Functionality: Decision Tree Prediction
+
+Prediction for a decision tree (trained using {schema_madlib}.tree_train) can
+be performed on a new data table.
+
+For more details on the function usage:
+    SELECT {schema_madlib}.tree_predict('usage');
+For an example on using this function:
+    SELECT {schema_madlib}.tree_predict('example');
+        """
+    elif message.lower().strip() in ['usage', 'help', '?']:
+        help_string = """
+------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------
+SELECT {schema_madlib}.tree_predict(
+    'tree_model',           -- Data table name
+    'new_data_table',       -- Table name to store the tree model
+    'output_table',         -- Row ID, used in tree_predict
+    'type'                  -- The column to fit
+);
+
+Note: The 'new_data_table' should have the same 'id_col_name' column as used
+in the training function. This is used to corelate the prediction data row with
+the actual prediction in the output table.
+
+------------------------------------------------------------
+                        OUTPUT
+------------------------------------------------------------
+The output table ('output_table' above) has the '<id_col_name>' column giving
+the 'id' for each prediction and the prediction columns for the response
+variable (also called as dependent variable).
+
+If prediction type = 'response', then the table has a single column with the
+prediction value of the response. The type of this column depends on the type
+of the response variable used during training.
+
+If prediction type = 'prob', then the table has multiple columns, one for each
+possible value of the response variable. The columns are labeled as
+'estimated_prob_<dep value>', where <dep value> represents for each value
+of the response.
+        """
+    elif message.lower().strip() in ['example', 'examples']:
+        # FIXME: add examples
+        help_string = """
+------------------------------------------------------------
+                        EXAMPLE
+------------------------------------------------------------
+-- Assuming the example of tree_train() has been run
+SELECT {schema_madlib}.tree_predict(
+    'tree_out',
+    'dummy_dt_src',
+    'tree_predict_out',
+    'response'
+);
+
+SELECT * FROM tree_predict_out;
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.tree_predict('usage')"
+    return help_string.format(schema_madlib=schema_madlib)
+# ------------------------------------------------------------

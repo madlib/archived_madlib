@@ -18,7 +18,7 @@ class ArrayHandle {
 public:
     enum { isMutable = false };
 
-    ArrayHandle(const ArrayType *inArray);
+    ArrayHandle(ArrayType *inArray);
     
     bool isNull() const { return mArray == NULL; }
     const T* ptr() const;
@@ -29,7 +29,13 @@ public:
     const T& operator[](size_t inIndex) const;
 
 protected:
-    const ArrayType *mArray;
+    ArrayType *mArray;
+    T *mData;
+    int mNumElems;
+    int16_t mElemLen;
+    bool mElemByVal;
+    char mElemAlign;
+
     static size_t internalArraySize(const ArrayType *inArray);
 };
 
