@@ -440,6 +440,8 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
             list_of_features_to_exclude, grouping_cols, weights, max_depth,
             min_split, min_bucket, n_bins,
             pruning_param_dict['cp'], pruning_param_dict['n_folds'])
+        cp = pruning_param_dict['cp']
+        cv_folds = pruning_param_dict['n_folds']
 
         # weights column has be to validated to be present,
         # hence default value allocation happens after
@@ -536,6 +538,7 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                 if tree_state['finished']:
                     break
                 tree_depth += 1
+            _prune_model(schema_madlib, tree_state, cp)
             _create_result_table(schema_madlib, tree_state['tree_state'],
                                  bins, cat_features, con_features,
                                  output_table_name, tree_depth)
@@ -604,6 +607,8 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                         if all(tree_state['finished'] for tree_state in tree_states):
                             break
                         tree_depth += 1
+            for tree in tree_states:
+                _prune_model(schema_madlib, tree, cp)
             _create_grp_result_table(
                 schema_madlib, tree_states, bins, cat_features, con_features,
                 output_table_name, grouping_cols, grouping_array_str,
@@ -805,7 +810,8 @@ def _get_bins(schema_madlib, training_table_name, cat_features,
 
 def _one_step(schema_madlib, training_table_name, cat_features,
               con_features, boolean_cats, bins, n_bins, tree_state, weights,
-              dep_var, min_split, min_bucket, max_depth, filter_null, dep_n_levels):
+              dep_var, min_split, min_bucket, max_depth, filter_null,
+              dep_n_levels):
     """ One step of tree training
 
     @param tree_state A big double precision array that conatins
@@ -1635,7 +1641,6 @@ def tree_display(schema_madlib, model_table, dot_format=True):
     return ("\n".join(return_str_list))
 # -------------------------------------------------------------------------
 
-
 def tree_predict_help_message(schema_madlib, message, **kwargs):
     """ Help message for Decision Tree predict
     """
@@ -1706,3 +1711,15 @@ SELECT * FROM tree_predict_out;
         help_string = "No such option. Use {schema_madlib}.tree_predict('usage')"
     return help_string.format(schema_madlib=schema_madlib)
 # ------------------------------------------------------------
+
+def _prune_model(schema_madlib, tree_state, cp):
+    sql = """
+        select {schema_madlib}._prune_model(
+            $1,
+            {cp}
+        ) as new_model
+    """.format(schema_madlib=schema_madlib, cp=cp)
+
+    sql_plan = plpy.prepare(sql, ['{schema_madlib}.bytea8'.format(schema_madlib=schema_madlib)])
+    tree_state['tree_state'] = plpy.execute(sql_plan, [tree_state['tree_state']])[0]['new_model']
+

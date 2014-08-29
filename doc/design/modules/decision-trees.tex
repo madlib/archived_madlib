@@ -368,31 +368,40 @@ predictors, the smaller the loss of information due to the missing value.
 
 \subsection{Pruning} % (fold)
 \label{sub:pruning}
-See~\cite{hastie2008statisticallearning} for details on various explanations in
-this section.
 
-It is often observed that a decision tree perfect on the training set, will have
-a worse generalization ability than a tree which is not-so-good on the training
-set; this is called \textbf{overfitting} which may be caused by the fact that
-some peculiarities of the training data, such as those caused by noise in
-collecting training examples, are misleadingly recognized by the learner as the
-underlying truth. To reduce the risk of overfitting, a general strategy is to
-employ pruning to cut off some tree branches caused by noise or peculiar- ities
-of the training set. \textbf{Pre-pruning} tries to prune branches when the tree
-is being grown, while \textbf{post-pruning} re-examines fully grown trees to
-decide which branches should be removed. When a validation set is available, the
-tree can be pruned according to the validation error: for pre-pruning, a branch
-will not be grown if the validation error will increase by growing the branch;
-for post-pruning, a branch will be removed if the removal will decrease the
-validation error.
+See~\cite{hastie2008statisticallearning} for details on various
+theoretical explanations in this section.
+
+We use the same method used by R's rpart package to prune the tree.
+The method is a little different from what is normally described in
+textbooks.
+
+It is often observed that a decision tree perfect on the training set,
+will have a worse generalization ability than a tree which is
+not-so-good on the training set; this is called \textbf{overfitting}
+which may be caused by the fact that some peculiarities of the
+training data, such as those caused by noise in collecting training
+examples, are misleadingly recognized by the learner as the underlying
+truth. To reduce the risk of overfitting, a general strategy is to
+employ pruning to cut off some tree branches caused by noise or
+peculiar- ities of the training set. \textbf{Pre-pruning} tries to
+prune branches when the tree is being grown, while
+\textbf{post-pruning} re-examines fully grown trees to decide which
+branches should be removed. When a validation set is available, the
+tree can be pruned according to the validation error: for pre-pruning,
+a branch will not be grown if the validation error will increase by
+growing the branch; for post-pruning, a branch will be removed if the
+removal will decrease the validation error.
 
 To perform pruning, we define a misclassification (resubstitution) error of the
 tree, which is the number of misclassified entries for a classification tree and
-the mean-squared error for a regression tree. We can estimate this error ($R^*$)
+the mean-squared error for a regression tree. We can estimate this
+error or risk ($R^*$)
 for classification tree as,
-$$
+\begin{equation}
+    \label{eq:def_risk}
     R^*(T) = \sum_{t \in \tilde{T}} r(t) p(t),
-$$
+\end{equation}
 
 where $p(t)$ is the proportion of points in terminal node $t$ (member of
 terminal nodes set $\tilde{T}$) and $r(t)$ is the probability of making wrong
@@ -416,18 +425,81 @@ $|\tilde{T}|$, the number of terminal or leaf nodes in $T$. Let $\alpha \ge 0$
 be a real number called the `complexity parameter' and define the cost-complexity
 measure $R_{\alpha}(T)$ as
 
-$$
-  R_{\alpha}(T) = R(T) + \alpha |\tilde{T}|.
-$$
+\begin{equation}
+    \label{eq:cp}
+    R_{\alpha}(T) = R(T) + \alpha |\tilde{T}|\cdot R(T_1),
+\end{equation}
 
-At the end, the cost complexity measure comes as a penalized version of the
-resubstitution error rate. This is the function to be minimized when pruning the
-tree. In general, given a pre-selected $\alpha$, we can find the subtree
-$T(\alpha)$ that minimizes $R_\alpha(T)$. Since there are at most a finite
-number of subtrees of $T_{\text{max}}$, $R_\alpha(T(\alpha))$ yields different
-values for only finitely many $\alpha$'s. T($\alpha$) continues to be the
-minimizing tree when $\alpha$ increases until a jump point is reached.
+where $R(T_1)$ is the risk computed for the tree with only one root
+node. Note that textbooks usually do not have $R(T_1)$ in the
+definition of the cost-complexity. According to the R package 'rpart',
+the above scaled version is unitless and thus much more user friendly
+than the original CART formular where there is no $R(T_1)$.
 
+Because we are using this scaled version, we can simplify the
+computation of risk in the case of classification Eq.
+(\ref{eq:def_risk}). In Eq. (\ref{eq:def_risk}), we have $r =
+n_{mis}/n$ and $p = n/N$, where $n_{mis}$ is the number of
+mis-classified records, $n$ is the number records classified into the
+current node and $N$ is the total number of records. Clearly in Eq.
+(\ref{eq:cp}), we can directly use $n_{mis}$ instead of $r \times p$.
+
+When there is a weight for each record, we should use weight in the
+calculation. For example, $n_{mis}$ should be replaced by the sum of
+weights of the mis-classified records.
+
+There is some logic in rpart's code that is not described anywhere. We
+try to give more detailed explanation here.
+
+(1) For a node $i$, we compute the risk of this node $r_i$, and the
+total risk $s_i$ of all nodes in the subtree where the node $i$ is the
+root node and not included in the subtree. The number of splits in
+subtree-$i$ is $m_i = m_{i,left} + m_{i,right} + 1$. Here the
+subscript "left" and "right" denote the left and right child of node
+$i$. Another important quatity is the cost-complexity itself $c_i$.
+
+(2) Instead of directly applying Eq. (\ref{eq:cp}), we use the
+following logic: For a node, we compute the average improvement per
+split in the subtree of node $i$.
+\begin{equation}
+    \bar{t} = \frac{r_i - s_{i,left} - s_{i,right}}{m_i}.
+\end{equation}
+If $\bar{t} > c_{i,right} > c_{i,left}$, the improvement at this split
+is more important than the splits in the sub-tree, since we already
+keep the nodes in the sub-tree, we must keep the current split. Thus,
+we re-compute the average improvement as the following
+\begin{equation}
+    \bar{t} = \frac{r_i - r_{i,left} - s_{i,right}}{m_{i,right} + 1} .
+\end{equation}
+And then if $\bar{t} > c_{i,right} $, we need to do the same thing and
+update
+\begin{equation}
+    \bar{t} = r_i - r_{i,left} - r_{i,right} .
+\end{equation}
+And when $\bar{t} > \alpha R(T_1) $, we keep the split.
+
+We use a similar method if instead $\bar{t} > c_{i,left} >
+c_{i,right}$, then we first deal with the right child, and then deal
+with the left child.
+
+(3) We recursively call the function of pruning. The question is when
+we stop. We stop when the current node under examination is a leaf
+node, or the risk is smaller than the threshold $\alpha\times R(T_1)$
+(no change can make the improvement larger than this threshold).
+However, rpart uses a fairly complicated method to estimate the risk
+that is used to compare with the threshold. See the code for more
+details.
+
+At the end, the cost complexity measure comes as a penalized version
+of the resubstitution error rate. This is the function to be minimized
+when pruning the tree. In general, given a pre-selected $\alpha$, we
+can find the subtree $T(\alpha)$ that minimizes $R_\alpha(T)$. Since
+there are at most a finite number of subtrees of $T_{\text{max}}$,
+$R_\alpha(T(\alpha))$ yields different values for only finitely many
+$\alpha$'s. T($\alpha$) continues to be the minimizing tree when
+$\alpha$ increases until a jump point is reached.
+
+\subsection{Cross-validation with the cost-complexity}
 
 The starting point for the pruning is not $T_{\text{max}}$, but rather
 $T_1 = T(0)$, which is the smallest subtree of $T_{\text{max}}$ satisfying

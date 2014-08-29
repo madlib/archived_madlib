@@ -7,6 +7,16 @@
 #ifndef MADLIB_MODULES_RP_DT_PROTO_HPP
 #define MADLIB_MODULES_RP_DT_PROTO_HPP
 
+#include <iostream>
+#include <sstream>
+#include <vector>
+#include <string>
+#include <iterator>
+
+#include <limits>  // std::numeric_limits
+
+#include <dbconnector/dbconnector.hpp>
+
 namespace madlib {
 
 namespace modules {
@@ -51,6 +61,7 @@ public:
                 const uint16_t &min_split,
                 const uint16_t &min_bucket,
                 const uint16_t &max_depth);
+
     Index trueChild(Index current) const { return 2 * current + 1; }
     Index falseChild(Index current) const { return 2 * current + 2; }
     double impurity(const ColumnVector & stats) const;

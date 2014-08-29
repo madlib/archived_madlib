@@ -46,7 +46,6 @@ typedef TreeAccumulator<MutableRootContainer, Tree> MutableLevelState;
 // ------------------------------------------------------------
 AnyType
 initialize_decision_tree::run(AnyType & args){
-    // elog(INFO, "Initializing tree ...");
 
     DecisionTree<MutableRootContainer> dt = DecisionTree<MutableRootContainer>();
     bool is_regression_tree = args[0].getAs<bool>();
@@ -317,6 +316,187 @@ display_text_tree::run(AnyType &args){
                     cat_n_levels, 1u);
 }
 
+
+// ------------------------------------------------------------
+// Prune the tree model using cost-complexity parameter
+// ------------------------------------------------------------
+
+/*
+ * Compute the risk using rpart's method, which scales the
+ * regularization with the root node risk
+ */
+inline double compute_risk(MutableTree &dt, int me) {
+    if (dt.is_regression) {
+        double wt_tot = dt.predictions.row(me)(0);
+        double y_avg = dt.predictions.row(me)(1);
+        return dt.predictions.row(me)(2) - y_avg * y_avg / wt_tot;
+    } else {
+        return dt.predictions.row(me).sum() - dt.predictions.row(me).maxCoeff();
+    }
+}
+
+// ------------------------------------------------------------
+
+// Remove me's subtree and make it become a leaf
+void mark_subtree_removal_recur(MutableTree &dt, int me) {
+    if (me < dt.predictions.rows() &&
+            dt.feature_indices(me) != dt.NON_EXISTING) {
+        int left = static_cast<int>(dt.trueChild(static_cast<Index>(me))), 
+            right = static_cast<int>(dt.falseChild(static_cast<Index>(me)));
+        mark_subtree_removal_recur(dt, left);
+        mark_subtree_removal_recur(dt, right);
+        dt.feature_indices(me) = dt.NON_EXISTING;
+    }
+}
+
+void mark_subtree_removal(MutableTree &dt, int me) {
+    mark_subtree_removal_recur(dt, me);
+    dt.feature_indices(me) = dt.FINISHED_LEAF;
+}
+
+// ------------------------------------------------------------
+
+/*
+ * Data structure that contains the info for lower sub-trees
+ */
+struct SubTreeInfo {
+    /* number of node splits */
+    int split;
+    /* current node's own risk */
+    double risk;
+    /*
+     * accumulated risk of sub-tree with the current
+     * node being the root
+     */
+    double sum_risk;
+    /* sub-tree's average risk improvement per split */
+    double complexity;
+    SubTreeInfo(int n, double r, double s, double c):
+        split(n), risk(r), sum_risk(s), complexity(c) {}
+};
+
+/*
+ * Pruning the tree by setting the pruned nodes'
+ * feature_indices value to be NON_EXISTING.
+ *
+ * Closely follow rpart's implementation. Please read the
+ * source code of rpart/src/partition.c
+ */
+SubTreeInfo pruning(MutableTree &dt, int me, double alpha,
+        double estimated_complexity) {
+    if (me >= dt.predictions.rows() || /* out of range */
+            dt.feature_indices(me) == dt.NON_EXISTING)
+        return SubTreeInfo(0, 0, 0, 0);
+
+    double risk = compute_risk(dt, me);
+
+    /*
+     * Before splitting, do a simple check. If the current
+     * node's risk is smaller than alpha, then the risk can
+     * never decrease more than alpha by splitting. No need
+     * to try split in this case.
+     *
+     * FIXME Not completely sure what 'rpart' is doing here
+     * with adjusted_risk
+     */
+    double adjusted_risk = risk > estimated_complexity
+        ? estimated_complexity : risk;
+    if (dt.feature_indices(me) == dt.FINISHED_LEAF ||
+            dt.feature_indices(me) == dt.IN_PROCESS_LEAF ||
+            adjusted_risk <= alpha) {
+        /*
+         * Remove the current node's subtree and make the
+         * current node a leaf
+         */
+        mark_subtree_removal(dt, me);
+        return SubTreeInfo(0, risk, risk, alpha);
+    }
+
+    /*
+     * FIXME Completely confused by what rpart is doing
+     * with the adjusted_risk
+     */
+    SubTreeInfo left = pruning(dt, 2*me+1, alpha,
+            adjusted_risk - alpha);
+
+    double left_improve_per_split = (risk - left.sum_risk) /
+        (left.split + 1);
+    double left_child_improve = risk - left.risk;
+    if (left_improve_per_split < left_child_improve)
+        left_improve_per_split = left_child_improve;
+    adjusted_risk = left_improve_per_split > estimated_complexity
+        ? estimated_complexity : left_improve_per_split;
+    SubTreeInfo right = pruning(dt, 2*me+2, alpha,
+            adjusted_risk - alpha);
+
+    /*
+     * Closely folllow rpart's algorithm,
+     * in rpart/src/partition.c
+     *
+     * If the average improvement of risk per split is larger
+     * than the sub-tree's average improvement, the current
+     * split is important. And we need to manually increase
+     * the value of the current split's improvement, which
+     * aims at keeping the current split if possible.
+     */
+    double left_risk = left.sum_risk,
+           right_risk = right.sum_risk;
+    int left_split = left.split, right_split = right.split;
+
+    double tempcp = (risk - (left_risk + right_risk)) /
+        (left_split + right_split + 1);
+
+    if (right.complexity > left.complexity) {
+        if (tempcp > left.complexity) {
+            left_risk = left.risk;
+            left_split = 0;
+
+            tempcp = (risk - (left_risk + right_risk)) /
+                (left_split + right_split + 1);
+            if (tempcp > right.complexity) {
+                right_risk = right.risk;
+                right_split = 0;
+            }
+        }
+    } else if (tempcp > right.complexity) {
+        right_risk = right.risk;
+        right_split = 0;
+
+        tempcp = (risk - (left_risk + right_risk)) /
+            (left_split + right_split + 1);
+        if (tempcp > left.complexity) {
+            left_risk = left.risk;
+            left_split = 0;
+        }
+    }
+
+    double complexity = (risk - (left_risk + right_risk)) /
+        (left_split + right_split + 1);
+    if (complexity <= alpha) {
+        /* No need to split */
+        mark_subtree_removal(dt, me);
+        return SubTreeInfo(0, risk, risk, complexity);
+    } else {
+        return SubTreeInfo(left_split + right_split + 1, risk,
+                left_risk + right_risk, complexity);
+    }
+}
+
+// ------------------------------------------------------------
+
+AnyType
+prune_model::run(AnyType &args) {
+    MutableTree dt = args[0].getAs<MutableByteString>();
+    double cp = args[1].getAs<double>();
+
+    /* use rpart's definition of regularized risk */
+    double root_risk = compute_risk(dt, 0);
+    double alpha = cp * root_risk;
+
+    pruning(dt, 0, alpha, root_risk);
+
+    return dt.storage(); /* the new pruned tree */
+}
 
 } // namespace recursive_partitioning
 } // namespace modules

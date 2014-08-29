@@ -17,3 +17,4 @@ DECLARE_UDF(recursive_partitioning, predict_dt_prob)
 
 DECLARE_UDF(recursive_partitioning, display_decision_tree)
 DECLARE_UDF(recursive_partitioning, display_text_tree)
+DECLARE_UDF(recursive_partitioning, prune_model)

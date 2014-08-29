@@ -283,6 +283,7 @@ DecisionTree<Container>::impurityGain(const ColumnVector &combined_stats,
                 impurity(combined_stats.segment(stats_per_split, stats_per_split))
             );
 }
+
 // ------------------------------------------------------------
 
 template <class Container>
@@ -351,8 +352,8 @@ DecisionTree<Container>::expand(const Accumulator &state,
 
             // create and update child nodes if splitting current
             if (max_impurity_gain > 0 &&
-                        shouldSplit(max_stats, min_split,
-                                    min_bucket, sps)) {
+                    shouldSplit(max_stats, min_split,
+                        min_bucket, sps)) {
 
                 if (children_not_allocated) {
                     // allocate the memory for child nodes if not allocated already
@@ -865,7 +866,6 @@ TreeAccumulator<Container, DTree>::operator<<(const tuple_type& inTuple) {
             if (dt.feature_indices(dt_search_index) != dt.FINISHED_LEAF) {
                 Index row_index = dt_search_index - num_non_leaf_nodes;
 
-
                 for (Index i=0; i < num_cat_features; ++i){
                     for (int j=0; j < cat_levels(i); ++j){
                         Index col_index = indexCatStats(
@@ -937,7 +937,6 @@ TreeAccumulator<Container, DTree>::updateStats(bool is_regression,
         double w_response = weight * response;
         stats << weight, w_response, w_response * response, 1;
     } else {
-        //assert(response > 0 && response < stats_per_split);
         stats(static_cast<uint16_t>(response)) = weight;
     }
 
@@ -955,9 +954,6 @@ Index
 TreeAccumulator<Container, DTree>::indexConStats(Index feature_index,
                                                  Index bin_index,
                                                  bool  is_split_true) const {
-
-    // con_stats is a matrix
-    //   size = (num_leaf_nodes) x (num_con_features * num_bins * stats_per_split * 2)
     assert(feature_index < num_con_features);
     assert(bin_index < num_bins);
     return computeSubIndex(feature_index * num_bins, bin_index, is_split_true);
