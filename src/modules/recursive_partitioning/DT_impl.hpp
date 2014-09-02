@@ -210,7 +210,6 @@ double
 DecisionTree<Container>::predict_response(
         MappedIntegerVector cat_features,
         MappedColumnVector con_features) const {
-
     ColumnVector curr_prediction = this->predict(cat_features, con_features);
     if (is_regression){
         return curr_prediction(0);
@@ -446,7 +445,7 @@ DecisionTree<Container>::statPredict(const ColumnVector &stats) const {
     } else {
         // classification stat ->  (i) = num of tuples for class i
         // we return the proportion of each label
-        return stats / stats.sum();
+        return stats / static_cast<double>(stats.sum());
     }
 
 }
@@ -509,7 +508,6 @@ DecisionTree<Container>::shouldSplit(const ColumnVector &combined_stats,
     uint64_t thresh_min_bucket = (min_bucket == 0) ? 1u : min_bucket;
     uint64_t true_count = statCount(combined_stats.segment(0, stats_per_split));
     uint64_t false_count = statCount(combined_stats.segment(stats_per_split, stats_per_split));
-
     return ((true_count + false_count) >= min_split &&
             true_count >= thresh_min_bucket &&
             false_count >= thresh_min_bucket);
@@ -608,12 +606,9 @@ DecisionTree<Container>::display(
         const std::string &id_prefix) {
 
     std::stringstream display_string;
-    if (feature_indices.size() == 1){
-        if (feature_indices(0) == IN_PROCESS_LEAF ||
-            feature_indices(0) == FINISHED_LEAF){
-            display_string << displayLeafNode(0, dependent_levels, id_prefix)
-                           << std::endl;
-        }
+    if (feature_indices(0) == FINISHED_LEAF){
+        display_string << displayLeafNode(0, dependent_levels, id_prefix)
+                       << std::endl;
     }
     else{
         for(Index index = 0; index < feature_indices.size() / 2; index++) {
@@ -671,6 +666,7 @@ DecisionTree<Container>::print(
         ArrayHandle<text*> &con_features_str,
         ArrayHandle<text*> &cat_levels_text,
         ArrayHandle<int> &cat_n_levels,
+        ArrayHandle<text*> &dep_levels,
         uint16_t recursion_depth){
 
     if (feature_indices(current) == NON_EXISTING){
@@ -681,11 +677,13 @@ DecisionTree<Container>::print(
     // print current node + prediction
     print_string << "(" << current << ")";
     print_string << "[ ";
-    if (is_regression)
+    if (is_regression){
         print_string << statCount(predictions.row(current)) << ", "
                        << statPredict(predictions.row(current));
-    else
+    }
+    else{
         print_string << predictions.row(current);
+    }
     print_string << "]  ";
 
     if (feature_indices(current) >= 0){
@@ -701,23 +699,28 @@ DecisionTree<Container>::print(
                                        static_cast<Index>(feature_thresholds(current)),
                                        cat_levels_text, cat_n_levels);
         }
-        print_string << label_str.str();
-        print_string << std::endl;
-        for (Index i=0; i < recursion_depth; i++)
-            print_string << "  ";
+        print_string << label_str.str() << std::endl;
+
+        std::string indentation(recursion_depth * 3, ' ');
         print_string
+            << indentation
             << print(trueChild(current), cat_features_str,
                      con_features_str, cat_levels_text,
-                     cat_n_levels, static_cast<uint16_t>(recursion_depth + 1));
+                     cat_n_levels, dep_levels, static_cast<uint16_t>(recursion_depth + 1));
 
-        for (Index i=0; i < recursion_depth; i++)
-            print_string << "  ";
         print_string
+            << indentation
             << print(falseChild(current), cat_features_str,
                      con_features_str, cat_levels_text,
-                     cat_n_levels, static_cast<uint16_t>(recursion_depth + 1));
+                     cat_n_levels, dep_levels, static_cast<uint16_t>(recursion_depth + 1));
     } else {
-        print_string << "*" << std::endl;
+        print_string << "*";
+        if (!is_regression){
+            std::string dep_value = get_text(dep_levels,
+                                             static_cast<int>(predict_response(current)));
+            print_string << " --> " << dep_value;
+        }
+        print_string << std::endl;
     }
     return print_string.str();
 }

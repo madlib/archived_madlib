@@ -139,8 +139,8 @@ def _tree_validate_args(
     _assert(min_split > 0, "Decision tree error: min_split must be positive.")
     _assert(min_bucket > 0, "Decision tree error: min_bucket must be positive.")
     _assert(n_bins > 1, "Decision tree error: number of bins must be at least 2.")
-    _assert(cp >= 0, "Decision tree error: cp must be non-negative.")
-    _assert(n_folds > 0, "Decision tree error: number of cross-validation "
+    # _assert(cp >= 0, "Decision tree error: cp must be non-negative.")
+    _assert(n_folds >= 0, "Decision tree error: number of cross-validation "
                          "folds must be non-negative.")
 # ------------------------------------------------------------
 
@@ -269,11 +269,11 @@ SELECT {schema_madlib}.tree_train(
     n_bins,                 -- Number of bins to find possible node
                                 split threshold values for continuous
                                 variables, default is 100 (Must be greater than 1)
-    pruning_params          -- (NOT IMPLEMENTED YET) A comma-separated text containing
+    pruning_params          -- A comma-separated text containing
                                 key=value pairs of parameters for pruning.
                                 Parameters accepted:
                                     'cp' - complexity parameter with default=0.01,
-                                    'n_folds' - number of cross-validation folds
+                                    'n_folds' - (NOT IMPLEMENTED YET) number of cross-validation folds
                                         with default value of 0 (= no cross-validation)
     verbose                 -- Boolean, whether to print more info,
                               default is False
@@ -370,17 +370,14 @@ def _extract_pruning_params(pruning_params_str):
     Returns:
         dict. A dictionary containing the pruning parameters
     """
-    default_dict = dict(cp=0.01, n_folds=2)
+    default_dict = dict(cp=0.01, n_folds=0)
     params_types = dict(cp=float, n_folds=int)
     pruning_params = extract_keyvalue_params(pruning_params_str,
                                              params_types,
                                              default_dict)
-    if pruning_params['cp'] < 0:
-        plpy.error("Decision Tree error: Cost-complexity ({0}) "
-                   "must be non-negative".format(pruning_params['cp']))
-    if pruning_params['n_folds'] <= 0:
+    if pruning_params['n_folds'] < 0:
         plpy.error("Decision Tree error: Number of cross-validation folds ({0}) "
-                   "must be positive".format(pruning_params['n_folds']))
+                   "must be non-negative".format(pruning_params['n_folds']))
     return pruning_params
 # ------------------------------------------------------------
 
@@ -428,7 +425,6 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
     n_bins = 100 if not n_bins else n_bins
     split_criterion = 'gini' if not split_criterion else split_criterion
     pruning_param = 'cp=0.01' if not pruning_param else pruning_param
-
     pruning_param_dict = _extract_pruning_params(pruning_param)
 
     with MinWarning(msg_level):
@@ -1432,10 +1428,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response'):
         "Decision tree error: Invalid model summary table ({0})".format(model_summary))
 
     # obtain the cat_features and con_features from model table
-    model_elements = plpy.execute("SELECT * FROM {0}".format(model))[0]
     summary_elements = plpy.execute("SELECT * FROM {0}".format(model_summary))[0]
-    cat_sorted_levels = model_elements["cat_levels_in_text"]
-    cat_n_levels = model_elements["cat_n_levels"]
 
     cat_features = split_quoted_delimited_str(summary_elements["cat_features"])
     con_features = split_quoted_delimited_str(summary_elements["con_features"])
@@ -1460,13 +1453,9 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response'):
             else:
                 cat_features_cast.append("(" + col + ")::text")
         cat_features_str = (
-            "{schema_madlib}._map_catlevel_to_int(array[" +
+            "{0}._map_catlevel_to_int(array[" +
             ", ".join(cat_features_cast) +
-            "], {cat_sorted_levels}, {cat_n_levels})")
-        cat_features_str = cat_features_str.format(
-            schema_madlib=schema_madlib,
-            cat_sorted_levels=py_list_to_sql_string(cat_sorted_levels, "text[]"),
-            cat_n_levels=py_list_to_sql_string(cat_n_levels, "integer[]"))
+            "], m.cat_levels_in_text, m.cat_n_levels)").format(schema_madlib)
     else:
         cat_features_str = "NULL"
 
@@ -1574,18 +1563,22 @@ def tree_display(schema_madlib, model_table, dot_format=True):
     else:
         return_str_list.append("-------------------------------------")
         return_str_list.append("- Each node represented by 'id' inside ().")
-        return_str_list.append("- Leaf nodes have a * while internal nodes "
-                               "have the split condition at the end.")
-        return_str_list.append("- For each internal node (i), it's children "
-                               "will be at (2i+1) and (2i+2)")
-        return_str_list.append("- For each split the first indented child (2i+1) "
-                               "is 'True' node and \n"
-                               "second indented child (2i+2) is 'False' node")
+        return_str_list.append(
+            "- Each internal nodes has the split condition at the end, \n"
+            "   while each leaf node has a * at the end.")
+        return_str_list.append(
+            "- For each internal node (i), its child nodes are indented by 1 level \n"
+            "   with ids (2i+1) for True node and (2i+2) for False node.")
         if is_regression:
-            return_str_list.append('- Number of rows and average response value inside [].')
+            return_str_list.append(
+                '- Number of rows and average response value inside [].\n'
+                '   For a leaf node, the average response value is the prediction.')
         else:
-            return_str_list.append('- Number of (weighted) rows for each response variable inside [].\n'
-                                   '- Order of values = {0}'.format(str(dep_levels)))
+            return_str_list.append(
+                '- Number of (weighted) rows for each response variable inside [].\n'
+                '    - Order of values inside [] = {0}\n'
+                '    - For a leaf node, the prediction (label with max count) is printed after -->.'
+                .format(str(dep_levels)))
         return_str_list.append("-------------------------------------")
 
     with MinWarning('warning'):
@@ -1613,24 +1606,19 @@ def tree_display(schema_madlib, model_table, dot_format=True):
                                     $1, $2, $3, $4, $5, $6, '{1}'
                                 ) as display_tree
                       """.format(schema_madlib, "g" + str(index) + "_")
-                sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib),
-                                              'text[]', 'text[]', 'text[]',
-                                              'int[]', 'text[]'])
-                tree_display = plpy.execute(
-                    sql_plan, [tree, cat_features_str, con_features_str,
-                               cat_levels_in_text, cat_n_levels, dep_levels])[0]
             else:
                 if group_name:
                     return_str_list.append("--- Tree for {0} ---".format(group_name))
                 sql = """
                         SELECT {0}._display_text_decision_tree(
-                                    $1, $2, $3, $4, $5) as display_tree
+                                    $1, $2, $3, $4, $5, $6) as display_tree
                       """.format(schema_madlib)
-                sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib),
-                                              'text[]', 'text[]', 'text[]', 'int[]'])
-                tree_display = plpy.execute(
-                    sql_plan, [tree, cat_features_str, con_features_str,
-                               cat_levels_in_text, cat_n_levels])[0]
+            sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib),
+                                          'text[]', 'text[]', 'text[]',
+                                          'int[]', 'text[]'])
+            tree_display = plpy.execute(
+                sql_plan, [tree, cat_features_str, con_features_str,
+                           cat_levels_in_text, cat_n_levels, dep_levels])[0]
             return_str_list.append(tree_display["display_tree"])
             if dot_format:
                 return_str_list.append("\t } //--- end of subgraph------------")
@@ -1640,6 +1628,7 @@ def tree_display(schema_madlib, model_table, dot_format=True):
         return_str_list.append("} //---end of digraph--------- ")
     return ("\n".join(return_str_list))
 # -------------------------------------------------------------------------
+
 
 def tree_predict_help_message(schema_madlib, message, **kwargs):
     """ Help message for Decision Tree predict

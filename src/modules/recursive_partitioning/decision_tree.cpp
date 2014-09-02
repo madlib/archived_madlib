@@ -311,9 +311,10 @@ display_text_tree::run(AnyType &args){
     ArrayHandle<text*> con_feature_names = args[2].getAs<ArrayHandle<text*> >();
     ArrayHandle<text*> cat_levels_text = args[3].getAs<ArrayHandle<text*> >();
     ArrayHandle<int> cat_n_levels = args[4].getAs<ArrayHandle<int> >();
+    ArrayHandle<text*> dependent_var_levels = args[5].getAs<ArrayHandle<text*> >();
 
     return dt.print(0, cat_feature_names, con_feature_names, cat_levels_text,
-                    cat_n_levels, 1u);
+                    cat_n_levels, dependent_var_levels, 1u);
 }
 
 
@@ -341,7 +342,7 @@ inline double compute_risk(MutableTree &dt, int me) {
 void mark_subtree_removal_recur(MutableTree &dt, int me) {
     if (me < dt.predictions.rows() &&
             dt.feature_indices(me) != dt.NON_EXISTING) {
-        int left = static_cast<int>(dt.trueChild(static_cast<Index>(me))), 
+        int left = static_cast<int>(dt.trueChild(static_cast<Index>(me))),
             right = static_cast<int>(dt.falseChild(static_cast<Index>(me)));
         mark_subtree_removal_recur(dt, left);
         mark_subtree_removal_recur(dt, right);
@@ -416,11 +417,9 @@ SubTreeInfo pruning(MutableTree &dt, int me, double alpha,
      * FIXME Completely confused by what rpart is doing
      * with the adjusted_risk
      */
-    SubTreeInfo left = pruning(dt, 2*me+1, alpha,
-            adjusted_risk - alpha);
+    SubTreeInfo left = pruning(dt, 2*me+1, alpha, adjusted_risk - alpha);
 
-    double left_improve_per_split = (risk - left.sum_risk) /
-        (left.split + 1);
+    double left_improve_per_split = (risk - left.sum_risk) / (left.split + 1);
     double left_child_improve = risk - left.risk;
     if (left_improve_per_split < left_child_improve)
         left_improve_per_split = left_child_improve;

@@ -76,7 +76,8 @@ public:
     uint64_t statCount(const ColumnVector &stats) const;
 
     string print(Index, ArrayHandle<text*>&, ArrayHandle<text*>&,
-                 ArrayHandle<text*>&, ArrayHandle<int>&, uint16_t);
+                 ArrayHandle<text*>&, ArrayHandle<int>&,
+                 ArrayHandle<text*>&, uint16_t);
 
     string displayLeafNode(Index id, ArrayHandle<text*> &dep_levels, const std::string & id_prefix);
     string displayInternalNode(
