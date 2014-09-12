@@ -17,6 +17,8 @@ using std::string;
 
 namespace madlib {
 
+using namespace dbconnector::postgres;
+
 namespace modules {
 
 namespace linalg {
@@ -64,7 +66,8 @@ closestColumnsAndDistances(
     const MappedColumnVector& inVector,
     DistanceFunction& inMetric,
     RandomAccessIterator ioFirst,
-    RandomAccessIterator ioLast) {
+    RandomAccessIterator ioLast,
+    Oid oid) {
 
     ReverseLexicographicComparator<
         typename std::iterator_traits<RandomAccessIterator>::value_type>
@@ -73,10 +76,19 @@ closestColumnsAndDistances(
     std::fill(ioFirst, ioLast,
         std::make_tuple(0, std::numeric_limits<double>::infinity()));
     for (Index i = 0; i < inMatrix.cols(); ++i) {
-        double currentDist
-            = AnyType_cast<double>(
-                inMetric(MappedColumnVector(inMatrix.col(i)), inVector)
-            );
+        double currentDist;
+        if (oid == InvalidOid) {
+            currentDist
+                = AnyType_cast<double>(
+                        inMetric(inMatrix.col(i), inVector)
+                        );
+        } else {
+            currentDist = static_cast<double>(DatumGetFloat8(OidFunctionCall2(
+                            oid,
+                            PointerGetDatum(VectorToNativeArray(inMatrix.col(i))),
+                            PointerGetDatum(VectorToNativeArray(inVector))
+                            )));
+        }
 
         // outIndicesAndDistances is a heap, so the first element is maximal
         if (currentDist < std::get<1>(*ioFirst)) {
@@ -91,7 +103,7 @@ closestColumnsAndDistances(
 }
 
 double
-distNorm1(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+distNorm1(const ColumnVector& inX, const MappedColumnVector& inY) {
     if (inX.size() != inY.size()) {
         throw std::runtime_error("Found input arrays of "
                 "different lengths unexpectedly.");
@@ -101,7 +113,7 @@ distNorm1(const MappedColumnVector& inX, const MappedColumnVector& inY) {
 }
 
 double
-distNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+distNorm2(const ColumnVector& inX, const MappedColumnVector& inY) {
     if (inX.size() != inY.size()) {
         throw std::runtime_error("Found input arrays of "
                 "different lengths unexpectedly.");
@@ -111,7 +123,7 @@ distNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
 }
 
 double
-squaredDistNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+squaredDistNorm2(const ColumnVector& inX, const MappedColumnVector& inY) {
     if (inX.size() != inY.size()) {
         throw std::runtime_error("Found input arrays of "
                 "different lengths unexpectedly.");
@@ -121,7 +133,7 @@ squaredDistNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
 }
 
 double
-distAngle(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+distAngle(const ColumnVector& inX, const MappedColumnVector& inY) {
     if (inX.size() != inY.size()) {
         throw std::runtime_error("Found input arrays of "
                 "different lengths unexpectedly.");
@@ -143,7 +155,7 @@ distAngle(const MappedColumnVector& inX, const MappedColumnVector& inY) {
 }
 
 double
-distTanimoto(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+distTanimoto(const ColumnVector& inX, const MappedColumnVector& inY) {
     if (inX.size() != inY.size()) {
         throw std::runtime_error("Found input arrays of "
                 "different lengths unexpectedly.");
@@ -176,22 +188,22 @@ closestColumnsAndDistancesShortcut(
     // Sorted in the order of expected use
     if (inDist.funcPtr() == funcPtr<squared_dist_norm2>())
         closestColumnsAndDistances(inMatrix, inVector, squaredDistNorm2,
-            ioFirst, ioLast);
+            ioFirst, ioLast, InvalidOid);
     else if (inDist.funcPtr() == funcPtr<dist_norm2>())
         closestColumnsAndDistances(inMatrix, inVector, distNorm2,
-            ioFirst, ioLast);
+            ioFirst, ioLast, InvalidOid);
     else if (inDist.funcPtr() == funcPtr<dist_norm1>())
         closestColumnsAndDistances(inMatrix, inVector, distNorm1,
-            ioFirst, ioLast);
+            ioFirst, ioLast, InvalidOid);
     else if (inDist.funcPtr() == funcPtr<dist_angle>())
         closestColumnsAndDistances(inMatrix, inVector, distAngle,
-            ioFirst, ioLast);
+            ioFirst, ioLast, InvalidOid);
     else if (inDist.funcPtr() == funcPtr<dist_tanimoto>())
         closestColumnsAndDistances(inMatrix, inVector, distTanimoto,
-            ioFirst, ioLast);
+            ioFirst, ioLast, InvalidOid);
     else
         closestColumnsAndDistances(inMatrix, inVector, inDist,
-            ioFirst, ioLast);
+            ioFirst, ioLast, inDist.funcID());
 }
 
 
@@ -207,8 +219,12 @@ AnyType
 closest_column::run(AnyType& args) {
     MappedMatrix M = args[0].getAs<MappedMatrix>();
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    FunctionHandle dist = args[2].getAs<FunctionHandle>()
-        .unsetFunctionCallOptions(FunctionHandle::GarbageCollectionAfterCall);
+    // FunctionHandle dist = args[2].getAs<FunctionHandle>()
+    //     .unsetFunctionCallOptions(FunctionHandle::GarbageCollectionAfterCall);
+
+
+
+    FunctionHandle dist = args[2].getAs<FunctionHandle>();
 
     std::tuple<Index, double> result;
     closestColumnsAndDistancesShortcut(M, x, dist, &result, &result + 1);
@@ -226,7 +242,7 @@ closest_column_hawq::run(AnyType& args) {
     string distance_metric_str = args[2].getAs<char *>();
     boost::trim(distance_metric_str);
 
-    double (*distance_metric)(const MappedColumnVector&, const MappedColumnVector&);
+    double (*distance_metric)(const ColumnVector&, const MappedColumnVector&);
 
     // we hard-code comparision and selection of the distance function since
     // we are currently limited in not being able to access the catalog
@@ -255,7 +271,7 @@ closest_column_hawq::run(AnyType& args) {
     }
 
     std::tuple<Index, double> result;
-    closestColumnsAndDistances(M, x, distance_metric, &result, &result + 1);
+    closestColumnsAndDistances(M, x, distance_metric, &result, &result + 1, InvalidOid);
 
     AnyType tuple;
     return tuple
@@ -306,7 +322,7 @@ closest_columns_hawq::run(AnyType& args) {
         throw std::invalid_argument("the parameter number should be a positive integer");
     }
 
-    double (*distance_metric)(const MappedColumnVector&, const MappedColumnVector&);
+    double (*distance_metric)(const ColumnVector&, const MappedColumnVector&);
 
     if ((distance_metric_str.compare("squared_dist_norm2") == 0) ||
             (distance_metric_str.compare("madlib.squared_dist_norm2") == 0)){
@@ -331,7 +347,7 @@ closest_columns_hawq::run(AnyType& args) {
     }
 
     std::vector<std::tuple<Index, double> > result(num);
-    closestColumnsAndDistances(M, x, distance_metric, result.begin(), result.end());
+    closestColumnsAndDistances(M, x, distance_metric, result.begin(), result.end(), InvalidOid);
 
     MutableArrayHandle<int32_t> indices = allocateArray<int32_t,
         dbal::FunctionContext, dbal::DoNotZero, dbal::ThrowBadAlloc>(num);

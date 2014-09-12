@@ -75,7 +75,8 @@ closestColumnsAndDistances(
     const MappedColumnVector& inVector,
     DistanceFunction& inMetric,
     RandomAccessIterator ioFirst,
-    RandomAccessIterator ioLast);
+    RandomAccessIterator ioLast,
+    Oid oid);
 
 } // namespace linalg
 
