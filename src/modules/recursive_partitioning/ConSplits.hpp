@@ -46,9 +46,6 @@ public:
         return *this;
     }
 
-    template<class OtherContainer> ConSplitsSample& operator<<(
-            const ConSplitsSample<OtherContainer>& inOther);
-
     bool empty() const { return this->num_rows == 0; }
 
     uint32_type num_rows;
@@ -59,46 +56,13 @@ public:
 };
 // ------------------------------------------------------------
 
-template<class Container>
-template<class OtherContainer>
-ConSplitsSample<Container>& ConSplitsSample<Container>::operator<<(
-        const ConSplitsSample<OtherContainer>& inOther) {
-
-    if (!inOther.empty()) {
-        if (num_features != inOther.num_features)
-            throw std::runtime_error("Inconsistent number of features during merge.");
-        else {
-            if (buff_size < num_rows + inOther.num_rows) {
-                ConSplitsSample<Container> merged_state =
-                    defaultAllocator().allocateByteString<
-                    dbal::AggregateContext, dbal::DoZero,
-                    dbal::ThrowBadAlloc>(0);
-                merged_state.num_rows = num_rows;
-                merged_state.num_splits = num_splits;
-                merged_state.num_features = num_features;
-                merged_state.buff_size = merged_state.num_rows + inOther.num_rows;
-                merged_state.resize();
-
-                for (size_t i = 0; i < num_rows; i++)
-                    merged_state.sample.col(i) = sample.col(i);
-                this->copy(merged_state);
-            }
-            for (size_t i = 0; i < inOther.num_rows; i++)
-                sample.col(i + num_rows) = inOther.sample.col(i);
-            num_rows += inOther.num_rows;
-        }
-    }
-    return *this;
-}
-// ------------------------------------------------------------
-
 // The continuous split result is returned in a bytea8 data type
 // So we need a dynamic struct.
 // Unfortunately Python has difficulty in passing matrix around
 template<class Container>
-class ConSplitsResult : public DynamicStruct<ConSplitsResult<Container>, Container>
-{
-  public:
+class ConSplitsResult
+  : public DynamicStruct<ConSplitsResult<Container>, Container> {
+public:
     typedef DynamicStruct<ConSplitsResult, Container> Base;
     MADLIB_DYNAMIC_STRUCT_TYPEDEFS;
 

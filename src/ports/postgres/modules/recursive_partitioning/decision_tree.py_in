@@ -14,7 +14,6 @@ from operator import itemgetter
 from itertools import groupby
 from contextlib import contextmanager
 
-from stats.cox_prop_hazards import _get_seg_number
 from utilities.control import MinWarning
 from utilities.validate_args import get_cols
 from utilities.validate_args import get_cols_and_types
@@ -552,41 +551,41 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                 ','.join("(case when " + col + " then 'True' else 'False' end)::text"
                          if col_type == 'boolean' else '(' + col + ')::text'
                          for col, col_type in grouping_cols_and_types) + "], ',')"
-
-            # Find the bins for all groups
-            bins = _get_bins_grps(schema_madlib, training_table_name, cat_features,
-                                  con_features, n_bins, dep, boolean_cats,
-                                  grouping_cols, grouping_array_str, n_rows,
-                                  is_classification, dep_n_levels, filter_null)
-            cat_features = bins['cat_features']
-
-            # Load all groups tree state into memory
-            # Iterations for training the tree
-            tree_state = plpy.execute(
-                """
-                SELECT
-                    {schema_madlib}._initialize_decision_tree(
-                        {is_regression_tree},
-                        '{split_criterion}'::text,
-                        {dep_n_levels}::smallint)
-                    AS tree_state,
-                    0 AS finished
-                """.format(schema_madlib=schema_madlib,
-                           is_regression_tree=not is_classification,
-                           split_criterion=split_criterion,
-                           dep_n_levels=dep_n_levels))[0]
-            tree_states = []
-            for key in bins['grp_key_con']:
-                tree_state.update(grp_key=key)
-                tree_states.append(dict(tree_state))
-            plpy.notice("Started tree building for all groups")
-            tree_depth = 0
             with disable_optimizer():
                 # we disable optimizer (ORCA) for platforms that use it
                 #  since ORCA doesn't provide an easy way to disable hashagg
                 with disable_hashagg():
                     # we disable hashagg since large number of groups could
                     # result in excessive memory usage.
+                    # Find the bins for all groups
+                    bins = _get_bins_grps(schema_madlib, training_table_name, cat_features,
+                                          con_features, n_bins, dep, boolean_cats,
+                                          grouping_cols, grouping_array_str, n_rows,
+                                          is_classification, dep_n_levels, filter_null)
+                    cat_features = bins['cat_features']
+
+                    # Load all groups tree state into memory
+                    # Iterations for training the tree
+                    tree_state = plpy.execute(
+                        """
+                        SELECT
+                            {schema_madlib}._initialize_decision_tree(
+                                {is_regression_tree},
+                                '{split_criterion}'::text,
+                                {dep_n_levels}::smallint)
+                            AS tree_state,
+                            0 AS finished
+                        """.format(schema_madlib=schema_madlib,
+                                   is_regression_tree=not is_classification,
+                                   split_criterion=split_criterion,
+                                   dep_n_levels=dep_n_levels))[0]
+                    tree_states = []
+                    for key in bins['grp_key_con']:
+                        tree_state.update(grp_key=key)
+                        tree_states.append(dict(tree_state))
+                    plpy.notice("Started tree building for all groups")
+                    tree_depth = 0
+
                     while True:
                         tree_states = _one_step_for_grps(
                             schema_madlib, training_table_name, cat_features,
@@ -702,17 +701,27 @@ def _get_bins(schema_madlib, training_table_name, cat_features,
                          ).format(schema_madlib=schema_madlib,
                                   sample_size=actual_sample_size,
                                   n_bins=n_bins)
+
+        sample_table_name = __unique_string()
+        plpy.execute("""
+                CREATE TEMP TABLE {sample_table_name} AS
+                SELECT *
+                FROM
+                (
+                    SELECT *, random() AS rand
+                    FROM {training_table_name}
+                    WHERE {filter_null}
+                ) subq
+                WHERE rand <= {percentage}
+                """.format(**locals()))
+
         # The splits for continuous variables
-        con_splits = plpy.execute(
-            """
-            SELECT
-                {con_split_str} as con_splits
-            FROM {training_table}
-            WHERE random() <= {percentage} and {filter_null}
-            """.format(con_split_str=con_split_str,
-                       training_table=training_table_name,
-                       filter_null=filter_null,
-                       percentage=percentage))[0]
+        con_splits = plpy.execute("""
+                SELECT {con_split_str} as con_splits
+                FROM {sample_table_name}
+                """.format(**locals()))[0]
+
+        plpy.execute("DROP TABLE {sample_table_name}".format(**locals()))
     else:
         con_splits = {'con_splits': []}   # no continuous features present
 
@@ -928,60 +937,77 @@ def _get_bins_grps(
         if n_bins > n_rows:
             plpy.error("Decision tree error: Number of bins is larger than "
                        "the number of data records.")
-        m = n_bins * n_bins   # sample size
+        sample_size = n_bins * n_bins  # We use Spark's value here
         # FIXME Hard coded number
-        if m < 10000:
-            m = 10000
-        n_seg = _get_seg_number()   # number of segments
+        if sample_size < 10000:
+            sample_size = 10000
+
+        # Compute the percentage of the sample.
+        # We sample a few more values to make sure we can get enough
+        # samples, otherwise the number of samples might be smaller
+        # than sample_size.
+        # Use design doc Eq. (2.1)
+        # FIXME Should also use this for the CoxPH module
+        sample_size = sample_size + 14 + sqrt(196 + 28 * sample_size)
 
         grp_key_str = __unique_string()
         n_per_seg_str = __unique_string()
         grp_size_str = __unique_string()
         random_str = __unique_string()
 
-        con_split_str = ('{schema_madlib}._dst_compute_con_splits(array[' +
-                         ', '.join(con_features) + ']::float8[], {n_per_seg}::integer,'
-                         '{n_bins}::smallint)').format(schema_madlib=schema_madlib,
-                                                       n_per_seg=n_per_seg_str,
-                                                       n_bins=n_bins)
-        sql = """
-                SELECT
-                    {grouping_array_str} as grp_key,
-                    {con_split_str} as con_splits
-                from (
-                    select
-                        src.*, grp_info.*, random() as {random_str}
-                    from
-                        {training_table_name} as src,
-                        (
-                            SELECT
-                                {grp_key_str}, {grp_size_str},
-                                (
-                                    case when {m} + 14. + sqrt(196. + 28*{m}) >= {grp_size_str}
-                                    then {grp_size_str}::double precision
-                                    else ({m} + 14. + sqrt(196. + 28*{m})) end
-                                ) as {n_per_seg_str}
-                            from (
-                                SELECT
-                                    {grouping_array_str} as {grp_key_str},
-                                    count(*) as {grp_size_str}
-                                from {training_table_name}
-                                group by {grouping_cols}
-                            ) s1
-                        ) grp_info
-                ) s
-                where
-                    {grouping_array_str} = {grp_key_str} and
-                    {random_str} <= ({m} + 14. + sqrt(196. + 28*{m})) / {grp_size_str} and
-                    {filter_null}
-                group by {grouping_cols}
-                """.format(**locals())
+        con_split_str = """{schema_madlib}._dst_compute_con_splits(
+                ARRAY[{con_features_str}]::float8[],
+                {n_per_seg}::integer,
+                {n_bins}::smallint)""".format(
+                    con_features_str=','.join(con_features),
+                    schema_madlib=schema_madlib,
+                    n_per_seg=n_per_seg_str,
+                    n_bins=n_bins)
+
+        sample_table_name = __unique_string()
+        plpy.execute("""
+                CREATE TEMP TABLE {sample_table_name} AS
+                SELECT *
+                FROM
+                (
+                    SELECT
+                        *,
+                        random() AS rand,
+                        CASE WHEN {grp_size_str} < {sample_size}
+                            THEN {grp_size_str}
+                            ELSE {sample_size}
+                        END AS {n_per_seg_str}
+                    FROM
+                    (
+                        SELECT *
+                        FROM {training_table_name}
+                        WHERE {filter_null}
+                    ) src
+                    JOIN
+                    (
+                        SELECT {grouping_cols}, count(*) AS {grp_size_str}
+                        FROM {training_table_name}
+                        WHERE {filter_null}
+                        GROUP BY {grouping_cols}
+                    ) grp_info
+                    USING ({grouping_cols})
+                ) subq
+                WHERE rand * {grp_size_str} <= {sample_size}
+                """.format(**locals()))
 
         # splits is a list, each of whose elements is a dictionary.
         # The dictionary contains 2 items:
         # 1) grp_key - It is an array of text
         # 2) con_splits - continuous split array
-        con_splits_all = plpy.execute(sql)   # multiple rows
+        con_splits_all = plpy.execute("""
+                SELECT
+                    {con_split_str} AS con_splits,
+                    {grouping_array_str} AS grp_key
+                FROM {sample_table_name}
+                GROUP BY {grouping_cols}
+                """.format(**locals()))   # multiple rows
+
+        plpy.execute("DROP TABLE {sample_table_name}".format(**locals()))
 
     if cat_features:
         if is_classification:

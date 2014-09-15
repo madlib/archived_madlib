@@ -50,50 +50,36 @@ dst_compute_con_splits_transition::run(AnyType &args){
 // ------------------------------------------------------------
 
 AnyType
-dst_compute_con_splits_merge::run(AnyType &args){
-    ConSplitsSample<MutableRootContainer> stateLeft = args[0].getAs<MutableByteString>();
-    if (stateLeft.empty()) { return args[1]; }
-    ConSplitsSample<RootContainer> stateRight = args[1].getAs<ByteString>();
-
-    stateLeft << stateRight;
-
-    return stateLeft.storage();
-}
-// ------------------------------------------------------------
-
-AnyType
 dst_compute_con_splits_final::run(AnyType &args){
     ConSplitsSample<RootContainer> state = args[0].getAs<ByteString>();
     ConSplitsResult<MutableRootContainer> result =
-        defaultAllocator().allocateByteString<
+            defaultAllocator().allocateByteString<
                 dbal::FunctionContext, dbal::DoZero, dbal::ThrowBadAlloc>(0);
     result.num_features = state.num_features;
     result.num_splits = state.num_splits;
     result.resize();
 
-    // MutableNativeMatrix splits(this->allocateArray<double>(state.num_splits,
-    //             state.num_features), state.num_features, state.num_splits);
-    ColumnVector to_sort;
-    if (static_cast<int>(state.num_rows) < static_cast<int>(state.num_splits) + 1){
+    if (state.num_rows <= state.num_splits) {
         std::stringstream error_msg;
-        error_msg << "Decision tree error: Number of splits (" << state.num_splits
-                  << ") is larger than the number of records (" << state.num_rows << ")";
+        error_msg << "Decision tree error: Number of splits ("
+            << state.num_splits
+            << ") is larger than the number of records ("
+            << state.num_rows << ")";
         throw std::runtime_error(error_msg.str());
     }
 
     int bin_size = static_cast<int>(state.num_rows / (state.num_splits + 1));
     for (Index i = 0; i < state.num_features; i ++) {
-        to_sort = state.sample.row(i).segment(0, state.num_rows);
-        std::sort(to_sort.data(), to_sort.data() + to_sort.size());
-
-        for (int j = 0; j < state.num_splits; j++)
-            result.con_splits(i, j) = to_sort(bin_size * (j + 1) - 1);
+        // sorting the values for each feature
+        ColumnVector feature_i_sample = \
+                state.sample.row(i).segment(0, state.num_rows);
+        std::sort(feature_i_sample.data(),
+                  feature_i_sample.data() + feature_i_sample.size());
+        // binning
+        for (int j = 0; j < state.num_splits; j ++) {
+            result.con_splits(i, j) = feature_i_sample(bin_size * (j + 1) - 1);
+        }
     }
-
-    // A Composite type is converted to string in Python when passed by the backend,
-    //  whereas, a 2D array is not. A 2D array inside a composite type can be
-    //  successfully passed in as a string. Hence, we embed the matrix inside a
-    //  composite type.
 
     return result.storage();
 }
