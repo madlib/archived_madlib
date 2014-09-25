@@ -51,8 +51,10 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
+    fn_dist_name = plpy.execute("select fn_dist_name from " + rel_args)[0]['fn_dist_name']
     iterationCtrl = IterationController2D(
         rel_args=rel_args,
+        fn_dist_name=fn_dist_name,
         rel_state=rel_state,
         stateType="DOUBLE PRECISION[][]",
         truncAfterIteration=True,
@@ -61,6 +63,7 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
         expr_point=expr_point)
     with iterationCtrl as it:
         fn_dist_str = m4_ifdef(<!__HAWQ__!>, <!"fn_dist_name"!>, <!"fn_dist"!>)
+        fn_dist_str = plpy.execute("select " + fn_dist_str + " from " + rel_args)[0][fn_dist_str]
         state_str = (m4_ifdef(<!__HAWQ__!>, <!
                      """(SELECT {schema_madlib}.array_to_2d($1))"""!>,
                      <! """(SELECT _state FROM {rel_state}
@@ -82,10 +85,13 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                     || {schema_madlib}.weighted_sample(
                             _src.{expr_point}::FLOAT8[],
                             1e-20 +
-                                ({schema_madlib}.closest_column(
+                                (
+                                    m4_ifdef(<!__HAWQ__!>, <!{schema_madlib}.closest_column!>,
+                                        <!{schema_madlib}._closest_column!>)(
                                     %(state_str)s
                                     , _src.{expr_point}::FLOAT8[]
-                                    , (SELECT %(fn_dist)s FROM {rel_args})
+                                    , '%(fn_dist)s'
+                                    m4_ifdef(<!__HAWQ__!>, <!!>, <!, '{fn_dist_name}'!>)
                                 )).distance)
                         )
                 FROM {rel_source} AS _src
@@ -180,10 +186,11 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
-
+    fn_dist_name = plpy.execute("select fn_dist_name from " + rel_args)[0]['fn_dist_name']
     iterationCtrl = IterationControllerComposite(
         rel_args=rel_args,
         rel_state=rel_state,
+        fn_dist_name=fn_dist_name,
         stateType="{schema_madlib}.kmeans_state",
         truncAfterIteration=False,
         schema_madlib=schema_madlib,
@@ -206,10 +213,16 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
         # for HAWQ we get the name of the distance function instead of the
         # original regproc
         fn_dist_str = m4_ifdef(<!__HAWQ__!>, <!"fn_dist_name"!>, <!"fn_dist"!>)
-        curr_assignment = """{schema_madlib}.closest_column(
+
+        fn_dist_str = plpy.execute("select " + fn_dist_str + " from " + rel_args)[0][fn_dist_str]
+
+        curr_assignment = """m4_ifdef(<!__HAWQ__!>, <!{schema_madlib}.closest_column!>,
+                                <!{schema_madlib}._closest_column!>)(
                                 (%s),
                                  _src.{expr_point}::FLOAT8[],
-                                (SELECT %s FROM {rel_args}))
+                                '%s'
+                                m4_ifdef(<!__HAWQ__!>, <!!>, <!, '{fn_dist_name}'!>)
+                                )
                            """ % (centroid_str, fn_dist_str)
 
         prev_centroid_str = (m4_ifdef(<!__HAWQ__!>, <!
@@ -219,10 +232,12 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
                                 WHERE _iteration = {iteration} - 1"""!>))
 
         # subquery to get closest centroid to point from previous iteration assignments
-        prev_assignment_id = """({schema_madlib}.closest_column(
+        prev_assignment_id = """(m4_ifdef(<!__HAWQ__!>, <!{schema_madlib}.closest_column!>,
+                                    <!{schema_madlib}._closest_column!>)(
                                 (%s),
                                 _src.{expr_point}::FLOAT8[],
-                                (SELECT %s FROM {rel_args})
+                                '%s'
+                                m4_ifdef(<!__HAWQ__!>, <!!>, <!, '{fn_dist_name}'!>)
                             )).column_id""" % (prev_centroid_str, fn_dist_str)
 
         it.update("""

@@ -236,17 +236,32 @@ CREATE TYPE MADLIB_SCHEMA.closest_column_result AS (
  *     column of \f$ M \f$ and \f$ x \f$. That is,
  *     \f$ \min_{i=0,\dots,l-1} \operatorname{dist}(\vec{m_i}, \vec x) \f$.
  */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._closest_column(
+    M           DOUBLE PRECISION[][],
+    x           DOUBLE PRECISION[],
+    dist        REGPROC,
+    dist_dn     TEXT
+) RETURNS MADLIB_SCHEMA.closest_column_result AS
+    'MODULE_PATHNAME', 'closest_column'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!NO SQL!>, <!!>);
+
+
+-- Because of Jiara MPP-23166, ORCA makes the following
+-- function extremely slow because "NO SQL" now becomes
+-- "CONTAINS SQL". This is why we disabled the optimizer
+-- in kmeans.
+
 m4_ifdef(<!__HAWQ__!>, <!!>, <!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.closest_column(
     M DOUBLE PRECISION[][],
     x DOUBLE PRECISION[],
     dist REGPROC /*+ DEFAULT 'squared_dist_norm2' */
-) RETURNS MADLIB_SCHEMA.closest_column_result
-IMMUTABLE
-STRICT
-LANGUAGE C
-AS 'MODULE_PATHNAME'
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL');
+) RETURNS MADLIB_SCHEMA.closest_column_result AS $$
+    SELECT MADLIB_SCHEMA._closest_column($1, $2, $3, textin(regprocout($3)))
+$$ LANGUAGE SQL IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL');
 !>)
 
 m4_ifdef(<!__HAWQ__!>, <!
@@ -300,18 +315,28 @@ CREATE TYPE MADLIB_SCHEMA.closest_columns_result AS (
  *     \f$ \operatorname{dist}(\vec{m_j}, \vec x) \f$, where \f$ j = \f$
  *     <tt>columns_ids[i]</tt>.
  */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._closest_columns(
+    M           DOUBLE PRECISION[][],
+    x           DOUBLE PRECISION[],
+    num         INTEGER,
+    dist        REGPROC,
+    dist_dn     TEXT
+) RETURNS MADLIB_SCHEMA.closest_columns_result AS
+    'MODULE_PATHNAME', 'closest_columns'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!NO SQL!>, <!!>);
+
 m4_ifdef(<!__HAWQ__!>, <!!>, <!
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.closest_columns(
     M DOUBLE PRECISION[][],
     x DOUBLE PRECISION[],
     num INTEGER,
     dist REGPROC
-) RETURNS MADLIB_SCHEMA.closest_columns_result
-IMMUTABLE
-STRICT
-LANGUAGE C
-AS 'MODULE_PATHNAME'
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL');
+) RETURNS MADLIB_SCHEMA.closest_columns_result AS $$
+    SELECT MADLIB_SCHEMA._closest_columns($1, $2, $3, $4, textin(regprocout($4)))
+$$ LANGUAGE SQL IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL');
 !>)
 
 m4_ifdef(<!__HAWQ__!>, <!

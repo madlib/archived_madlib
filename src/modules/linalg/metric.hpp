@@ -75,6 +75,14 @@ closestColumnsAndDistances(
     const MappedColumnVector& inVector,
     DistanceFunction& inMetric,
     RandomAccessIterator ioFirst,
+    RandomAccessIterator ioLast);
+
+template <class RandomAccessIterator>
+void
+closestColumnsAndDistancesUDF(
+    const MappedMatrix& inMatrix,
+    const MappedColumnVector& inVector,
+    RandomAccessIterator ioFirst,
     RandomAccessIterator ioLast,
     Oid oid);
 

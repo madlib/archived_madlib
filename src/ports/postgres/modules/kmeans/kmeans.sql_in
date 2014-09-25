@@ -168,7 +168,7 @@ The output of the k-means module is a composite type with the following columns:
     </tr>
     <tr>
         <th>objective_fn</th>
-        <td>DOUBLE PRECISON. The value of the objective function.</td>
+        <td>DOUBLE PRECISION. The value of the objective function.</td>
     </tr>
     <tr>
         <th>frac_reassigned</th>
@@ -604,10 +604,15 @@ DECLARE
     centroids FLOAT8[];
     data_size INTEGER;
     init_size INTEGER;
+    old_optimizer TEXT;
 BEGIN
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
     EXECUTE 'SET client_min_messages TO warning';
+
+    m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `
+        EXECUTE $sql$ SHOW optimizer $sql$ into old_optimizer;
+        EXECUTE $sql$ SET optimizer=off $sql$;', `') -- disable ORCA before MPP-23166 is fixed
 
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
 
@@ -706,6 +711,8 @@ BEGIN
     IF NOT (theResult IS NULL) THEN
         theResult.num_iterations = theIteration;
     END IF;
+    m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `
+        EXECUTE $sql$ SET optimizer=$sql$ || old_optimizer;', `')
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
     RETURN theResult;
 END;
@@ -815,10 +822,14 @@ DECLARE
     num_points INTEGER;
     num_centroids INTEGER;
     num_array_dim INTEGER;
+    old_optimizer TEXT;
 BEGIN
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
     EXECUTE 'SET client_min_messages TO warning';
+    m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `
+        EXECUTE $sql$ SHOW optimizer $sql$ into old_optimizer;
+        EXECUTE $sql$ SET optimizer=off $sql$;', `') -- disable ORCA before MPP-23166 is fixed
 
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
     PERFORM MADLIB_SCHEMA.__seeding_validate_args(
@@ -873,6 +884,8 @@ BEGIN
         WHERE _iteration = $sql$ || theIteration || $sql$
         $sql$
         INTO theResult;
+    m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `
+        EXECUTE $sql$ SET optimizer=$sql$ || old_optimizer;', `')
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
     RETURN theResult;
 END;
@@ -1488,17 +1501,22 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.simple_silhouette(
     centroids DOUBLE PRECISION[][],
     fn_dist VARCHAR /*+ DEFAULT 'dist_norm2' */
 ) RETURNS DOUBLE PRECISION
-STABLE
-LANGUAGE plpgsql
+LANGUAGE plpgsql VOLATILE
 AS $$
 DECLARE
     class_rel_source REGCLASS;
     proc_fn_dist REGPROCEDURE;
     rel_filtered VARCHAR;
+    ans DOUBLE PRECISION;
+    old_optimizer TEXT;
 BEGIN
     IF (array_upper(centroids,1) IS NULL) THEN
     RAISE EXCEPTION 'Kmeans error: No valid centroids given.';
     END IF;
+
+    m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `
+        EXECUTE $sql$ SHOW optimizer $sql$ into old_optimizer;
+        EXECUTE $sql$ SET optimizer=off $sql$;', `') -- disable ORCA before MPP-23166 is fixed
 
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
 
@@ -1514,7 +1532,7 @@ BEGIN
         RAISE EXCEPTION 'Kmeans error: Distance function has wrong signature or is not a simple function.';
     END IF;
 
-    RETURN MADLIB_SCHEMA.internal_execute_using_silhouette_args($sql$
+    ans := MADLIB_SCHEMA.internal_execute_using_silhouette_args($sql$
         SELECT
             avg(CASE
                     WHEN distances[2] = 0 THEN 0
@@ -1522,17 +1540,22 @@ BEGIN
                 END)
         FROM (
             SELECT
-                (MADLIB_SCHEMA.closest_columns(
+                (m4_ifdef(`__HAWQ__', `MADLIB_SCHEMA.closest_columns', `MADLIB_SCHEMA._closest_columns')(
                     $1,
                     ($sql$ || expr_point || $sql$)::FLOAT8[],
                     2::INTEGER,
                     m4_ifdef(`__HAWQ__', $3, $2)
+                    m4_ifdef(`__HAWQ__', `', `, $3')
                 )).distances
             FROM
                 $sql$ || textin(regclassout(class_rel_source)) || $sql$
         ) AS two_shortest_distances
         $sql$,
         centroids, proc_fn_dist, fn_dist);
+
+    m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `
+        EXECUTE $sql$ SET optimizer=$sql$ || old_optimizer;', `')
+    RETURN ans;
 END;
 $$
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
