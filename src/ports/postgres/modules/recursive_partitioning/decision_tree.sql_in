@@ -54,7 +54,7 @@ tree_train(
     min_bucket,
     num_splits,
     pruning_params,
-    verbose
+    verbosity
     )
 </pre>
 \b arguments
@@ -236,29 +236,36 @@ tree_train(
       <tr>
       <th>cp</th>
       <td>
-        Default: 0.01. A split on a node is attempted only if it
+        Default: 0. A split on a node is attempted only if it
         decreases the overall lack of fit by a factor of 'cp', else the split is
-        pruned away.</td>
+        pruned away. This value is used to create an initial tree before running
+        cross-validation (see below).
+      </td>
       </tr>
       <tr>
       <th>n_folds</th>
-      <td><b>Not implemented yet</b>.
+      <td>
         Default: 0 (= No cross-validation).
         Number of cross-validation folds to use to compute the best value of
         <em>cp</em>. To perform cross-validation, a positive value of
         <em>n_folds</em> (greater than 2) should be given. An additional output
-        table <em>\<model_table\>_xval</em> is created containing the
-        values of <em>cp</em> evaluated and the cross-validation error value.
-        The tree returned in the output table corresponds to the <em>cp</em>
-        value with the lowest error.
+        table <em>\<model_table\>_cv</em> is created containing the values of
+        evaluated <em>cp</em> and the cross-validation error. The tree returned
+        in the output table corresponds to the <em>cp</em> with the lowest
+        cross-validation error (we pick the maximum <em>cp</em> if multiple
+        values have same error).
+
+        The list of <em>cp</em> values are automatically computed by parsing
+        through the tree initially trained on the complete dataset. The tree
+        outputed is a subset of this initial tree corresponding to the best
+        computed <em>cp</em>.
+
       </td>
       </tr>
-      <tr>Note: Only one of <em>cp</em> or <em>n_folds</em> should be provided.
-      An error is returned if both parameters are provided.</tr>
     </table>
   </DD>
 
-  <DT>verbose (optional)</DT>
+  <DT>verbosity (optional)</DT>
   <DD>BOOLEAN, default: FALSE. Provides verbose output of the results of training.</DD>
 </DL>
 
@@ -673,7 +680,7 @@ File decision_tree.sql_in documenting the training function
   *        one of minbucket or minsplit is specified, minsplit
   *        is set to minbucket*3 or minbucket to minsplit/3, as
   *        appropriate.
-  * @param num_splits optional (default = 100) number of bins to use
+  * @param n_bins optional (default = 100) number of bins to use
   *        during binning. continuous-valued features are binned
   *        into discrete bins (per the quartile values) to compute
   *        split bound- aries. this global parameter is used to
@@ -686,7 +693,7 @@ File decision_tree.sql_in documenting the training function
   *                  that determines that a split is attempted only if it
   *                  decreases the overall lack of fit by a factor of ‘cp’.
   *             n_folds (default = 0) number of cross-validation folds
-  * @param verbose optional (default = false) prints status
+  * @param verbose_mode optional (default = false) prints status
   *        information on the splits performed and any other
   *        information useful for debugging.
   *
@@ -705,38 +712,53 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
     max_depth                   INTEGER,
     min_split                   INTEGER,
     min_bucket                  INTEGER,
-    num_splits                  INTEGER,
+    n_bins                      INTEGER,
     pruning_params              TEXT,
-    verbose                     BOOLEAN
+    verbose_mode                BOOLEAN
 ) RETURNS VOID AS $$
-    PythonFunctionBodyOnly(`recursive_partitioning', `decision_tree')
+    PythonFunctionBodyOnlyNoSchema(recursive_partitioning, decision_tree)
     decision_tree.tree_train(
-        schema_madlib,
-        training_table_name,
-        output_table_name,
-        id_col_name,
-        dependent_variable,
-        list_of_features,
-        list_of_features_to_exclude,
-        split_criterion,
-        grouping_cols,
-        weights,
-        max_depth,
-        min_split,
-        min_bucket,
-        num_splits,
-        pruning_params,
-        verbose
-    )
+        'MADLIB_SCHEMA', training_table_name, output_table_name,
+        id_col_name, dependent_variable, list_of_features,
+        list_of_features_to_exclude, split_criterion, grouping_cols,
+        weights, max_depth, min_split, min_bucket, n_bins, pruning_params,
+        verbose_mode)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
 ------------------------------------------------------------
+
+-------------------------------------------------------------
+/* This is an interal function and should not be called directly. */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__build_tree(
+    is_classification     BOOLEAN,
+    split_criterion       TEXT,
+    training_table_name   TEXT,
+    output_table_name     TEXT,
+    id_col_name           TEXT,
+    dependent_variable    TEXT,
+    dep_is_bool           BOOLEAN,
+    grouping_cols         TEXT,
+    cat_features          VARCHAR[],
+    con_features          VARCHAR[],
+    boolean_cats          VARCHAR[],
+    n_bins                INTEGER,
+    min_split             INTEGER,
+    min_bucket            INTEGER,
+    max_depth             INTEGER,
+    weights               TEXT,
+    cp                    DOUBLE PRECISION,
+    n_folds               INTEGER,
+    create_output         BOOLEAN)
+RETURNS VOID AS $$
+PythonFunction(recursive_partitioning, decision_tree, _build_tree)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
     message     TEXT
 ) RETURNS TEXT AS $$
-    PythonFunction(recursive_partitioning, decision_tree, tree_train_help_message)
+PythonFunction(recursive_partitioning, decision_tree, tree_train_help_message)
 $$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
@@ -748,7 +770,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
-
 -------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_con_splits_transition(
@@ -785,7 +806,6 @@ CREATE AGGREGATE MADLIB_SCHEMA._dst_compute_con_splits(
     FinalFunc = MADLIB_SCHEMA._dst_compute_con_splits_final,
     InitCond = ''
 );
-
 ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dst_compute_entropy_transition(
@@ -827,7 +847,6 @@ CREATE AGGREGATE MADLIB_SCHEMA._dst_compute_entropy(
     m4_ifdef(`__POSTGRESQL__', `', `PreFunc = MADLIB_SCHEMA._dst_compute_entropy_merge,')
     FinalFunc = MADLIB_SCHEMA._dst_compute_entropy_final
 );
-
 ------------------------------------------------------------
 
 -- Translate the categorical variable values into the integer
@@ -840,7 +859,6 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._map_catlevel_to_int(
     'MODULE_PATHNAME', 'map_catlevel_to_int'
 LANGUAGE c IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
-
 ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._initialize_decision_tree(
@@ -912,7 +930,6 @@ CREATE AGGREGATE MADLIB_SCHEMA._compute_leaf_stats(
     SFunc = MADLIB_SCHEMA._compute_leaf_stats_transition
     m4_ifdef(`__POSTGRESQL__', `', `, PreFunc = MADLIB_SCHEMA._compute_leaf_stats_merge')
 );
-
 ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._dt_apply(
@@ -970,10 +987,10 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 /**
   * @brief Use decision tree model to make predictions
   *
-  * @param tree_model Name of the table containing the decision tree model
-  * @param new_data_table Name of table containing prediction data
-  * @param output_table Name of table to output prediction results
-  * @param type OPTIONAL (Default = 'response'). For regression trees,
+  * @param model Name of the table containing the decision tree model
+  * @param source Name of table containing prediction data
+  * @param output Name of table to output prediction results
+  * @param pred_type OPTIONAL (Default = 'response'). For regression trees,
   *        'response', implies output is the predicted value. For
   *        classification trees, this can be 'response', giving the
   *        classification prediction as output, or ‘prob’, giving the
@@ -986,28 +1003,20 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
   * See \ref grp_decision_tree for more details.
   */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_predict(
-    tree_model                  TEXT,
-    new_data_table              TEXT,
-    output_table                TEXT,
-    type                        TEXT
+    model                TEXT,
+    source               TEXT,
+    output               TEXT,
+    pred_type            TEXT
 ) RETURNS VOID AS $$
-    PythonFunctionBodyOnly(`recursive_partitioning', `decision_tree')
-    decision_tree.tree_predict(
-        schema_madlib,
-        tree_model,
-        new_data_table,
-        output_table,
-        type
-    )
+PythonFunction(recursive_partitioning, decision_tree, tree_predict)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
-
 ------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_predict(
     message     TEXT
 ) RETURNS TEXT AS $$
-    PythonFunction(recursive_partitioning, decision_tree, tree_predict_help_message)
+PythonFunction(recursive_partitioning, decision_tree, tree_predict_help_message)
 $$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
@@ -1033,8 +1042,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_display(
     model_table    TEXT,
     dot_format     BOOLEAN
 ) RETURNS VARCHAR AS $$
-    PythonFunctionBodyOnly(`recursive_partitioning', `decision_tree')
-    return decision_tree.tree_display(schema_madlib, model_table, dot_format)
+PythonFunction(recursive_partitioning, decision_tree, tree_display)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
@@ -1148,7 +1156,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
     max_depth                   INTEGER,
     min_split                   INTEGER,
     min_bucket                  INTEGER,
-    num_splits                  INTEGER,
+    n_bins                      INTEGER,
     pruning_params              TEXT
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
@@ -1169,7 +1177,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
     max_depth                   INTEGER,
     min_split                   INTEGER,
     min_bucket                  INTEGER,
-    num_splits                  INTEGER
+    n_bins                      INTEGER
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
                                     $11, $12, $13, 'cp=0.01'::TEXT, FALSE::BOOLEAN);
@@ -1306,15 +1314,22 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
         'cp=0.01'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE SQL VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
--------------------------------------------------------------------------
+-- -------------------------------------------------------------------------
 
--- Function for post-pruning
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._prune_model(
+-- Post-pruning
+DROP TYPE IF EXISTS MADLIB_SCHEMA._prune_result_type CASCADE;
+CREATE TYPE MADLIB_SCHEMA._prune_result_type AS (
+    tree_state      MADLIB_SCHEMA.BYTEA8,
+    cp_list         DOUBLE PRECISION[]
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._prune_and_cplist(
     model               MADLIB_SCHEMA.bytea8,
-    cp                  DOUBLE PRECISION
-) RETURNS MADLIB_SCHEMA.bytea8 AS
-    'MODULE_PATHNAME', 'prune_model'
-LANGUAGE c IMMUTABLE
+    cp                  DOUBLE PRECISION,
+    n_folds             SMALLINT
+) RETURNS MADLIB_SCHEMA._prune_result_type AS
+    'MODULE_PATHNAME', 'prune_and_cplist'
+LANGUAGE C IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 ------------------------------------------------------------
@@ -1337,3 +1352,71 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._get_split_thresholds(
     'MODULE_PATHNAME', 'get_split_thresholds'
 LANGUAGE c IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+-------------------------------------------------------------------------
+
+-- compare the prediction and actual values
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._tree_rmse(
+    source_table           VARCHAR,
+    dependent_varname      VARCHAR,
+    prediction_table       VARCHAR,
+    pred_dep_name          VARCHAR,
+    id_col_name            VARCHAR,
+    output_table           VARCHAR
+) RETURNS VOID AS $$
+    old_messages = plpy.execute("SELECT setting FROM pg_settings "
+                                "WHERE name = 'client_min_messages'")[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+    sql = """
+        CREATE TABLE {output_table} AS
+        SELECT
+            sqrt(avg(
+                    ({prediction_table}.{pred_dep_name} -
+                     {source_table}.{dependent_varname})^2
+                    )
+                ) as rmse
+        FROM {prediction_table}, {source_table}
+        WHERE {prediction_table}.{id_col_name} = {source_table}.{id_col_name}
+        """.format(output_table=output_table,
+                   prediction_table=prediction_table,
+                   pred_dep_name=pred_dep_name,
+                   source_table=source_table,
+                   dependent_varname=dependent_varname,
+                   id_col_name=id_col_name)
+    plpy.execute(sql)
+    plpy.execute('SET client_min_messages TO ' + old_messages);
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+
+-- compare the prediction and actual values
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._tree_misclassified(
+    source_table           VARCHAR,
+    dependent_varname      VARCHAR,
+    prediction_table       VARCHAR,
+    pred_dep_name          VARCHAR,
+    id_col_name            VARCHAR,
+    output_table           VARCHAR
+) RETURNS VOID AS $$
+    old_messages = plpy.execute(
+        "SELECT setting FROM pg_settings WHERE name = 'client_min_messages'")[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+    sql = """
+        CREATE TABLE {output_table} AS
+        SELECT
+            1.0 * sum(CASE WHEN ({prediction_table}.{pred_dep_name} =
+                           {source_table}.{dependent_varname})
+                THEN 0 ELSE 1 END) / count(*) as misclassified
+        FROM
+            {prediction_table}, {source_table}
+        WHERE
+          {prediction_table}.{id_col_name} = {source_table}.{id_col_name}
+        """.format(output_table=output_table,
+                   prediction_table=prediction_table,
+                   pred_dep_name=pred_dep_name,
+                   source_table=source_table,
+                   dependent_varname=dependent_varname,
+                   id_col_name=id_col_name)
+    plpy.execute(sql)
+    plpy.execute('SET client_min_messages TO ' + old_messages);
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

@@ -11,6 +11,7 @@
 #include <sstream>
 #include <vector>
 #include <string>
+#include <list>
 #include <iterator>
 
 #include <dbconnector/dbconnector.hpp>
@@ -18,6 +19,8 @@
 #include "DT_proto.hpp"
 #include "DT_impl.hpp"
 #include "ConSplits.hpp"
+
+#include <math.h>       /* fabs */
 
 #include "decision_tree.hpp"
 
@@ -134,12 +137,19 @@ compute_leaf_stats_transition::run(AnyType & args){
     }
 
     if (state.empty()){
+        // For classification, we store for each split the number of weighted
+        // tuples for each possible response value and the number of unweighted
+        // tuples landing on that node.
+        // For regression, REGRESS_N_STATS determines the number of stats per split
+        uint16_t stats_per_split = dt.is_regression ?
+            REGRESS_N_STATS : static_cast<uint16_t>(n_response_labels + 1);
+
         state.rebind(static_cast<uint16_t>(splits_results.con_splits.cols()),
                      static_cast<uint16_t>(cat_features.size()),
                      static_cast<uint16_t>(con_features.size()),
                      static_cast<uint32_t>(cat_levels.sum()),
                      static_cast<uint16_t>(dt.tree_depth),
-                     dt.is_regression ? REGRESS_N_STATS : n_response_labels
+                     stats_per_split
                     );
         // compute cumulative sum of the levels of the categorical variables
         int current_sum = 0;
@@ -311,10 +321,10 @@ display_text_tree::run(AnyType &args){
     ArrayHandle<text*> con_feature_names = args[2].getAs<ArrayHandle<text*> >();
     ArrayHandle<text*> cat_levels_text = args[3].getAs<ArrayHandle<text*> >();
     ArrayHandle<int> cat_n_levels = args[4].getAs<ArrayHandle<int> >();
-    ArrayHandle<text*> dependent_var_levels = args[5].getAs<ArrayHandle<text*> >();
+    ArrayHandle<text*> dep_levels = args[5].getAs<ArrayHandle<text*> >();
 
     return dt.print(0, cat_feature_names, con_feature_names, cat_levels_text,
-                    cat_n_levels, dependent_var_levels, 1u);
+                    cat_n_levels, dep_levels, 1u);
 }
 
 
@@ -322,23 +332,7 @@ display_text_tree::run(AnyType &args){
 // Prune the tree model using cost-complexity parameter
 // ------------------------------------------------------------
 
-/*
- * Compute the risk using rpart's method, which scales the
- * regularization with the root node risk
- */
-inline double compute_risk(MutableTree &dt, int me) {
-    if (dt.is_regression) {
-        double wt_tot = dt.predictions.row(me)(0);
-        double y_avg = dt.predictions.row(me)(1);
-        return dt.predictions.row(me)(2) - y_avg * y_avg / wt_tot;
-    } else {
-        return dt.predictions.row(me).sum() - dt.predictions.row(me).maxCoeff();
-    }
-}
-
-// ------------------------------------------------------------
-
-// Remove me's subtree and make it become a leaf
+// Remove me's subtree and make it a leaf
 void mark_subtree_removal_recur(MutableTree &dt, int me) {
     if (me < dt.predictions.rows() &&
             dt.feature_indices(me) != dt.NON_EXISTING) {
@@ -361,8 +355,11 @@ void mark_subtree_removal(MutableTree &dt, int me) {
  * Data structure that contains the info for lower sub-trees
  */
 struct SubTreeInfo {
+    /* id of the root node of the subtree */
+    int root_id;
+
     /* number of node splits */
-    int split;
+    int n_split;
     /* current node's own risk */
     double risk;
     /*
@@ -372,9 +369,29 @@ struct SubTreeInfo {
     double sum_risk;
     /* sub-tree's average risk improvement per split */
     double complexity;
-    SubTreeInfo(int n, double r, double s, double c):
-        split(n), risk(r), sum_risk(s), complexity(c) {}
+
+    SubTreeInfo * left_child;
+    SubTreeInfo * right_child;
+
+    SubTreeInfo(int i, int n, double r, double s, double c):
+            root_id(i), n_split(n), risk(r), sum_risk(s), complexity(c){
+        left_child = NULL;
+        right_child = NULL;
+    }
 };
+
+
+// FIXME: Remove after finalzing code
+void debug_list(std::list<double> debug_list){
+    std::stringstream debug;
+    debug << "List = ";
+    std::list<double>::iterator it;
+    for (it = debug_list.begin(); it != debug_list.end(); it++){
+        debug << std::setprecision(8) << *it << ", ";
+    }
+    warning(debug.str());
+}
+
 
 /*
  * Pruning the tree by setting the pruned nodes'
@@ -383,118 +400,171 @@ struct SubTreeInfo {
  * Closely follow rpart's implementation. Please read the
  * source code of rpart/src/partition.c
  */
-SubTreeInfo pruning(MutableTree &dt, int me, double alpha,
-        double estimated_complexity) {
-    if (me >= dt.predictions.rows() || /* out of range */
+SubTreeInfo prune_tree(MutableTree &dt,
+                       int me,
+                       double alpha,
+                       double estimated_complexity,
+                       std::vector<double> & node_complexities) {
+    if (me >= dt.feature_indices.size() || /* out of range */
             dt.feature_indices(me) == dt.NON_EXISTING)
-        return SubTreeInfo(0, 0, 0, 0);
+        return SubTreeInfo(-1, 0, 0, 0, 0);
 
-    double risk = compute_risk(dt, me);
+    double risk = dt.computeRisk(me);
 
-    /*
-     * Before splitting, do a simple check. If the current
-     * node's risk is smaller than alpha, then the risk can
-     * never decrease more than alpha by splitting. No need
-     * to try split in this case.
-     *
-     * FIXME Not completely sure what 'rpart' is doing here
-     * with adjusted_risk
-     */
-    double adjusted_risk = risk > estimated_complexity
-        ? estimated_complexity : risk;
-    if (dt.feature_indices(me) == dt.FINISHED_LEAF ||
-            dt.feature_indices(me) == dt.IN_PROCESS_LEAF ||
-            adjusted_risk <= alpha) {
-        /*
-         * Remove the current node's subtree and make the
-         * current node a leaf
+    double adjusted_risk = risk > estimated_complexity ?
+                            estimated_complexity : risk;
+    if (adjusted_risk <= alpha) {
+        /* If the current node's risk is smaller than alpha, then the risk can
+         * never decrease more than alpha by splitting. Remove the current
+         * node's subtree and make the current node a leaf.
          */
         mark_subtree_removal(dt, me);
-        return SubTreeInfo(0, risk, risk, alpha);
+        node_complexities[me] = alpha;
+        return SubTreeInfo(me, 0, risk, risk, alpha);
     }
 
-    /*
-     * FIXME Completely confused by what rpart is doing
-     * with the adjusted_risk
-     */
-    SubTreeInfo left = pruning(dt, 2*me+1, alpha, adjusted_risk - alpha);
+    if (dt.feature_indices(me) >= 0) {
+        SubTreeInfo left = prune_tree(dt, 2*me+1, alpha,
+                                      adjusted_risk - alpha,
+                                      node_complexities);
+        double left_improve_per_split = (risk - left.sum_risk) / (left.n_split + 1);
+        double left_child_improve = risk - left.risk;
+        if (left_improve_per_split < left_child_improve)
+            left_improve_per_split = left_child_improve;
+        adjusted_risk = left_improve_per_split > estimated_complexity ?
+                        estimated_complexity : left_improve_per_split;
 
-    double left_improve_per_split = (risk - left.sum_risk) / (left.split + 1);
-    double left_child_improve = risk - left.risk;
-    if (left_improve_per_split < left_child_improve)
-        left_improve_per_split = left_child_improve;
-    adjusted_risk = left_improve_per_split > estimated_complexity
-        ? estimated_complexity : left_improve_per_split;
-    SubTreeInfo right = pruning(dt, 2*me+2, alpha,
-            adjusted_risk - alpha);
+        SubTreeInfo right = prune_tree(dt, 2*me+2, alpha, adjusted_risk - alpha,
+                                       node_complexities);
 
-    /*
-     * Closely folllow rpart's algorithm,
-     * in rpart/src/partition.c
-     *
-     * If the average improvement of risk per split is larger
-     * than the sub-tree's average improvement, the current
-     * split is important. And we need to manually increase
-     * the value of the current split's improvement, which
-     * aims at keeping the current split if possible.
-     */
-    double left_risk = left.sum_risk,
-           right_risk = right.sum_risk;
-    int left_split = left.split, right_split = right.split;
+        /*
+         * Closely follow rpart's algorithm, in rpart/src/partition.c
+         *
+         * If the average improvement of risk per split is larger
+         * than the sub-tree's average improvement, the current
+         * split is important. And we need to manually increase
+         * the value of the current split's improvement, which
+         * aims at keeping the current split if possible.
+         */
+        double left_risk = left.sum_risk;
+        double right_risk = right.sum_risk;
+        int left_n_split = left.n_split;
+        int right_n_split = right.n_split;
 
-    double tempcp = (risk - (left_risk + right_risk)) /
-        (left_split + right_split + 1);
+        double tempcp = (risk - (left_risk + right_risk)) /
+                            (left_n_split + right_n_split + 1);
 
-    if (right.complexity > left.complexity) {
-        if (tempcp > left.complexity) {
-            left_risk = left.risk;
-            left_split = 0;
+        if (right.complexity > left.complexity) {
+            if (tempcp > left.complexity) {
+                left_risk = left.risk;
+                left_n_split = 0;
+
+                tempcp = (risk - (left_risk + right_risk)) /
+                    (left_n_split + right_n_split + 1);
+                if (tempcp > right.complexity) {
+                    right_risk = right.risk;
+                    right_n_split = 0;
+                }
+            }
+        } else if (tempcp > right.complexity) {
+            right_risk = right.risk;
+            right_n_split = 0;
 
             tempcp = (risk - (left_risk + right_risk)) /
-                (left_split + right_split + 1);
-            if (tempcp > right.complexity) {
-                right_risk = right.risk;
-                right_split = 0;
+                (left_n_split + right_n_split + 1);
+            if (tempcp > left.complexity) {
+                left_risk = left.risk;
+                left_n_split = 0;
             }
         }
-    } else if (tempcp > right.complexity) {
-        right_risk = right.risk;
-        right_split = 0;
 
-        tempcp = (risk - (left_risk + right_risk)) /
-            (left_split + right_split + 1);
-        if (tempcp > left.complexity) {
-            left_risk = left.risk;
-            left_split = 0;
+        double complexity = (risk - (left_risk + right_risk)) /
+                                (left_n_split + right_n_split + 1);
+        if (complexity <= alpha) {
+            /* Prune this split by removing the subtree */
+            mark_subtree_removal(dt, me);
+            node_complexities[me] = alpha;
+            return SubTreeInfo(me, 0, risk, risk, alpha);
+        } else {
+            node_complexities[me] = complexity;
+            return SubTreeInfo(me, left_n_split + right_n_split + 1,
+                               risk, left_risk + right_risk, complexity);
         }
-    }
-
-    double complexity = (risk - (left_risk + right_risk)) /
-        (left_split + right_split + 1);
-    if (complexity <= alpha) {
-        /* No need to split */
-        mark_subtree_removal(dt, me);
-        return SubTreeInfo(0, risk, risk, complexity);
-    } else {
-        return SubTreeInfo(left_split + right_split + 1, risk,
-                left_risk + right_risk, complexity);
+    } // end of if (dt.feature_indices(me) >= 0)
+    else {
+        // node is a leaf node
+        node_complexities[me] = alpha;
+        return SubTreeInfo(me, 0, risk, risk, alpha);
     }
 }
-
 // ------------------------------------------------------------
 
+void make_cp_list(MutableTree & dt,
+                  std::vector<double> & node_complexities,
+                  const double & alpha,
+                  std::list<double> & cp_list,
+                  const double root_risk){
+
+    cp_list.clear();
+    cp_list.push_back(node_complexities[0] / root_risk);
+    for (uint i = 1; i < node_complexities.size(); i++){
+        Index parent_id = dt.parentIndex(i);
+        if (dt.feature_indices(i) != dt.NON_EXISTING &&
+                dt.feature_indices(parent_id) != dt.NON_EXISTING){
+            double parent_cp = node_complexities[parent_id];
+            if (node_complexities[i] > parent_cp)
+                node_complexities[i] = parent_cp;
+            double current_cp = node_complexities[i];
+            if (current_cp < alpha)
+                current_cp = alpha;  // don't explore any cp less than alpha
+            if (current_cp < parent_cp){
+                // original complexity is scaled by root_risk. But user
+                // expects an unscaled cp value
+                current_cp /= root_risk;
+                std::list<double>::iterator it;
+                bool skip_cp = false;
+                for (it = cp_list.begin(); !skip_cp && it != cp_list.end(); it++){
+                    if (fabs(current_cp - *it) < 1e-4)
+                        skip_cp = true;
+                    if (current_cp > *it)
+                        break;
+                }
+                if (!skip_cp)
+                    cp_list.insert(it, current_cp);
+            }
+        }
+    }
+}
+// -------------------------------------------------------------------------
+
 AnyType
-prune_model::run(AnyType &args) {
+prune_and_cplist::run(AnyType &args){
     MutableTree dt = args[0].getAs<MutableByteString>();
     double cp = args[1].getAs<double>();
+    uint16_t n_folds = args[2].getAs<uint16_t>();
 
-    /* use rpart's definition of regularized risk */
-    double root_risk = compute_risk(dt, 0);
+    // We use a scaled version of risk (similar to rpart's definition).
+    //    The risk is relative to a tree with no splits (single node tree).
+    double root_risk = dt.computeRisk(0);
     double alpha = cp * root_risk;
+    AnyType output_tuple;
+    std::list<double> cp_list;
+    std::vector<double> node_complexities(dt.feature_indices.size(), alpha);
+    prune_tree(dt, 0, alpha, root_risk, node_complexities);
 
-    pruning(dt, 0, alpha, root_risk);
-
-    return dt.storage(); /* the new pruned tree */
+    if (n_folds < 2){
+        output_tuple << dt.storage();
+        return output_tuple;
+    } else {
+        make_cp_list(dt, node_complexities, alpha, cp_list, root_risk);
+        ColumnVector cp_vector(cp_list.size());
+        std::list<double>::iterator it = cp_list.begin();
+        for (Index i = 0; it != cp_list.end(); it++, i++){
+            cp_vector(i) = *it;
+        }
+        output_tuple << dt.storage() << cp_vector;
+        return output_tuple;
+    }
 }
 
 // ------------------------------------------------------------
@@ -522,41 +592,29 @@ void fill_row(MutableNativeMatrix &frame, Tree &dt, int me, int i,
     if (dt.is_regression) {
         frame(i,1) = dt.predictions(me,3); // n
         frame(i,2) = dt.predictions(me,0); // wt
-
-        double wt_tot = dt.predictions(me,0);
-        double y_avg = dt.predictions(me,1);
-        frame(i,3) = dt.predictions(me,2) -
-            y_avg * y_avg / wt_tot; // dev
-        frame(i,4) = y_avg / wt_tot; // yval
+        frame(i,3) = dt.computeRisk(me); // weighted variance
+        frame(i,4) = dt.predictions(me, 1) / dt.predictions(me,0); // yval
     } else {
-        double total_records = dt.predictions.row(0).sum();
-        double n_records_innode = dt.predictions.row(me).sum();
-        int n_dep_levels = static_cast<int>(dt.predictions.cols());
+        double total_records = dt.nodeWeightedCount(0);
+        double n_records_innode = dt.nodeWeightedCount(me);
+        int n_dep_levels = static_cast<int>(dt.n_y_labels);
 
         // FIXME use weight sum as the total number
         frame(i,1) = n_records_innode;
         frame(i,2) = n_records_innode;
-        frame(i,3) = n_records_innode -
-            dt.predictions.row(me).maxCoeff();
+        frame(i,3) = dt.computeMisclassification(me);
 
-        int max_index = 0;
-        double max_val = 0;
-        for (int j = 0; j < n_dep_levels; ++j) {
-            if (dt.predictions(me,j) > max_val) {
-                max_index = j;
-                max_val = dt.predictions(me,j);
-            }
-        }
+        Index max_index;
+        dt.predictions.row(me).head(dt.n_y_labels).maxCoeff(&max_index);
         // start from 1 to be consistent with R convention
-        frame(i,4) = max_index + 1;
+        frame(i,4) = static_cast<double>(max_index + 1);
         frame(i,8) = frame(i,4);
         for (int j = 0; j < n_dep_levels; ++j) {
-            frame(i,9 + j) = dt.predictions(me,j);
+            frame(i,9 + j) = dt.predictions(me, j);
             frame(i,9 + j + n_dep_levels) =
-                dt.predictions(me,j) / n_records_innode;
+                dt.predictions(me, j) / n_records_innode;
         }
-        frame(i,9 + 2 * n_dep_levels) = n_records_innode /
-            total_records;
+        frame(i,9 + 2 * n_dep_levels) = n_records_innode / total_records;
     }
 }
 

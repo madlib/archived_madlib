@@ -1,7 +1,5 @@
 
-# from convex.ridge import __ridge_cv_args
-# from convex.ridge import __ridge_newton_cv
-# from convex.ridge import __ridge_newton_cv_help
+from utilities.control import MinWarning
 from utilities.utilities import __unique_string
 from validation.cv_utils import __cv_copy_data_with_id
 from validation.cv_utils import __cv_split_data_using_id_col
@@ -9,6 +7,7 @@ from validation.cv_utils import __cv_split_data_using_id_tbl
 from validation.cv_utils import __cv_summarize_result
 from validation.cv_utils import __cv_generate_random_id
 from utilities.utilities import __mad_version
+from utilities.utilities import preprocess_keyvalue_params
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
 from utilities.validate_args import get_cols
@@ -39,38 +38,55 @@ def __cv_combine_params_type_general(params, params_type, tbl_data,
         Output is a string, where all parameters are force-casted into their type.
     """
     if len(params) != len(params_type):
-        plpy.error('CV error: The number of parameters should be equal to the number of types!')
+        plpy.error("CV error: The number of parameters ({0}) "
+                   "should be equal to the number of types ({1})!".
+                   format(params, params_type))
 
-    rst = ""
+    rst = []
     # The special keywords
-    opts = set(["%data%", "%id%", "%error%", "%model%", "%prediction%", param_explored])
-    for i in range(len(params)):
-        if params[i] is None or params[i].upper() == 'NULL':
-            rst += "NULL"
-        elif params[i] not in opts:
-            rst += "\'" + params[i] + "\'::" + params_type[i].strip("\"")
-        elif params[i] == param_explored:
-            rst += "\'" + explore_value + "\'::" + params_type[i].strip("\"")
-        elif params[i] == "%data%":
-            rst += "\'" + tbl_data + "\'::" + params_type[i].strip("\"")
-        elif params[i] == "%id%":
-            rst += "\'" + col_random_id + "\'::" + params_type[i].strip("\"")
-        elif params[i] == "%error%":
-            rst += "\'" + tbl_output + "\'::" + params_type[i].strip("\"")
-        elif params[i] == "%model%":
-            if tbl_input is None:
-                rst += "\'" + tbl_output + "\'::" + params_type[i].strip("\"")
-            else:
-                rst += "\'" + tbl_input + "\'::" + params_type[i].strip("\"")
-        elif params[i] == "%prediction%":
-            if "%error%" in set(params):
-                rst += "\'" + tbl_input + "\'::" + params_type[i].strip("\"")
-            else:
-                rst += "\'" + tbl_output + "\'::" + params_type[i].strip("\"")
+    # opts = set(["%data%", "%id%", "%error%", "%model%", "%prediction%",
+    #             "%explore%", param_explored])
+    for i, p in enumerate(params):
+        if not p or p.upper() == 'NULL':
+            rst.append("NULL")
+        else:
+            p = p.strip()
+            p_type = params_type[i].strip('"')
+            if p == param_explored or "%explore%" in p:
+                if "=" in p:
+                    # p is a string with key-value pairs, each pair separated by ','
+                    pairs = preprocess_keyvalue_params(p)
+                    param_list = []
+                    for each_pair in pairs:
+                        key_value = [i.strip() for i in each_pair.split("=")]
+                        if key_value[1] == "%explore%":
+                            param_list.append(str(key_value[0]) + "=" +
+                                              str(explore_value))
+                        else:
+                            param_list.append(each_pair)
+                    rst.append("\'{" + ','.join(param_list) + "}\'::" + p_type)
+                else:
+                    rst.append("\'" + explore_value + "\'::" + p_type)
 
-        if i != len(params) - 1:
-            rst = rst + ", "
-    return rst
+            elif p == "%data%":
+                rst.append("\'" + tbl_data + "\'::" + p_type)
+            elif p == "%id%":
+                rst.append("\'" + col_random_id + "\'::" + p_type)
+            elif p == "%error%":
+                rst.append("\'" + tbl_output + "\'::" + p_type)
+            elif p == "%model%":
+                if tbl_input is None:
+                    rst.append("\'" + tbl_output + "\'::" + p_type)
+                else:
+                    rst.append("\'" + tbl_input + "\'::" + p_type)
+            elif p == "%prediction%":
+                if "%error%" in set(params):
+                    rst.append("\'" + tbl_input + "\'::" + p_type)
+                else:
+                    rst.append("\'" + tbl_output + "\'::" + p_type)
+            else:
+                rst.append("\'" + p + "\'::" + p_type)
+    return ','.join(rst)
 ## ========================================================================
 
 
@@ -88,9 +104,8 @@ def __cv_funcall_general(func, params, params_type, tbl_data, col_random_id,
         params, params_type, tbl_data, col_random_id,
         param_explored, explore_value, tbl_input, tbl_output
     )
-    plpy.execute("select {func}({arg_string})".
-                 format(func=func, arg_string=arg_string))
-    return None
+    sql = "SELECT {func}({arg_string})".format(func=func, arg_string=arg_string)
+    plpy.execute(sql)
 ## ========================================================================
 
 
@@ -105,7 +120,7 @@ def __cv_param_type_explored(params, params_type, param_explored):
     for i in range(len(params)):
         if params[i] == param_explored:
             return params_type[i]
-    return "integer"
+    return None
 ## ========================================================================
 
 
@@ -116,12 +131,12 @@ def __validate_cv_args(schema_madlib, modelling_func, modelling_params,
                        metric_func, metric_params, metric_params_type,
                        data_tbl, data_id, id_is_random,
                        validation_result,
-                       fold_num, data_cols):
+                       n_folds, data_cols):
     if any(arg is None for arg in
             (modelling_func, modelling_params, modelling_params_type,
              predict_func, predict_params, predict_params_type,
              metric_func, metric_params, metric_params_type, data_tbl,
-             validation_result, fold_num)):
+             validation_result, n_folds)):
         plpy.error("CV error: You have unsupported Null value(s) in arguments!")
 
     if not table_exists(data_tbl):
@@ -136,7 +151,7 @@ def __validate_cv_args(schema_madlib, modelling_func, modelling_params,
     if data_id is not None and id_is_random is None:
         plpy.error("CV error: Is the data row ID random?")
 
-    if fold_num <= 1:
+    if n_folds <= 1:
         plpy.error("CV error: Cross validation total fold number should be larger than 1!")
 
     return data_cols
@@ -151,16 +166,14 @@ def cross_validation_general(
         predict_func, predict_params, predict_params_type,
         metric_func, metric_params, metric_params_type,
         data_tbl, data_id, id_is_random,
-        validation_result,
-        data_cols, fold_num,
-        **kwargs):
+        validation_result, data_cols, n_folds, **kwargs):
     """
     A general framework that runs cross-validation for modules that are
     consistent with certain SQL API.
 
     See dev-doc for details.
     """
-    if data_cols is None:
+    if not data_cols:
         data_cols = get_cols(data_tbl, schema_madlib)
 
     __validate_cv_args(
@@ -170,138 +183,147 @@ def cross_validation_general(
         metric_func, metric_params, metric_params_type,
         data_tbl, data_id, id_is_random,
         validation_result,
-        fold_num, data_cols)
+        n_folds, data_cols)
 
-    row_num = plpy.execute("select count(*) as row_num from " + data_tbl)[0]["row_num"]
-    if row_num <= fold_num:
-        plpy.error("CV error: Too few data! Fewer than fold_num.")
+    row_num = plpy.execute("SELECT count(*) AS row_num FROM " +
+                           data_tbl)[0]["row_num"]
+    if row_num <= n_folds:
+        plpy.error("CV error: Number of rows less than number of folds")
 
-    old_msg_level = plpy.execute("select setting from pg_settings where name='client_min_messages'")[0]['setting']
-    plpy.execute("set client_min_messages to warning")
+    with MinWarning("warning"):
+        explore_type = __cv_param_type_explored(modelling_params,
+                                                modelling_params_type,
+                                                param_explored)
+        explore_type_str = "" if not explore_type else "::" + str(explore_type)
 
-    explore_type = __cv_param_type_explored(modelling_params, modelling_params_type, param_explored)
+        # all temporary names
+        tbl_all_data = __unique_string()
+        tbl_train = __unique_string()
+        tbl_valid = __unique_string()
+        col_random_id = __unique_string()
+        tbl_random_id = __unique_string()
+        tbl_output_model = __unique_string()
+        tbl_output_pred = __unique_string()
+        tbl_output_error = __unique_string()
+        tbl_accum_error = __unique_string()
+        kwargs = dict(tbl_accum_error=tbl_accum_error,
+                      explore_type_str=explore_type_str,
+                      tbl_output_error=tbl_output_error,
+                      param_explored=param_explored,
+                      tbl_all_data=tbl_all_data,
+                      tbl_train=tbl_train,
+                      tbl_valid=tbl_valid,
+                      tbl_random_id=tbl_random_id,
+                      tbl_output_model=tbl_output_model,
+                      tbl_output_pred=tbl_output_pred)
 
-    # all temporary names
-    tbl_all_data = __unique_string()
-    tbl_train = __unique_string()
-    tbl_valid = __unique_string()
-    col_random_id = __unique_string()
-    tbl_random_id = __unique_string()
-    tbl_output_model = __unique_string()
-    tbl_output_pred = __unique_string()
-    tbl_output_error = __unique_string()
-    tbl_accum_error = __unique_string()
-    kwargs = dict(tbl_accum_error=tbl_accum_error,
-                  explore_type=explore_type,
-                  tbl_output_error=tbl_output_error,
-                  param_explored=param_explored,
-                  tbl_all_data=tbl_all_data,
-                  tbl_train=tbl_train,
-                  tbl_valid=tbl_valid,
-                  tbl_random_id=tbl_random_id,
-                  tbl_output_model=tbl_output_model,
-                  tbl_output_pred=tbl_output_pred)
-
-    if data_id is None:
-        # unique ID column is not given, has to copy the data and create the ID
-        __cv_copy_data_with_id(data_tbl, data_cols, tbl_all_data, col_random_id)
-        tbl_used = tbl_all_data
-    elif id_is_random:
-        # unique ID column is given and is random
-        tbl_used = data_tbl
-        col_random_id = data_id
-    else:
-        # the provided unique ID is not random, create a table
-        # mapping the given ID to a random ID
-        __cv_generate_random_id(data_tbl, data_id, tbl_random_id, col_random_id)
-        tbl_used = data_tbl
-
-    # try to be as general as possible
-    # validation using each explore_value
-    if explore_values is None or len(explore_values) == 0:
-        # if no parameter needs to be explored
-        # just do the data folding
-        temp_param_explored = __unique_string()
-        temp_explore_values = [-1]
-        data_folding_only = True
-    else:
-        temp_param_explored = param_explored
-        temp_explore_values = explore_values
-        data_folding_only = False
-
-    accum_count = 0
-    for k in range(fold_num):
-        # split data into train and validation parts
-        if (data_id is None) or (data_id is not None and id_is_random):
-            __cv_split_data_using_id_col(tbl_used, data_cols, col_random_id, row_num, tbl_train, tbl_valid, fold_num, k+1)
+        if data_id is None:
+            # unique ID column is not given, has to copy the data and create the ID
+            __cv_copy_data_with_id(data_tbl, data_cols, tbl_all_data, col_random_id)
+            tbl_used = tbl_all_data
+        elif id_is_random:
+            # unique ID column is given and is random
+            tbl_used = data_tbl
+            col_random_id = data_id
         else:
-            __cv_split_data_using_id_tbl(tbl_used, data_cols, tbl_random_id, col_random_id, data_id, row_num, tbl_train, tbl_valid, fold_num, k+1)
+            # the provided unique ID is not random, create a table
+            # mapping the given ID to a random ID
+            __cv_generate_random_id(data_tbl, data_id, tbl_random_id, col_random_id)
+            tbl_used = data_tbl
 
-        for explore_value in temp_explore_values:
-            # train
-            plpy.execute("""
-                        drop table if exists {tbl_output_model};
-                        drop table if exists {tbl_output_pred};
-                        drop table if exists {tbl_output_error}
-                         """.format(**kwargs))
-            __cv_funcall_general(
-                modelling_func, modelling_params, modelling_params_type,
-                tbl_train, col_random_id, temp_param_explored, explore_value,
-                None, tbl_output_model)
-            # validation
-            __cv_funcall_general(
-                predict_func, predict_params, predict_params_type,
-                tbl_valid, col_random_id, temp_param_explored, explore_value,
-                tbl_output_model, tbl_output_pred)
-            # measure the performance metric
-            __cv_funcall_general(
-                metric_func, metric_params, metric_params_type,
-                tbl_valid, col_random_id, temp_param_explored, explore_value,
-                tbl_output_pred, tbl_output_error)
+        # try to be as general as possible
+        # validation using each explore_value
+        if not explore_values:
+            # if no parameter needs to be explored
+            # just do the data folding
+            temp_param_explored = __unique_string()
+            temp_explore_values = [-1]
+            data_folding_only = True
+        else:
+            temp_param_explored = param_explored
+            temp_explore_values = explore_values
+            data_folding_only = False
 
-            # accumulate the measured metric result
-            accum_count += 1
-            if accum_count == 1:
-                plpy.execute("""
-                    drop table if exists {tbl_accum_error};
-                    create temp table {tbl_accum_error} as
-                        select
-                            ({explore_value})::{explore_type} as {temp_param_explored},
-                            {tbl_output_error}.*
-                        from {tbl_output_error}
-                """.format(explore_value=explore_value,
-                           temp_param_explored=temp_param_explored,
-                           **kwargs))
+        output_created = False
+
+        for k in range(n_folds):
+            # split data into train and validation parts
+            if not data_id or id_is_random:
+                __cv_split_data_using_id_col(tbl_used, data_cols, col_random_id,
+                                             row_num, tbl_train, tbl_valid,
+                                             n_folds, k+1)
             else:
+                __cv_split_data_using_id_tbl(tbl_used, data_cols, tbl_random_id,
+                                             col_random_id, data_id, row_num,
+                                             tbl_train, tbl_valid, n_folds, k+1)
+
+            for explore_value in temp_explore_values:
+                # train
                 plpy.execute("""
-                    insert into {tbl_accum_error}
-                        select
-                            ({explore_value})::{explore_type} as {temp_param_explored},
-                            {tbl_output_error}.*
-                        from {tbl_output_error}
-                """.format(explore_value=explore_value,
-                           temp_param_explored=temp_param_explored,
-                           **kwargs))
+                            drop table if exists {tbl_output_model};
+                            drop table if exists {tbl_output_model}_summary;
+                            drop table if exists {tbl_output_pred};
+                            drop table if exists {tbl_output_error}
+                             """.format(**kwargs))
 
-    # compute the averages and standard deviations for all measured metrics (not necessary one)
-    __cv_summarize_result(tbl_accum_error, validation_result, temp_param_explored,
-                          data_folding_only, schema_madlib)
+                __cv_funcall_general(
+                    modelling_func, modelling_params, modelling_params_type,
+                    tbl_train, col_random_id, temp_param_explored,
+                    explore_value, None, tbl_output_model)
+                # validation
 
-    # clean up the temporary tables
-    plpy.execute("""
-        drop table if exists {tbl_all_data};
-        drop table if exists {tbl_train};
-        drop table if exists {tbl_valid};
-        drop table if exists {tbl_random_id};
-        drop table if exists {tbl_output_model};
-        drop table if exists {tbl_output_pred};
-        drop table if exists {tbl_output_error};
-        drop table if exists {tbl_accum_error};
-    """.format(**kwargs))
+                __cv_funcall_general(
+                    predict_func, predict_params, predict_params_type,
+                    tbl_valid, col_random_id, temp_param_explored,
+                    explore_value, tbl_output_model, tbl_output_pred)
+                # measure the performance metric
 
-    plpy.execute("set client_min_messages to " + old_msg_level)
+                __cv_funcall_general(
+                    metric_func, metric_params, metric_params_type,
+                    tbl_valid, col_random_id, temp_param_explored,
+                    explore_value, tbl_output_pred, tbl_output_error)
 
-    return None
+                # accumulate the measured metric result
+                if not output_created:
+                    plpy.execute("""
+                        drop table if exists {tbl_accum_error};
+                        create temp table {tbl_accum_error} as
+                            select
+                                ({explore_value}){explore_type_str} as {temp_param_explored},
+                                {tbl_output_error}.*
+                            from {tbl_output_error}
+                    """.format(explore_value=explore_value,
+                               temp_param_explored=temp_param_explored,
+                               **kwargs))
+                    output_created = True
+                else:
+                    plpy.execute("""
+                        insert into {tbl_accum_error}
+                            select
+                                ({explore_value}){explore_type_str} as {temp_param_explored},
+                                {tbl_output_error}.*
+                            from {tbl_output_error}
+                    """.format(explore_value=explore_value,
+                               temp_param_explored=temp_param_explored,
+                               **kwargs))
+
+        # compute the averages and standard deviations for all measured metrics (not necessary one)
+        __cv_summarize_result(tbl_accum_error, validation_result,
+                              temp_param_explored, data_folding_only,
+                              schema_madlib)
+
+        # clean up the temporary tables
+        plpy.execute("""
+            drop table if exists {tbl_all_data};
+            drop table if exists {tbl_train};
+            drop table if exists {tbl_valid};
+            drop table if exists {tbl_random_id};
+            drop table if exists {tbl_output_model};
+            drop table if exists {tbl_output_pred};
+            drop table if exists {tbl_output_error};
+            drop table if exists {tbl_accum_error};
+        """.format(**kwargs))
+        return None
 ## ========================================================================
 
 

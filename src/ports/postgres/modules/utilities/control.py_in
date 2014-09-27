@@ -18,12 +18,79 @@ version_wrapper = __mad_version()
 from utilities import __unique_string
 _unique_string = __unique_string
 
+
+class EnableOptimizer(object):
+    """
+    @brief: A wrapper that enables/disables the optimizer and
+        then sets it back to the original value on exit
+    """
+    def __init__(self, to_enable=True):
+        self.to_enable = to_enable
+        self.optimizer_enabled = False
+        self.guc_exists = True
+
+    def __enter__(self):
+        try:
+            optimizer = plpy.execute("show optimizer")[0]["optimizer"]
+            self.optimizer_enabled = True if optimizer == 'on' else False
+            plpy.execute("set optimizer={0}".
+                         format(('off', 'on')[self.to_enable]))
+        except:
+            self.guc_exists = False
+        finally:
+            return self
+
+    def __exit__(self, *args):
+        if args and args[0]:
+            # an exception was raised in code. We return False so that any
+            # exception is re-raised after exit. The transaction will not
+            # commit leading to reset of client_min_messages.
+            return False
+        else:
+            if self.guc_exists:
+                plpy.execute("set optimizer={0}".
+                             format(('off', 'on')[self.optimizer_enabled]))
+
+
+class EnableHashagg(object):
+    """
+    @brief: A wrapper that enables/disables the hashagg and then sets it back
+        to the original value on exit
+    """
+    def __init__(self, to_enable=True):
+        self.to_enable = to_enable
+        self.hashagg_enabled = False
+        self.guc_exists = True
+
+    def __enter__(self):
+        try:
+            enable_hashagg = plpy.execute("show enable_hashagg")[0]["enable_hashagg"]
+            self.hashagg_enabled = True if enable_hashagg == 'on' else False
+            plpy.execute("set enable_hashagg={0}".
+                         format(('off', 'on')[self.to_enable]))
+        except:
+            self.guc_exists = False
+        finally:
+            return self
+
+    def __exit__(self, *args):
+        if args and args[0]:
+            # an exception was raised in code. We return False so that any
+            # exception is re-raised after exit. The transaction will not
+            # commit leading to reset of client_min_messages.
+            return False
+        else:
+            if self.guc_exists:
+                plpy.execute("set enable_hashagg={0}".
+                             format(('off', 'on')[self.hashagg_enabled]))
+
+
 class MinWarning:
     """
     @brief A wrapper for setting the level of logs going into client
     """
 
-    def __init__(self, warningLevel = 'error'):
+    def __init__(self, warningLevel='error'):
         self.warningLevel = warningLevel
 
     def __enter__(self):
@@ -32,13 +99,21 @@ class MinWarning:
         """)[0]['setting']
         plpy.execute("""
             SET client_min_messages = {warningLevel}
-            """.format(warningLevel = self.warningLevel))
+            """.format(warningLevel=self.warningLevel))
         return self
 
     def __exit__(self, *args):
-        plpy.execute("""
-            SET client_min_messages = {oldMsgLevel};
-            """.format(oldMsgLevel = self.oldMsgLevel))
+        if args and args[0]:
+            # an exception was raised in code. We return False so that any
+            # exception is re-raised after exit. The transaction will not
+            # commit leading to reset of client_min_messages.
+            return False
+        else:
+            # if no exception then we reset the client_min_messages
+            plpy.execute("""
+                SET client_min_messages = {oldMsgLevel};
+                """.format(oldMsgLevel=self.oldMsgLevel))
+
 
 class IterationController:
     """

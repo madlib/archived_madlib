@@ -102,7 +102,13 @@ DecisionTree<Container>::bind(ByteStream_type& inStream) {
     size_t n_labels = 0;
     if (!tree_depth.isNull()) {
         n_nodes = static_cast<size_t>(pow(2, tree_depth) - 1);
-        n_labels = static_cast<size_t>(n_y_labels);
+
+        // for classification n_labels = n_y_labels + 1 since the last element
+        // is the count of actual (unweighted) tuples landing on a node
+        if (is_regression)
+            n_labels = static_cast<size_t>(n_y_labels);
+        else
+            n_labels = static_cast<size_t>(n_y_labels + 1);
     }
 
     inStream
@@ -184,8 +190,8 @@ DecisionTree<Container>::search(MappedIntegerVector cat_features,
                              <= feature_thresholds(current));
         }
         /*       (i)
-              /      \
-          (2i+1)   (2i+2)
+               /     \
+           (2i+1)  (2i+2)
          */
         current = is_split_true ? trueChild(current) : falseChild(current);
         feature_index = feature_indices(current);
@@ -210,7 +216,7 @@ double
 DecisionTree<Container>::predict_response(
         MappedIntegerVector cat_features,
         MappedColumnVector con_features) const {
-    ColumnVector curr_prediction = this->predict(cat_features, con_features);
+    ColumnVector curr_prediction = predict(cat_features, con_features);
     if (is_regression){
         return curr_prediction(0);
     } else {
@@ -245,7 +251,7 @@ DecisionTree<Container>::impurity(const ColumnVector &stats) const {
         // variance is a measure of the mean-squared distance to all points
         return stats(2) / stats(0) - pow(stats(1) / stats(0), 2);
     } else {
-        ColumnVector proportions = stats / stats.sum();
+        ColumnVector proportions = statPredict(stats);
         if (impurity_type == GINI){
             return 1 - proportions.cwiseProduct(proportions).sum();
         } else if (impurity_type == ENTROPY){
@@ -264,8 +270,8 @@ double
 DecisionTree<Container>::impurityGain(const ColumnVector &combined_stats,
                                       const uint16_t &stats_per_split) const {
 
-    uint64_t true_count = statCount(combined_stats.segment(0, stats_per_split));
-    uint64_t false_count = statCount(combined_stats.segment(stats_per_split, stats_per_split));
+    uint64_t true_count = statWeightedCount(combined_stats.segment(0, stats_per_split));
+    uint64_t false_count = statWeightedCount(combined_stats.segment(stats_per_split, stats_per_split));
     double total_count = static_cast<double>(true_count + false_count);
 
     if (true_count == 0 || false_count == 0) {
@@ -351,8 +357,7 @@ DecisionTree<Container>::expand(const Accumulator &state,
 
             // create and update child nodes if splitting current
             if (max_impurity_gain > 0 &&
-                    shouldSplit(max_stats, min_split,
-                        min_bucket, sps)) {
+                    shouldSplit(max_stats, min_split, min_bucket, sps)) {
 
                 if (children_not_allocated) {
                     // allocate the memory for child nodes if not allocated already
@@ -445,14 +450,15 @@ DecisionTree<Container>::statPredict(const ColumnVector &stats) const {
     } else {
         // classification stat ->  (i) = num of tuples for class i
         // we return the proportion of each label
-        return stats / static_cast<double>(stats.sum());
+        ColumnVector statsCopy(stats);
+        return statsCopy.head(n_y_labels) / static_cast<double>(stats.head(n_y_labels).sum());
     }
 
 }
 // -------------------------------------------------------------------------
 
 /**
- * @brief Return the number of nodes accounted in a 'stats' vector
+ * @brief Return the number of tuples accounted in a 'stats' vector
  */
 template <class Container>
 inline
@@ -460,17 +466,91 @@ uint64_t
 DecisionTree<Container>::statCount(const ColumnVector &stats) const{
 
     // stats is assumed to be of size = stats_per_split
-    if (is_regression){
-        // regression: stat(3) = num of tuples
-        return static_cast<uint64_t>(stats(3));
-    } else {
-        // classification: stat(i) = num of tuples for class i
-        // we return the sum as count for that stat
-        return static_cast<uint64_t>(stats.sum());
-    }
-
+    // for both regression and classification, the last element is the number
+    // of tuples landing on this node.
+    return static_cast<uint64_t>(stats.tail(1)(0));  // tail(n) returns a slice with last n elements
 }
 // -------------------------------------------------------------------------
+
+/**
+ * @brief Return the number of weighted tuples accounted in a 'stats' vector
+ */
+template <class Container>
+inline
+double
+DecisionTree<Container>::statWeightedCount(const ColumnVector &stats) const{
+    // stats is assumed to be of size = stats_per_split
+    if (is_regression)
+        return stats(0);
+    else
+        return stats.head(n_y_labels).sum();
+}
+// -------------------------------------------------------------------------
+
+/**
+ * @brief Return the number of tuples that landed on given node
+ */
+template <class Container>
+inline
+uint64_t
+DecisionTree<Container>::nodeCount(const Index node_index) const{
+    return statCount(predictions.row(node_index));
+}
+
+
+/**
+ * @brief Return the number of tuples (normalized using weights) that landed on given node
+ */
+template <class Container>
+inline
+double
+DecisionTree<Container>::nodeWeightedCount(const Index node_index) const{
+    return statWeightedCount(predictions.row(node_index));
+}
+
+
+/*
+ * Compute misclassification for prediction from a node in a classification tree.
+ * For regression, a zero value is returned.
+ * For classification, the difference between sum of weighted count and the max coefficient.
+ *
+ * @param node_index: Index of node for which to compute misclassification
+ */
+template <class Container>
+inline
+double
+DecisionTree<Container>::computeMisclassification(Index node_index) const {
+    if (is_regression) {
+        return  0;
+    } else {
+        return predictions.row(node_index).head(n_y_labels).sum() -
+                predictions.row(node_index).head(n_y_labels).maxCoeff();
+    }
+}
+// -------------------------------------------------------------------------
+
+
+/*
+ * Compute risk for a node of the tree.
+ * For regression, risk is the variance of the reponse at that node.
+ * For classification, risk is the number of misclassifications at that node.
+ *
+ * @param node_index: Index of node for which to compute risk
+ */
+template <class Container>
+inline
+double
+DecisionTree<Container>::computeRisk(const Index node_index) const {
+    if (is_regression) {
+        double wt_tot = predictions.row(node_index)(0);
+        double y_avg = predictions.row(node_index)(1);
+        double y2_avg = predictions.row(node_index)(2);
+        return y2_avg - y_avg * y_avg / wt_tot;
+    } else {
+        return computeMisclassification(node_index);
+    }
+}
+
 
 /**
  * @brief Return if a child node is pure
@@ -488,7 +568,7 @@ DecisionTree<Container>::isChildPure(const ColumnVector &stats) const{
         return variance < epsilon * mean * mean;
     } else {
         // child is pure if all are of same class
-        return (stats.sum() - stats.maxCoeff()) / stats.maxCoeff() < 100 * epsilon;
+        return (statPredict(stats) / stats.head(n_y_labels).maxCoeff()).sum() < 100 * epsilon;
     }
 
 }
@@ -678,11 +758,11 @@ DecisionTree<Container>::print(
     print_string << "(" << current << ")";
     print_string << "[ ";
     if (is_regression){
-        print_string << statCount(predictions.row(current)) << ", "
-                       << statPredict(predictions.row(current));
+        print_string << nodeWeightedCount(current) << ", "
+                     << statPredict(predictions.row(current));
     }
     else{
-        print_string << predictions.row(current);
+        print_string << predictions.row(current).head(n_y_labels);
     }
     print_string << "]  ";
 
@@ -941,6 +1021,7 @@ TreeAccumulator<Container, DTree>::updateStats(bool is_regression,
         stats << weight, w_response, w_response * response, 1;
     } else {
         stats(static_cast<uint16_t>(response)) = weight;
+        stats.tail(1)(0) = 1;
     }
 
     if (is_cat) {

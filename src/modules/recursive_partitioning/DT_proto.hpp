@@ -62,6 +62,9 @@ public:
                 const uint16_t &min_bucket,
                 const uint16_t &max_depth);
 
+    Index parentIndex(Index current) const {
+        return current > 0? static_cast<Index>((current-1)/2): 0;
+    }
     Index trueChild(Index current) const { return 2 * current + 1; }
     Index falseChild(Index current) const { return 2 * current + 2; }
     double impurity(const ColumnVector & stats) const;
@@ -72,8 +75,13 @@ public:
                        const uint16_t &min_bucket,
                        const uint16_t &stats_per_split) const;
     ColumnVector statPredict(const ColumnVector &stats) const;
-    bool isChildPure(const ColumnVector &stats) const;
     uint64_t statCount(const ColumnVector &stats) const;
+    double statWeightedCount(const ColumnVector &stats) const;
+    uint64_t nodeCount(const Index node_index) const;
+    double nodeWeightedCount(const Index node_index) const;
+    double computeMisclassification(const Index node_index) const;
+    double computeRisk(const Index node_index) const;
+    bool isChildPure(const ColumnVector &stats) const;
 
     string print(Index, ArrayHandle<text*>&, ArrayHandle<text*>&,
                  ArrayHandle<text*>&, ArrayHandle<int>&,
