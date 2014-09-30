@@ -1,0 +1,448 @@
+% When using TeXShop on the Mac, let it know the root document. The following must be one of the first 20 lines.
+% !TEX root = ../design.tex
+
+\chapter[Random Forests]{Random Forests: Classification and Regression}
+\begin{moduleinfo}
+\item[Author] \href{mailto:pjayaram@pivotal.io}{Preethi Jayaram}
+\item[Author] \href{mailto:xfeng@pivotal.io}{Feng, Xixuan (Aaron)}
+\item[History]
+    \begin{modulehistory}
+            \item[v0.1] Initial version: introduction, theory, and interface
+    \end{modulehistory}
+\end{moduleinfo}
+
+% Abstract. What is the problem we want to solve?
+\section{Introduction} % (fold)
+\label{sec:introduction}
+
+Tree-based methods provide a simple and human-interpretable model for classifying data.
+Decision Trees, for example, use splitting rules to segment the predictor space into simple
+regions that are then summarized in a tree form. However, they tend to over-fit the data, 
+resulting in poor prediction accuracies. One way to mitigate this problem is by building an
+ensemble of classifiers, each of which produces a tree model on some combination of the 
+input data. The results of these models are then combined to yield a single prediction, 
+which, although at the expense of some loss in interpretation, have been found to be
+highly accurate. Such methods of using multiple decision trees to make predictions 
+are called random forest methods.
+
+\subsection{Basics of Random Forests} % (fold)
+\label{sub:basics_of_random_forests}
+Random forests operate by constructing many trees at training time using bootstrapped
+samples from the training data. During prediction, they output the class that is the
+mean (regression) or mode (classification) of the predictions output by the individual trees.
+
+Each tree is grown as follows:
+\begin{enumerate}
+    \item If the number of training samples is N, we sample, with replacement, N cases at random.
+    This forms the training set for the current tree.
+    \item Each time a split is considered, a random sample of $m$ predictors is chosen as split
+    candidates from the full set of $p$ predictors such that $m \ll p$. Typically, we
+    choose $m \approx \sqrt{p}$. One of the m predictors is then used to split the node.
+    \item The tree is grown to the maximum size without pruning.
+\end{enumerate}
+
+[10] proves that the generalization error, or the misclassification rate, has a limiting value 
+and that, random forests do not over-fit the data.
+
+\subsection{Out-of-bag error (oob) error estimate}
+The Out-of-bag error is an unbiased estimate of the test set error. While growing each tree during
+training, about one-third of the samples are left out. These are used to get a test-set
+classification for each sample in about one-third of the trees. The average prediction $c$ for each
+sample is calculated as the average of the predictions output by individual trees.
+The number of times $c$ is not equal to the true class of the sample, averaged
+over all the samples, is the oob error estimate. Such an unbiased error estimate removes
+the need for cross-validation or a separate test set for calculating test set error. 
+
+\subsection{Variable importance}
+Random forests can be used to rank the importance of variables in the dataset.
+For a given dataset $D_{n} = \{(X_i, Y_i)\}_{i=1}^{n}$, first, a random forest is fit to the data.
+To measure the importance of the $j$-th feature after training, the values of the $j$-th feature are
+permuted among the training data, and the oob error is calculated on this perturbed dataset. The
+importance of the $j$-th feature is calculated by averaging the difference between the oob error
+estimate before and after permuting the $j$-th feature. The average is normalized by the
+standard deviations of the differences.
+
+\subsection{Proximities}
+Proximity matrices are a useful tool in clustering and outlier detection.
+Random forests can be used to calculate pair-wise proximities between input samples.
+If there are N training samples, the proximity matrix is created as an NxN matrix. After a
+tree is grown, both the training and oob data are sent down the tree. If two different samples
+end up in the same leaf node, their proximity is increased by one. After repeating this process
+for all samples, the proximity values are normalized by diving by the number of trees.
+
+\paragraph{Advantages of Random forests:}
+
+\begin{enumerate}
+    \item It is one of the most accurate learning algorithms available. For many data sets, it
+    produces a highly accurate classifier.
+    \item It runs efficiently on large databases.
+    \item It can handle thousands of input variables without variable deletion.
+    \item It gives estimates of what variables are important in the classification.
+    \item It generates an internal unbiased estimate of the generalization error as the forest
+    building progresses.
+    \item It has an effective method for estimating missing data and maintains accuracy
+    when a large proportion of the data are missing.
+    \item It computes proximities between pairs of cases that can be used in clustering, locating
+    outliers, or (by scaling) give interesting views of the data.
+    \item The capabilities of the above can be extended to unlabeled data, leading to
+    unsupervised clustering and outlier detection. Proximity matrix calculated from the random forest 
+    for unlabeled data can be used for clustering and outlier detection.
+\end{enumerate}
+% subsection basics_of_random_forests (end)
+
+\section{Interface} % (fold)
+\label{sec:interface}
+The interface to the random forest functionality includes rf\_train and rf\_predict as
+the training and prediction functions. Additionally, utility methods for calculating 
+variable importance, proximity matrices, viewing individual trees, and visualization 
+are also included.
+
+\subsection{Training} % (fold)
+\label{sub:training}
+\begin{sql}
+    SELECT forest_train(
+            training_table_name,
+            output_table_name,
+            id_col_name,
+            dependent_variable,
+            list_of_features,
+            list_of_features_to_exclude,
+            grouping_cols,
+            num_trees,
+            num_features,
+            max_depth,
+            min_split,
+            min_bucket,
+            verbose
+    )
+\end{sql}
+
+\paragraph{Arguments:}
+
+The descriptions of the arguments are the same as found in Decision Trees with the exception
+of the following:
+
+\begin{itemize}
+    \item \emph{num\_trees}: Number of trees to grow while building the random forest. Default: 500
+    \item \emph{num\_features}: Number of features to randomly select at each split. Default=$\sqrt{p}$ for
+    classification, and p/3 for regression, where p is the total number of features.
+    \item There will be no parameters for cross-validation and pruning as random forests build complete
+    trees without pruning, and the technique of cross-validation is inherent.
+\end{itemize}
+% subsection training (end)
+
+\subsection{Prediction} % (fold)
+\label{sub:prediction}
+\begin{sql}
+    SELECT forest_predict(
+            random_forest_model,
+            new_data_table,
+            output_table,
+            type
+    )
+\end{sql}
+The descriptions of all the arguments are the same as found in Decision Trees.
+% subsection prediction (end)
+\\
+\subsection{Training Output} % (fold)
+\label{sub:training_out}
+The function forest\_train produces three output tables, one each for the model, summary 
+and groups, as described below:
+
+\paragraph{Model table:}
+
+\begin{itemize}
+    \item \emph{group\_id}: Id of the group for which this tree was generated. The specific
+    grouping columns and values can be obtained from the 'Groups' table.
+    \item \emph{sample\_id}: Id of the (bootstrap) sample for which this tree was generated.
+    \item \emph{tree}: Trained decision tree model stored in bytea8 format.
+    \item \emph{cat\_levels\_in\_text}: Ordered levels of categorical variables.
+    \item \emph{cat\_n\_levels}: Number of levels for each categorical variable.
+    \item \emph{tree\_depth}: Depth of the tree.
+\end{itemize}
+
+\paragraph{Summary table:}
+
+\begin{itemize}
+    \item \emph{method\_name}: Name of training method, 'forest\_train' in this case.
+    \item \emph{is\_classification}: Indicates if the model is for classification/regression.
+    \item \emph{training\_table\_name}: Name of table containing training data.
+    \item \emph{output\_table\_name}: Name of table containing the model.
+    \item \emph{id\_col\_name}: The Id column name.
+    \item \emph{dependent\_variable}: The dependent variable.
+    \item \emph{features}: The independent variables.
+    \item \emph{cat\_features\_str}: The list of categorical feature names as a comma-separated string.
+    \item \emph{con\_features\_str}: The list of continuous feature names as a comma-separated string.
+    \item \emph{grouping\_cols\_str}: Names of grouping columns.
+    \item \emph{n\_groups}: Number of groups in training.
+    \item \emph{failed\_groups}: Number of failed groups in training.
+    \item \emph{n\_rows}: Total number of rows processed across all groups.
+    \item \emph{n\_rows\_skipped}: Total number of rows skipped across groups.
+    \item \emph{dep\_list\_str}: Distinct levels of dependent variable in the case of classification.
+    \item \emph{dep\_type}: Type of dependent variable.
+\end{itemize}
+
+\paragraph{Groups table:}
+
+\begin{itemize}
+    \item \emph{grouping\_cols}: grouping\_cols if provided in input. This could be zero or 
+    more columns depending upon user input.
+    \item \emph{group\_id}: Id of the group that this row of statistics corresponds to.   
+    \item \emph{num\_trees}: Number of trees constructed by the model.
+    \item \emph{oob\_error}: Out-of-bag error estimate for the model.
+    \item \emph{variable\_importance}: A matrix containing containing the permutation-based importance measure.
+    The rows correspond to the different predictors, and the columns correspond to various importance measures.
+    \item \emph{proximity}: A matrix of size NxN containing proximity measures among the input, based
+    on the number of times pairs of input points end up in the same terminal node.
+\end{itemize}
+% subsection training_out (end)
+
+\subsection{Prediction Output}
+\label{sub:prediction_out}
+The function forest\_predict produces one output table containing a list of predictions, which 
+are either class probabilities, or classification prediction outputs. In the case of 
+classification with multiple classes, an array of class probabilities are produced as output.
+The output table is as described below:
+
+\begin{itemize}
+    \item \emph{id}: Id of the data point.
+    \item \emph{estimated\_<column>}: Contains prediction for this data point. Can be one (regression)
+    or more columns(classification).
+\end{itemize}
+% subsection prediction_out (end)
+% section interface (end)
+
+\subsection{Other functions}
+\label{sub:others}
+\subsection{Display} % (fold)
+\label{sub:display}
+\begin{sql}
+    SELECT forest_display(
+          random_forest_model,
+          group_id,
+          sample_id,
+          is_dot_format)
+          
+\end{sql}
+\begin{itemize}
+    \item \emph{random\_forest\_model}: Table containing the random forest model.
+    \item \emph{group\_id}: Id of the group that the tree to be displayed is a part of.
+    \item \emph{sample\_id}: Id of the sample within the group.
+    \item \emph{is\_dot\_format}: True for dot format, False for text format.
+\end{itemize}
+% subsection display (end)
+
+\section{Implementation} % (fold)
+\label{sec:implementation}
+
+Let $X = \{X_1, X_2, \dots, X_N\}$ be a set of attributes with domains
+$D_{X_1}, D_{X_2}, \dots, D_{X_N}$. Let $Y$ be an output with domain $D_Y$.
+Given a dataset $D^* = \{(x_i, y_i) | x_i \in D_{X_1} \times D_{X_2} \times \dots D_{X_N}, y_i \in D_Y\}$,
+the goal is to learn a random forest model that best approximates the true
+distribution of $D^*$. The random forest will be composed of individual trees
+each of which is learnt using a greedy top-down approach, as described in
+Decision Trees.
+
+In the below sections, we will only expand item[1] and item[5], which are specific
+to building random forests. The others have already been covered in Decision Trees.
+Any differences will be noted along in the process.
+
+The following are the major steps for building a random forest model:
+\begin{itemize}
+\item[1.] Bootstrap, which includes sampling N samples from the training set.
+\item[2.] Initialize, which includes binning and finding split candidates.
+\item[3.] Finding best split for each node.
+\item[4.] Finding prediction for leaf nodes in the individual decision trees.
+\item[5.] Calculate random forest statistics.
+\end{itemize}
+
+\subsection{Bootstrapping}
+Given the dataset $D^* = \{(x_i, y_i) | x_i \in D_{X_1} \times D_{X_2} \times \dots D_{X_N}, y_i \in D_Y\}$
+we will generate B bootstrap samples $B_{1}, B_{2}, \dots B_{b}$ where each bootstrap
+sample is obtained by sampling N times, with replacement, from the same dataset.
+Each bootstrapped sample $B_{i}$ is treated as the training set for ~\ref{alg:buildRandomForest}.
+We thought about a couple of approaches for achieving this:
+
+\subsubsection{Using Row Identifiers}
+The first method generates row ids for each row of the input table, which ranges from 
+  1..N. We then generate N random numbers between 1 and N, and store the results in a 
+  one-column table. A bootstrapped sample can now be obtained by joining this
+  table with the input dataset. See \ref{sec:SamplingWithReplacement} for implementing this
+  in sql. The problem, however, is that, the step which generates row ids for the input table 
+  would involve pulling in data from all segments to the master in order to be able to generate 
+  a sequential gap-less set of ids. This is an expensive operation which is overcome by the 
+  second method.
+  
+\subsubsection{Using Poisson sampling}
+The process of bootstrapping can be thought of as sampling from a multinomial 
+  distribution where the probability of selecting any data point is uniform
+  over the entire data set. While this requires scanning the entire data set, the second 
+  approach approximates the multinomial distribution by sampling from an identical 
+  Poisson distribution on each data point independently. Thus, we are able to generate
+  counts indicative of the number of times the particular data point should 
+  be included in the bootstrap sample.
+
+It has been decided that we will be using Poisson sampling for our bootstrapping step.
+We will use a Poisson distribution with $\lambda=1$ where $\lambda$ is the average
+fraction of input data that we want in each tree. In our case, this fraction = 1 as we want 
+N samples in each tree from the input where N is also the size of the data set.
+\\
+\begin{algorithm}[Bootstrapping$(D^*)$]\label{alg:bootstrap}
+\alginput{Training dataset $D^*$}
+\algoutput{Bootstrap sample $B$}
+  \begin{algorithmic}[1]
+   \For{$d \in D^*$}
+     \State count = Poisson(1)
+     \State id = user provided id for $d$
+     \State Add $(count, id)$ to C where C is a two-column table
+    \EndFor
+    \State Output $Join(D^*,C)$   
+  \end{algorithmic}
+\end{algorithm}
+
+\subsection{Variable Importance}
+In order to rank the importance of features in the input dataset, random forests
+use a mechanism of calculating the average increase in misclassification rate
+when the values of a particular feature are randomly permuted in the input set,
+and comparing the classification accuracy against the original data set. 
+The algorithm is as follows:
+
+ \begin{algorithm}[calculateVariableImportance$(R, F^*)$] \label{alg:variableImportance}
+   \alginput{Random Forest model $R$}
+   \alginput{Features $F^*$}
+   \algoutput{Variable importance for each feature in $F$}
+   \begin{algorithmic}[1]
+   \For{$subtree T_i \in R$}
+     \State $O_i$ = out-of-bag samples of $T_i$
+     \State size = size of $O_i$
+     \For{$f \in F$}
+       \State Create one-column table C with values of $f$ randomly selected $size$ times
+       \State Join $(O_i,C)$ replacing column f with values from C
+       \For{$o \in O_i$}
+         \State Find prediction for o, and increment count for (f, o, prediction)
+       \EndFor
+     \EndFor
+   \EndFor
+   \State Find majority prediction for each input point per feature
+   \State Calculate misclassification rate per feature
+  \end{algorithmic}
+ \end{algorithm}
+
+\subsection{Proximities}
+Proximities help identify clusters within the input set. This is depicted
+as an NxN matrix where N is the size of the data set.
+The algorithm is as follows:
+
+ \begin{algorithm}[calculateProximity$(R, D^*)$] \label{alg:proximity}
+   \alginput{Random Forest model $R$}
+   \algoutput{Proximity for data points in $D^*$}
+   \begin{algorithmic}[1]
+   \For{$subtree T_i \in R$}
+     \For{$d \in D^*$}
+       \State Find prediction p for d in $T_i$. Increment pair\-wise counts of d with all other data points with prediction p. 
+     \EndFor
+   \EndFor
+   \State Normalize proximity by dividing by number of trees.
+  \end{algorithmic}
+ \end{algorithm}
+
+\subsection{Feature sampling}
+Unlike in decision trees where all the features are used to grow the tree, 
+random forests will at each split, select at random, a subset of the 
+features to find the best split candidate. This would require some changes
+in the current Decision tree implementation to both support and be able to
+use the reduced feature set for an optimized implementation, by, for example,
+only having to aggregate statistics for the feature subsample. 
+ 
+\subsection{Random forest and Decision Tree building algorithms}
+\begin{algorithm}[BuildRandomForest$(D^*)$] \label{alg:buildRandomForest}
+\alginput{Training dataset $D^*$}
+\algoutput{A random forest model fit to the dataset $D$}
+\begin{algorithmic}[1]
+   \State Generate bootstrap samples $B_{1}, B_{2}, \dots B_{r}$ 
+   using ~\ref{alg:bootstrap}
+   \For {$i \in B_{i}$}
+       \State Generate binning info $b_{i}$ using ~\ref{alg:findSplitBins}
+       \State Build subtree using ~\ref{alg:buildSubtreeRF}
+   \EndFor
+   \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[buildSubtreeRandomForest$(D^*, M, n_l, B)$] \label{alg:buildSubtreeRF}
+\alginput{Bootstrapped training dataset $B_{i}$,\\
+          Binning info $b$}
+\algoutput{Subtree built from $B_{i}$}
+\begin{algorithmic}[1]
+   \State Select $m$ features at random from the set of $p$ features
+   \State On each segment, perform the following \Comment{Transition function}
+    \For{$d \in B_{i}$}
+        \For{$attr \in m$ \, in \, $d$}
+            \State Find the bin index in $b$ that $attr\_value$ belongs to
+            \State Add sufficient statistics $s$ to aggregate
+        \EndFor
+    \EndFor
+    \State Merge aggregated statistics on different segments \Comment{Merge function}
+    \State Find split in $m$ that maximizes impurity using ~\ref{alg:findBestSplits}\Comment{Final function}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Grouping Support}
+Like other algorithms in MADlib, Random Forests will also support grouping. A lot of the 
+functionality that exists in Decision Trees to support grouping can be leveraged. 
+Two major steps to support grouping in random forests would be:
+\begin{itemize}
+    \item Generate bootstrap samples for a particular group before training a random forest 
+    on that group. See \ref{sec:SamplingWithReplacement} for implementation details of 
+    sampling with replacement involving groups, in the database. 
+    \item Aggregate necessary results on a per-group basis in order to output final statistics
+    such as variable importance, proximity etc.
+\end{itemize}
+
+\section{Data Handling}
+\label{sec:dataHandling}
+
+In order to calculate metrics such as the oob error, variable importance and proximities, 
+data from all the trees need to aggregated. Three different alternatives were 
+experimented with, w.r.t storing and retrieving data.  
+
+\begin{enumerate}
+    \item In the first approach, we construct two tables, one that stores the bootstrap samples
+    of the current working set, i.e., the data needed to construct the current tree, 
+    and another table which accumulates both the training and oob samples for all trees.
+    Metrics are then calculated at the end of training the random forest model by running
+    aggregation queries on the table with all of the data. The query to accumulate all data 
+    simply appends the current sample to the aggregated sample. 
+    \item In the second approach, we store one big table, which is used for both training the 
+    current tree, as well as accumulating samples for all trees. The overall amount of data 
+    stored is reduced. 
+    \item In the final approach, we construct one table to store the current working set like in
+    approach (1), and additionally, we store one other table to store various partially 
+    aggregated statistics from training each tree, such as the predictions for oob samples 
+    for each tree. These will be aggregated at the end of training to produce the final results.   
+    \item Based on preliminary tests on HAWQ (with half a rack), a table with 1M rows 
+    using approach (3) takes only half as much time as required for approaches (1) and (2)
+\end{enumerate}
+
+\section{Design Considerations}
+\label{sec:designConsiderations}
+
+\begin{itemize}
+    \item Building a random forest can potentially be made embarrassingly parallel as each tree
+    in the model can be built independently of the rest. This, however, requires that each segment 
+    has all the data necessary for training a single tree, and would involve copying large amounts
+    of data over to the segments, which is a lot of overhead. It has therefore been decided that
+    individual trees will be built in sequence, with each tree itself being built in parallel, as 
+    discussed under Decision Trees.
+    \item Random forests are usually built without pruning, which could lead to trees that are very 
+    deep. That could potentially have an impact on performance. The current design proposes 
+    not to use pruning, but based on performance tests and accuracy results, this could be changed 
+    to use pruning and/or limit the maximum depth of the tree.
+    \item num\_trees is currently an input parameter to the rf\_train method. If, however, we want
+    to be able to determine the number of trees to use, one approach is to use a number that is
+    typically used, such as few hundreds of trees. Another way might be to observe the out-of-bag 
+    error rate on each training sample on the current model, and stop constructing more trees when 
+    the improvement in the error rate falls below a certain threshold.
+\end{itemize}
+
+% section parallelism (end)
+
