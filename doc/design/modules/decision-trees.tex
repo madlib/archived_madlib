@@ -156,7 +156,8 @@ The interface of the decision tree functionality includes two functions,
             max_depth,
             min_split,
             min_bucket,
-            cp,
+            surrogate_params,   -- not implemented
+            pruning_params,
             verbose
     )
 \end{sql}
@@ -192,34 +193,39 @@ The interface of the decision tree functionality includes two functions,
     \item \emph{min\_bucket}: OPTIONAL (Default = minsplit/3). Minimum number of observations
     in any terminal node. If only one of minbucket or minsplit is specified,
     minsplit is set to minbucket*3 or minbucket to minsplit/3, as appropriate.
-    % \item \emph{use\_surrogate}: OPTIONAL (Default = 0) Use of surrogates in splitting process.
-    %     \begin{enumerate}
-    %         \setcounter{enumi}{0}
-    %         \item An observation with a missing value for the primary split rule
-    %         is not sent further down the tree.
-    %         \item
-    %         \item If all surrogates are missing, then send the observation in the majority direction.
-    %     \end{enumerate}
-    % \item \emph{surrogate\_style}: OPTIONAL (Default = 0)
-    %     \begin{enumerate}
-    %         \setcounter{enumi}{0}
-    %         \item Use total number of correct classification for a potential surrogate variable
-    %         \item Use the percent correct, calculated over the non-missing values of the surrogate
-    %     \end{enumerate}
-    % \item \emph{max\_surrogate}: OPTIONAL (Default = 0)
-    % The number of surrogate splits retained in the output. If this is set to zero the compute time will be reduced.
     % \item \emph{max\_compete}: OPTIONAL (Default = 0) Number of competitor splits
     % retained in the output. It is useful to know not just which split was chosen,
     % but which variable came in second, third, etc.
     \item \emph{n\_bins}: OPTIONAL (Default = 100) Number of bins to use during binning.
     Continuous-valued features are binned into discrete bins (per the quantile values)
     to compute split boundaries. This global parameter is used to compute the resolution of the bins. Higher number of bins will lead to higher processing time.
-    \item \emph{cp}: OPTIONAL (Default = 0.01)
-        % For `c4.5', a statistical confidence interval of the re-substitution error;
-        % for `cart',
-        A complexity parameter that determines that a split is attempted only if it
-        decreases the overall lack of fit by a factor of `cp'.
-    \item \emph{n\_folds}: OPTIONAL (Default = 10) Number of cross-validation folds
+    \item \emph{surrogate\_params}: (Not implemented) OPTIONAL (String with multiple key-value parameters, default = NULL)
+        \begin{enumerate}
+            \item \emph{max\_surrogate}: OPTIONAL (Default = 0)
+                The number of surrogate splits retained in the output.
+                If this is set to zero the compute time will be reduced by half.
+            % \item \emph{use\_surrogate}: OPTIONAL (Default = 1) Use of surrogates in splitting process.
+            %     \begin{enumerate}
+            %         \setcounter{enumi}{0}
+            %         \item Display only, an observation with a missing value for the primary split rule
+            %         is not sent further down the tree.
+            %         \item Use surrogates to split subjects missing the primary variable; if all surrogates are missing the observation is not split.
+            %         \item If all surrogates are missing, then send the observation in the majority direction.
+            %     \end{enumerate}
+            % \item \emph{surrogate\_style}: OPTIONAL (Default = 0)
+            %     \begin{enumerate}
+            %         \setcounter{enumi}{0}
+            %         \item Use total number of correct classification for a potential surrogate variable
+            %         \item Use the percent correct, calculated over the non-missing values of the surrogate
+            %     \end{enumerate}
+        \end{enumerate}
+    \item \emph{pruning\_params}: OPTIONAL (String with multiple key-value parameters, default = NULL)
+        \begin{enumerate}
+                \item \emph{cp}: OPTIONAL (Default = 0)
+                    A complexity parameter that determines that a split is attempted only if it
+                    decreases the overall lack of fit by a factor of `cp'.
+                \item \emph{n\_folds}: OPTIONAL (Default = 0; no cross-validation) Number of cross-validation folds
+        \end{enumerate}
     \item \emph{verbose}: OPTIONAL (Default = False) Prints status information
      on the splits performed and any other information useful for debugging.
 \end{itemize}
@@ -362,9 +368,63 @@ second best, and so on. When sending observations down the tree either in the
 training phase or during prediction, we use the surrogate splits in order, if
 the primary splitting predictor is missing. Surrogate splits exploit
 correlations between predictors to try and alleviate the effect of missing data.
-The higher the cor- relation between the missing predictor and the other
+The higher the correlation between the missing predictor and the other
 predictors, the smaller the loss of information due to the missing value.
 
+The resemblance between two binary splits over sample $S$ is formally defined as:
+\begin{align*}
+    & sim(a_i, dom_1(a_i), dom_2(a_i), a_j, dom_1(a_j), dom_2(a_j), S) = \\
+     & \ |\sigma_{a_i \in dom_1(a_i) and a_j \in dom_1(a_j)} S| +
+                |\sigma_{a_i \in dom_2(a_i) and a_j \in dom_2(a_j)} S|
+\end{align*}
+
+\subsubsection{Implementation considerations} % (fold)
+\label{ssub:surrogates_impl}
+For implementing surrogates the following should be considered:
+
+\begin{enumerate}
+    \item Training surrogates: There are two options to consider for training
+    of surrogates for each split:
+    \begin{enumerate}
+        \item Compute surrogates after the whole tree has trained. Advantage:
+        the increase in training time will be equivalent to increasing number of
+        iterations by one. Disadvantage: we won't have surrogates
+        for a level while training the sub-levels. Hence, all rows with NULL will
+        be ignored during the training.
+        \item Compute surrogates splits for a node while that node is being trained.
+        Advantage: during training, we have surrogate splits for all nodes above
+        the current trained level, implying that features with NULL rows are
+        ignored only while training nodes that use that feature - all nodes below
+        will still get to use that row. Disadvantage: the training doubles, since
+        every iteration will have to first train the nodes in level, and then
+        compute the surrogates for that node.
+    \end{enumerate}
+    \item Storage for surrogates: We store an array of surrogate variables and
+        their corresponding split thresholds for each node. In abstract, all the
+        surrogates would be stored as two matrices: one for each surrogate feature
+        index and another for corresponding threshold.
+    \item Update to search using surrogates: During searching the tree for a
+        incoming tuple we go through the tree as usual. If for a node, the feature
+        to check is NULL in the tuple, we go through the surrogate splits. If
+        at least one of the surrogate split features has a non-NULL value, we
+        use it search further. If an observation is missing all the surrogates
+        we use the majority branch to search further.
+
+    \item Displaying surrogate splits: we can display the surrogate splits for
+    each split in a separate table - this can implemented as a function call
+    for the user. The table would have a row for each node, with a column for
+    each surrogate split variable. Along with the surrogate split we also display
+    the aggrement measure that indicates how similar the two splits are.
+\end{enumerate}
+
+It's important to note that, similar to the `rpart' package, no surrogate that
+does worse than ``go with the majority'' is printed or used. The ``go with the majority''
+rule, also referred to as the ``blind'' rule computes the agreement measure when
+we always go with the branch that has majority of the tuples. Computing this
+blind rule measure is easy since we already have the statistics of tuples
+going left and right from our previous training of the node.
+
+% subsubsection surrogates_impl (end)
 
 \subsection{Pruning} % (fold)
 \label{sub:pruning}
