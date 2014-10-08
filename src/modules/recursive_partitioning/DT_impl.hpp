@@ -270,9 +270,9 @@ double
 DecisionTree<Container>::impurityGain(const ColumnVector &combined_stats,
                                       const uint16_t &stats_per_split) const {
 
-    uint64_t true_count = statWeightedCount(combined_stats.segment(0, stats_per_split));
-    uint64_t false_count = statWeightedCount(combined_stats.segment(stats_per_split, stats_per_split));
-    double total_count = static_cast<double>(true_count + false_count);
+    double true_count = statWeightedCount(combined_stats.segment(0, stats_per_split));
+    double false_count = statWeightedCount(combined_stats.segment(stats_per_split, stats_per_split));
+    double total_count = true_count + false_count;
 
     if (true_count == 0 || false_count == 0) {
         // no gain if all fall into one side

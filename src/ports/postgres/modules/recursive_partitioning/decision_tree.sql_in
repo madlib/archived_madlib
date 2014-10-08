@@ -35,9 +35,11 @@ values that the input variables can take, and leaf nodes represent values of the
 target variable, given the values of the input variables, represented by the
 path from the root to the leaf nodes.
 
+
 @anchor train
 @par Training Function
-Decision tree training function has the following format:
+We implement decision tree using the CART algorithm, introduced by Breiman et al. [1].
+The training function has the following syntax:
 <pre class="syntax">
 tree_train(
     training_table_name,
@@ -194,7 +196,14 @@ tree_train(
   ones included in the next argument). The types of the features can be mixed
   where boolean, integer, and text columns are considered categorical and
   double precision columns are considered continuous. The categorical variables
-  are not encoded and used as is for the training.</DD>
+  are not encoded and used as is for the training.
+
+  There are no limitations to the number of levels in a categorical variable.
+  It is, however, important to note that we don't test for every combination of
+  levels of a categorical variable for evaluating a split. We order the levels
+  of the variable by the entropy of the varible in predicting the response. The
+  splits at each node is evaluated between these ordered levels.
+  </DD>
 
   <DT>list_of_features_to_exclude</DT>
   <DD>TEXT. Comma-separated string of column names to exclude from the predictors
@@ -270,7 +279,7 @@ tree_train(
 
         The list of <em>cp</em> values are automatically computed by parsing
         through the tree initially trained on the complete dataset. The tree
-        outputed is a subset of this initial tree corresponding to the best
+        outputted is a subset of this initial tree corresponding to the best
         computed <em>cp</em>.
 
       </td>
@@ -283,7 +292,7 @@ tree_train(
 </DL>
 
 @note
-- All rows containing any NULL value in the features used for training will be
+All rows containing NULL value for any of the features used for training will be
 ignored from training.
 
 @anchor predict
@@ -297,14 +306,17 @@ tree_predict(tree_model,
              type)
 </pre>
 
+
 \b Arguments
 <DL class="arglist">
   <DT>tree_model</DT>
-  <DD>TEXT. Name of the table containing the decision tree model.</DD>
+  <DD>TEXT. Name of the table containing the decision tree model. This should
+  be the output table returned from <em>tree_train</em>.</DD>
 
   <DT>new_data_table</DT>
   <DD>TEXT. Name of the table containing prediction data. This table is
-  expected to contain the same </DD>
+  expected to contain the same features that were used during training. The table
+  should also contain <em>id_col_name</em> used for identifying each row.</DD>
 
   <DT>output_table</DT>
   <DD>TEXT. Name of the table to output prediction results to. If this table
@@ -330,6 +342,12 @@ tree_predict(tree_model,
       column with the probabilities is added to the output table.
   </DD>
 </DL>
+
+@note
+- All rows containing any NULL value in the features used for training will
+result in a NULL prediction.
+- If the <em>new_data_table</em> contains categories of categorical variables
+not seen in the training data then the prediction for that row will be NULL.
 
 @anchor display
 @par Display Function
@@ -658,6 +676,10 @@ Result:
 (32 rows)
 </pre>
 
+@anchor literature
+@literature
+[1] Breiman, Leo; Friedman, J. H.; Olshen, R. A.; Stone, C. J. (1984). Classification and regression trees. Monterey, CA: Wadsworth & Brooks/Cole Advanced Books & Software.
+
 @anchor related
 @par Related Topics
 
@@ -758,7 +780,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 ------------------------------------------------------------
 
 -------------------------------------------------------------
-/* This is an interal function and should not be called directly. */
+/* This is an internal function and should not be called directly. */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__build_tree(
     is_classification     BOOLEAN,
     split_criterion       TEXT,
@@ -1346,17 +1368,27 @@ $$ LANGUAGE SQL VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 -- -------------------------------------------------------------------------
 
--- Post-pruning
+-- Pruning function and return type
 DROP TYPE IF EXISTS MADLIB_SCHEMA._prune_result_type CASCADE;
 CREATE TYPE MADLIB_SCHEMA._prune_result_type AS (
     tree_state      MADLIB_SCHEMA.BYTEA8,
     cp_list         DOUBLE PRECISION[]
 );
 
+/**
+  * @brief Prune a decision tree and compute the list of cp values that
+  *  corresponds to each split of the original tree
+  *
+  * @param model The decision tree to prune
+  * @param cp Cost complexity value; all splits that have lower complexity will be pruned
+  * @param compute_cp_list Boolean that sets if a list of cp values
+  *       is to be computed that gives the pruning thresholds
+  *       for various subtrees of the input tree.
+**/
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._prune_and_cplist(
     model               MADLIB_SCHEMA.bytea8,
     cp                  DOUBLE PRECISION,
-    n_folds             SMALLINT
+    compute_cp_list     BOOLEAN
 ) RETURNS MADLIB_SCHEMA._prune_result_type AS
     'MODULE_PATHNAME', 'prune_and_cplist'
 LANGUAGE C IMMUTABLE

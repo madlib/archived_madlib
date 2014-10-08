@@ -541,21 +541,18 @@ AnyType
 prune_and_cplist::run(AnyType &args){
     MutableTree dt = args[0].getAs<MutableByteString>();
     double cp = args[1].getAs<double>();
-    uint16_t n_folds = args[2].getAs<uint16_t>();
+    bool compute_cp_list = args[2].getAs<bool>();
 
     // We use a scaled version of risk (similar to rpart's definition).
     //    The risk is relative to a tree with no splits (single node tree).
     double root_risk = dt.computeRisk(0);
     double alpha = cp * root_risk;
-    AnyType output_tuple;
-    std::list<double> cp_list;
     std::vector<double> node_complexities(dt.feature_indices.size(), alpha);
     prune_tree(dt, 0, alpha, root_risk, node_complexities);
 
-    if (n_folds < 2){
-        output_tuple << dt.storage();
-        return output_tuple;
-    } else {
+    std::list<double> cp_list;
+    AnyType output_tuple;
+    if (compute_cp_list){
         make_cp_list(dt, node_complexities, alpha, cp_list, root_risk);
         ColumnVector cp_vector(cp_list.size());
         std::list<double>::iterator it = cp_list.begin();
@@ -563,8 +560,10 @@ prune_and_cplist::run(AnyType &args){
             cp_vector(i) = *it;
         }
         output_tuple << dt.storage() << cp_vector;
-        return output_tuple;
+    } else {
+        output_tuple << dt.storage();
     }
+    return output_tuple;
 }
 
 // ------------------------------------------------------------

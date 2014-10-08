@@ -62,7 +62,11 @@ def _tree_validate_args(
     _assert(columns_exist_in_table(training_table_name, [id_col_name]),
             "Decision tree error: ID column does not exist.")
 
-    _assert(not (list_of_features is None or list_of_features.strip().lower() == ''),
+    _assert(is_var_valid(training_table_name, dependent_variable),
+            "Decision tree error: Invalid dependent variable ({0}).".
+            format(dependent_variable))
+
+    _assert(list_of_features and list_of_features.strip(),
             "Decision tree error: Features to include is empty.")
 
     _assert(not (dependent_variable is None or dependent_variable.strip().lower() == ''),
@@ -72,15 +76,11 @@ def _tree_validate_args(
         _assert(is_var_valid(training_table_name, list_of_features),
                 "Decision tree error: Invalid feature list ({0})".
                 format(list_of_features))
-
-    _assert(is_var_valid(training_table_name, dependent_variable),
-            "Decision tree error: Invalid dependent variable ({0}).".
-            format(dependent_variable))
-
-    if (list_of_features.strip() and list_of_features.strip() == '*'
-            and list_of_features_to_exclude.strip()):
-        _assert(is_var_valid(training_table_name, list_of_features_to_exclude.strip()),
-                "Decision tree error: Some of the excluded features do not exist.")
+    else:
+        if (list_of_features_to_exclude and list_of_features_to_exclude.strip()):
+            _assert(is_var_valid(training_table_name,
+                                 list_of_features_to_exclude.strip()),
+                    "Decision tree error: Some of the excluded features do not exist.")
 
     if grouping_cols:
         _assert(is_var_valid(training_table_name, grouping_cols),
@@ -107,9 +107,9 @@ def _get_features_to_use(schema_madlib, training_table_name,
     """ Expand '*' syntax and exclude some features
 
     Ignore 'list_of_features_to_exclude' if 'list_of_features' is not '*'
-    """
-    cols = set(get_cols(training_table_name, schema_madlib))
 
+    We also exclude from the features all grouping_cols, id_col_name, weights and dependent_variable
+    """
     # for some of the sets below we include the quoted name and the unquoted name
     #  to allow user to provide either form. Both forms are added in the exclusion
     #  list.
@@ -124,12 +124,18 @@ def _get_features_to_use(schema_madlib, training_table_name,
                          for i in [id_col_name, weights, dependent_variable])
 
     if list_of_features.strip() == '*':
-        return list(cols - set(split_quoted_delimited_str(list_of_features_to_exclude)) -
-                    group_set - other_col_set)
+        all_col_set = set(get_cols(training_table_name, schema_madlib))
+        exclude_set = set(split_quoted_delimited_str(list_of_features_to_exclude))
+        feature_set = all_col_set - exclude_set
+        return list(feature_set - group_set - other_col_set)
     else:
-        features = (set(split_quoted_delimited_str(list_of_features)) -
-                    group_set - other_col_set)
-        return list(features)
+        feature_list = split_quoted_delimited_str(list_of_features)
+        return_set = set(feature_list) - group_set - other_col_set
+        # instead of returning list(return_set) we create a list that has
+        # elements in same order as original feature_list
+        plpy.info(str([feat for feat in feature_list if feat in return_set]))
+        return [feat for feat in feature_list if feat in return_set]
+
 # ------------------------------------------------------------
 
 
@@ -151,15 +157,15 @@ def _classify_features(all_feature_names_types, features):
     text_types = ['text', 'varchar', 'character varying', 'char', 'character']
     boolean_types = ['boolean']
     cat_types = int_types + text_types + boolean_types
-    classified_features = set(features)
 
     cat_features = [col for col in features
                     if _get_col_value(all_feature_names_types, col) in cat_types]
-    classified_features -= set(cat_features)
+    cat_features_set = set(cat_features)
     # continuous types - 'real' is cast to 'double precision' for uniformity
     con_types = ['real', 'float8', 'double precision']
-    con_features = [col for col in classified_features
-                    if _get_col_value(all_feature_names_types, col) in con_types]
+    con_features = [col for col in features
+                    if (not col in cat_features_set and
+                        _get_col_value(all_feature_names_types, col) in con_types)]
 
     # In order to be able to form an array, all categorical variables
     # will be casted into TEXT type, but GPDB cannot cast a boolean
@@ -476,7 +482,7 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
     cp_list = set()
     for tree in tree_states:
         tree['tree_state'], curr_cp_list = _prune_and_cplist(
-            schema_madlib, tree['tree_state'], cp, n_folds)
+            schema_madlib, tree['tree_state'], cp, compute_cp_list=(n_folds > 2))
         if curr_cp_list:
             cp_list |= set(curr_cp_list)
     cp_list = list(cp_list)
@@ -564,6 +570,7 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
         cat_features, con_features, boolean_cats = _classify_features(
             all_cols_types, features)
 
+
         # get all rows
         n_all_rows = plpy.execute("SELECT count(*) FROM {source_table}".
                                   format(source_table=training_table_name)
@@ -589,7 +596,8 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                 # the cp_list since n_folds = 0
                 for tree in tree_states:
                     tree['tree_state'], _ = _prune_and_cplist(
-                        schema_madlib, tree['tree_state'], cp, 0)
+                        schema_madlib, tree['tree_state'], cp,
+                        compute_cp_list=False)
 
         _create_output_tables(**locals())
     return None
@@ -1617,6 +1625,7 @@ def tree_display(schema_madlib, model_table, dot_format=True, **kwargs):
     is_regression = not summary["is_classification"]
     cat_features_str = split_quoted_delimited_str(summary['cat_features'])
     con_features_str = split_quoted_delimited_str(summary['con_features'])
+
     grouping_cols = summary["grouping_cols"]
     grouping_cols = '' if grouping_cols is None else grouping_cols + ','
     grouped_trees = plpy.execute("SELECT {grouping_cols} "
@@ -1750,7 +1759,7 @@ SELECT * FROM tree_predict_out;
 # ------------------------------------------------------------
 
 
-def _prune_and_cplist(schema_madlib, tree_state, cp, n_folds, cp_list=None):
+def _prune_and_cplist(schema_madlib, tree_state, cp, compute_cp_list=False):
     """ Prune tree and return a list of cp values if cross-validating
     """
     sql = """
@@ -1758,11 +1767,12 @@ def _prune_and_cplist(schema_madlib, tree_state, cp, n_folds, cp_list=None):
         FROM (
             SELECT {schema_madlib}._prune_and_cplist(
                         $1,
-                        {cp}::double precision,
-                        {n_folds}::smallint
+                        ({cp})::double precision,
+                        ({compute_cp_list})::boolean
                     ) as pruned_tree
         ) q
-    """.format(schema_madlib=schema_madlib, cp=cp, n_folds=n_folds)
+    """.format(schema_madlib=schema_madlib, cp=cp,
+               compute_cp_list=bool(compute_cp_list))
 
     sql_plan = plpy.prepare(sql, ['{schema_madlib}.bytea8'.format(schema_madlib=schema_madlib)])
     pruned_tree = plpy.execute(sql_plan, [tree_state])[0]
