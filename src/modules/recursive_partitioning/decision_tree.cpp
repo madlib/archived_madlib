@@ -649,7 +649,7 @@ AnyType convert_to_rpart_format::run(AnyType &args) {
     if (dt.is_regression) {
         n_col = 8;
     } else {
-        n_col = 10 + 2 * static_cast<int>(dt.predictions.cols());
+        n_col = 10 + 2 * dt.n_y_labels;
     }
 
     MutableNativeMatrix frame(this->allocateArray<double>(

@@ -66,6 +66,13 @@ class PMMLBuilder(object):
         self.formula = Formula(self.y_str, self.x_str, self.n_coef)
         if self.name_spec is not None:
             self.formula.rename(self.name_spec)
+        else:
+            # change the y column name to avoid possible
+            # name conflicts
+            if all(s.lower() in '0123456789_abcdefghijklmnopqrstuvwxyz' for s in self.formula.y):
+                self.formula.y += '_pmml_prediction'
+            else:
+                self.formula.y = '(' + self.formula.y + ')_pmml_prediction'
 
     def _build_header(self):
         user = current_user()
@@ -545,3 +552,341 @@ class MultinomRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
                                       targetVariableName=self.formula.y,
                                       modelType='multinomialLogistic',
                                       functionName=self.function)
+
+
+class DecisionTreePMMLBuilder(PMMLBuilder):
+    """Builder class for PMML model 'TreeModel'
+    """
+    OUTPUT_COLS = ['tree']
+    SUMMARY_COLS = ['grouping_cols', 'dependent_varname', 'independent_varnames',
+            'cat_features', 'con_features', 'is_classification',
+            'dependent_var_levels', 'dependent_var_type', 'independent_var_types']
+    DATA_TYPE_DICT = {
+            'boolean':           'boolean',
+            'char':              'string',
+            'character':         'string',
+            'varchar':           'string',
+            'character varying': 'string',
+            'text':              'string',
+            'smallint':          'integer',
+            'int2':              'integer',
+            'integer':           'integer',
+            'int4':              'integer',
+            'int':               'integer',
+            'bigint':            'integer',
+            'int8':              'integer',
+            'float8':            'double',
+            'double precision':  'double'
+            }
+
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        PMMLBuilder.__init__(self, schema_madlib, model_type, model_table, name_spec)
+        self.mining_schema = None
+
+    def _parse_summary(self):
+        self.y_str = self.summary['dependent_varname']
+        self.x_str = self.summary['independent_varnames']
+        self.x = [s.strip() for s in self.x_str.split(',')]
+        self.n_coef = len(self.x)
+
+        self.grouping_col = self.summary['grouping_cols']
+        self.grouping_str = '' if self.grouping_col is None \
+                else self.grouping_col + ','
+
+        self.cat_features = [s.strip()
+                for s in self.summary['cat_features'].split(',') if s.strip() != '']
+        self.con_features = [s.strip()
+                for s in self.summary['con_features'].split(',') if s.strip() != '']
+        self.n_cats = len(self.cat_features)
+
+        self.is_classification = self.summary['is_classification']
+        if self.is_classification:
+            # remove possible quotes around the values
+            self.y_levels = [s.strip().strip("\"")
+                    for s in self.summary['dependent_var_levels'].split(',')]
+
+        self.y_data_type = self.summary['dependent_var_type']
+        self.y_data_type = self.__class__.DATA_TYPE_DICT[self.y_data_type.lower()]
+
+        # figure out whether each x is categorical or continuous
+        self.x_optype = ['categorical' if x in self.cat_features else 'continuous'
+                for x in self.x]
+        self.x_data_type = [s.strip()
+                for s in self.summary['independent_var_types'].split(',')]
+        for i, t in enumerate(self.x_data_type):
+            self.x_data_type[i] = self.__class__.DATA_TYPE_DICT[t.lower()]
+
+    # load the tree frame into memory
+    def _query_output_table(self):
+        """
+        Re-use _convert_to_rpart_format and _get_split_thresholds
+        functions to extract the tree information, and store in memory.
+        """
+        output_query = """
+                SELECT
+                    {grouping_str}
+                    array_to_string({schema_madlib}._convert_to_rpart_format(
+                        tree,
+                        {n_cats}
+                    ), ',') AS frame,
+                    cat_levels_in_text,
+                    cat_n_levels,
+                    {schema_madlib}._get_split_thresholds(tree) AS thresholds
+                FROM
+                    {model_table}
+                """.format(**self.__dict__)
+        self.output = plpy.execute(output_query)
+
+    def _parse_output(self):
+        self.grouped_coefs = [{'coef' : {'frame' : g['frame'],
+                    'cat_levels' : g['cat_levels_in_text'],
+                    'cat_n' : g['cat_n_levels'],
+                    'thresholds' : g['thresholds']}}
+                for g in self.output]
+        for i in range(len(self.output)):
+            self.grouped_coefs[i].update(dict((k, v) for k, v
+                in self.output[i].items() if k not in
+                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds']))
+        self.coef0 = self.grouped_coefs[0]['coef']
+        self.grouping_keys = [k for k in self.output[0] if k not in
+                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds']]
+
+    def _construct_predict_spec(self):
+        " Construct model attributes "
+        self.y_value_forest = []
+        if self.is_classification:
+            self.y_value_forest.extend(Value(value_=s.strip('"')) for s in self.y_levels)
+        self.function = 'classification' if self.is_classification else 'regression'
+        self.y_optype = 'categorical' if self.is_classification else 'continuous'
+
+    def _build_mining_schema(self):
+        if self.mining_schema is None:
+            mining_field_forest = [MiningField(name=self.formula.y,
+                usageType='predicted')]
+            for i, x_i in enumerate(self.x):
+                mining_field_forest.append(MiningField(name=x_i))
+            self.mining_schema = MiningSchema(*mining_field_forest)
+
+    def _create_single_model(self, coef0):
+        self._build_mining_schema() # construct MiningSchema
+        node = self._build_node(coef0) # construct Node tree
+
+        return TreeModel(self.mining_schema, node,
+                functionName=self.function,
+                algorithmName='cart',
+                splitCharacteristic='binarySplit')
+
+    # Override
+    def _build_data_dictionary(self):
+        """
+        The independent variables can be either categorical or
+        continuous.
+        """
+        # Use correct x names before constructing Formula
+        self.formula.x = self.x
+
+        data_field_forest = [DataField(
+                *self.y_value_forest,
+                name     = self.formula.y,
+                optype   = self.y_optype,
+                dataType = self.y_data_type)]
+
+        data_field_forest.extend(DataField(
+                name     = self.x[i],
+                optype   = self.x_optype[i],
+                dataType = self.x_data_type[i])
+                for i in range(len(self.x)))
+
+        data_field_forest.extend(DataField(
+                name=k,
+                optype='categorical',
+                dataType='string')
+                for k in self.grouping_keys)
+
+        self.data_dictionary = DataDictionary(*data_field_forest,
+                numberOfFields=len(data_field_forest))
+
+    def _build_node(self, coef):
+        """ Construct the hierarchy of nodes
+        - Use self.coef0, which is the frame matrix in madlib.rpart.
+        - Use a method similar to madlib.rpart to parse the tree structure
+
+        For the meaning of each column of the frame matrix, see the manual
+        of rpart and madlib.rpart
+        """
+        # all node information, see madlib.rpart, double[][]
+        frame = self._get_one_frame_matrix(coef['frame'])
+        row_id = self._frame_row_id(frame)
+        id_to_row = dict((rid, i) for rid, i in zip(row_id, range(len(frame))))
+        split_var = self._frame_row_names(frame)
+
+        cat_n = coef['cat_n']           # number of categorical levels, int[]
+        # categorical variable levels, string[][]
+        cat_levels = self._get_cat_levels(coef['cat_levels'], cat_n)
+        thresh = coef['thresholds']     # split values, double[]
+
+        cat_name_to_id = dict((var, i)
+                for var, i in zip(self.cat_features, range(len(cat_levels))))
+
+        # Map from row number to thresh id
+        row_to_thresh = dict((row, thresh_id) for row, thresh_id in
+                zip([i for i in range(len(frame)) if frame[i][0] >= 0],
+                    range(len(thresh))))
+
+        # Construct a predicate from i-th row of frame
+        # For continuous variables, we use SimplePredicate
+        # However, for categorical variables, we have to use CompoundPredicate
+        # with the booleanOperator="or"
+        def construct_predicate(i):
+            if i == 0: # root node always True
+                return True_()
+            parent = id_to_row[(row_id[i] - 1) / 2]
+            # whether i is the left son of its parent
+            is_left = 2 * row_id[parent] + 1 == row_id[i]
+            is_split_categorical = split_var[parent] in self.cat_features
+            if is_left:
+                if is_split_categorical:
+                    simple_predicates = [SimplePredicate(field=split_var[parent],
+                        operator="equal", value_=v)
+                        for v in cat_levels[cat_name_to_id[split_var[parent]]]
+                        if v != cat_levels[cat_name_to_id[split_var[parent]]][int(thresh[row_to_thresh[parent]])]]
+                    if len(simple_predicates) > 1:
+                        return CompoundPredicate(*simple_predicates, booleanOperator="or")
+                    else:
+                        return simple_predicates[0]
+                else:
+                    return SimplePredicate(
+                            field=split_var[parent],
+                            operator="greaterThan",
+                            value_=thresh[row_to_thresh[parent]])
+            else:
+                if is_split_categorical:
+                    return SimplePredicate(
+                            field=split_var[parent],
+                            operator="equal",
+                            value_=cat_levels[cat_name_to_id[split_var[parent]]][int(thresh[row_to_thresh[parent]])]
+                            )
+                else:
+                    return SimplePredicate(
+                            field=split_var[parent],
+                            operator="lessOrEqual",
+                            value_=thresh[row_to_thresh[parent]])
+
+        # compute the score of the node
+        def compute_node_score(i):
+            if self.is_classification:
+                n_y_level = len(self.y_levels)
+                s = 9 + n_y_level
+                max_prob = 0
+                max_level = 0
+                for j in range(s, s + n_y_level):
+                    if frame[i][j] > max_prob:
+                        max_prob = frame[i][j]
+                        max_level = j - s
+                return self.y_levels[max_level]
+            else:
+                return frame[i][4]
+
+        # compute categorical score distributions
+        # only for classification
+        def compute_score_distributions(i):
+            n_y_level = len(self.y_levels)
+            s = 9
+            ans = []
+            for j in range(s, s + n_y_level):
+                ans.append(ScoreDistribution(
+                    value_=self.y_levels[j - s].strip('"'),
+                    recordCount=int(frame[i][j])))
+            return ans
+
+        # get the row number of left son
+        def left_node(i):
+            return id_to_row[2*row_id[i]+1]
+
+        # get the row number of right son
+        def right_node(i):
+            return id_to_row[2*row_id[i]+2]
+
+        # Recursively construct the i-th node using the i-th row of frame
+        def construct_node(i):
+            predicate = construct_predicate(i)
+            score = compute_node_score(i)
+            record_count = frame[i][1]
+            choice = []
+
+            if self.is_classification:
+                choice.extend(compute_score_distributions(i))
+
+            if frame[i][0] >= 0: # splitting node
+                choice.extend([construct_node(left_node(i)),
+                    construct_node(right_node(i))])
+
+            return Node(predicate, *choice,
+                    id=row_id[i],
+                    score=score,
+                    recordCount=int(record_count))
+
+        return construct_node(0)
+
+    # Helper function used only by _build_node
+    def _get_one_frame_matrix(self, frame_string):
+        """
+        frame from the _query_output_table is an array, convert it
+        into a matrix format to simplify the following processing.
+        """
+        frame_vector = [float(x) for x in
+                frame_string.split(',')]
+        n = len(frame_vector)
+        ncol = 10 + 2 * len(self.y_levels) if self.is_classification else 8
+        nrow = n / ncol
+        frame_matrix = [[0 for j in range(ncol)] for i in range(nrow)]
+
+        # column wise assignment
+        count = 0
+        for j in range(ncol):
+            for i in range(nrow):
+                frame_matrix[i][j] = frame_vector[count]
+                count += 1
+
+        return frame_matrix
+
+    # Helper function used only by _build_node
+    # Extract row_id from the frame matrix. See madlib.rpart
+    # for more details.
+    def _frame_row_id(self, frame_matrix):
+        nrow = len(frame_matrix)
+        row_id = [0 for i in range(nrow)]
+
+        def compute_id(c, r):
+            row_id[c[0]] = r
+            if c[0] >= nrow or frame_matrix[c[0]][0] < 0:
+                c[0] += 1
+                return
+            c[0] += 1
+            compute_id(c, 2*r + 1) # left
+            compute_id(c, 2*r + 2) # right
+
+        count = [0]
+        compute_id(count, 0)
+        return row_id
+
+    # Helper function used only by _build_node
+    def _frame_row_names(self, frame_matrix):
+        " The name of the variable used for splitting node "
+        nrow = len(frame_matrix)
+        return [None if frame_matrix[i][0] < 0
+                else self.x[int(round(frame_matrix[i][0]))]
+                for i in range(nrow)]
+
+    # Helper function used only by _build_node
+    def _get_cat_levels(self, cat_level_vector, cat_n):
+        if cat_n is None: return []
+        cat_level_array = []
+        count = 0
+        for n in cat_n:
+            tmp = []
+            for i in range(n):
+                tmp.append(cat_level_vector[count])
+                count += 1
+            cat_level_array.append(tmp)
+        return cat_level_array

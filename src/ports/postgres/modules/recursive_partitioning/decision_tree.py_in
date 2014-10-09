@@ -259,7 +259,7 @@ columns:
     'method'                -- Method name: 'tree_train'
     'source_table'          -- Data table name
     'model_table'           -- Tree model table name
-    'id_col_name'           -- Name of the 'id' column
+    'id_col_name'           -- Name of the ID column
     is_classification       -- Boolean value indicating if tree is classification or regression
     'dependent_varname'     -- Response variable column name
     'independent_varnames'  -- Comma-separated feature column names
@@ -273,7 +273,8 @@ columns:
     dependent_var_levels    -- For classification, the distinct levels of
                                 the dependent variable
     dependent_var_type      -- The type of dependent variable
-    complexity_parameter    -- The complexity parameter (cp) used for training the output tree(s)
+    complexity_parameter    -- The complexity parameter (cp) used for training
+    independent_var_types   -- The types of independent variables, comma-separated
         """
     elif message.lower().strip() in ['example', 'examples']:
         help_string = """
@@ -501,6 +502,7 @@ def _build_tree(schema_madlib, is_classification, split_criterion,
     tree_states, tree_depth, bins, dep_list, n_rows, cp_list = \
         _get_tree_states(**locals())
     if create_output:
+        all_cols_types = get_cols_and_types(training_table_name, schema_madlib)
         n_all_rows = plpy.execute("select count(*) from " + training_table_name
                                   )[0]['count']
         _create_output_tables(**locals())
@@ -608,7 +610,7 @@ def _create_output_tables(schema_madlib, training_table_name, output_table_name,
                           tree_states, bins, split_criterion, cat_features,
                           con_features, tree_depth, id_col_name, dependent_variable,
                           is_classification, n_all_rows, n_rows, dep_list, cp,
-                          grouping_cols=None, **kwargs):
+                          all_cols_types, grouping_cols=None, **kwargs):
     if not grouping_cols:
         _create_result_table(schema_madlib, tree_states[0]['tree_state'],
                              bins['cat_origin'], bins['cat_n'], cat_features,
@@ -622,7 +624,7 @@ def _create_output_tables(schema_madlib, training_table_name, output_table_name,
         schema_madlib, split_criterion, training_table_name,
         output_table_name, id_col_name, cat_features, con_features,
         dependent_variable, tree_states, is_classification, n_all_rows,
-        n_rows, dep_list, cp, grouping_cols)
+        n_rows, dep_list, cp, all_cols_types, grouping_cols)
 # -------------------------------------------------------------------------
 
 
@@ -1336,7 +1338,7 @@ def _create_summary_table(
         training_table_name, output_table_name, id_col_name,
         cat_features, con_features, dependent_variable,
         tree_states, is_classification, n_all_rows, n_rows,
-        dep_list, cp, grouping_cols=None):
+        dep_list, cp, all_cols_types, grouping_cols=None):
     # dependent variables
     features = ', '.join(cat_features + con_features)
     if dep_list:
@@ -1345,6 +1347,8 @@ def _create_summary_table(
                         "$dep_list$")
     else:
         dep_list_str = "NULL"
+    indep_type = ', '.join(_get_col_value(all_cols_types, col)
+            for col in cat_features + con_features)
     dep_type = _get_dep_type(training_table_name, dependent_variable)
     cat_features_str = ','.join(cat_features)
     con_features_str = ','.join(con_features)
@@ -1377,7 +1381,8 @@ def _create_summary_table(
                 {n_rows_skipped}::integer     as total_rows_skipped,
                 {dep_list_str}::text          as dependent_var_levels,
                 '{dep_type}'::text            as dependent_var_type,
-                {cp}::double precision        as complexity_parameter
+                {cp}::double precision        as complexity_parameter,
+                '{indep_type}'::text          as independent_var_types
         """.format(**locals())
     plpy.execute(sql)
 # ------------------------------------------------------------
