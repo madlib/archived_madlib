@@ -23,6 +23,15 @@ using namespace dbal;
 using namespace dbal::eigen_integration;
 // ------------------------------------------------------------
 
+
+AnyType
+print_con_splits::run(AnyType &args){
+    ConSplitsResult<RootContainer> state = args[0].getAs<ByteString>();
+    AnyType tuple;
+    tuple << state.con_splits;
+    return tuple;
+}
+
 AnyType
 dst_compute_con_splits_transition::run(AnyType &args){
     ConSplitsSample<MutableRootContainer> state = args[0].getAs<MutableByteString>();
@@ -175,7 +184,10 @@ map_catlevel_to_int::run(AnyType &args){
     int pos = 0;
     for (size_t i = 0; i < n_levels.size(); i++) {
         // linear search to find a match
-        int match = 0;
+        int match = -1;  // if cat_values contains any not present in cat_levels,
+                         // then the mapped integer is -1. If cat_values contains
+                         // a known cat_level, then the mapped integer is
+                         // the index of that value in cat_levels
         for (int j = 0; j < n_levels[i]; j++)
             if (cmp_text(cat_values[i], cat_levels[pos + j])) {
                 match = j;
