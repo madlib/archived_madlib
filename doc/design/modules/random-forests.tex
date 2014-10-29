@@ -92,10 +92,8 @@ for all samples, the proximity values are normalized by diving by the number of 
 
 \section{Interface} % (fold)
 \label{sec:interface}
-The interface to the random forest functionality includes rf\_train and rf\_predict as
-the training and prediction functions. Additionally, utility methods for calculating 
-variable importance, proximity matrices, viewing individual trees, and visualization 
-are also included.
+The interface to the random forest functionality includes forest\_train and forest\_predict as
+the training and prediction functions, and forest\_display as the visualization function.
 
 \subsection{Training} % (fold)
 \label{sub:training}
@@ -108,8 +106,8 @@ are also included.
             list_of_features,
             list_of_features_to_exclude,
             grouping_cols,
-            num_trees,
-            num_features,
+            num_max_trees,
+            num_random_features,
             max_depth,
             min_split,
             min_bucket,
@@ -123,8 +121,8 @@ The descriptions of the arguments are the same as found in Decision Trees with t
 of the following:
 
 \begin{itemize}
-    \item \emph{num\_trees}: Number of trees to grow while building the random forest. Default: 500
-    \item \emph{num\_features}: Number of features to randomly select at each split. Default=$\sqrt{p}$ for
+    \item \emph{num\_max\_trees}: Maximum number of trees to grow while building the random forest. Default: 500
+    \item \emph{num\_random\_features}: Number of features to randomly select at each split. Default=$\sqrt{p}$ for
     classification, and p/3 for regression, where p is the total number of features.
     \item There will be no parameters for cross-validation and pruning as random forests build complete
     trees without pruning, and the technique of cross-validation is inherent.
@@ -150,10 +148,21 @@ The function forest\_train produces three output tables, one each for the model,
 and groups, as described below:
 
 \paragraph{Model table:}
+The structure of the model table remains mostly similar to the one constructed by Decision trees.
+For Random forests, we provide two additional fields: 'sample\_id' and 'group\_id'.\\
+sample\_id refers to the id of the bootstrap sample, which is a number ranging from 1 to
+num\_trees, where num\_trees is the number of trees that were actually grown.
+group\_id is an integer assigned to each unique combination of values of grouping columns.
+As one can see, a tree can uniquely be identified by using the sample\_id as well as
+particular values for the grouping columns. To make it easier for the user to retrieve a tree,
+we assign a group\_id instead of the user having to list all grouping columns and their values.
+The total number of trees in the model table will be equal to the number of groups multiplied
+by the number of bootstrap samples.
 
 \begin{itemize}
-    \item \emph{group\_id}: Id of the group for which this tree was generated. The specific
-    grouping columns and values can be obtained from the 'Groups' table.
+    \item \emph{group\_id}: If grouping columns were provided, this refers to the Id of the group
+    for which this tree was generated. The specific grouping columns and values can be
+    obtained from the 'Groups' table.
     \item \emph{sample\_id}: Id of the (bootstrap) sample for which this tree was generated.
     \item \emph{tree}: Trained decision tree model stored in bytea8 format.
     \item \emph{cat\_levels\_in\_text}: Ordered levels of categorical variables.
@@ -162,7 +171,8 @@ and groups, as described below:
 \end{itemize}
 
 \paragraph{Summary table:}
-
+This table stores details that are common across all random forest models created by the
+training function.
 \begin{itemize}
     \item \emph{method\_name}: Name of training method, 'forest\_train' in this case.
     \item \emph{is\_classification}: Indicates if the model is for classification/regression.
@@ -183,17 +193,23 @@ and groups, as described below:
 \end{itemize}
 
 \paragraph{Groups table:}
-
+This table stores statistics on a per-group basis. It has one row for each group (which in turn
+corresponds to the random forest model for that group).
 \begin{itemize}
-    \item \emph{grouping\_cols}: grouping\_cols if provided in input. This could be zero or 
-    more columns depending upon user input.
-    \item \emph{group\_id}: Id of the group that this row of statistics corresponds to.   
-    \item \emph{num\_trees}: Number of trees constructed by the model.
+    \item \emph{grouping\_cols}: Zero or more grouping columns depending upon user input.
+    \item \emph{group\_id}: If grouping columns were provided, this refers to the Id of the group
+    that this row of statistics corresponds to.
+    \item \emph{num\_trees}: Actual number of trees constructed by the model. This should usually be the same
+    as num\_max\_trees, but we could optimize the implementation to limit the number of trees to grow
+    based on the observed oob error during construction of the random forest model for each group.
     \item \emph{oob\_error}: Out-of-bag error estimate for the model.
-    \item \emph{variable\_importance}: A matrix containing containing the permutation-based importance measure.
+    \item \emph{variable\_importance}: A matrix containing the permutation-based importance measures.
     The rows correspond to the different predictors, and the columns correspond to various importance measures.
-    \item \emph{proximity}: A matrix of size NxN containing proximity measures among the input, based
-    on the number of times pairs of input points end up in the same terminal node.
+    Importance measures include Mean Decrease in MSE (for regression) and Mean Decrease in Classification
+    Accuracy for classification. Additionally, we may be able to add Mean Decrease in Gini criterion for classification.
+    \item \emph{proximity}: A matrix containing proximity measures among the input, based
+    on the number of times pairs of input points end up in the same terminal node. Note that this
+    feature being Priority 2, will not be available in the first iteration.
 \end{itemize}
 % subsection training_out (end)
 
@@ -214,7 +230,7 @@ The output table is as described below:
 
 \subsection{Other functions}
 \label{sub:others}
-\subsection{Display} % (fold)
+\subsubsection{Display} % (fold)
 \label{sub:display}
 \begin{sql}
     SELECT forest_display(
@@ -224,12 +240,17 @@ The output table is as described below:
           is_dot_format)
           
 \end{sql}
+
 \begin{itemize}
     \item \emph{random\_forest\_model}: Table containing the random forest model.
     \item \emph{group\_id}: Id of the group that the tree to be displayed is a part of.
     \item \emph{sample\_id}: Id of the sample within the group.
     \item \emph{is\_dot\_format}: True for dot format, False for text format.
 \end{itemize}
+
+The output of the display function to output individual trees will follow the same format as used by
+Decision Trees.
+
 % subsection display (end)
 
 \section{Implementation} % (fold)
@@ -301,6 +322,43 @@ N samples in each tree from the input where N is also the size of the data set.
 \end{algorithm}
 
 \subsection{Variable Importance}
+``Subtract the number of votes for the correct class in the variable-m-permuted
+oob data from the number of votes for the correct class in the untouched oob
+data.''~\cite{random_forest_home}
+According to the source code of R package randomForest~\cite{r_random_forest},
+we define the normalization of the subtraction,
+\[
+D_{m,g,t,p} =
+    \frac{
+        \left( \sum_{n \in \mathit{oob}_{t,g}} \mathit{predict}(n) == y_n \right)
+        - \left( \sum_{n \in \mathit{oob}_{t,g}} \mathit{predict}_p^m(n) == y_n \right)
+    }{
+        \mathit{oobsize}_{t,g}
+    }.
+\]
+For regression,
+\[
+D_{m,g,t,p} =
+    \frac{
+        \left[ \sum_{n \in \mathit{oob}_{t,g}} \left( \mathit{predict}_p^m(n) - y_n \right)^2 \right]
+        - \left[ \sum_{n \in \mathit{oob}_{t,g}} \left( \mathit{predict}(n) - y_n \right)^2 \right]
+    }{
+        \mathit{oobsize}_{t,g}
+    }.
+\]
+
+``The average of this number over all trees in the forest is the raw importance
+score for variable m.''~\cite{random_forest_home}
+Considering multiple permutations, we have
+\[
+importance_{m,g} = \sum_{p=1}^P \sum_{t=1}^T \frac{D_{m,g,t,p}}{TP}
+\]
+for each variable $m$ per group $g$.
+
+Note: R package randomForest~\cite{r_random_forest} computes the above
+importance without considering grouping support and aggregating $p$ prior to
+$t$.
+
 In order to rank the importance of features in the input dataset, random forests
 use a mechanism of calculating the average increase in misclassification rate
 when the values of a particular feature are randomly permuted in the input set,

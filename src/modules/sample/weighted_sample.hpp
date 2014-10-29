@@ -21,3 +21,8 @@ DECLARE_UDF(sample, weighted_sample_merge_vector)
  */
 DECLARE_UDF(sample, weighted_sample_final_int64)
 DECLARE_UDF(sample, weighted_sample_final_vector)
+
+/**
+ * @brief In-memory weighted sample, returning index
+ */
+DECLARE_UDF(sample, index_weighted_sample)

@@ -62,6 +62,15 @@ public:
                 const uint16_t &min_bucket,
                 const uint16_t &max_depth);
 
+    template <class Accumulator>
+    bool expand_by_sampling(const Accumulator &state,
+                const MappedMatrix &con_splits,
+                const uint16_t &min_split,
+                const uint16_t &min_bucket,
+                const uint16_t &max_depth,
+                const int &num_random_features);
+
+
     Index parentIndex(Index current) const {
         return current > 0? static_cast<Index>((current-1)/2): 0;
     }
@@ -71,6 +80,10 @@ public:
     double impurityGain(const ColumnVector &combined_stats,
                         const uint16_t &stats_per_split) const;
     bool shouldSplit(const ColumnVector & stats,
+                       const uint16_t &min_split,
+                       const uint16_t &min_bucket,
+                       const uint16_t &stats_per_split) const;
+    bool shouldSplitWeights(const ColumnVector & stats,
                        const uint16_t &min_split,
                        const uint16_t &min_bucket,
                        const uint16_t &stats_per_split) const;

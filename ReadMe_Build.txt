@@ -151,7 +151,7 @@ root directory) for more options, after having run `cmake` the first time.
 
 - `BOOST_TAR_SOURCE` (default: *empty*)
 
-    If no recent version of Boost is found (>= 1.46), Boost is downloaded
+    If no recent version of Boost is found (>= 1.47), Boost is downloaded
     automatically. Alternatively, the path to the (possibly gzip'ed)
     tarball can be specified by calling `./configure` with
     `-DBOOST_TAR_SOURCE=/path/to/boost_x.tar.gz`

@@ -126,7 +126,7 @@ compute_leaf_stats_transition::run(AnyType & args){
     }
 
     // con_splits size = num_con_features x num_bins
-    ConSplitsResult<RootContainer> splits_results = args[7].getAs<MutableByteString>();
+    ConSplitsResult<RootContainer> splits_results = args[7].getAs<ByteString>();
 
     // n_response_labels are the number of values the dependent variable takes
     uint16_t n_response_labels = args[8].getAs<uint16_t>();
@@ -206,9 +206,18 @@ dt_apply::run(AnyType & args){
         uint16_t min_split = args[3].getAs<uint16_t>();
         uint16_t min_bucket = args[4].getAs<uint16_t>();
         uint16_t max_depth = args[5].getAs<uint16_t>();
+        bool subsample = args[6].getAs<bool>();
+        int num_random_features = args[7].getAs<int>();
 
-        bool finished = dt.expand(curr_level, con_splits_results.con_splits,
-                                  min_split, min_bucket, max_depth);
+        bool finished = false;
+        if (!subsample) {
+            finished = dt.expand(curr_level, con_splits_results.con_splits,
+                                 min_split, min_bucket, max_depth);
+        } else {
+            finished = dt.expand_by_sampling(curr_level, con_splits_results.con_splits,
+                                             min_split, min_bucket, max_depth,
+                                             num_random_features);
+        }
         return_code = finished ? FINISHED : NOT_FINISHED;
     }
     else{
@@ -218,6 +227,7 @@ dt_apply::run(AnyType & args){
     output_tuple << dt.storage() << return_code;
     return output_tuple;
 } // apply function
+
 
 // ------------------------------------------------------------
 
@@ -326,7 +336,6 @@ display_text_tree::run(AnyType &args){
     return dt.print(0, cat_feature_names, con_feature_names, cat_levels_text,
                     cat_n_levels, dep_levels, 1u);
 }
-
 
 // ------------------------------------------------------------
 // Prune the tree model using cost-complexity parameter

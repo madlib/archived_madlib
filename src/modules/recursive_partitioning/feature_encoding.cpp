@@ -186,6 +186,43 @@ map_catlevel_to_int::run(AnyType &args){
     }
     return cat_int;
 }
+// --------------------------------------------------------------
+
+AnyType
+get_bin_value_by_index::run(AnyType &args) {
+    ConSplitsResult<RootContainer> con_splits_results = args[0].getAs<ByteString>();
+    int feature_index = args[1].getAs<int>();
+    int bin_index = args[2].getAs<int>();
+    // assuming we use <= to create bins by values in con_splits
+    // see TreeAccumulator::operator<<(const tuple_type&)
+    if (bin_index < con_splits_results.con_splits.cols()) {
+        // covering ranges (-inf,v_0], ..., (v_{n-2}, v_{n-1}]
+        return con_splits_results.con_splits(feature_index, bin_index);
+    } else {
+        // covering range (v_{n-1}, +inf)
+        return con_splits_results.con_splits(feature_index, bin_index-1) + 1.;
+    }
+}
+// --------------------------------------------------------------
+
+AnyType
+get_bin_index_by_value::run(AnyType &args) {
+    double bin_value = args[0].getAs<double>();
+    ConSplitsResult<RootContainer> con_splits_results = args[1].getAs<ByteString>();
+    int feature_index = args[2].getAs<int>();
+    // assuming we use <= to create bins by values in con_splits
+    // and each row in con_splits is sorted in ascending order
+    // see TreeAccumulator::operator<<(const tuple_type&)
+    // and dst_compute_con_splits_final::run(AnyType &)
+    for (int i = 0; i < con_splits_results.con_splits.cols(); i ++) {
+        // covering ranges (-inf,v_0], ..., (v_{n-2}, v_{n-1}]
+        if (bin_value <= con_splits_results.con_splits(feature_index, i)) {
+            return i;
+        }
+    }
+    // covering range (v_{n-1}, +inf)
+    return static_cast<int>(con_splits_results.con_splits.cols());
+}
 
 } // namespace recursive_partitioning
 } // namespace modules

@@ -16,12 +16,16 @@
 #include <limits>  // std::numeric_limits
 
 #include <dbconnector/dbconnector.hpp>
+#include <boost/random/uniform_int.hpp>
+#include <boost/random/variate_generator.hpp>
 #include "DT_proto.hpp"
 
 namespace madlib {
 
 // Use Eigen
 using namespace dbal::eigen_integration;
+using boost::uniform_int;
+using boost::variate_generator;
 
 namespace modules {
 
@@ -278,8 +282,8 @@ DecisionTree<Container>::impurityGain(const ColumnVector &combined_stats,
         // no gain if all fall into one side
         return 0.;
     }
-    double true_weight = static_cast<double>(true_count) / total_count;
-    double false_weight = static_cast<double>(false_count) / total_count;
+    double true_weight = true_count / total_count;
+    double false_weight = false_count / total_count;
     ColumnVector stats_sum = combined_stats.segment(0, stats_per_split) +
             combined_stats.segment(stats_per_split, stats_per_split);
     return (impurity(stats_sum) -
@@ -438,6 +442,176 @@ DecisionTree<Container>::expand(const Accumulator &state,
 // -------------------------------------------------------------------------
 
 template <class Container>
+template <class Accumulator>
+inline
+bool
+DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
+                                const MappedMatrix &con_splits,
+                                const uint16_t &min_split,
+                                const uint16_t &min_bucket,
+                                const uint16_t &max_depth,
+                                const int &num_random_features) {
+
+    uint16_t num_non_leaf_nodes = static_cast<uint16_t>(state.num_leaf_nodes - 1);
+    bool children_not_allocated = true;
+    bool all_leaf_small = true;
+    bool all_leaf_pure = true;
+
+    //select cat and con features to be sampled
+    int total_cat_con_features = state.num_cat_features + state.num_con_features;
+    const uint16_t &sps = state.stats_per_split;  // short form for brevity
+
+    //store indicies from 0 to total_cat_con_features-1
+    int *cat_con_feature_indices = new int[total_cat_con_features];
+    NativeRandomNumberGenerator generator;
+    uniform_int<int> uni_dist;
+    variate_generator<NativeRandomNumberGenerator, uniform_int<int> > rvt(generator, uni_dist);
+
+    for (Index i=0; i < state.num_leaf_nodes; i++) {
+        Index current = num_non_leaf_nodes + i;
+        if (feature_indices(current) == IN_PROCESS_LEAF) {
+
+            for (int j=0; j<total_cat_con_features; j++) {
+                cat_con_feature_indices[j] = j;
+             }
+            //randomly shuffle cat_con_feature_indices
+            std::random_shuffle(cat_con_feature_indices,
+                    cat_con_feature_indices + total_cat_con_features, rvt);
+            // if a leaf node exists, compute the gain in impurity for each split
+            // pick split  with maximum gain and update node with split value
+            int max_feat = -1;
+            Index max_bin = -1;
+            bool max_is_cat = false;
+            double max_impurity_gain = -std::numeric_limits<double>::infinity();
+            ColumnVector max_stats;
+
+            for (int index=0; index<num_random_features; index++) {
+                int f = cat_con_feature_indices[index];
+                if (f >= 0 && f < state.num_cat_features) {
+                    //categorical feature
+                    int v_end = f < 1 ? \
+                            state.cat_levels_cumsum(0) : \
+                            state.cat_levels_cumsum(f) - state.cat_levels_cumsum(f-1);
+                    for (int v=0; v < v_end; ++v){
+                        // each value of feature
+                        Index fv_index = state.indexCatStats(f, v, true);
+                        double gain = impurityGain(
+                            state.cat_stats.row(i).segment(fv_index, sps * 2), sps);
+                        if (gain > max_impurity_gain){
+                            max_impurity_gain = gain;
+                            max_feat = f;
+                            max_bin = v;
+                            max_is_cat = true;
+                            max_stats = state.cat_stats.row(i).segment(fv_index,
+                                                                       sps * 2);
+                        }
+                    }
+
+
+                } else { //f >= state.num_cat.features
+                    //continuous feature
+                    f -= state.num_cat_features;
+                    for (Index b=0; b < state.num_bins; ++b){
+                        // each bin of feature
+                        Index fb_index = state.indexConStats(f, b, true);
+                        double gain = impurityGain(
+                            state.con_stats.row(i).segment(fb_index, sps * 2), sps);
+                        if (gain > max_impurity_gain){
+                            max_impurity_gain = gain;
+                            max_feat = f;
+                            max_bin = b;
+                            max_is_cat = false;
+                            max_stats = state.con_stats.row(i).segment(fb_index,
+                                                                       sps * 2);
+                        }
+                    }
+                }
+
+            }
+
+            // create and update child nodes if splitting current
+            if (max_impurity_gain > 0 &&
+                    shouldSplitWeights(max_stats, min_split, min_bucket, sps)) {
+
+                if (children_not_allocated) {
+                    // allocate the memory for child nodes if not allocated already
+                    incrementInPlace();
+                    children_not_allocated = false;
+                }
+
+                // current node
+                feature_indices(current) = static_cast<int>(max_feat);
+                is_categorical(current) = max_is_cat ? 1 : 0;
+                if (max_is_cat) {
+                    feature_thresholds(current) =
+                            static_cast<double>(max_bin);
+                } else {
+                    feature_thresholds(current) = con_splits(max_feat, max_bin);
+                }
+
+                // update prediction for children
+                if (current == 0){
+                    // since prediction is updated by parent node, we need special
+                    // handling for root node (index = 0)
+                    predictions.row(current) =
+                        max_stats.segment(0, sps) + max_stats.segment(sps, sps);
+                }
+                feature_indices(trueChild(current)) = IN_PROCESS_LEAF;
+                predictions.row(trueChild(current)) = max_stats.segment(0, sps);
+                feature_indices(falseChild(current)) = IN_PROCESS_LEAF;
+                predictions.row(falseChild(current)) = max_stats.segment(sps, sps);
+
+                if (all_leaf_pure){
+                    // verify if current's children are pure
+                    all_leaf_pure =
+                        isChildPure(max_stats.segment(0, sps)) &&
+                        isChildPure(max_stats.segment(sps, sps));
+                }
+
+                if (all_leaf_small){
+                    // verify if current's children are too small to split further
+                    uint64_t true_count = statCount(max_stats.segment(0, sps));
+                    uint64_t false_count = statCount(max_stats.segment(sps, sps));
+                    all_leaf_small = (true_count < min_split && false_count < min_split);
+                }
+            } else {
+                feature_indices(current) = FINISHED_LEAF;
+                if (current == 0){
+                    // prediction is updated by the parent, need special
+                    // handling for the root node
+                    if (state.num_cat_features > 0){
+                        predictions.row(0) =
+                            state.cat_stats.row(0).segment(0, sps) +
+                            state.cat_stats.row(0).segment(sps, sps);
+                    }else if (state.num_con_features > 0){
+                        predictions.row(0) =
+                            state.con_stats.row(0).segment(0, sps) +
+                            state.con_stats.row(0).segment(sps, sps);
+                    } else{
+                    }
+                }
+            }
+        } // if leaf exists
+    } // for each leaf
+
+    // return true if tree expansion is finished
+    //      we check (tree_depth = max_depth + 1) since internally
+    //      tree_depth starts from 1 though max_depth expects root node depth as 0
+    bool training_finished = (children_not_allocated ||
+                              tree_depth >= (max_depth + 1) ||
+                              all_leaf_small || all_leaf_pure);
+    if (training_finished){
+        // label any remaining IN_PROCESS_LEAF as FINISHED_LEAF
+        for (Index i=0; i < feature_indices.size(); i++) {
+            if (feature_indices(i) == IN_PROCESS_LEAF)
+                feature_indices(i) = FINISHED_LEAF;
+        }
+    }
+    delete[] cat_con_feature_indices;
+    return training_finished;
+}
+
+template <class Container>
 inline
 ColumnVector
 DecisionTree<Container>::statPredict(const ColumnVector &stats) const {
@@ -588,6 +762,29 @@ DecisionTree<Container>::shouldSplit(const ColumnVector &combined_stats,
     uint64_t thresh_min_bucket = (min_bucket == 0) ? 1u : min_bucket;
     uint64_t true_count = statCount(combined_stats.segment(0, stats_per_split));
     uint64_t false_count = statCount(combined_stats.segment(stats_per_split, stats_per_split));
+    return ((true_count + false_count) >= min_split &&
+            true_count >= thresh_min_bucket &&
+            false_count >= thresh_min_bucket);
+}
+// ------------------------------------------------------------------------
+
+template <class Container>
+inline
+bool
+DecisionTree<Container>::shouldSplitWeights(const ColumnVector &combined_stats,
+                                      const uint16_t &min_split,
+                                      const uint16_t &min_bucket,
+                                      const uint16_t &stats_per_split) const {
+
+    // combined_stats is assumed to be of size = stats_per_split
+    // number of tuples landing on a node is equal to the sum of weights for
+    // that node. we therefore use statWeightedCount
+    // we always want at least 1 tuple going into a child node. Hence the
+    // minimum value for min_bucket is 1
+    //
+    uint64_t thresh_min_bucket = (min_bucket == 0) ? 1u : min_bucket;
+    double true_count = statWeightedCount(combined_stats.segment(0, stats_per_split));
+    double false_count = statWeightedCount(combined_stats.segment(stats_per_split, stats_per_split));
     return ((true_count + false_count) >= min_split &&
             true_count >= thresh_min_bucket &&
             false_count >= thresh_min_bucket);

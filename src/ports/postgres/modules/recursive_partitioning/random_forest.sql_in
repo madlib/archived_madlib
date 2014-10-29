@@ -1,0 +1,1152 @@
+/* ------------------------------------------------------------
+ *
+ * @file random_forest.sql_in
+ *
+ * @brief SQL functions for random forest
+ * @date November 2014
+ *
+ * @sa For a brief introduction to random forest, see the
+ *     module description \ref grp_random_forest
+ *
+ * ------------------------------------------------------------ */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_random_forest
+
+<div class="toc"><b>Contents</b><ul>
+<li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#predict">Prediction Function</a></li>
+<li class="level1"><a href="#get_tree">Display Function</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul></div>
+
+@brief
+Random forests are an ensemble learning method for classification
+(and regression) that operate by constructing a multitude of decision trees
+at training time and outputting the class that is the mode of the classes
+output by individual trees.
+
+Random forests build an ensemble of classifiers, each of which is a tree model constructed
+using bootstrapped samples from the input data. The results of these models are then combined
+to yield a single prediction, which, although at the expense of some loss in interpretation,
+have been found to be highly accurate. Such methods of using multiple Random Forests to
+make predictions are called random forest methods.
+
+@anchor train
+@par Training Function
+Random Forest training function has the following format:
+<pre class="syntax">
+forest_train(training_table_name,
+             output_table_name,
+             id_col_name,
+             dependent_variable,
+             list_of_features,
+             list_of_features_to_exclude,
+             grouping_cols,
+             num_trees,
+             num_random_features,
+             max_tree_depth,
+             min_split,
+             min_bucket,
+             num_splits,
+             verbose
+             )
+</pre>
+
+\b Arguments
+<dl class="arglist">
+  <dt>training_table_name</dt>
+  <dd>text. the name of the table containing the training data.</dd>
+
+  <dt>output_table_name</dt>
+  <dd>text. the name of the generated table containing the model.</dd>
+
+    The model table produced by the train function contains the following columns:
+
+    <table class="output">
+      <tr>
+        <th>gid</th>
+        <td>integer. group id that uniquely identifies a set of grouping column values.</td>
+      </tr>
+      <tr>
+        <th>sample_id</th>
+        <td>integer. id of the bootstrap sample that this tree is a part of.</td>
+      </tr>
+      <tr>
+        <th>tree</th>
+        <td>bytea8. trained tree model stored in binary format.</td>
+      </tr>
+    </table>
+
+    A summary table named <em>\<model_table\>_summary</em> is also created at the same time, which has the following columns:
+    <table class="output">
+    <tr>
+      <th>method</th>
+      <td>'forest_train'</td>
+    </tr>
+
+    <tr>
+      <th>is_classification</th>
+      <td>boolean. True if it is a classification trees.</td>
+    </tr>
+
+    <tr>
+      <th>source_table</th>
+      <td>text. The data source table name.</td>
+    </tr>
+
+    <tr>
+      <th>model_table</th>
+      <td>text. The model table name.</td>
+    </tr>
+
+    <tr>
+      <th>id_col_name</th>
+    <td>text. The ID column name.</td>
+    </tr>
+
+    <tr>
+      <th>dependent_varname</th>
+      <td>text. The dependent variable.</td>
+    </tr>
+
+    <tr>
+      <th>independent_varname</th>
+      <td>text. The independent variables</td>
+    </tr>
+
+    <tr>
+      <th>cat_features</th>
+      <td>text. categorical feature names.</td>
+    </tr>
+
+    <tr>
+      <th>con_features</th>
+      <td>text. continuous feature names.</td>
+    </tr>
+
+    <tr>
+      <th>grouping_col</th>
+      <td>int. Names of grouping columns.</td>
+    </tr>
+
+    <tr>
+      <th>num_trees</th>
+      <td>int. Number of trees grown by the model.</td>
+    </tr>
+
+    <tr>
+      <th>num_random_features</th>
+      <td>int. Number of features randomly selected for each split.</td>
+    </tr>
+
+    <tr>
+      <th>max_tree_depth</th>
+      <td>int. Maximum depth of any tree in the random forest model_table.</td>
+    </tr>
+
+    <tr>
+      <th>min_split</th>
+      <td>int. Minimum number of observations in a node for it to be split.</td>
+    </tr>
+
+    <tr>
+      <th>min_bucket</th>
+      <td>int. minimum number of observations in any terminal node.</td>
+    </tr>
+
+    <tr>
+      <th>num_splits</th>
+      <td>int. number of buckets for continuous variables.</td>
+    </tr>
+
+    <tr>
+      <th>verbose</th>
+      <td>boolean. whether or not to display debug info.</td>
+    </tr>
+
+    <tr>
+      <th>importance</th>
+      <td>boolean. whether or not to calculate variable importance.</td>
+    </tr>
+
+    <tr>
+      <th>num_permutations</th>
+      <td>int. number of times feature values are permuted while calculating
+      variable importance.</td>
+    </tr>
+
+    <tr>
+    <th>num_all_groups</th>
+    <td>int. Number of groups during forest training.</td>
+    </tr>
+
+    <tr>
+    <th>num_failed_groups</th>
+    <td>int. Number of failed groups during forest training.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_processed</th>
+      <td>bigint. Total numbers of rows processed in all groups.</td>
+    </tr>
+
+    <tr>
+      <th>total_rows_skipped</th>
+      <td>bigint. Total numbers of rows skipped in all groups due to missing values or failures.</td>
+    </tr>
+
+    <tr>
+    <th>dependent_var_levels</th>
+    <td>itext. For classification, the distinct levels of the dependent variable.</td>
+    </tr>
+
+    <tr>
+    <th>dependent_var_type</th>
+    <td>text. The type of dependent variable.</td>
+    </tr>
+    </table>
+
+    A group table named <em> \<model_table\>_group</em> is created, which has the following columns:
+     <table class="output">
+
+      <tr>
+        <th>gid</th>
+        <td>integer. group id that uniquely identifies a set of grouping column values.</td>
+      </tr>
+
+      <tr>
+        <th>&lt;...&gt;</th>
+        <td>Same type as in the training data table. Grouping columns, if provided in input.
+        This could be multiple columns depending on the \c grouping_cols input.</td>
+      </tr>
+
+      <tr>
+        <th>success</th>
+        <td>boolean. Indicator of the success of the group.</td>
+      </tr>
+
+      <tr>
+        <th>cat_levels_in_text</th>
+        <td>text[]. Ordered levels of categorical variables.</td>
+      </tr>
+
+      <tr>
+        <th>cat_n_levels</th>
+        <td>integer[]. Number of levels for each categorical variable.</td>
+      </tr>
+
+      <tr>
+        <th>oob_error</th>
+        <td>double precision. Out-of-bag error for the random forest model.</td>
+      </tr>
+
+      <tr>
+        <th>cat_var_importance</th>
+        <td>double precision[]. Variable importance for categorical features.
+        The order corresponds to the order of the variables as found in
+        cat_features in <em> \<model_table\>_summary</em>.</td>
+      </tr>
+
+      <tr>
+        <th>con_var_importance</th>
+        <td>double precision[]. Variable importance for continuous features.
+        The order corresponds to the order of the variables as found in
+        con_features in  <em> \<model_table\>_summary</em>.</td>
+      </tr>
+
+   </table>
+  </DD>
+
+  <DT>id_col_name</DT>
+  <DD>text. Name of the column containing id information in the training data.</DD>
+
+  <DT>dependent_variable</DT>
+  <DD>text. Name of the column that contains the output for
+  training. Boolean, integer and text are considered classification outputs,
+  while float values are considered regression outputs.</DD>
+
+  <DT>list_of_features</DT>
+  <DD>text. Comma-separated string of column names to use as predictors. Can
+  also be a '*' implying all columns are to be used as predictors (except the
+  ones included in the next argument). Boolean, integer and text columns are
+  considered categorical columns.</DD>
+
+  <DT>list_of_features_to_exclude</DT>
+  <DD>text. Comma-separated string of column names to exclude from the predictors
+      list. If the <em>dependent_variable</em> argument is an expression
+      (including cast of a column name), then this list should include the
+      columns that are included in the <em>dependent_variable</em> expression,
+      otherwise those columns will be included in the features
+      (resulting in meaningless trees).</DD>
+
+  <DT>grouping_cols (optional)</DT>
+  <DD>text, default: NULL. Comma-separated list of column names to group the
+      data by. This will lead to creating multiple random forests, one for
+      each group.</DD>
+
+  <DT>num_trees (optional)</DT>
+  <DD>integer, default: 100. Maximum number of trees to grow in the Random
+      forest model. Actual number of trees grown may be slighlty different.</DD>
+
+  <DT>num_random_features (optional)</DT>
+  <DD>integer, default: sqrt(n) if classification tree, otherwise n/3. Number of
+      features to randomly select at each split.</DD>
+
+  <DT>max_depth (optional)</DT>
+  <DD>integer, default: 10. Maximum depth of any node of a tree,
+      with the root node counted as depth 0.</DD>
+
+  <DT>min_split (optional)</DT>
+  <DD>integer, default: 20. Minimum number of observations that must exist
+      in a node for a split to be attempted.</DD>
+
+  <DT>min_bucket (optional)</DT>
+  <DD>integer, default: min_split/3. Minimum number of observations in any terminal
+      node. If only one of min_bucket or min_split is specified, min_split is
+      set to min_bucket*3 or min_bucket to min_split/3, as appropriate.</DD>
+
+  <DT>num_splits (optional)</DT>
+  <DD>integer, default: 100. Continuous-valued features are binned into
+      discrete quantiles to compute split boundaries. This global parameter
+      is used to compute the resolution of splits for continuous features.
+      Higher number of bins will lead to better prediction,
+      but will also result in higher processing time.</DD>
+
+  <DT>verbose (optional)</DT>
+  <DD>boolean, default: FALSE. Provides verbose output of the results of training.</DD>
+
+  <DT>importance (optional)</DT>
+  <DD>boolean, default: true. Whether or not to calculate variable importance.</DD>
+
+  <DT>num_permutations (optional)</DT>
+  <DD>integer, default: 1. Number of times to permute each feature value while
+      calculating variable importance</DD>
+</DL>
+
+@anchor predict
+@par Prediction Function
+The prediction function is provided to estimate the conditional mean given a new
+predictor. It has the following syntax:
+<pre class="syntax">
+forest_predict(random_forest_model,
+               new_data_table,
+               output_table,
+               type)
+</pre>
+
+\b Arguments
+<DL class="arglist">
+  <DT>forest_model</DT>
+  <DD>text. Name of the table containing the Random Forest model.</DD>
+
+  <DT>new_data_table</DT>
+  <DD>text. Name of the table containing prediction data.</DD>
+
+  <DT>output_table</DT>
+  <DD>text. Name of the table to output prediction results to.</DD>
+
+  <DT>type</DT>
+  <DD>text, optional, default: 'response'. For regression models, the output is
+      always the predicted value of the dependent variable. For classification
+      models, the <em>type</em> variable can be 'response', giving the
+      classification prediction as output, or 'prob', giving the class
+      probabilities as output. For each value of the dependent variable, a
+      column with the probabilities is added to the output table.
+  </DD>
+</DL>
+
+@anchor get_tree
+@par Display Function
+The get_tree function is provided to output a graph representation of a
+single tree of the Random Forest. The output can either be in the popular
+'dot' format that can be visualized using various programs including those
+in the GraphViz package, or in a simple text format. The details of the
+text format is outputted with the tree.
+<pre class="syntax">
+get_tree(forest_model_table,
+         gid,
+         sample_id,
+         result_dot_format)
+</pre>
+
+\b Arguments
+<DL class="arglist">
+    <DT>forest_model_table</DT>
+    <DD>text. Name of the table containing the Random Forest model.</DD>
+
+    <DT>gid</DT>
+    <DD>integer. Id of the group that this tree is a part of.</DD>
+
+    <DT>sample_id</DT>
+    <DD>integer. Id of the bootstrap sample that this tree if a part of.</DD>
+
+    <DT>result_dot_format</DT>
+    <DD>boolean, default = TRUE. Output can either be in a dot format or a text
+    format. If TRUE, the result is in the dot format, else output is in text format.</DD>
+</DL>
+
+The output is always returned as a 'TEXT'. For the dot format, the output can be
+redirected to a file on the client side and then rendered using visualization
+programs.
+
+@anchor examples
+@examp
+\b Note: The output results may vary due the random nature of random forests.
+
+<b>Random Forest Classification Example</b>
+
+-# Prepare input data.
+<pre class="example">
+DROP TABLE IF EXISTS dt_golf;
+CREATE TABLE dt_golf (
+    id integer NOT NULL,
+    "OUTLOOK" text,
+    temperature double precision,
+    humidity double precision,
+    windy text,
+    class text
+) ;
+</pre>
+<pre class="example">
+INSERT INTO dt_golf (id,"OUTLOOK",temperature,humidity,windy,class) VALUES
+(1, 'sunny', 85, 85, 'false', 'Don''t Play'),
+(2, 'sunny', 80, 90, 'true', 'Don''t Play'),
+(3, 'overcast', 83, 78, 'false', 'Play'),
+(4, 'rain', 70, 96, 'false', 'Play'),
+(5, 'rain', 68, 80, 'false', 'Play'),
+(6, 'rain', 65, 70, 'true', 'Don''t Play'),
+(7, 'overcast', 64, 65, 'true', 'Play'),
+(8, 'sunny', 72, 95, 'false', 'Don''t Play'),
+(9, 'sunny', 69, 70, 'false', 'Play'),
+(10, 'rain', 75, 80, 'false', 'Play'),
+(11, 'sunny', 75, 70, 'true', 'Play'),
+(12, 'overcast', 72, 90, 'true', 'Play'),
+(13, 'overcast', 81, 75, 'false', 'Play'),
+(14, 'rain', 71, 80, 'true', 'Don''t Play');
+</pre>
+
+-# Run Random Forest train function.
+<pre class="example">
+DROP TABLE IF EXISTS train_output, train_output_group, train_output_summary;
+SELECT madlib.forest_train('dt_golf',         -- source table
+                           'train_output',    -- output model table
+                           'id',              -- id column
+                           'class',           -- response
+                           '"OUTLOOK", temperature, humidity, windy', -- features
+                           NULL,              -- exclude columns
+                           NULL,              -- grouping columns
+                           20::integer,       -- number of trees
+                           2::integer,        -- number of random features
+                           8,                 -- max depth
+                           3,                 -- min split
+                           1,                 -- min bucket
+                           10,                -- number of splits per continuous variable
+                           FALSE              -- verbose
+                           );
+\\x on
+SELECT * FROM train_output_summary;
+SELECT * FROM train_output_group;
+\\x off
+</pre>
+
+-# Obtain a dot format display of a single tree
+within the forest.
+<pre class="example">
+SELECT madlib.get_tree('train_output',1,2);
+</pre>
+Result:
+<pre class="result">
+digraph "Classification tree for dt_golf" {
+"0" [label="temperature<=70", shape=ellipse];
+"0" -> "1"[label="yes"];
+"1" [label="\"'Play'\"",shape=box];
+"0" -> "2"[label="no"];
+"2" [label="\"OUTLOOK\"<={overcast}", shape=ellipse];
+"2" -> "5"[label="yes"];
+"5" [label="\"'Play'\"",shape=box];
+"2" -> "6"[label="no"];
+"6" [label="humidity<=70", shape=ellipse];
+"6" -> "13"[label="yes"];
+"13" [label="\"'Play'\"",shape=box];
+"6" -> "14"[label="no"];
+"14" [label="\"'Don''t Play'\"",shape=box];
+} //---end of digraph---------
+</pre>
+
+-# Obtain a text display of the tree
+<pre class="example">
+SELECT madlib.get_tree('train_output',1,2,FALSE);
+</pre>
+Result:
+<pre class="result">
+&nbsp;-------------------------------------
+&nbsp;- Each node represented by 'id' inside ().
+&nbsp;- Leaf nodes have a * while internal nodes have the split condition at the end.
+&nbsp;- For each internal node (i), it's children will be at (2i+1) and (2i+2).
+&nbsp;- For each split the first indented child (2i+1) is the 'True' node and
+second indented child (2i+2) is the 'False' node.
+&nbsp;- Number of (weighted) rows for each response variable inside [].
+&nbsp;- Order of values = ['"Don\'t Play"', '"Play"']
+&nbsp;-------------------------------------
+(0)[  3 11]  temperature<=70
+    (1)[ 0 7]  * --> "'Play'"
+    (2)[ 3 4]  "OUTLOOK"<={overcast}
+       (5)[ 0 3]  * --> "'Play'"
+       (6)[ 3 1]  humidity<=70
+          (13)[ 0 1]  * --> "'Play'"
+          (14)[ 3 0]  * --> "'Don''t Play'"
+&nbsp;-------------------------------------
+</pre>
+
+-# Predict output categories for the same data as was used for input.
+<pre class="example">
+DROP TABLE IF EXISTS prediction_results;
+SELECT madlib.forest_predict('train_output',
+                             'dt_golf',
+                             'prediction_results',
+                             'response');
+\\x off
+SELECT id, estimated_class, class
+FROM prediction_results JOIN dt_golf USING (id)
+ORDER BY id;
+</pre>
+Result:
+<pre class="result">
+ id | estimated_class |   class
+----+-----------------+------------
+  1 | Don't Play      | Don't Play
+  2 | Don't Play      | Don't Play
+  3 | Play            | Play
+  4 | Play            | Play
+  5 | Play            | Play
+  6 | Don't Play      | Don't Play
+  7 | Play            | Play
+  8 | Don't Play      | Don't Play
+  9 | Play            | Play
+ 10 | Play            | Play
+ 11 | Play            | Play
+ 12 | Play            | Play
+ 13 | Play            | Play
+ 14 | Don't Play      | Don't Play
+(14 rows)
+</pre>
+
+-# Predict probablities of output categories for the same data.
+<pre class="example">
+DROP TABLE IF EXISTS prediction_prob;
+SELECT madlib.forest_predict('train_output',
+                             'dt_golf',
+                             'prediction_prob',
+                             'prob');
+\\x off
+SELECT id, "estimated_prob_Play", class
+FROM prediction_prob JOIN dt_golf USING (id)
+ORDER BY id;
+</pre>
+Result:
+<pre class="result">
+ id | estimated_prob_Play |   class    
+----+---------------------+------------
+  1 |                0.15 | Don't Play
+  2 |                 0.1 | Don't Play
+  3 |                0.95 | Play
+  4 |                 0.7 | Play
+  5 |                0.85 | Play
+  6 |                0.25 | Don't Play
+  7 |                0.75 | Play
+  8 |                 0.1 | Don't Play
+  9 |                0.85 | Play
+ 10 |                 0.7 | Play
+ 11 |                0.35 | Play
+ 12 |                0.75 | Play
+ 13 |                0.95 | Play
+ 14 |                0.15 | Don't Play
+(14 rows)
+</pre>
+
+
+<b>Random Forest Regression Example</b>
+
+-# Prepare input data.
+<pre class="example">
+DROP TABLE IF EXISTS mt_cars;
+CREATE TABLE mt_cars (
+    id integer NOT NULL,
+    mpg double precision,
+    cyl integer,
+    disp double precision,
+    hp integer,
+    drat double precision,
+    wt double precision,
+    qsec double precision,
+    vs integer,
+    am integer,
+    gear integer,
+    carb integer
+) ;
+</pre>
+<pre class="example">
+INSERT INTO mt_cars (id,mpg,cyl,disp,hp,drat,wt,qsec,vs,am,gear,carb) VALUES
+(1,18.7,8,360,175,3.15,3.44,17.02,0,0,3,2),
+(2,21,6,160,110,3.9,2.62,16.46,0,1,4,4),
+(3,24.4,4,146.7,62,3.69,3.19,20,1,0,4,2),
+(4,21,6,160,110,3.9,2.875,17.02,0,1,4,4),
+(5,17.8,6,167.6,123,3.92,3.44,18.9,1,0,4,4),
+(6,16.4,8,275.8,180,3.078,4.07,17.4,0,0,3,3),
+(7,22.8,4,108,93,3.85,2.32,18.61,1,1,4,1),
+(8,17.3,8,275.8,180,3.078,3.73,17.6,0,0,3,3),
+(9,21.4,6,258,110,3.08,3.215,19.44,1,0,3,1),
+(10,15.2,8,275.8,180,3.078,3.78,18,0,0,3,3),
+(11,18.1,6,225,105,2.768,3.46,20.22,1,0,3,1),
+(12,32.4,4,78.7,66,4.08,2.20,19.47,1,1,4,1),
+(13,14.3,8,360,245,3.21,3.578,15.84,0,0,3,4),
+(14,22.8,4,140.8,95,3.92,3.15,22.9,1,0,4,2),
+(15,30.4,4,75.7,52,4.93,1.615,18.52,1,1,4,2),
+(16,19.2,6,167.6,123,3.92,3.44,18.3,1,0,4,4),
+(17,33.9,4,71.14,65,4.22,1.835,19.9,1,1,4,1),
+(18,15.2,8,304,150,3.15,3.435,17.3,0,0,3,2),
+(19,10.4,8,472,205,2.93,5.25,17.98,0,0,3,4),
+(20,27.3,4,79,66,4.08,1.935,18.9,1,1,4,1),
+(21,10.4,8,460,215,3,5.424,17.82,0,0,3,4),
+(22,26,4,120.3,91,4.43,2.14,16.7,0,1,5,2),
+(23,14.7,8,440,230,3.23,5.345,17.42,0,0,3,4),
+(24,30.4,4,95.14,113,3.77,1.513,16.9,1,1,5,2),
+(25,21.5,4,120.1,97,3.70,2.465,20.01,1,0,3,1),
+(26,15.8,8,351,264,4.22,3.17,14.5,0,1,5,4),
+(27,15.5,8,318,150,2.768,3.52,16.87,0,0,3,2),
+(28,15,8,301,335,3.54,3.578,14.6,0,1,5,8),
+(29,13.3,8,350,245,3.73,3.84,15.41,0,0,3,4),
+(30,19.2,8,400,175,3.08,3.845,17.05,0,0,3,2),
+(31,19.7,6,145,175,3.62,2.77,15.5,0,1,5,6),
+(32,21.4,4,121,109,4.11,2.78,18.6,1,1,4,2);
+</pre>
+
+-# Run Random Forest train function.
+<pre class="example">
+DROP TABLE IF EXISTS mt_cars_output, mt_cars_output_group, mt_cars_output_summary;
+SELECT madlib.forest_train('mt_cars',
+                           'mt_cars_output',
+                           'id',
+                           'mpg',
+                           '*',
+                           'id, hp, drat, am, gear, carb',  -- exclude columns
+                           'am',
+                           10::integer,
+                           2::integer,
+                           10,
+                           8,
+                           3,
+                           10,
+                           FALSE
+                           );
+\\x on
+SELECT * FROM mt_cars_output_summary;
+SELECT * FROM mt_cars_output_group;
+\\x off
+</pre>
+
+-# Display a single tree of the Random Forest in dot format.
+<pre class="example">
+SELECT madlib.get_tree('mt_cars_output',1,1);
+</pre>
+Result:
+<pre class="result">
+digraph "Regression tree for mt_cars" {
+"0" [label="28.8444",shape=box];
+} //---end of digraph--------- 
+</pre>
+
+-# Predict regression output for the same data and compare with original.
+<pre class="example">
+DROP TABLE IF EXISTS prediction_results;
+SELECT madlib.forest_predict('mt_cars_output',
+                             'mt_cars',
+                             'prediction_results',
+                             'response');
+SELECT am, id, estimated_mpg, mpg
+FROM prediction_results JOIN mt_cars USING (id)
+ORDER BY am, id;
+</pre>
+Result:
+<pre class="result">
+ am | id |  estimated_mpg   | mpg  
+----+----+------------------+------
+  0 |  1 |  15.893525974026 | 18.7
+  0 |  3 | 21.5238492063492 | 24.4
+  0 |  5 | 20.0175396825397 | 17.8
+  0 |  6 | 14.8406818181818 | 16.4
+  0 |  8 | 14.8406818181818 | 17.3
+  0 |  9 | 20.0496825396825 | 21.4
+  0 | 10 | 14.4012272727273 | 15.2
+  0 | 11 | 20.0175396825397 | 18.1
+  0 | 13 | 15.0162878787879 | 14.3
+  0 | 14 | 21.5238492063492 | 22.8
+  0 | 16 | 20.0175396825397 | 19.2
+  0 | 18 | 15.4787532467532 | 15.2
+  0 | 19 | 14.4272987012987 | 10.4
+  0 | 21 | 14.4272987012987 | 10.4
+  0 | 23 | 14.8667532467532 | 14.7
+  0 | 25 | 21.5238492063492 | 21.5
+  0 | 27 |  15.281525974026 | 15.5
+  0 | 29 | 15.0162878787879 | 13.3
+  0 | 30 |  15.281525974026 | 19.2
+  1 |  2 | 20.6527393162393 |   21
+  1 |  4 | 20.6527393162393 |   21
+  1 |  7 | 22.7707393162393 | 22.8
+  1 | 12 | 27.0888266178266 | 32.4
+  1 | 15 | 28.2478650793651 | 30.4
+  1 | 17 | 28.2478650793651 | 33.9
+  1 | 20 | 28.2478650793651 | 27.3
+  1 | 22 | 23.8401984126984 |   26
+  1 | 24 | 26.9748650793651 | 30.4
+  1 | 26 | 20.6527393162393 | 15.8
+  1 | 28 | 20.6527393162393 |   15
+  1 | 31 | 20.6527393162393 | 19.7
+  1 | 32 | 22.7707393162393 | 21.4
+</pre>
+
+@anchor related
+@par Related Topics
+
+File random_forest.sql_in documenting the training function
+
+\ref grp_decision_tree
+
+@internal
+@sa Namespace
+    \ref madlib::modules::recursive_partitioning documenting the implementation in C++
+@endinternal
+
+*/
+
+------------------------------------------------------------
+
+/**
+  * @brief Training of Random Forest
+  *
+  * @param training_table_name Name of the table containing data.
+  * @param output_table_name Name of the table to output the model.
+  * @param id_col_name Name of column containing the id information
+  *        in training data.
+  * @param dependent_variable Name of the column that contains the
+  *        output for training. Boolean, integer and text are
+  *        considered classification outputs, while float values
+  *        are considered regression outputs.
+  * @param list_of_features List of column names (comma-separated string)
+  *        to use as predictors. Can also be a ‘*’ implying all columns
+  *        are to be used as predictors (except the ones included in
+  *        the next argument). Boolean, integer, and text columns are
+  *        considered categorical columns.
+  * @param list_of_features_to_exclude OPTIONAL. List of column names
+  *        (comma-separated string) to exlude from the predictors list.
+  * @param grouping_cols OPTIONAL. List of column names (comma-separated
+  *        string) to group the data by. This will lead to creating
+  *        multiple Random Forests, one for each group.
+  * @param num_trees OPTIONAL (Default = 100). Maximum number of trees to grow in the
+  *        Random forest model.
+  * @param num_random_features OPTIONAL (Default = sqrt(n) for classification,
+  *        n/3 for regression) Number of features to randomly select at
+  *        each split.
+  * @param max_tree_depth OPTIONAL (Default = 10). Set the maximum depth
+  *        of any node of the final tree, with the root node counted
+  *        as depth 0.
+  * @param min_split OPTIONAL (Default = 20). Minimum number of
+  *        observations that must exist in a node for a split to
+  *        be attempted.
+  * @param min_bucket OPTIONAL (Default = minsplit/3). Minimum
+  *        number of observations in any terminal node. If only
+  *        one of minbucket or minsplit is specified, minsplit
+  *        is set to minbucket*3 or minbucket to minsplit/3, as
+  *        appropriate.
+  * @param num_splits optional (default = 100) number of bins to use
+  *        during binning. continuous-valued features are binned
+  *        into discrete bins (per the quartile values) to compute
+  *        split bound- aries. this global parameter is used to
+  *        compute the resolution of the bins. higher number of
+  *        bins will lead to higher processing time.
+  * @param verbose optional (default = false) prints status
+  *        information on the splits performed and any other
+  *        information useful for debugging.
+  * @param importance optional (default = false) calculates
+  *        variable importance of all features if True
+  * @param num_permutations optional (default = 1) number
+  * of times to permute feature values while calculating
+  * variable importance
+  *
+  * see \ref grp_random_forest for more details.
+  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer,
+    max_tree_depth              integer,
+    min_split                   integer,
+    min_bucket                  integer,
+    num_splits                  integer,
+    verbose                     boolean,
+    importance                  boolean,
+    num_permutations            integer
+) RETURNS VOID AS $$
+    PythonFunctionBodyOnly(`recursive_partitioning', `random_forest')
+    random_forest.forest_train(
+        schema_madlib,
+        training_table_name,
+        output_table_name,
+        id_col_name,
+        dependent_variable,
+        list_of_features,
+        list_of_features_to_exclude,
+        grouping_cols,
+        num_trees,
+        num_random_features,
+        max_tree_depth,
+        min_split,
+        min_bucket,
+        num_splits,
+        verbose,
+        importance,
+        num_permutations
+    )
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-----------------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._get_bin_value_by_index(
+    con_splits          MADLIB_SCHEMA.bytea8,
+    feature_index       integer,
+    bin_index           integer
+) RETURNS DOUBLE PRECISION AS
+    'MODULE_PATHNAME', 'get_bin_value_by_index'
+LANGUAGE c IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__',`NO SQL', `');
+-----------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._get_bin_index_by_value(
+    bin_value           double precision,
+    con_splits          MADLIB_SCHEMA.bytea8,
+    feature_index       integer
+) RETURNS integer AS
+    'MODULE_PATHNAME', 'get_bin_index_by_value'
+LANGUAGE c IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__',`NO SQL', `');
+------------------------------------------------------------
+
+/**
+  * @brief Use random forest model to make predictions
+  *
+  * @param model Name of the table containing the random forest model
+  * @param source Name of table containing prediction data
+  * @param output Name of table to output prediction results
+  * @param pred_type OPTIONAL (Default = 'response'). For regression trees,
+  *        'response', implies output is the predicted value. For
+  *        classification models, this can be 'response', giving the
+  *        classification prediction as output, or ‘prob’, giving the
+  *        class probabilities as output (for two classes, only a
+  *        single probability value is output that corresponds to the
+  *        first class when the two classes are sorted by name; in
+  *        case of more than two classes, an array of class probabilities
+  *        (a probability of each class) is output).
+  *
+  * See \ref grp_random_forest for more details.
+  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_predict(
+    model                text,
+    source               text,
+    output               text,
+    pred_type            text
+) RETURNS void AS $$
+PythonFunction(recursive_partitioning, random_forest, forest_predict)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_predict(
+    message     TEXT
+) RETURNS TEXT AS $$
+PythonFunction(recursive_partitioning, random_forest, forest_predict_help_message)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_predict()
+RETURNS TEXT AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.forest_predict('');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+
+---------------------------------------------------------------------------
+---------------------------------------------------------------------------
+
+/**
+  *@brief Display a single tree from random forest in dot or text format
+  *
+  *@param forest_model Name of the table containing the random forest model
+  *@param gid Group id of the tree to display
+  *@param sample_id Sample id of the tree to display
+  *@dot_format TRUE if dot format, FALSE for text format
+  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.get_tree(
+    "model_table"    TEXT,
+    "gid"    INTEGER,
+    "sample_id"    INTEGER,
+    "dot_format"  BOOLEAN
+) RETURNS VARCHAR AS $$
+PythonFunction(recursive_partitioning, random_forest, get_tree)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.get_tree(
+    "model_table"     TEXT,
+    "gid"  INTEGER,
+    "sample_id"   INTEGER
+) RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.get_tree($1, $2, $3, True);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.get_tree(
+) RETURNS VARCHAR AS $$
+    help_str = """
+The display function is provided to output a graph representation of a
+tree of the random forest. The output can either be in the popular 'dot'
+format that can be visualized using various programs including those
+in the GraphViz package, or in a simple text format.
+The details of the text format is outputted with the
+tree.
+------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------
+SELECT MADLIB_SCHEMA.get_tree(
+    forest_model,            -- TEXT. Name of the table containing the random forest model
+    gid,                -- INTEGER. Group id of the tree to be displayed
+    sample_id,               -- INTEGER. Sample of the tree to be displayed
+    result_dot_format        -- BOOLEAN. (OPTIONAL, Default = TRUE)
+                             -- Output can either be in a dot format or a text
+                             --   format. If TRUE, the result is in the dot format,
+                             --   else output is in text format
+    )
+------------------------------------------------------------
+The output is always returned as a 'TEXT'. For the dot format, the output can be
+redirected to a file on the client side and then rendered using visualization
+programs.
+    """
+    return help_str
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+-----------------------------------------------------------------------
+-- All derived functions of forest_train (created to set some arguments
+-- as optional
+-----------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer,
+    max_tree_depth              integer,
+    min_split                   integer,
+    min_bucket                  integer,
+    num_splits                  integer,
+    verbose                     boolean,
+    importance                  boolean
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14, $15, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer,
+    max_tree_depth              integer,
+    min_split                   integer,
+    min_bucket                  integer,
+    num_splits                  integer,
+    verbose                     boolean
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14, True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer,
+    max_tree_depth              integer,
+    min_split                   integer,
+    min_bucket                  integer,
+    num_splits                  integer
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, False::BOOLEAN, True::BOOLEAN,
+            1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer,
+    max_tree_depth              integer,
+    min_split                   integer,
+    min_bucket                  integer
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, 100::INTEGER, False::BOOLEAN,
+            True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer,
+    max_tree_depth              integer,
+    min_split                   integer
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, ($11/3)::INTEGER, 100::INTEGER, False::BOOLEAN
+            , True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer,
+    max_tree_depth              integer
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer,
+    num_random_features         integer
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text,
+    num_trees                   integer
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text,
+    grouping_cols               text
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, 100,
+            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text,
+    list_of_features_to_exclude text
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, NULL::TEXT, 100,
+            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         text,
+    output_table_name           text,
+    id_col_name                 text,
+    dependent_variable          text,
+    list_of_features            text
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, NULL::TEXT, NULL::TEXT, 100,
+            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
+            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

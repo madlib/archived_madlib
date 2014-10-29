@@ -21,7 +21,7 @@ MADlib incorporates material from the following third-party components:
 - argparse 1.2.1 "provides an easy, declarative interface for creating command
   line tools"
   http://code.google.com/p/argparse/
-- Boost 1.46.1 (or newer) "provides peer-reviewed portable C++ source
+- Boost 1.47.0 (or newer) "provides peer-reviewed portable C++ source
   libraries"
   http://www.boost.org/
 - CERN ROOT is "an object oriented framework for large scale data analysis"

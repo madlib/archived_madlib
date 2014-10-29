@@ -13,3 +13,5 @@ DECLARE_UDF(recursive_partitioning, dst_compute_entropy_final)
 
 DECLARE_UDF(recursive_partitioning, map_catlevel_to_int)
 
+DECLARE_UDF(recursive_partitioning, get_bin_value_by_index)
+DECLARE_UDF(recursive_partitioning, get_bin_index_by_value)

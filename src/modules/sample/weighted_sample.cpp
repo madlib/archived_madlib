@@ -8,6 +8,8 @@
 
 #include <dbconnector/dbconnector.hpp>
 
+#include <boost/random/discrete_distribution.hpp>
+
 #include "WeightedSample_proto.hpp"
 #include "WeightedSample_impl.hpp"
 #include "weighted_sample.hpp"
@@ -93,6 +95,26 @@ weighted_sample_final_vector::run(AnyType &args) {
     WeightedSampleColVecState state = args[0].getAs<MutableByteString>();
 
     return state.sample;
+}
+
+/**
+ * @brief In-memory weighted sample, returning index
+ */
+AnyType
+index_weighted_sample::run(AnyType &args) {
+    MappedColumnVector distribution;
+    try {
+        MappedColumnVector xx = args[0].getAs<MappedColumnVector>();
+        distribution.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    boost::random::discrete_distribution<> dist(distribution.data(),
+            distribution.data() + distribution.size());
+
+    NativeRandomNumberGenerator gen;
+    return dist(gen);
 }
 
 } // namespace sample

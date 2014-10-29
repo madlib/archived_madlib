@@ -1,0 +1,192 @@
+DROP TABLE IF EXISTS dt_golf CASCADE;
+CREATE TABLE dt_golf (
+    id integer NOT NULL,
+    "OUTLOOK" text,
+    temperature double precision,
+    humidity double precision,
+    windy text,
+    class text
+) ;
+
+INSERT INTO dt_golf (id,"OUTLOOK",temperature,humidity,windy,class) VALUES
+(1, 'sunny', 85, 85, 'false', 'Don''t Play'),
+(2, 'sunny', 80, 90, 'true', 'Don''t Play'),
+(3, 'overcast', 83, 78, 'false', 'Play'),
+(4, 'rain', 70, 96, 'false', 'Play'),
+(5, 'rain', 68, 80, 'false', 'Play'),
+(6, 'rain', 65, 70, 'true', 'Don''t Play'),
+(7, 'overcast', 64, 65, 'true', 'Play'),
+(8, 'sunny', 72, 95, 'false', 'Don''t Play'),
+(9, 'sunny', 69, 70, 'false', 'Play'),
+(10, 'rain', 75, 80, 'false', 'Play'),
+(11, 'sunny', 75, 70, 'true', 'Play'),
+(12, 'overcast', 72, 90, 'true', 'Play'),
+(13, 'overcast', 81, 75, 'false', 'Play'),
+(14, 'rain', 71, 80, 'true', 'Don''t Play');
+
+-------------------------------------------------------------------------
+DROP TABLE IF EXISTS train_output, train_output_summary, train_output_group;
+SELECT forest_train(
+                  'dt_golf'::text,         -- source table
+                  'train_output'::text,    -- output model table
+                  'id'::text,              -- id column
+                  'class'::text,           -- response
+                  'humidity, temperature'::text,   -- features
+                  NULL::text,        -- exclude columns
+                  NULL::text,        -- no grouping
+                  5,                -- num of trees
+                  1,                 -- num of random features
+                  10::integer,       -- max depth
+                  1::integer,        -- min split
+                  1::integer,        -- min bucket
+                  8::integer,        -- number of bins per continuous variable
+                  FALSE
+                  );
+
+\x on
+SELECT * from train_output_summary;
+SELECT * from train_output_group;
+
+-------------------------------------------------------------------------
+DROP TABLE IF EXISTS train_output, train_output_summary, train_output_group, train_output_poisson_count;
+SELECT forest_train(
+                  'dt_golf'::text,         -- source table
+                  'train_output'::text,    -- output model table
+                  'id'::text,              -- id column
+                  'temperature::double precision'::text,           -- response
+                  'humidity, windy'::text,   -- features
+                  NULL::text,        -- exclude columns
+                  'class',          -- grouping
+                  5,                -- num of trees
+                  1,                 -- num of random features
+                  10::integer,       -- max depth
+                  1::integer,        -- min split
+                  1::integer,        -- min bucket
+                  3::integer,        -- number of bins per continuous variable
+                  FALSE
+                  );
+
+\x on
+SELECT * from train_output_summary;
+SELECT * from train_output_group;
+SELECT assert(count(distinct(gid)) = 2, 'gid is not correctly generated!') FROM train_output;
+
+-------------------------------------------------------------------------
+-- using y to predict y for the sake of testing variable importance
+DROP TABLE IF EXISTS train_output, train_output_summary, train_output_group;
+SELECT forest_train(
+                  'dt_golf'::text,         -- source table
+                  'train_output'::text,    -- output model table
+                  'id'::text,              -- id column
+                  'class::text'::text,           -- response
+                  'class, humidity, temperature'::text,   -- features
+                  NULL::text,        -- exclude columns
+                  NULL::text,        -- no grouping
+                  100,                -- num of trees
+                  1,                 -- num of random features
+                  10::integer,       -- max depth
+                  1::integer,        -- min split
+                  1::integer,        -- min bucket
+                  8::integer,        -- number of bins per continuous variable
+                  FALSE
+                  );
+
+\x on
+SELECT * from train_output_summary;
+SELECT * from train_output_group;
+SELECT
+    assert(cat_var_importance[1] > con_var_importance[1], 'class should be important!'),
+    assert(cat_var_importance[1] > con_var_importance[2], 'class should be important!')
+FROM train_output_group;
+
+-------------------------------------------------------------------------
+-- using y to predict y for the sake of testing variable importance
+DROP TABLE IF EXISTS train_output, train_output_summary, train_output_group;
+SELECT forest_train(
+                  'dt_golf'::text,         -- source table
+                  'train_output'::text,    -- output model table
+                  'id'::text,              -- id column
+                  'temperature::double precision'::text,           -- response
+                  'class, temperature, windy'::text,   -- features
+                  NULL::text,        -- exclude columns
+                  NULL::text,        -- no grouping
+                  100,                -- num of trees
+                  1,                 -- num of random features
+                  10::integer,       -- max depth
+                  1::integer,        -- min split
+                  1::integer,        -- min bucket
+                  8::integer,        -- number of bins per continuous variable
+                  FALSE
+                  );
+
+\x on
+SELECT * from train_output_summary;
+SELECT * from train_output_group;
+SELECT assert(oob_error < 100.0, 'oob_error is larger than 100.0!') FROM train_output_group;
+SELECT
+    assert(con_var_importance[1] > cat_var_importance[1], 'temperature should be important!'),
+    assert(con_var_importance[1] > cat_var_importance[2], 'temperature should be important!')
+FROM train_output_group;
+
+-------------------------------------------------------------------------
+DROP TABLE IF EXISTS train_output, train_output_summary, train_output_group, train_output_poisson_count;
+SELECT forest_train(
+                  'dt_golf'::text,         -- source table
+                  'train_output'::text,    -- output model table
+                  'id'::text,              -- id column
+                  'temperature::double precision'::text,           -- response
+                  'humidity'::text,   -- features
+                  NULL::text,        -- exclude columns
+                  'class,windy',          -- grouping
+                  5,                -- num of trees
+                  1,                 -- num of random features
+                  10::integer,       -- max depth
+                  1::integer,        -- min split
+                  1::integer,        -- min bucket
+                  2::integer,        -- number of bins per continuous variable
+                  FALSE
+                  );
+
+\x on
+SELECT * from train_output_summary;
+SELECT * from train_output_group;
+
+----------------------------------------------------------------------------
+DROP TABLE IF EXISTS predict_output;
+SELECT forest_predict(
+    'train_output',
+    'dt_golf',
+    'predict_output',
+    'response'
+);
+
+SELECT * from predict_output;
+
+----------------------------------------------------------------------------
+DROP TABLE IF EXISTS train_output, train_output_summary, train_output_group;
+SELECT forest_train(
+                  'dt_golf'::text,         -- source table
+                  'train_output'::text,    -- output model table
+                  'id'::text,              -- id column
+                  'class'::text,           -- response
+                  'humidity, temperature'::text,   -- features
+                  NULL::text,        -- exclude columns
+                  NULL::text,        -- no grouping
+                  5,                -- num of trees
+                  1,                 -- num of random features
+                  10::integer,       -- max depth
+                  1::integer,        -- min split
+                  1::integer,        -- min bucket
+                  8::integer,        -- number of bins per continuous variable
+                  FALSE
+                  );
+
+DROP TABLE IF EXISTS predict_output;
+SELECT forest_predict(
+    'train_output',
+    'dt_golf',
+    'predict_output',
+    'prob'
+);
+
+SELECT * from predict_output;

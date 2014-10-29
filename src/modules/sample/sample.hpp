@@ -7,3 +7,4 @@
  * -------------------------------------------------------------------------- */
 
 #include "weighted_sample.hpp"
+#include "random_process.hpp"

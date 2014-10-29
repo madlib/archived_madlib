@@ -26,8 +26,8 @@ set(BITBUCKET_BASE_URL
 # running cmake:
 # "-DBOOST_TAR_SOURCE=/path/to/boost_x_x_x.tar.gz"
 
-set(BOOST_TAR_VERSION "1.46.1")
-set(BOOST_TAR_MD5 341e5d993b19d099bf1a548495ea91ec)
+set(BOOST_TAR_VERSION "1.47.0")
+set(BOOST_TAR_MD5 ff180a5276bec773a7625cac7e2288e8)
 
 string(REPLACE "." "_" _BOOST_TAR_VERSION_UNDERSCORES ${BOOST_TAR_VERSION})
 set(BOOST_TAR "boost_${_BOOST_TAR_VERSION_UNDERSCORES}.tar.gz")
@@ -98,9 +98,9 @@ set(MAD_MODULE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/modules)
 
 # -- Third-party dependencies: Find or download Boost --------------------------
 
-find_package(Boost 1.46)
+find_package(Boost 1.47)
 
-# We use BOOST_ASSERT_MSG, which only exists in Boost 1.46 and later.
+# We use BOOST_ASSERT_MSG, which only exists in Boost 1.47 and later.
 # Unfortunately, the FindBoost module seems to be broken with respect to version
 # checking, so we will set Boost_FOUND to FALSE if the version is too old.
 if(Boost_FOUND)
@@ -112,7 +112,7 @@ endif(Boost_FOUND)
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
 else(Boost_FOUND)
-    message(STATUS "No sufficiently recent version (>= 1.46) of Boost was found. Will download.")
+    message(STATUS "No sufficiently recent version (>= 1.47) of Boost was found. Will download.")
 
     ExternalProject_Add(EP_boost
         PREFIX ${MAD_THIRD_PARTY}
