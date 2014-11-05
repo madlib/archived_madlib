@@ -144,7 +144,7 @@ DecisionTree<Container>::bind(ByteStream_type& inStream) {
         >> is_categorical.rebind(n_nodes)
         >> surr_indices.rebind(n_nodes * max_surrogates)
         >> surr_thresholds.rebind(n_nodes * max_surrogates)
-        >> surr_is_categorical.rebind(n_nodes * max_surrogates)
+        >> surr_status.rebind(n_nodes * max_surrogates)
         >> surr_agreement.rebind(n_nodes * max_surrogates)
         >> predictions.rebind(n_nodes, n_labels)
         ;
@@ -190,7 +190,7 @@ DecisionTree<Container>::incrementInPlace() {
     if (max_n_surr > 0){
         surr_indices.segment(0, n_orig_nodes*max_n_surr) = orig.surr_indices;
         surr_thresholds.segment(0, n_orig_nodes*max_n_surr) = orig.surr_thresholds;
-        surr_is_categorical.segment(0, n_orig_nodes*max_n_surr) = orig.surr_is_categorical;
+        surr_status.segment(0, n_orig_nodes*max_n_surr) = orig.surr_status;
         surr_agreement.segment(0, n_orig_nodes*max_n_surr) = orig.surr_agreement;
     }
 
@@ -211,8 +211,8 @@ DecisionTree<Container>::incrementInPlace() {
                              n_new_leaves*max_n_surr).setConstant(NON_EXISTING);
         surr_thresholds.segment(n_orig_nodes*max_n_surr,
                                 n_new_leaves*max_n_surr).setConstant(0);
-        surr_is_categorical.segment(n_orig_nodes*max_n_surr,
-                                    n_new_leaves*max_n_surr).setConstant(0);
+        surr_status.segment(n_orig_nodes*max_n_surr,
+                                n_new_leaves*max_n_surr).setConstant(0);
         surr_agreement.segment(n_orig_nodes*max_n_surr,
                                     n_new_leaves*max_n_surr).setConstant(0);
     }
@@ -243,7 +243,7 @@ DecisionTree<Container>::getMajoritySplit(Index node_index) const {
         throw std::runtime_error("Requested split for a non-internal node");
     uint64_t true_count = nodeCount(trueChild(node_index));
     uint64_t false_count = nodeCount(falseChild(node_index));
-    return true_count >= false_count;
+    return (true_count >= false_count);
 }
 // -------------------------------------------------------------------------
 
@@ -257,19 +257,28 @@ DecisionTree<Container>::getSurrSplit(
 
     Index surr_base_index;
     for (surr_base_index = node_index * max_n_surr;
-            surr_base_index < max_n_surr; surr_base_index++){
+            surr_base_index < (node_index+1) * max_n_surr; surr_base_index++){
 
         Index surr_feat_index = surr_indices(surr_base_index);
         if (surr_feat_index == SURR_NON_EXISTING || surr_feat_index < 0)
             break;
-        double surr_feat_theshold = surr_thresholds(surr_base_index);
 
-        if (surr_is_categorical(surr_base_index) != 0){
-            if (!isNull(cat_features(surr_feat_index), true))
-                return cat_features(surr_feat_index) <= surr_feat_theshold;
+        double surr_feat_threshold = surr_thresholds(surr_base_index);
+        bool split_response;
+        if (std::abs(surr_status(surr_base_index)) == 1){
+            if (!isNull(cat_features(surr_feat_index), true)){
+                split_response = cat_features(surr_feat_index) <= surr_feat_threshold;
+                // negative status is a reverse split (> relation)
+                return ((surr_status(surr_base_index) > 0) ?
+                            (split_response) : (!split_response));
+            }
         } else {
-            if (!isNull(con_features(surr_feat_index), false))
-                return con_features(surr_feat_index) <= surr_feat_theshold;
+            if (!isNull(con_features(surr_feat_index), false)){
+                split_response = con_features(surr_feat_index) <= surr_feat_threshold;
+                // negative status is a reverse split (> relation)
+                return ((surr_status(surr_base_index) > 0) ?
+                            (split_response) : (!split_response));
+            }
         }
     }
     return getMajoritySplit(node_index);
@@ -294,11 +303,13 @@ DecisionTree<Container>::search(MappedIntegerVector cat_features,
                                     <= feature_thresholds(current));
             }
         } else {
-            if (isNull(con_features(feature_index), false))
+            if (isNull(con_features(feature_index), false)){
                 is_split_true = getSurrSplit(current, cat_features, con_features);
-            else
+
+            } else{
                 is_split_true = (con_features(feature_index)
                                     <= feature_thresholds(current));
+            }
         }
         /*       (i)
                /     \
@@ -328,6 +339,7 @@ DecisionTree<Container>::predict_response(
         MappedIntegerVector cat_features,
         MappedColumnVector con_features) const {
     ColumnVector curr_prediction = predict(cat_features, con_features);
+
     if (is_regression){
         return curr_prediction(0);
     } else {
@@ -428,12 +440,7 @@ DecisionTree<Container>::updatePrimarySplit(
     is_categorical(node_index) = max_is_cat ? 1 : 0;
     feature_thresholds(node_index) = max_threshold;
 
-    // update prediction for children
-    if (node_index == 0){
-        // since prediction is updated by parent node, we need special
-        // handling for root node (index = 0)
-        predictions.row(node_index) = true_stats + false_stats;
-    }
+    // update feature indices and prediction for children
     feature_indices(trueChild(node_index)) = IN_PROCESS_LEAF;
     predictions.row(trueChild(node_index)) = true_stats;
     feature_indices(falseChild(node_index)) = IN_PROCESS_LEAF;
@@ -473,6 +480,11 @@ DecisionTree<Container>::expand(const Accumulator &state,
     for (Index i=0; i < state.n_leaf_nodes; i++) {
         Index current = n_non_leaf_nodes + i;
         if (feature_indices(current) == IN_PROCESS_LEAF) {
+            // 1. Set the prediction for current node from stats of all rows
+            predictions.row(current) = state.node_stats.row(i);
+
+            // 2. Compute the best feature to split current node by
+
             // if a leaf node exists, compute the gain in impurity for each split
             // pick split  with maximum gain and update node with split value
             int max_feat = -1;
@@ -480,7 +492,6 @@ DecisionTree<Container>::expand(const Accumulator &state,
             bool max_is_cat = false;
             double max_impurity_gain = -std::numeric_limits<double>::infinity();
             ColumnVector max_stats;
-
             // go through all categorical stats
             int cumsum = 0;
             for (int f=0; f < state.n_cat_features; ++f){ // each feature
@@ -499,7 +510,6 @@ DecisionTree<Container>::expand(const Accumulator &state,
                     }
                 }
             }
-
             // go through all continuous stats
             for (int f=0; f < state.n_con_features; ++f){  // each feature
                 for (Index b=0; b < state.n_bins; ++b){
@@ -518,7 +528,7 @@ DecisionTree<Container>::expand(const Accumulator &state,
                 }
             }
 
-            // create and update child nodes if splitting current
+            // 3. Create and update child nodes if splitting current
             if (max_impurity_gain > 0 &&
                     shouldSplit(max_stats, min_split, min_bucket, sps, max_depth)) {
 
@@ -538,20 +548,6 @@ DecisionTree<Container>::expand(const Accumulator &state,
 
             } else {
                 feature_indices(current) = FINISHED_LEAF;
-                if (current == 0){
-                    // prediction is updated by the parent, need special
-                    // handling for the root node
-                    if (state.n_cat_features > 0){
-                        predictions.row(0) =
-                            state.cat_stats.row(0).segment(0, sps) +
-                            state.cat_stats.row(0).segment(sps, sps);
-                    } else if (state.n_con_features > 0){
-                        predictions.row(0) =
-                            state.con_stats.row(0).segment(0, sps) +
-                            state.con_stats.row(0).segment(sps, sps);
-                    } else{
-                    }
-                }
             }
         } // if leaf exists
     } // for each leaf
@@ -590,31 +586,54 @@ DecisionTree<Container>::pickSurrogates(
         const Accumulator &state,
         const MappedMatrix &con_splits) {
 
-    // add every two columns in cat stats and con_stats
-    // this assumes that stats_per_split = 2, hence cat_stats and con_stats have
-    // even number of cols
     uint16_t n_cats = state.n_cat_features;
     uint16_t n_cons = state.n_con_features;
     uint16_t n_bins = state.n_bins;
     uint32_t n_cat_splits = state.total_n_cat_levels;
     uint32_t n_con_splits = n_cons * n_bins;
 
-    // we use the *_agg_matrix to add every two columns of the *_stats matrix
-    // to create a single aggrement metric for each split
-    Matrix cat_agg_matrix = Matrix::Zero(n_cat_splits * 2, n_cat_splits);
-    for (Index i=0; i < cat_agg_matrix.cols(); i++)
-        cat_agg_matrix.col(i).segment(2*i, 2).setOnes();
+    // add every two columns in cat stats and con_stats
+    // this assumes that stats_per_split = 2, hence cat_stats and con_stats have
+    // even number of cols
+    // we use the *_agg_matrix to add every two alternate columns of the
+    // *_stats matrix to create a forward and reverse agreement metric
+    // for each split.
+    // eg. in cat_stats,
+    //      we add columns 1 and 3 to get the <= split agreement for 1st cat split.
+    //      we add columns 2 and 4 to get the > split agreement for 1st cat split.
+    //      we add columns 5 and 7 to get the <= split agreement for 2nd cat split.
+    //      we add columns 6 and 8 to get the > split agreement for 2nd cat split.
+    ColumnVector fwd_agg_vec(4);
+    fwd_agg_vec << 1, 0, 1, 0;
+    ColumnVector rev_agg_vec(4);
+    rev_agg_vec << 0, 1, 0, 1;
 
-    Matrix con_agg_matrix = Matrix::Zero(n_con_splits*2, n_con_splits);
-    for (Index i=0; i < con_agg_matrix.cols(); i++)
-        con_agg_matrix.col(i).segment(2*i, 2).setOnes();
+    Matrix cat_agg_matrix = Matrix::Zero(n_cat_splits*4, n_cat_splits * 2);
+    for (Index i=0; i < cat_agg_matrix.cols(); i+=2){
+        cat_agg_matrix.col(i).segment(2*i, 4) = fwd_agg_vec;
+        cat_agg_matrix.col(i+1).segment(2*i, 4) = rev_agg_vec;
+    }
 
+    Matrix con_agg_matrix = Matrix::Zero(n_con_splits*4, n_con_splits*2);
+    for (Index i=0; i < con_agg_matrix.cols(); i+=2){
+        con_agg_matrix.col(i).segment(2*i, 4) = fwd_agg_vec;
+        con_agg_matrix.col(i+1).segment(2*i, 4) = rev_agg_vec;
+    }
+
+    assert(state.cat_stats.cols() == cat_agg_matrix.rows());
+    assert(state.con_stats.cols() == con_agg_matrix.rows());
     Matrix cat_stats_counts = state.cat_stats * cat_agg_matrix;
     Matrix con_stats_counts = state.con_stats * con_agg_matrix;
 
-    // tree_depth starts from 1, to get number of nodes in a layer d, we use
-    // 2^(d-1). For n_surr_nodes, we need number of nodes in 2nd last layer,
-    // so we use 2^(d-2)
+    // cat_stats_counts size = n_nodes x n_cats*2
+    // con_stats_counts size = n_nodes x n_cons*2
+    // *_stats_counts now contains the agreement count for each split where
+    // each even col represents forward surrogate split count and
+    // each odd col represents reverse surrogate split count.
+
+    // Number of nodes in a last layer = 2^(tree_depth-1). (since depth starts from 1)
+    // For n_surr_nodes, we need number of nodes in 2nd last layer,
+    // so we use 2^(tree_depth-2)
     uint16_t n_surr_nodes = static_cast<uint16_t>(pow(2, tree_depth - 2));
     uint16_t n_ancestors = static_cast<uint16_t>(n_surr_nodes - 1);
 
@@ -627,24 +646,32 @@ DecisionTree<Container>::pickSurrogates(
             // each categorical and continuous feature
             ColumnVector cat_max_thres = ColumnVector::Zero(n_cats);
             ColumnVector cat_max_count = ColumnVector::Zero(n_cats);
-            Index base_index = 0;
+            IntegerVector cat_max_is_reverse = IntegerVector::Zero(n_cats);
+            Index prev_cum_levels = 0;
             for (Index each_cat=0; each_cat < n_cats; each_cat++){
+                Index n_levels = state.cat_levels_cumsum(each_cat) - prev_cum_levels;
                 Index max_label;
-                (cat_stats_counts.row(i).segment(base_index,
-                                                 state.cat_levels_cumsum(each_cat) - base_index)
-                        ).maxCoeff(&max_label);
-                cat_max_thres(each_cat) = static_cast<double>(max_label);
-                cat_max_count(each_cat) = cat_stats_counts(i, base_index + max_label);
-                base_index = state.cat_levels_cumsum(each_cat);
+                (cat_stats_counts.row(i).segment(
+                    prev_cum_levels * 2, n_levels * 2)).maxCoeff(&max_label);
+                cat_max_thres(each_cat) = static_cast<double>(max_label / 2);
+                cat_max_count(each_cat) =
+                        cat_stats_counts(i, prev_cum_levels*2 + max_label);
+                // every odd col is for reverse, hence i % 2 == 1 for reverse index i
+                cat_max_is_reverse(each_cat) = (max_label % 2 == 1) ? 1 : 0;
+                prev_cum_levels = state.cat_levels_cumsum(each_cat);
             }
+
             ColumnVector con_max_thres = ColumnVector::Zero(n_cons);
             ColumnVector con_max_count = ColumnVector::Zero(n_cons);
+            IntegerVector con_max_is_reverse = IntegerVector::Zero(n_cons);
             for (Index each_con=0; each_con < n_cons; each_con++){
                 Index max_label;
                 (con_stats_counts.row(i).segment(
-                        each_con*n_bins, n_bins)).maxCoeff(&max_label);
-                con_max_thres(each_con) = con_splits(each_con, max_label);
-                con_max_count(each_con) = con_stats_counts(i, each_con*n_bins + max_label);
+                        each_con*n_bins*2, n_bins*2)).maxCoeff(&max_label);
+                con_max_thres(each_con) = con_splits(each_con, max_label / 2);
+                con_max_count(each_con) =
+                        con_stats_counts(i, each_con*n_bins*2 + max_label);
+                con_max_is_reverse(each_con) = (max_label % 2 == 1) ? 1 : 0;
             }
 
             // 2. Combine the best counts and sort them to get best
@@ -669,10 +696,12 @@ DecisionTree<Container>::pickSurrogates(
                     // ensure primary not same as surrogate
                     if ((is_categorical(curr_node) != 1) ||
                             (feature_indices(curr_node) != curr_surr)) {
-                        // update all surrogate strucutures
                         surr_indices(to_update_surr) = static_cast<int>(curr_surr);
                         surr_thresholds(to_update_surr) = cat_max_thres(curr_surr);
-                        surr_is_categorical(to_update_surr) = static_cast<int>(1);
+                        // reverse splits have negative status
+                        surr_status(to_update_surr) =
+                            (cat_max_is_reverse(curr_surr) == 1) ?
+                                static_cast<int>(-1) : static_cast<int>(1);
                         surr_agreement(to_update_surr) = static_cast<int>(cat_max_count(curr_surr));
                         surr_count++;
                     }
@@ -682,10 +711,12 @@ DecisionTree<Container>::pickSurrogates(
                     // ensure primary not same as surrogate
                     if ((is_categorical(curr_node) != 0) ||
                             (feature_indices(curr_node) != curr_surr)) {
-                        // update all surrogate strucutures
                         surr_indices(to_update_surr) = static_cast<int>(curr_surr);
                         surr_thresholds(to_update_surr) = con_max_thres(curr_surr);
-                        surr_is_categorical(to_update_surr) = static_cast<int>(0);
+                        // reverse splits have negative status
+                        surr_status(to_update_surr) =
+                            (con_max_is_reverse(curr_surr) == 1) ?
+                                static_cast<int>(-2) : static_cast<int>(2);
                         surr_agreement(to_update_surr) = static_cast<int>(con_max_count(curr_surr));
                         surr_count++;
                     }
@@ -707,7 +738,6 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
                                 const uint16_t &min_bucket,
                                 const uint16_t &max_depth,
                                 const int &n_random_features) {
-
     uint16_t n_non_leaf_nodes = static_cast<uint16_t>(state.n_leaf_nodes - 1);
     bool children_not_allocated = true;
     bool all_leaf_small = true;
@@ -726,6 +756,8 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
     for (Index i=0; i < state.n_leaf_nodes; i++) {
         Index current = n_non_leaf_nodes + i;
         if (feature_indices(current) == IN_PROCESS_LEAF) {
+            // 1. Set the prediction for current node from stats of all rows
+            predictions.row(current) = state.node_stats.row(i);
 
             for (int j=0; j<total_cat_con_features; j++) {
                 cat_con_feature_indices[j] = j;
@@ -804,20 +836,6 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
 
             } else {
                 feature_indices(current) = FINISHED_LEAF;
-                if (current == 0){
-                    // prediction is updated by the parent, need special
-                    // handling for the root node
-                    if (state.n_cat_features > 0){
-                        predictions.row(0) =
-                            state.cat_stats.row(0).segment(0, sps) +
-                            state.cat_stats.row(0).segment(sps, sps);
-                    }else if (state.n_con_features > 0){
-                        predictions.row(0) =
-                            state.con_stats.row(0).segment(0, sps) +
-                            state.con_stats.row(0).segment(sps, sps);
-                    } else{
-                    }
-                }
             }
         } // if leaf exists
     } // for each leaf
@@ -846,7 +864,7 @@ DecisionTree<Container>::statPredict(const ColumnVector &stats) const {
 
     // stats is assumed to be of size = stats_per_split
     if (is_regression){
-        // regression stat -> (0) = num of tuples, (1) = sum of responses
+        // regression stat -> (0) = sum of weights, (1) = weighted sum of responses
         // we return the average response as prediction
         return ColumnVector(stats.segment(1, 1) / stats(0));
     } else {
@@ -947,7 +965,11 @@ DecisionTree<Container>::computeRisk(const Index node_index) const {
         double wt_tot = predictions.row(node_index)(0);
         double y_avg = predictions.row(node_index)(1);
         double y2_avg = predictions.row(node_index)(2);
-        return y2_avg - y_avg * y_avg / wt_tot;
+
+        if (wt_tot <= 0)
+            return 0;
+        else
+            return (y2_avg - (y_avg * y_avg / wt_tot));
     } else {
         return computeMisclassification(node_index);
     }
@@ -976,7 +998,6 @@ DecisionTree<Container>::isChildPure(const ColumnVector &stats) const{
         double non_max_vals =  total_count - stats.head(n_y_labels).maxCoeff();
         return (non_max_vals/total_count) < 100*epsilon;
     }
-
 }
 // -------------------------------------------------------------------------
 
@@ -1108,11 +1129,12 @@ DecisionTree<Container>::displayInternalNode(
     std::stringstream label_str;
     if (is_categorical(id) == 0) {
         feature_name = get_text(con_features_str, feature_indices(id));
-        label_str << escape_quotes(feature_name) << "<=" << feature_thresholds(id);
+        label_str << escape_quotes(feature_name) << " <= " << feature_thresholds(id);
     } else {
         feature_name = get_text(cat_features_str, feature_indices(id));
-        label_str << escape_quotes(feature_name) << "<="
+        label_str << escape_quotes(feature_name) << " in "
                    << getCatLabels(feature_indices(id),
+                                   static_cast<Index>(0),
                                    static_cast<Index>(feature_thresholds(id)),
                                    cat_levels_text, cat_n_levels);
     }
@@ -1203,6 +1225,7 @@ inline
 string
 DecisionTree<Container>::print_split(
         bool is_cat,
+        bool is_reverse,
         Index feat_index,
         double feat_threshold,
         ArrayHandle<text*> &cat_features_str,
@@ -1212,13 +1235,30 @@ DecisionTree<Container>::print_split(
 
     string feature_name;
     std::stringstream label_str;
+    std::string compare;
+
     if (!is_cat) {
+        if (!is_reverse)
+            compare = " <= ";
+        else
+            compare = " > ";
         feature_name = get_text(con_features_str, feat_index);
-        label_str << feature_name << " <= " << feat_threshold;
+        label_str << feature_name << compare << feat_threshold;
     } else {
+        Index start_threshold;
+        Index end_threshold;
+        if (!is_reverse){
+            start_threshold = 0;
+            end_threshold = static_cast<Index>(feat_threshold);
+        }
+        else{
+            start_threshold = static_cast<Index>(feat_threshold + 1);
+            end_threshold = cat_n_levels[feat_index] - 1;
+        }
+
         feature_name = get_text(cat_features_str, feat_index);
-        label_str << feature_name << " <= "
-                  << getCatLabels(feat_index, static_cast<Index>(feat_threshold),
+        label_str << feature_name << " in "
+                  << getCatLabels(feat_index, start_threshold, end_threshold,
                                   cat_levels_text, cat_n_levels);
     }
     return label_str.str();
@@ -1256,6 +1296,7 @@ DecisionTree<Container>::print(
 
     if (feature_indices(current) >= 0){
         string label_str = print_split(static_cast<bool>(is_categorical(current)),
+                                       false,
                                        feature_indices(current),
                                        feature_thresholds(current),
                                        cat_features_str,
@@ -1293,7 +1334,8 @@ template <class Container>
 inline
 string
 DecisionTree<Container>::getCatLabels(Index cat_index,
-                                      Index cat_value,
+                                      Index start_value,
+                                      Index end_value,
                                       ArrayHandle<text*> &cat_levels_text,
                                       ArrayHandle<int> &cat_n_levels) {
     size_t to_skip = 0;
@@ -1303,8 +1345,8 @@ DecisionTree<Container>::getCatLabels(Index cat_index,
     std::stringstream cat_levels;
     size_t start_index;
     cat_levels << "{";
-    for (start_index = to_skip;
-            start_index < to_skip + cat_value &&
+    for (start_index = to_skip + start_value;
+            start_index < to_skip + end_value &&
             start_index < cat_levels_text.size();
             start_index++) {
         cat_levels << get_text(cat_levels_text, start_index) << ",";
@@ -1334,6 +1376,7 @@ DecisionTree<Container>::surr_display(
         if (feat_index != NON_EXISTING && feat_index != IN_PROCESS_LEAF &&
                 feat_index != FINISHED_LEAF) {
             string feature_str = print_split(is_categorical(curr_node),
+                                             false,
                                              feat_index,
                                              feature_thresholds(curr_node),
                                              cat_features_str,
@@ -1350,7 +1393,10 @@ DecisionTree<Container>::surr_display(
 
                 Index curr_surr = surr_base + i;
                 if (surr_indices(curr_surr) >= 0){
-                    string surr_str = print_split(surr_is_categorical(curr_surr),
+                    bool is_cat = std::abs(surr_status(curr_surr)) == 1? true : false;
+                    bool is_reverse = surr_status(curr_surr) < 0 ? true : false;
+                    string surr_str = print_split(is_cat,
+                                                  is_reverse,
                                                   surr_indices(curr_surr),
                                                   surr_thresholds(curr_surr),
                                                   cat_features_str,
@@ -1428,7 +1474,8 @@ TreeAccumulator<Container, DTree>::bind(ByteStream_type& inStream) {
     inStream
         >> cat_levels_cumsum.rebind(n_cat)
         >> cat_stats.rebind(n_leafs, tot_levels * n_stats * 2)
-        >> con_stats.rebind(n_leafs, n_con * n_bins_tmp * n_stats * 2);
+        >> con_stats.rebind(n_leafs, n_con * n_bins_tmp * n_stats * 2)
+        >> node_stats.rebind(n_leafs, n_stats);
 }
 // -------------------------------------------------------------------------
 
@@ -1465,7 +1512,6 @@ template <class Container, class DTree>
 inline
 TreeAccumulator<Container, DTree>&
 TreeAccumulator<Container, DTree>::operator<<(const tuple_type& inTuple) {
-
     tree_type dt = std::get<0>(inTuple);
     const MappedIntegerVector& cat_features = std::get<1>(inTuple);
     const MappedColumnVector& con_features = std::get<2>(inTuple);
@@ -1489,9 +1535,15 @@ TreeAccumulator<Container, DTree>::operator<<(const tuple_type& inTuple) {
         } else{
             uint16_t n_non_leaf_nodes = static_cast<uint16_t>(n_leaf_nodes - 1);
             Index dt_search_index = dt.search(cat_features, con_features);
-            if (dt.feature_indices(dt_search_index) != dt.FINISHED_LEAF) {
+            if (dt.feature_indices(dt_search_index) != dt.FINISHED_LEAF &&
+                 dt.feature_indices(dt_search_index) != dt.NON_EXISTING) {
                 Index row_index = dt_search_index - n_non_leaf_nodes;
+                assert(row_index >= 0);
+                // add this row into the stats for the node
+                updateNodeStats(static_cast<bool>(dt.is_regression), row_index,
+                                response, weight);
 
+                // update stats for categorical feature values in the current row
                 for (Index i=0; i < n_cat_features; ++i){
                     for (int j=0; j < cat_levels(i); ++j){
                         if (!dt.isNull(cat_features(i), true)){
@@ -1502,6 +1554,7 @@ TreeAccumulator<Container, DTree>::operator<<(const tuple_type& inTuple) {
                         }
                     }
                 }
+                // update stats for continuous feature values in the current row
                 for (Index i=0; i < n_con_features; ++i){
                     for (Index j=0; j < n_bins; ++j){
                         if (!dt.isNull(con_features(i), false)){
@@ -1571,7 +1624,6 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
             if (dt.feature_indices(dt_parent_index) >= 0){
                 Index row_index = dt_parent_index - n_non_surr_nodes;
 
-                elog(WARNING, "row_index = %d", row_index);
                 assert(row_index >= 0 && row_index < cat_stats.rows() &&
                        row_index < con_stats.rows());
 
@@ -1583,12 +1635,12 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
                             // we don't capture stats when surrogate is NULL
                             bool is_surrogate_true = (cat_features(i) <= j);
                             Index col_index = indexCatStats(i, j, is_surrogate_true);
-                            // Note: the below works only if stats_per_split = 1
-                            if (is_primary_true == is_surrogate_true){
-                                cat_stats(row_index, col_index) += 1;
-                            }
+                            updateSurrStats(true,
+                                            is_primary_true == is_surrogate_true,
+                                            row_index,
+                                            col_index);
                         }
-                   }
+                    }
                 }
                 for (Index i=0; i < n_con_features; ++i){
                     if (!is_primary_cat && i == primary_index)
@@ -1598,10 +1650,10 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
                             // we don't capture stats when surrogate is NULL
                             bool is_surrogate_true = (con_features(i) <= con_splits(i, j));
                             Index col_index = indexConStats(i, j, is_surrogate_true);
-                            // Note: the below works only if stats_per_split = 1
-                            if (is_primary_true == is_surrogate_true){
-                                con_stats(row_index, col_index) += 1;
-                            }
+                            updateSurrStats(false,
+                                            is_primary_true == is_surrogate_true,
+                                            row_index,
+                                            col_index);
                         }
                     }
                 }
@@ -1632,9 +1684,35 @@ TreeAccumulator<Container, DTree>::operator<<(
         } else {
             cat_stats += inOther.cat_stats;
             con_stats += inOther.con_stats;
+            node_stats += inOther.node_stats;
         }
     }
     return *this;
+}
+// -------------------------------------------------------------------------
+
+/**
+ * @brief Update the node statistics for given node
+ */
+template <class Container, class DTree>
+inline
+void
+TreeAccumulator<Container, DTree>::updateNodeStats(bool is_regression,
+                                                  Index node_index,
+                                                  const double response,
+                                                  const double weight) {
+    ColumnVector stats(stats_per_split);
+    stats.fill(0);
+
+    if (is_regression){
+        double w_response = weight * response;
+        stats << weight, w_response, w_response * response, 1;
+    } else {
+        assert(response >= 0);
+        stats(static_cast<uint16_t>(response)) = weight;
+        stats.tail(1)(0) = 1;
+    }
+    node_stats.row(node_index) += stats;
 }
 // -------------------------------------------------------------------------
 
@@ -1648,8 +1726,8 @@ TreeAccumulator<Container, DTree>::updateStats(bool is_regression,
                                                bool  is_cat,
                                                Index row_index,
                                                Index stats_index,
-                                               const double &response,
-                                               const double &weight) {
+                                               const double response,
+                                               const double weight) {
     ColumnVector stats(stats_per_split);
     stats.fill(0);
     if (is_regression){
@@ -1675,11 +1753,22 @@ template <class Container, class DTree>
 inline
 void
 TreeAccumulator<Container, DTree>::updateSurrStats(
-        const bool is_cat, Index row_index, Index stats_index) {
-    if (is_cat) {
+        const bool is_cat, const bool surr_agrees,
+        Index row_index, Index stats_index) {
 
+    // Note: the below works only if stats_per_split = 2
+    // 1st position for <= surrogate split and
+    // 2nd position for > split
+    ColumnVector stats(stats_per_split);
+    if (surr_agrees)
+        stats << 1, 0;
+    else
+        stats << 0, 1;
+
+    if (is_cat) {
+        cat_stats.row(row_index).segment(stats_index, stats_per_split) += stats;
     } else {
-        con_stats.row(row_index).segment(stats_index, stats_per_split) += 1;
+        con_stats.row(row_index).segment(stats_index, stats_per_split) += stats;
     }
 }
 // -------------------------------------------------------------------------

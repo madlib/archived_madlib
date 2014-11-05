@@ -125,16 +125,6 @@ public:
     bool isNull(const double feature_val, const bool is_categorical) const{
         return (is_categorical) ? (feature_val < 0) : std::isnan(feature_val);
     }
-    string print_split(bool, Index, double,
-                       ArrayHandle<text*> &, ArrayHandle<text*> &,
-                       ArrayHandle<text*> &, ArrayHandle<int> &);
-    string print(Index, ArrayHandle<text*>&, ArrayHandle<text*>&,
-                 ArrayHandle<text*>&, ArrayHandle<int>&,
-                 ArrayHandle<text*>&, uint16_t);
-    string surr_display(ArrayHandle<text*> &cat_features_str,
-                        ArrayHandle<text*> &con_features_str,
-                        ArrayHandle<text*> &cat_levels_text,
-                        ArrayHandle<int> &cat_n_levels);
 
     uint16_t recomputeTreeDepth() const;
     string displayLeafNode(Index id, ArrayHandle<text*> &dep_levels, const std::string & id_prefix);
@@ -146,8 +136,20 @@ public:
                                const std::string & id_prefix);
     string display(ArrayHandle<text*>&, ArrayHandle<text*>&, ArrayHandle<text*>&,
                    ArrayHandle<int>&, ArrayHandle<text*>&, const std::string&);
-    string getCatLabels(Index, Index, ArrayHandle<text*> &,
+    string getCatLabels(Index, Index, Index, ArrayHandle<text*> &,
                         ArrayHandle<int> &);
+    string print_split(bool, bool, Index, double,
+                       ArrayHandle<text*> &, ArrayHandle<text*> &,
+                       ArrayHandle<text*> &, ArrayHandle<int> &);
+    string print(Index, ArrayHandle<text*>&, ArrayHandle<text*>&,
+                 ArrayHandle<text*>&, ArrayHandle<int>&,
+                 ArrayHandle<text*>&, uint16_t);
+    string surr_display(
+        ArrayHandle<text*> &cat_features_str,
+        ArrayHandle<text*> &con_features_str,
+        ArrayHandle<text*> &cat_levels_text,
+        ArrayHandle<int> &cat_n_levels);
+
     // attributes
     // dimension information
     uint16_type tree_depth; // 1 for root-only tree
@@ -180,8 +182,14 @@ public:
     //   the indices on non-existing will be -1
     IntegerVector_type surr_indices;
     ColumnVector_type surr_thresholds;   // used as integer if classification
-    // used as boolean array, 0 means continuous, otherwise categorical
-    IntegerVector_type surr_is_categorical;
+
+    // used as enumerated array to record the status of a surrogate split
+    //      0 = default value indicating invalid surrogate split
+    //      1 = categorical feature <= threshold
+    //     -1 = categorical feature > threshold
+    //      2 = continuous feature <= threshold
+    //     -2 = continuous feature > threshold
+    IntegerVector_type surr_status;
     // used for keeping count of number of rows that are common between primary
     // and surrogate
     IntegerVector_type surr_agreement;
@@ -240,13 +248,17 @@ public:
     // bin_threshold = con_splits[feature_index, bin_index]
     Index indexConStats(Index feature_index, Index bin_index, bool is_split_true) const;
     Index computeSubIndex(Index start_Index, Index relative_index, bool is_split_true) const;
+
+    void updateNodeStats(bool is_regression, Index row_index,
+                         const double response, const double weight);
     // apply the tuple using indices
     void updateStats(bool is_regression, bool is_cat, Index row_index,
-                     Index stats_index, const double &response,
-                     const double &weight);
+                     Index stats_index, const double response,
+                     const double weight);
 
     // apply the tuple using indices
-    void updateSurrStats(bool is_cat, Index row_index, Index stats_index);
+    void updateSurrStats(bool is_cat, bool surr_agrees,
+                         Index row_index, Index stats_index);
 
     // attributes
     uint64_type n_rows;  // number of rows mapped to this node
@@ -275,15 +287,21 @@ public:
     // element = (total_n_cat_levels - last element of cat_levels)
     IntegerVector_type cat_levels_cumsum; // used as integer array
 
-    // cat_stats is matrix of (n_leaf_nodes) rows,
-    // each row is a vector (flattened matrix) of size:
-    // (total_n_cat_levels * stats_per_split * 2)
-    Matrix_type cat_stats;
     // con_stats and cat_stats are matrices that contain the statistics used
     // during training.
+    // cat_stats is a matrix of size:
+    // (n_leaf_nodes) x (total_n_cat_levels * stats_per_split * 2)
+    Matrix_type cat_stats;
     // con_stats is a matrix:
     // (n_leaf_nodes) x (n_con_features * n_bins * stats_per_split * 2)
     Matrix_type con_stats;
+
+    // node_stats is used to keep a statistic of all the rows that land on a
+    // node and are used to determine the prediction made by a node.
+    // In the absence of any NULL value, these stats can be deduced from
+    // cat_stats/con_stats. In the presence of NULL value, the stats could be
+    // different.
+    Matrix_type node_stats;
 };
 // ------------------------------------------------------------------------
 

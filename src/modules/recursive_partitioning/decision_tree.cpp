@@ -64,7 +64,7 @@ initialize_decision_tree::run(AnyType & args){
     if (max_n_surr > 0){
         dt.surr_indices.setConstant(dt.NON_EXISTING);
         dt.surr_thresholds.setConstant(0);
-        dt.surr_is_categorical.setConstant(0);
+        dt.surr_status.setConstant(0);
     }
     dt.predictions.row(0).setConstant(0);
 
@@ -280,6 +280,7 @@ compute_surr_stats_transition::run(AnyType & args){
 
     // con_splits size = n_con_features x n_bins
     ConSplitsResult<RootContainer> splits_results = args[5].getAs<MutableByteString>();
+
     // tree_depth = 1 implies a single leaf node in the tree.
     // We compute surrogates only for internal nodes. Hence we need
     // the root be an internal node i.e. we need the tree_depth to be more than 1.
@@ -287,13 +288,15 @@ compute_surr_stats_transition::run(AnyType & args){
         if (state.empty()){
             // 1. We need to compute stats for parent of each leaf.
             //      Hence the tree_depth is decremented by 1.
-            // 2. We store 1 value for each split (hence stats_per_split = 1)
+            // 2. We store 2 values for each surrogate split
+            //       1st value is for <= split; 2nd value is for > split
+            //       (hence stats_per_split = 2)
             state.rebind(static_cast<uint16_t>(splits_results.con_splits.cols()),
                          static_cast<uint16_t>(cat_features.size()),
                          static_cast<uint16_t>(con_features.size()),
                          static_cast<uint32_t>(cat_levels.sum()),
                          static_cast<uint16_t>(dt.tree_depth - 1),
-                         1
+                         2
                         );
             // compute cumulative sum of the levels of the categorical variables
             int current_sum = 0;
@@ -428,7 +431,7 @@ print_decision_tree::run(AnyType &args){
         << dt.predictions
         << dt.surr_indices
         << dt.surr_thresholds
-        << dt.surr_is_categorical;
+        << dt.surr_status;
     return tuple;
 }
 
@@ -499,14 +502,14 @@ struct SubTreeInfo {
 
 
 // FIXME: Remove after finalzing code
-void debug_list(std::list<double> debug_list){
+template <class IterableContainer>
+string print_debug_list(IterableContainer debug_list){
     std::stringstream debug;
-    debug << "List = ";
-    std::list<double>::iterator it;
+    typename IterableContainer::iterator it;
     for (it = debug_list.begin(); it != debug_list.end(); it++){
         debug << std::setprecision(8) << *it << ", ";
     }
-    warning(debug.str());
+    return debug.str();
 }
 
 
@@ -553,7 +556,6 @@ SubTreeInfo prune_tree(MutableTree &dt,
 
         SubTreeInfo right = prune_tree(dt, 2*me+2, alpha, adjusted_risk - alpha,
                                        node_complexities);
-
         /*
          * Closely follow rpart's algorithm, in rpart/src/partition.c
          *
@@ -667,7 +669,6 @@ prune_and_cplist::run(AnyType &args){
     std::vector<double> node_complexities(dt.feature_indices.size(), alpha);
 
     prune_tree(dt, 0, alpha, root_risk, node_complexities);
-
     // Get the new tree_depth after pruning
     //  Note: externally, tree_depth starts from 0 but DecisionTree assumes
     //  tree_depth starts from 1
@@ -677,7 +678,6 @@ prune_and_cplist::run(AnyType &args){
     if (compute_cp_list){
         std::list<double> cp_list;
         make_cp_list(dt, node_complexities, alpha, cp_list, root_risk);
-
         // we copy to a vector since we currently only have << operator
         // defined for a vector
         ColumnVector cp_vector(cp_list.size());
@@ -685,12 +685,10 @@ prune_and_cplist::run(AnyType &args){
         for (Index i = 0; it != cp_list.end(); it++, i++){
             cp_vector(i) = *it;
         }
-
         output_tuple << dt.storage() << pruned_depth << cp_vector;
     } else {
         output_tuple << dt.storage() << pruned_depth;
     }
-
     return output_tuple;
 }
 
