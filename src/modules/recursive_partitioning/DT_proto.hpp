@@ -64,6 +64,18 @@ public:
                             MappedColumnVector con_features) const;
     double predict_response(Index feature_index) const;
 
+    void updatePrimarySplit(const Index node_index,
+                            const int & max_feat,
+                            const double & max_threshold,
+                            const bool & max_is_cat,
+                            const uint16_t & min_split,
+                            const uint16_t & min_bucket,
+                            const ColumnVector &true_stats,
+                            const ColumnVector &false_stats,
+                            bool & all_leaf_pure,
+                            bool & all_leaf_small,
+                            bool & children_not_allocated);
+
     template <class Accumulator>
     bool expand(const Accumulator &state,
                 const MappedMatrix &con_splits,
@@ -73,11 +85,11 @@ public:
 
     template <class Accumulator>
     bool expand_by_sampling(const Accumulator &state,
-                const MappedMatrix &con_splits,
-                const uint16_t &min_split,
-                const uint16_t &min_bucket,
-                const uint16_t &max_depth,
-                const int &num_random_features);
+                            const MappedMatrix &con_splits,
+                            const uint16_t &min_split,
+                            const uint16_t &min_bucket,
+                            const uint16_t &max_depth,
+                            const int &num_random_features);
 
 
     Index parentIndex(Index current) const {
@@ -89,15 +101,15 @@ public:
     double impurityGain(const ColumnVector &combined_stats,
                         const uint16_t &stats_per_split) const;
     bool shouldSplit(const ColumnVector & stats,
-                       const uint16_t &min_split,
-                       const uint16_t &min_bucket,
-                       const uint16_t &stats_per_split,
-                       const uint16_t &max_depth) const;
+                     const uint16_t &min_split,
+                     const uint16_t &min_bucket,
+                     const uint16_t &stats_per_split,
+                     const uint16_t &max_depth) const;
 
     bool shouldSplitWeights(const ColumnVector & stats,
-                       const uint16_t &min_split,
-                       const uint16_t &min_bucket,
-                       const uint16_t &stats_per_split) const;
+                            const uint16_t &min_split,
+                            const uint16_t &min_bucket,
+                            const uint16_t &stats_per_split) const;
     template <class Accumulator>
     void pickSurrogates(const Accumulator &state,
                         const MappedMatrix &con_splits);
@@ -119,21 +131,19 @@ public:
     string print(Index, ArrayHandle<text*>&, ArrayHandle<text*>&,
                  ArrayHandle<text*>&, ArrayHandle<int>&,
                  ArrayHandle<text*>&, uint16_t);
-    string surr_display(
-        ArrayHandle<text*> &cat_features_str,
-        ArrayHandle<text*> &con_features_str,
-        ArrayHandle<text*> &cat_levels_text,
-        ArrayHandle<int> &cat_n_levels);
+    string surr_display(ArrayHandle<text*> &cat_features_str,
+                        ArrayHandle<text*> &con_features_str,
+                        ArrayHandle<text*> &cat_levels_text,
+                        ArrayHandle<int> &cat_n_levels);
 
     uint16_t recomputeTreeDepth() const;
     string displayLeafNode(Index id, ArrayHandle<text*> &dep_levels, const std::string & id_prefix);
-    string displayInternalNode(
-            Index id,
-            ArrayHandle<text*> &cat_features_str,
-            ArrayHandle<text*> &con_features_str,
-            ArrayHandle<text*> &cat_levels_text,
-            ArrayHandle<int> &cat_n_levels,
-            const std::string & id_prefix);
+    string displayInternalNode(Index id,
+                               ArrayHandle<text*> &cat_features_str,
+                               ArrayHandle<text*> &con_features_str,
+                               ArrayHandle<text*> &cat_levels_text,
+                               ArrayHandle<int> &cat_n_levels,
+                               const std::string & id_prefix);
     string display(ArrayHandle<text*>&, ArrayHandle<text*>&, ArrayHandle<text*>&,
                    ArrayHandle<int>&, ArrayHandle<text*>&, const std::string&);
     string getCatLabels(Index, Index, ArrayHandle<text*> &,

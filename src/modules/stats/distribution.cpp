@@ -40,7 +40,7 @@ discrete_distribution_transition::run(AnyType &args) {
 
     int index = args[1].getAs<int>();
     double weight = args[2].getAs<double>();
-    if (index >= distribution.size()) {
+    if (index < 0 || index >= distribution.size()) {
         std::stringstream ss;
         ss << "index out-of-bound: index=" << index
             << ", level=" << distribution.size() << std::endl;

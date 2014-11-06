@@ -24,16 +24,17 @@ m4_include(`SQLCommon.m4')
 </ul></div>
 
 @brief
-Random forests are an ensemble learning method for classification
-(and regression) that operate by constructing a multitude of decision trees
-at training time and outputting the class that is the mode of the classes
-output by individual trees.
+Random forests are an ensemble learning method for classification (and
+regression) that operate by constructing a multitude of decision trees at
+training time and outputting the class that is the mode of the classes output by
+individual trees.
 
-Random forests build an ensemble of classifiers, each of which is a tree model constructed
-using bootstrapped samples from the input data. The results of these models are then combined
-to yield a single prediction, which, although at the expense of some loss in interpretation,
-have been found to be highly accurate. Such methods of using multiple Random Forests to
-make predictions are called random forest methods.
+Random forests build an ensemble of classifiers, each of which is a tree model
+constructed using bootstrapped samples from the input data. The results of these
+models are then combined to yield a single prediction, which, although at the
+expense of some loss in interpretation, have been found to be highly accurate.
+Such methods of using multiple Random Forests to make predictions are called
+random forest methods.
 
 @anchor train
 @par Training Function
@@ -48,10 +49,13 @@ forest_train(training_table_name,
              grouping_cols,
              num_trees,
              num_random_features,
+             importance,
+             num_permutations,
              max_tree_depth,
              min_split,
              min_bucket,
              num_splits,
+             surrogate_params,
              verbose
              )
 </pre>
@@ -81,7 +85,8 @@ forest_train(training_table_name,
       </tr>
     </table>
 
-    A summary table named <em>\<model_table\>_summary</em> is also created at the same time, which has the following columns:
+    A summary table named <em>\<model_table\>_summary</em> is also created at
+    the same time, which has the following columns:
     <table class="output">
     <tr>
       <th>method</th>
@@ -296,6 +301,20 @@ forest_train(training_table_name,
   <DD>integer, default: sqrt(n) if classification tree, otherwise n/3. Number of
       features to randomly select at each split.</DD>
 
+  <DT>importance (optional)</DT>
+  <DD>boolean, default: true. Whether or not to calculate variable importance.</DD>
+
+  <DT>num_permutations (optional)</DT>
+  <DD>integer, default: 1. Number of times to permute each feature value while
+      calculating variable importance.
+
+      Variable importance for a feature is computed by permuting the variable with
+      random values and computing the drop in predictive accuracy (using OOB samples).
+      Setting this greater than 1 performs an average over multiple importance
+      calculation. This increases the total run time and in most cases
+      the default value of 1 is sufficient to compute the importance.
+  </DD>
+
   <DT>max_depth (optional)</DT>
   <DD>integer, default: 10. Maximum depth of any node of a tree,
       with the root node counted as depth 0.</DD>
@@ -316,15 +335,19 @@ forest_train(training_table_name,
       Higher number of bins will lead to better prediction,
       but will also result in higher processing time.</DD>
 
+  <DT>surrogate_params (optional)</DT>
+  <DD>text, Comma-separated string of key-value pairs controlling the behavior
+  of surrogate splits for each node in a tree.
+    <table class='output'>
+    <tr>
+      <th>max_surrogates</th>
+      <td>Default: 0. Number of surrogates to store for each node.</td>
+    </tr>
+    </table>
+  </DD>
+
   <DT>verbose (optional)</DT>
   <DD>boolean, default: FALSE. Provides verbose output of the results of training.</DD>
-
-  <DT>importance (optional)</DT>
-  <DD>boolean, default: true. Whether or not to calculate variable importance.</DD>
-
-  <DT>num_permutations (optional)</DT>
-  <DD>integer, default: 1. Number of times to permute each feature value while
-      calculating variable importance</DD>
 </DL>
 
 @anchor predict
@@ -372,6 +395,25 @@ get_tree(forest_model_table,
          sample_id,
          dot_format)
 </pre>
+
+An additional display function is provided to output the surrogate splits chosen
+for each internal node.
+<pre class="syntax">
+get_tree_surr(forest_model_table,
+              gid,
+              sample_id)
+</pre>
+
+The output contains the list of surrogate splits for each internal node of a
+tree. The nodes are sorted in ascending order by id. This is equivalent to
+viewing the tree in a breadth-first manner. For each surrogate, the output gives
+the surrogate split (variable and threshold) and also provides the number of
+rows that were common between the primary split and the surrogate split.
+Finally, the number of rows present in the majority branch of the primary split
+is also presented. Only surrogates that perform better than this majority branch
+are used. When the primary variable has a NULL value the surrogate variables are
+used in order to compute the split for that node. If all surrogates variables
+are NULL, then the majority branch is used to compute the split for a tuple.
 
 \b Arguments
 <DL class="arglist">
@@ -441,10 +483,12 @@ SELECT madlib.forest_train('dt_golf',         -- source table
                            NULL,              -- grouping columns
                            20::integer,       -- number of trees
                            2::integer,        -- number of random features
-                           8,                 -- max depth
-                           3,                 -- min split
-                           1,                 -- min bucket
-                           10,                -- number of splits per continuous variable
+                           TRUE::boolean,     -- variable importance
+                           1::integer,        -- num_permutations
+                           8::integer,        -- max depth
+                           3::integer,        -- min split
+                           1::integer,        -- min bucket
+                           10::integer,       -- number of splits per continuous variable
                            FALSE              -- verbose
                            );
 \\x on
@@ -637,11 +681,12 @@ SELECT madlib.forest_train('mt_cars',
                            'am',
                            10::integer,
                            2::integer,
+                           TRUE::boolean,
+                           1,
                            10,
                            8,
                            3,
-                           10,
-                           FALSE
+                           10
                            );
 \\x on
 SELECT * FROM mt_cars_output_summary;
@@ -779,22 +824,23 @@ File random_forest.sql_in documenting the training function
   * see \ref grp_random_forest for more details.
   */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
-    num_trees                   integer,
-    num_random_features         integer,
-    max_tree_depth              integer,
-    min_split                   integer,
-    min_bucket                  integer,
-    num_splits                  integer,
-    verbose                     boolean,
-    importance                  boolean,
-    num_permutations            integer
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
+    num_trees                   INTEGER,
+    num_random_features         INTEGER,
+    importance                  BOOLEAN,
+    num_permutations            INTEGER,
+    max_tree_depth              INTEGER,
+    min_split                   INTEGER,
+    min_bucket                  INTEGER,
+    num_splits                  INTEGER,
+    surrogate_params            TEXT,
+    verbose                     BOOLEAN
 ) RETURNS VOID AS $$
     PythonFunctionBodyOnly(`recursive_partitioning', `random_forest')
     random_forest.forest_train(
@@ -808,13 +854,14 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
         grouping_cols,
         num_trees,
         num_random_features,
+        importance,
+        num_permutations,
         max_tree_depth,
         min_split,
         min_bucket,
         num_splits,
-        verbose,
-        importance,
-        num_permutations
+        surrogate_params,
+        verbose
     )
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -823,8 +870,8 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._get_bin_value_by_index(
     con_splits          MADLIB_SCHEMA.bytea8,
-    feature_index       integer,
-    bin_index           integer
+    feature_index       INTEGER,
+    bin_index           INTEGER
 ) RETURNS DOUBLE PRECISION AS
     'MODULE_PATHNAME', 'get_bin_value_by_index'
 LANGUAGE c IMMUTABLE STRICT
@@ -832,9 +879,9 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__',`NO SQL', `');
 -----------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._get_bin_index_by_value(
-    bin_value           double precision,
+    bin_value           DOUBLE PRECISION,
     con_splits          MADLIB_SCHEMA.bytea8,
-    feature_index       integer
+    feature_index       INTEGER
 ) RETURNS integer AS
     'MODULE_PATHNAME', 'get_bin_index_by_value'
 LANGUAGE c IMMUTABLE STRICT
@@ -860,13 +907,24 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__',`NO SQL', `');
   * See \ref grp_random_forest for more details.
   */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_predict(
-    model                text,
-    source               text,
-    output               text,
-    pred_type            text
+    model       TEXT,
+    source      TEXT,
+    output      TEXT,
+    pred_type   TEXT
 ) RETURNS void AS $$
 PythonFunction(recursive_partitioning, random_forest, forest_predict)
 $$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_predict(
+    model       TEXT,
+    source      TEXT,
+    output      TEXT
+)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_predict($1, $2, $3, 'response'::TEXT);
+$$ LANGUAGE SQL VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 ------------------------------------------------------------
 
@@ -913,7 +971,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.get_tree(
     "gid"  INTEGER,
     "sample_id"   INTEGER
 ) RETURNS VARCHAR AS $$
-    SELECT MADLIB_SCHEMA.get_tree($1, $2, $3, True);
+    SELECT MADLIB_SCHEMA.get_tree($1, $2, $3, TRUE::BOOLEAN);
 $$ LANGUAGE SQL VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
@@ -947,6 +1005,54 @@ programs.
     return help_str
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+-------------------------------------------------------------------------
+
+/**
+  *@brief Display the surrogate splits for each internal node in a single tree from random forest.
+  *
+  *@param forest_model Name of the table containing the random forest model
+  *@param gid Group id of the tree to display
+  *@param sample_id Sample id of the tree to display
+  */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.get_tree_surr(
+    "model_table"    TEXT,
+    "gid"    INTEGER,
+    "sample_id"    INTEGER
+) RETURNS VARCHAR AS $$
+PythonFunction(recursive_partitioning, random_forest, get_tree_surr)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.get_tree_surr(
+) RETURNS VARCHAR AS $$
+    help_str = """
+This display function is provided to output the surrogate splits chosen for each
+internal node.
+------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------
+SELECT MADLIB_SCHEMA.tree_surr_display(
+    tree_model     -- TEXT. Name of the table containing the decision tree model
+    gid,           -- INTEGER. Group id of the tree to be displayed
+    sample_id,     -- INTEGER. Sample of the tree to be displayed
+)
+------------------------------------------------------------
+The output is always returned as a 'TEXT'.
+
+The output contains the list of surrogate splits for each internal node. The
+nodes are sorted in ascending order by node id. This is equivalent to viewing the
+tree in a breadth-first manner. For each surrogate, we output the surrogate
+split (variable and threshold) and also give the number of rows that were common
+between the primary split and the surrogate split. Finally, the number of rows
+present in the majority branch of the primary split is also presented. Only
+surrogates that perform better than this majority branch are included in the
+surrogate list. When the primary variable has a NULL value the surrogate variables
+are used in order to compute the split for that node. If all surrogates variables
+are NULL, then the majority branch is used to compute the split for a tuple.
+"""
+    return help_str
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 -----------------------------------------------------------------------
 -- All derived functions of forest_train (created to set some arguments
@@ -954,198 +1060,216 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 -----------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
     num_trees                   integer,
     num_random_features         integer,
+    importance                  boolean,
+    num_permutations            integer,
     max_tree_depth              integer,
     min_split                   integer,
     min_bucket                  integer,
     num_splits                  integer,
-    verbose                     boolean,
-    importance                  boolean
+    surrogate_params            TEXT
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, $12, $13, $14, $15, 1::INTEGER);
+            $9, $10, $11, $12, $13, $14, $15, $16, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
     num_trees                   integer,
     num_random_features         integer,
-    max_tree_depth              integer,
-    min_split                   integer,
-    min_bucket                  integer,
-    num_splits                  integer,
-    verbose                     boolean
-) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, $12, $13, $14, True::BOOLEAN, 1::INTEGER);
-$$ LANGUAGE sql VOLATILE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
-    num_trees                   integer,
-    num_random_features         integer,
+    importance                  boolean,
+    num_permutations            integer,
     max_tree_depth              integer,
     min_split                   integer,
     min_bucket                  integer,
     num_splits                  integer
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, $12, $13, False::BOOLEAN, True::BOOLEAN,
-            1::INTEGER);
+            $9, $10, $11, $12, $13, $14, $15, NULL::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
     num_trees                   integer,
     num_random_features         integer,
+    importance                  boolean,
+    num_permutations            integer,
     max_tree_depth              integer,
     min_split                   integer,
     min_bucket                  integer
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, $12, 100::INTEGER, False::BOOLEAN,
-            True::BOOLEAN, 1::INTEGER);
+    SELECT MADLIB_SCHEMA.forest_train(
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, $14, 100::INTEGER,
+        'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
     num_trees                   integer,
     num_random_features         integer,
+    importance                  boolean,
+    num_permutations            integer,
     max_tree_depth              integer,
     min_split                   integer
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, $11, ($11/3)::INTEGER, 100::INTEGER, False::BOOLEAN
-            , True::BOOLEAN, 1::INTEGER);
+    SELECT MADLIB_SCHEMA.forest_train(
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13, ($13/3)::INTEGER, 100::INTEGER,
+        'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
     num_trees                   integer,
     num_random_features         integer,
+    importance                  boolean,
+    num_permutations            integer,
     max_tree_depth              integer
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            $9, $10, 20::INTEGER, 6::INTEGER, 100::INTEGER,
-            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+            $9, $10, $11, $12, 20::INTEGER, (20/3)::INTEGER, 100::INTEGER,
+            'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
+    num_trees                   integer,
+    num_random_features         integer,
+    importance                  boolean,
+    num_permutations            integer
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, 10::INTEGER, 20::INTEGER, (20/3)::INTEGER, 100::INTEGER,
+            'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
+    num_trees                   integer,
+    num_random_features         integer,
+    importance                  boolean
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, 1::INTEGER, 10::INTEGER, 20::INTEGER, (20/3)::INTEGER,
+            100::INTEGER, 'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
     num_trees                   integer,
     num_random_features         integer
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            $9, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
-            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+            $9, TRUE::BOOLEAN, 1::INTEGER, 10::INTEGER, 20::INTEGER,
+            (20/3)::INTEGER, 100::INTEGER,
+            'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text,
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT,
     num_trees                   integer
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
-            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
-            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+            NULL::INTEGER, TRUE::BOOLEAN, 1::INTEGER, 10::INTEGER, 20::INTEGER,
+            (20/3)::INTEGER, 100::INTEGER,
+            'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text,
-    grouping_cols               text
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT,
+    grouping_cols               TEXT
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, 100,
-            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
-            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7,
+            100::INTEGER, NULL::integer, TRUE::BOOLEAN, 1::INTEGER,
+            10::INTEGER, 20::INTEGER, (20/3)::INTEGER, 100::INTEGER,
+            'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text,
-    list_of_features_to_exclude text
+    training_table_name         TEXT,
+    output_table_name           TEXT,
+    id_col_name                 TEXT,
+    dependent_variable          TEXT,
+    list_of_features            TEXT,
+    list_of_features_to_exclude TEXT
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, NULL::TEXT, 100,
-            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
-            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
-$$ LANGUAGE sql VOLATILE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
-    training_table_name         text,
-    output_table_name           text,
-    id_col_name                 text,
-    dependent_variable          text,
-    list_of_features            text
-) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, NULL::TEXT, NULL::TEXT, 100,
-            NULL, 10::INTEGER, 20::INTEGER, 6::INTEGER, 100::INTEGER,
-            False::BOOLEAN, True::BOOLEAN, 1::INTEGER);
+    SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, NULL::TEXT,
+            100::INTEGER, NULL::integer, TRUE::BOOLEAN, 1::INTEGER,
+            10::INTEGER, 20::INTEGER, (20/3)::INTEGER, 100::INTEGER,
+            'max_surrogates=0'::TEXT, FALSE::BOOLEAN);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

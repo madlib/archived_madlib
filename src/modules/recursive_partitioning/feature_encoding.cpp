@@ -205,6 +205,11 @@ get_bin_value_by_index::run(AnyType &args) {
     ConSplitsResult<RootContainer> con_splits_results = args[0].getAs<ByteString>();
     int feature_index = args[1].getAs<int>();
     int bin_index = args[2].getAs<int>();
+
+    // -1 is used to indicate a NaN value
+    if (bin_index < 0)
+        return std::numeric_limits<double>::quiet_NaN();
+
     // assuming we use <= to create bins by values in con_splits
     // see TreeAccumulator::operator<<(const tuple_type&)
     if (bin_index < con_splits_results.con_splits.cols()) {
@@ -220,6 +225,11 @@ get_bin_value_by_index::run(AnyType &args) {
 AnyType
 get_bin_index_by_value::run(AnyType &args) {
     double bin_value = args[0].getAs<double>();
+
+    // we return a -1 index is the value is NaN
+    if (std::isnan(bin_value))
+        return -1;
+
     ConSplitsResult<RootContainer> con_splits_results = args[1].getAs<ByteString>();
     int feature_index = args[2].getAs<int>();
     // assuming we use <= to create bins by values in con_splits

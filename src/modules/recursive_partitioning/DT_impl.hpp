@@ -401,6 +401,59 @@ DecisionTree<Container>::impurityGain(const ColumnVector &combined_stats,
 }
 
 // ------------------------------------------------------------
+template <class Container>
+inline
+void
+DecisionTree<Container>::updatePrimarySplit(
+        const Index node_index,
+        const int & max_feat,
+        const double & max_threshold,
+        const bool & max_is_cat,
+        const uint16_t & min_split,
+        const uint16_t & min_bucket,
+        const ColumnVector &true_stats,
+        const ColumnVector &false_stats,
+        bool & all_leaf_pure,
+        bool & all_leaf_small,
+        bool & children_not_allocated) {
+
+    if (children_not_allocated) {
+        // allocate the memory for child nodes if not allocated already
+        incrementInPlace();
+        children_not_allocated = false;
+    }
+
+    // current node
+    feature_indices(node_index) = max_feat;
+    is_categorical(node_index) = max_is_cat ? 1 : 0;
+    feature_thresholds(node_index) = max_threshold;
+
+    // update prediction for children
+    if (node_index == 0){
+        // since prediction is updated by parent node, we need special
+        // handling for root node (index = 0)
+        predictions.row(node_index) = true_stats + false_stats;
+    }
+    feature_indices(trueChild(node_index)) = IN_PROCESS_LEAF;
+    predictions.row(trueChild(node_index)) = true_stats;
+    feature_indices(falseChild(node_index)) = IN_PROCESS_LEAF;
+    predictions.row(falseChild(node_index)) = false_stats;
+
+    if (all_leaf_pure){
+        // verify if current's children are pure
+        all_leaf_pure =
+            isChildPure(true_stats) &&
+            isChildPure(false_stats);
+    }
+    if (all_leaf_small){
+        // verify if current's children are too small to split further
+        uint64_t true_count = statCount(true_stats);
+        uint64_t false_count = statCount(false_stats);
+        all_leaf_small = (true_count < min_split && false_count < min_split);
+    }
+}
+// -------------------------------------------------------------------------
+
 
 template <class Container>
 template <class Accumulator>
@@ -469,54 +522,25 @@ DecisionTree<Container>::expand(const Accumulator &state,
             if (max_impurity_gain > 0 &&
                     shouldSplit(max_stats, min_split, min_bucket, sps, max_depth)) {
 
-                if (children_not_allocated) {
-                    // allocate the memory for child nodes if not allocated already
-                    incrementInPlace();
-                    children_not_allocated = false;
-                }
-
-                // current node
-                feature_indices(current) = static_cast<int>(max_feat);
-                is_categorical(current) = max_is_cat ? 1 : 0;
+                double max_threshold;
                 if (max_is_cat)
-                    feature_thresholds(current) = static_cast<double>(max_bin);
+                    max_threshold = static_cast<double>(max_bin);
                 else
-                    feature_thresholds(current) = con_splits(max_feat, max_bin);
+                    max_threshold = con_splits(max_feat, max_bin);
 
-                // update prediction for children
-                if (current == 0){
-                    // since prediction is updated by parent node, we need special
-                    // handling for root node (index = 0)
-                    predictions.row(current) =
-                        max_stats.segment(0, sps) + max_stats.segment(sps, sps);
-                }
-                feature_indices(trueChild(current)) = IN_PROCESS_LEAF;
-                predictions.row(trueChild(current)) = max_stats.segment(0, sps);
-                feature_indices(falseChild(current)) = IN_PROCESS_LEAF;
-                predictions.row(falseChild(current)) = max_stats.segment(sps, sps);
+                updatePrimarySplit(current, static_cast<int>(max_feat),
+                                   max_threshold, max_is_cat,
+                                   min_split, min_bucket,
+                                   max_stats.segment(0, sps),  // true_stats
+                                   max_stats.segment(sps, sps),  // false_stats
+                                   all_leaf_pure, all_leaf_small,
+                                   children_not_allocated);
 
-                if (all_leaf_pure){
-                    // verify if current's children are pure
-                    all_leaf_pure =
-                        isChildPure(max_stats.segment(0, sps)) &&
-                        isChildPure(max_stats.segment(sps, sps));
-                }
-
-                if (all_leaf_small){
-                    // verify if current's children are too small to split further
-                    // if all are too small then we finish in this layer
-                    uint64_t true_count = statCount(max_stats.segment(0, sps));
-                    uint64_t false_count = statCount(max_stats.segment(sps, sps));
-                    all_leaf_small = (true_count < min_split && false_count < min_split);
-                }
             } else {
                 feature_indices(current) = FINISHED_LEAF;
                 if (current == 0){
                     // prediction is updated by the parent, need special
                     // handling for the root node
-                    // FIXME: currently assuming that the first variable will
-                    // receive all the rows. This is not necessarily True and
-                    // could result in fewer count than actually seen by root node.
                     if (state.n_cat_features > 0){
                         predictions.row(0) =
                             state.cat_stats.row(0).segment(0, sps) +
@@ -545,6 +569,13 @@ DecisionTree<Container>::expand(const Accumulator &state,
                 feature_indices(i) = FINISHED_LEAF;
         }
     }
+
+    // FIXME: currently the prediction for root node is set by using the stats
+    // of either the first variable (when root is a leaf) or the max of all
+    // variables (when root is internal). This could result in fewer count than
+    // actually seen by root node and cause incorrect prediction.
+    // The easiest solution is to update the root node prediction after
+    // tree train using dependent variable distribution.
 
     return training_finished;
 }
@@ -751,54 +782,26 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
                         }
                     }
                 }
-
             }
 
             // create and update child nodes if splitting current
             if (max_impurity_gain > 0 &&
                     shouldSplitWeights(max_stats, min_split, min_bucket, sps)) {
 
-                if (children_not_allocated) {
-                    // allocate the memory for child nodes if not allocated already
-                    incrementInPlace();
-                    children_not_allocated = false;
-                }
+                double max_threshold;
+                if (max_is_cat)
+                    max_threshold = static_cast<double>(max_bin);
+                else
+                    max_threshold = con_splits(max_feat, max_bin);
 
-                // current node
-                feature_indices(current) = static_cast<int>(max_feat);
-                is_categorical(current) = max_is_cat ? 1 : 0;
-                if (max_is_cat) {
-                    feature_thresholds(current) =
-                            static_cast<double>(max_bin);
-                } else {
-                    feature_thresholds(current) = con_splits(max_feat, max_bin);
-                }
+                updatePrimarySplit(current, static_cast<int>(max_feat),
+                                   max_threshold, max_is_cat,
+                                   min_split, min_bucket,
+                                   max_stats.segment(0, sps),  // true_stats
+                                   max_stats.segment(sps, sps),  // false_stats
+                                   all_leaf_pure, all_leaf_small,
+                                   children_not_allocated);
 
-                // update prediction for children
-                if (current == 0){
-                    // since prediction is updated by parent node, we need special
-                    // handling for root node (index = 0)
-                    predictions.row(current) =
-                        max_stats.segment(0, sps) + max_stats.segment(sps, sps);
-                }
-                feature_indices(trueChild(current)) = IN_PROCESS_LEAF;
-                predictions.row(trueChild(current)) = max_stats.segment(0, sps);
-                feature_indices(falseChild(current)) = IN_PROCESS_LEAF;
-                predictions.row(falseChild(current)) = max_stats.segment(sps, sps);
-
-                if (all_leaf_pure){
-                    // verify if current's children are pure
-                    all_leaf_pure =
-                        isChildPure(max_stats.segment(0, sps)) &&
-                        isChildPure(max_stats.segment(sps, sps));
-                }
-
-                if (all_leaf_small){
-                    // verify if current's children are too small to split further
-                    uint64_t true_count = statCount(max_stats.segment(0, sps));
-                    uint64_t false_count = statCount(max_stats.segment(sps, sps));
-                    all_leaf_small = (true_count < min_split && false_count < min_split);
-                }
             } else {
                 feature_indices(current) = FINISHED_LEAF;
                 if (current == 0){
@@ -1446,7 +1449,10 @@ TreeAccumulator<Container, DTree>::rebind(
     n_cat_features = in_n_cat_feat;
     n_con_features = in_n_con_feat;
     total_n_cat_levels = in_n_total_levels;
-    n_leaf_nodes = static_cast<uint16_t>(pow(2, tree_depth - 1));
+    if (tree_depth > 0)
+        n_leaf_nodes = static_cast<uint16_t>(pow(2, tree_depth - 1));
+    else
+        n_leaf_nodes = 1;
     stats_per_split = in_n_stats;
     this->resize();
 }
@@ -1525,6 +1531,11 @@ template <class Container, class DTree>
 inline
 TreeAccumulator<Container, DTree>&
 TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
+    std::stringstream debug;
+    debug << "cat_stats size = " << cat_stats.rows() << "x" << cat_stats.cols() << std::endl;
+    debug << "con_stats size = " << con_stats.rows() << "x" << con_stats.cols() << std::endl;
+    warning(debug.str());
+
     tree_type dt = std::get<0>(inTuple);
     const MappedIntegerVector& cat_features = std::get<1>(inTuple);
     const MappedColumnVector& con_features = std::get<2>(inTuple);
@@ -1563,6 +1574,11 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
 
             if (dt.feature_indices(dt_parent_index) >= 0){
                 Index row_index = dt_parent_index - n_non_surr_nodes;
+
+                elog(WARNING, "row_index = %d", row_index);
+                assert(row_index >= 0 && row_index < cat_stats.rows() &&
+                       row_index < con_stats.rows());
+
                 for (Index i=0; i < n_cat_features; ++i){
                     if (is_primary_cat && i == primary_index)
                         continue;

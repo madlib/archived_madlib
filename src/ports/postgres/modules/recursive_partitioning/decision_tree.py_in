@@ -513,9 +513,9 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                                                    dict(max_surrogates=int),
                                                    dict(max_surrogates=0))
     max_n_surr = surrogate_param_dict['max_surrogates']
-    if max_n_surr < 0:
-        plpy.error("Maximum number of surrogates ({0}) should be non-positive".
-                   format(max_n_surr))
+    _assert(max_n_surr >= 0,
+            "Maximum number of surrogates ({0}) should be non-negative".
+            format(max_n_surr))
 
     with MinWarning(msg_level):
         # 1)
@@ -528,8 +528,8 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
 
         # expand "*" syntax and exclude some features
         features = _get_features_to_use(**locals())
-        if len(features) == 0:
-            plpy.error("Decision tree error: No feature is selected for the model.")
+        _assert(bool(features),
+                "Decision tree error: No feature is selected for the model.")
 
         # 2)
         all_cols_types = get_cols_and_types(training_table_name, schema_madlib)
@@ -1006,9 +1006,9 @@ def _get_bins_grps(
 # ------------------------------------------------------------
 
 
-def _get_feature_str(schema_madlib, boolean_cats,
-                     cat_features, con_features,
-                     levels_str, n_levels_str):
+def get_feature_str(schema_madlib, boolean_cats,
+                    cat_features, con_features,
+                    levels_str, n_levels_str):
     if len(cat_features) > 0:
         unique_val = unique_string()
         cat_features_cast = []
@@ -1052,11 +1052,11 @@ def _one_step(schema_madlib, training_table_name, cat_features,
     # integer representation. It returns an integer array.
     # XXX cat_feature_str contains $5 and $2, and a SQL function
     bytea8 = schema_madlib + '.bytea8'
-    cat_features_str, con_features_str = _get_feature_str(schema_madlib,
-                                                          boolean_cats,
-                                                          cat_features,
-                                                          con_features,
-                                                          "$3", "$2")
+    cat_features_str, con_features_str = get_feature_str(schema_madlib,
+                                                         boolean_cats,
+                                                         cat_features,
+                                                         con_features,
+                                                         "$3", "$2")
 
     # The arguments of the aggregate (in the same order):
     # 1. current tree state, madlib.bytea8
@@ -1098,7 +1098,12 @@ def _one_step(schema_madlib, training_table_name, cat_features,
                                                  bins['cat_origin'],
                                                  bins['con']
                                                  ])[0]
-    if max_n_surr > 0:
+    # Compute surrogates:
+    #   tree_depth outside the scope of dt_apply starts from 0 i.e. 0 depth
+    #   implies a single leaf node for the tree. We compute surrogates only for
+    #   internal nodes. Hence we at least need the root be an internal node i.e.
+    #   we need the tree_depth to be 1 or more.
+    if max_n_surr > 0 and updated_tree['tree_depth'] > 0:
         surr_sql = """
                 SELECT
                     {schema_madlib}._dt_surr_apply(
@@ -1146,7 +1151,7 @@ def _one_step_for_grps(
     finished = unique_string()
     cat_levels_in_text = unique_string()
 
-    cat_features_str, con_features_str = _get_feature_str(
+    cat_features_str, con_features_str = get_feature_str(
         schema_madlib, boolean_cats, cat_features, con_features,
         cat_levels_in_text, cat_n_levels)
 
@@ -1462,7 +1467,7 @@ def _get_filter_str(schema_madlib, cat_features, con_features, boolean_cats,
     else:
         g_filter = None
 
-    if cat_features and max_n_surr <= 0:
+    if cat_features and max_n_surr == 0:
         cat_filter = \
             'NOT {schema_madlib}.array_contains_null({cat_features_array})'.format(
                 schema_madlib=schema_madlib,
@@ -1473,7 +1478,7 @@ def _get_filter_str(schema_madlib, cat_features, con_features, boolean_cats,
     else:
         cat_filter = None
 
-    if con_features and max_n_surr <= 0:
+    if con_features and max_n_surr == 0:
         con_filter = \
             'NOT {schema_madlib}.array_contains_null({con_features_array})'.format(
                 schema_madlib=schema_madlib,
@@ -1568,7 +1573,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
                         (get_cols_and_types(source, schema_madlib)).iteritems()
                         if value == 'boolean'])
 
-    cat_features_str, con_features_str = _get_feature_str(
+    cat_features_str, con_features_str = get_feature_str(
         schema_madlib, boolean_cats, cat_features, con_features,
         "m.cat_levels_in_text", "m.cat_n_levels")
 
@@ -1871,9 +1876,7 @@ def _xvalidate(schema_madlib, training_table_name, output_table_name,
                dep_is_bool, dep_n_levels, cp, cp_list, n_folds, n_rows,
                max_n_surr, **kwargs):
     """
-    Args:
-        @param kwargs: A dictionary of all local variables present in the
-                        training function (tree_train).
+    Run cross validation for decision tree over multiple cp values
 
     Returns:
         cp value corresponding to lowest cross validation error

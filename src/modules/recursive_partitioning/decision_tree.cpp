@@ -280,26 +280,32 @@ compute_surr_stats_transition::run(AnyType & args){
 
     // con_splits size = n_con_features x n_bins
     ConSplitsResult<RootContainer> splits_results = args[5].getAs<MutableByteString>();
-    if (state.empty()){
-        // 1. We need to compute stats for parent of each leaf.
-        //      Hence the tree_depth is decremented by 1.
-        // 2. We store 1 value for each split (hence stats_per_split = 1)
-        state.rebind(static_cast<uint16_t>(splits_results.con_splits.cols()),
-                     static_cast<uint16_t>(cat_features.size()),
-                     static_cast<uint16_t>(con_features.size()),
-                     static_cast<uint32_t>(cat_levels.sum()),
-                     static_cast<uint16_t>(dt.tree_depth - 1),
-                     1
-                    );
-        // compute cumulative sum of the levels of the categorical variables
-        int current_sum = 0;
-        for (Index i=0; i < state.n_cat_features; ++i){
-            current_sum += cat_levels(i);
-            state.cat_levels_cumsum(i) = current_sum;
+    // tree_depth = 1 implies a single leaf node in the tree.
+    // We compute surrogates only for internal nodes. Hence we need
+    // the root be an internal node i.e. we need the tree_depth to be more than 1.
+    if (dt.tree_depth > 1){
+        if (state.empty()){
+            // 1. We need to compute stats for parent of each leaf.
+            //      Hence the tree_depth is decremented by 1.
+            // 2. We store 1 value for each split (hence stats_per_split = 1)
+            state.rebind(static_cast<uint16_t>(splits_results.con_splits.cols()),
+                         static_cast<uint16_t>(cat_features.size()),
+                         static_cast<uint16_t>(con_features.size()),
+                         static_cast<uint32_t>(cat_levels.sum()),
+                         static_cast<uint16_t>(dt.tree_depth - 1),
+                         1
+                        );
+            // compute cumulative sum of the levels of the categorical variables
+            int current_sum = 0;
+            for (Index i=0; i < state.n_cat_features; ++i){
+                current_sum += cat_levels(i);
+                state.cat_levels_cumsum(i) = current_sum;
+            }
         }
+
+        state << MutableLevelState::surr_tuple_type(
+            dt, cat_features, con_features, cat_levels, splits_results.con_splits);
     }
-    state << MutableLevelState::surr_tuple_type(
-        dt, cat_features, con_features, cat_levels, splits_results.con_splits);
     return state.storage();
 }
 

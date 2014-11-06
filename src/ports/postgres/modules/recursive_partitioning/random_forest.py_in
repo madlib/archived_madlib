@@ -19,6 +19,7 @@ from utilities.validate_args import cols_in_tbl_valid
 from utilities.utilities import _assert
 from utilities.utilities import unique_string
 from utilities.utilities import split_quoted_delimited_str
+from utilities.utilities import extract_keyvalue_params
 
 from decision_tree import _tree_train_using_bins
 from decision_tree import _tree_train_grps_using_bins
@@ -32,6 +33,7 @@ from decision_tree import _classify_features
 from decision_tree import _get_filter_str
 from decision_tree import _get_col_value
 from decision_tree import _get_display_header
+from decision_tree import get_feature_str
 # ------------------------------------------------------------
 
 
@@ -180,9 +182,10 @@ SELECT madlib.forest_display('forest_out');
 def forest_train(
         schema_madlib, training_table_name, output_table_name, id_col_name,
         dependent_variable, list_of_features, list_of_features_to_exclude,
-        grouping_cols=None, num_trees=100, num_random_features=None,
-        max_tree_depth=10, min_split=20, min_bucket=6, num_bins=100,
-        verbose=False, importance=True, num_permutations=1, **kwargs):
+        grouping_cols, num_trees, num_random_features,
+        importance, num_permutations, max_tree_depth,
+        min_split, min_bucket, num_bins,
+        surrogate_params, verbose=False, **kwargs):
     """ Random forest main training function
 
     Args:
@@ -221,22 +224,32 @@ def forest_train(
         min_split = min_bucket * 3 if not min_split else min_split
         num_bins = 100 if num_bins is None else num_bins
 
+        surrogate_param_dict = extract_keyvalue_params(surrogate_params,
+                                                       dict(max_surrogates=int),
+                                                       dict(max_surrogates=0))
+        max_n_surr = surrogate_param_dict['max_surrogates']
+        _assert(max_n_surr >= 0,
+                "Maximum number of surrogates ({0}) should be non-negative".
+                format(max_n_surr))
+
         ##################################################################
         #### validate arguments
         _forest_validate_args(training_table_name, output_table_name, id_col_name,
                               list_of_features, dependent_variable,
                               list_of_features_to_exclude, grouping_cols,
-                              num_trees, num_random_features, max_tree_depth,
+                              num_trees, num_random_features,
+                              num_permutations, max_tree_depth,
                               min_split, min_bucket, num_bins)
 
         ##################################################################
         #### preprocess arguments
+
         # expand "*" syntax and exclude some features
         features = _get_features_to_use(schema_madlib, training_table_name,
                                         list_of_features,
                                         list_of_features_to_exclude, id_col_name,
                                         '1', dependent_variable, grouping_cols)
-        _assert(len(features) != 0,
+        _assert(bool(features),
                 "Random forest error: No feature is selected for the model.")
 
         is_classification, is_bool = _is_dep_categorical(training_table_name,
@@ -247,6 +260,9 @@ def forest_train(
             n_all_features = len(features)
             num_random_features = (sqrt(n_all_features) if is_classification
                                    else n_all_features / 3)
+        _assert(num_random_features <= len(features),
+                "Random forest error: Number of features to be selected is more "
+                "than the actual number of features.")
 
         all_cols_types = get_cols_and_types(training_table_name, schema_madlib)
         cat_features, con_features, boolean_cats = _classify_features(
@@ -254,7 +270,7 @@ def forest_train(
 
         filter_null = _get_filter_str(schema_madlib, cat_features, con_features,
                                       boolean_cats, dependent_variable,
-                                      grouping_cols)
+                                      grouping_cols, max_n_surr)
         # the total number of records
         n_all_rows = plpy.execute("""
                 select count(*) from {source_table}
@@ -430,7 +446,8 @@ def forest_train(
         ##################################################################
         #### training random forest
         tree_terminated = None
-        for sample_id in range(1, num_trees+1):
+        for sample_id in range(1, num_trees + 1):
+            plpy.info("Running sample " + str(sample_id))
             sql_refresh_tmp_id_to_count = """
                     TRUNCATE TABLE {tmp_id_to_count_table} CASCADE;
                     INSERT INTO {tmp_id_to_count_table}
@@ -447,7 +464,8 @@ def forest_train(
                     schema_madlib, bins, src_view, cat_features, con_features,
                     boolean_cats, num_bins, 'poisson_count', dep, min_split,
                     min_bucket, max_tree_depth, filter_null, dep_n_levels,
-                    is_classification, split_criterion, True, num_random_features)
+                    is_classification, split_criterion, True,
+                    num_random_features, max_n_surr)
                 tree_states = [dict(tree_state=tree_state['tree_state'],
                                     grp_key='')]
 
@@ -457,9 +475,11 @@ def forest_train(
                 tree_states = _tree_train_grps_using_bins(
                     schema_madlib, bins, src_view, cat_features, con_features,
                     boolean_cats, num_bins, 'poisson_count', grouping_cols,
-                    grouping_array_str, dep, min_split, min_bucket, max_tree_depth,
-                    filter_null, dep_n_levels, is_classification, split_criterion,
-                    True, num_random_features, tree_terminated=tree_terminated)
+                    grouping_array_str, dep, min_split, min_bucket,
+                    max_tree_depth, filter_null, dep_n_levels,
+                    is_classification, split_criterion, True,
+                    num_random_features, tree_terminated=tree_terminated,
+                    max_n_surr=max_n_surr)
 
                 # If a tree for a group is terminated (not finished properly),
                 # then we do not need to compute other trees, and can just
@@ -492,12 +512,27 @@ def forest_train(
                              oob_error_table, id_col_name, is_classification)
 
         importance_table = unique_string()
-        _calculate_variable_importance(
-            schema_madlib, training_table_name, output_table_name,
-            oob_prediction_table, importance_table, cat_features_info_table,
-            sample_id, id_col_name, dep, is_classification, cat_features,
-            con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols,
-            bins, num_bins, num_permutations, importance)
+        sql_create_empty_imp_tbl = """
+                CREATE TABLE {importance_table}
+                (
+                    is_categorical boolean,
+                    feature_index integer,
+                    gid integer,
+                    variable_importance double precision
+                );
+                """.format(**locals())
+        plpy.notice("sql_create_empty_imp_tbl:\n"+sql_create_empty_imp_tbl)
+        plpy.execute(sql_create_empty_imp_tbl)
+        # we populate the importance_table only if variable importance is to be
+        # calculated, otherwise we use an empty table which will be used later
+        # for an outer join.
+        if importance:
+            _calculate_variable_importance(
+                schema_madlib, training_table_name, output_table_name,
+                oob_prediction_table, importance_table, cat_features_info_table,
+                sample_id, id_col_name, dep, is_classification, cat_features,
+                con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols,
+                bins, num_bins, num_permutations)
 
         _create_group_table(schema_madlib, output_table_name,
                             oob_error_table, importance_table,
@@ -569,25 +604,9 @@ def forest_predict(schema_madlib, model, source, output, pred_type='response',
                         (get_cols_and_types(source, schema_madlib)).iteritems()
                         if value == 'boolean'])
 
-    if len(cat_features) > 0:
-        cat_features_cast = []
-        for col in cat_features:
-            if col in boolean_cats:
-                cat_features_cast.append(
-                    "(case when " + col + " then 'True' else 'False' end)::text")
-            else:
-                cat_features_cast.append("(" + col + ")::text")
-        cat_features_str = (
-            "{0}._map_catlevel_to_int(array[" +
-            ", ".join(cat_features_cast) +
-            "], cat_levels_in_text, cat_n_levels)").format(schema_madlib)
-    else:
-        cat_features_str = "NULL"
-
-    if len(con_features) > 0:
-        con_features_str = 'array[' + ','.join(con_features) + ']'
-    else:
-        con_features_str = "NULL"
+    cat_features_str, con_features_str = get_feature_str(
+        schema_madlib, boolean_cats, cat_features, con_features,
+        "cat_levels_in_text", "cat_n_levels")
 
     pred_name = ('"prob_{0}"' if pred_type == "prob" else
                  '"estimated_{0}"').format(dep_varname.replace('"', '').strip())
@@ -693,11 +712,20 @@ def forest_predict(schema_madlib, model, source, output, pred_type='response',
 # ------------------------------------------------------------
 
 
+def get_tree_surr(schema_madlib, model_table, gid, sample_id, **kwargs):
+    return get_tree(schema_madlib, model_table, gid, sample_id,
+                    dot_format=False, disp_surr=True)
+
+
 def get_tree(schema_madlib, model_table, gid, sample_id,
-             dot_format=True, **kwargs):
+             dot_format=True, disp_surr=False, **kwargs):
     """Random forest tree display function"""
 
     _validate_get_tree(model_table, gid, sample_id)
+    if dot_format:
+        disp_surr = False  # surrogates cannot be displayed in dot format
+    bytea8 = schema_madlib + '.bytea8'
+
     summary = plpy.execute("SELECT * FROM {model_table}_summary".
                            format(model_table=model_table))[0]
     dep_levels = summary["dependent_var_levels"]
@@ -738,30 +766,52 @@ def get_tree(schema_madlib, model_table, gid, sample_id,
         cat_n_levels = []
 
     return_str_list = []
-    return_str_list.append(_get_display_header(table_name, dep_levels,
-                                               is_regression, dot_format))
-    with MinWarning('warning'):
-        if dot_format:
-            sql_display = """
-                    SELECT {0}._display_decision_tree(
-                        $1, $2, $3, $4, $5, $6, '{1}'
-                        ) as display_tree
-                    """.format(schema_madlib, "")
-        else:
-            sql_display = """
-                    SELECT {0}._display_text_decision_tree(
-                        $1, $2, $3, $4, $5, $6
-                        ) as display_tree
-                  """.format(schema_madlib)
+    if not disp_surr:
+        return_str_list.append(_get_display_header(table_name, dep_levels,
+                                                   is_regression, dot_format))
+    else:
+        return_str_list.append("""
+  -------------------------------------
+      Surrogates for internal nodes
+  -------------------------------------
+        """)
 
-        plpy.notice("sql_display:\n"+sql_display)
-        plan_display = plpy.prepare(sql_display, ['{0}.bytea8'.format(schema_madlib),
-                                                  'text[]', 'text[]', 'text[]',
-                                                  'int[]', 'text[]'])
-        tree_display = plpy.execute(
-            plan_display, [tree['tree'], cat_features_str, con_features_str,
-                           cat_levels_in_text, cat_n_levels,
-                           dep_levels])[0]
+    with MinWarning('warning'):
+        if disp_surr:
+            # Output only surrogate information for the internal nodes of tree
+            sql = """SELECT {0}._display_decision_tree_surrogate(
+                                    $1, $2, $3, $4, $5) as display_tree
+                      """.format(schema_madlib)
+            # execute sql to get display string
+            sql_plan = plpy.prepare(sql, [bytea8,
+                                          'text[]', 'text[]', 'text[]',
+                                          'int[]'])
+            tree_display = plpy.execute(
+                sql_plan, [tree['tree'], cat_features_str, con_features_str,
+                           cat_levels_in_text, cat_n_levels])[0]
+        else:
+            # Output the splits in each node of the tree
+            if dot_format:
+                sql_display = """
+                        SELECT {0}._display_decision_tree(
+                            $1, $2, $3, $4, $5, $6, '{1}'
+                            ) as display_tree
+                        """.format(schema_madlib, "")
+            else:
+                sql_display = """
+                        SELECT {0}._display_text_decision_tree(
+                            $1, $2, $3, $4, $5, $6
+                            ) as display_tree
+                      """.format(schema_madlib)
+
+                plpy.notice("sql_display:\n"+sql_display)
+                plan_display = plpy.prepare(sql_display, [bytea8,
+                                                          'text[]', 'text[]', 'text[]',
+                                                          'int[]', 'text[]'])
+                tree_display = plpy.execute(
+                    plan_display, [tree['tree'], cat_features_str, con_features_str,
+                                   cat_levels_in_text, cat_n_levels,
+                                   dep_levels])[0]
 
         return_str_list.append(tree_display["display_tree"])
     if dot_format:
@@ -775,24 +825,10 @@ def _calculate_oob_prediction(
         oob_prediction_table, oob_view, sample_id, id_col_name, cat_features,
         con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols, dep):
     """Calculate predication for out-of-bag sample"""
-    if len(cat_features) > 0:
-        cat_features_cast = []
-        for col in cat_features:
-            if col in boolean_cats:
-                cat_features_cast.append(
-                    "(case when " + col + " then 'True' else 'False' end)::text")
-            else:
-                cat_features_cast.append("(" + col + ")::text")
-        cat_features_str = (
-            "{0}._map_catlevel_to_int(array[" +
-            ", ".join(cat_features_cast) +
-            "], cat_levels_in_text, cat_n_levels)").format(schema_madlib)
-    else:
-        cat_features_str = "NULL"
-    if len(con_features) > 0:
-        con_features_str = 'array[' + ','.join(con_features) + ']'
-    else:
-        con_features_str = "NULL"
+
+    cat_features_str, con_features_str = get_feature_str(
+        schema_madlib, boolean_cats, cat_features, con_features,
+        "cat_levels_in_text", "cat_n_levels")
 
     join_str = "," if grouping_cols is None else "JOIN"
     using_str = "" if grouping_cols is None else "USING (" + grouping_cols + ")"
@@ -834,24 +870,10 @@ def _create_translated_view(
         schema_madlib, cat_features_info_table, training_table,
         all_oob_view, oob_prediction_table, cat_features, con_features,
         boolean_cats, id_col_name):
-    if len(cat_features) > 0:
-        cat_features_cast = []
-        for col in cat_features:
-            if col in boolean_cats:
-                cat_features_cast.append(
-                    "(case when " + col + " then 'True' else 'False' end)::text")
-            else:
-                cat_features_cast.append("(" + col + ")::text")
-        cat_features_str = (
-            "{0}._map_catlevel_to_int(array[" +
-            ", ".join(cat_features_cast) +
-            "], cat_levels_in_text, cat_n_levels)").format(schema_madlib)
-    else:
-        cat_features_str = "NULL"
-    if len(con_features) > 0:
-        con_features_str = 'array[' + ','.join(con_features) + ']'
-    else:
-        con_features_str = "NULL"
+
+    cat_features_str, con_features_str = get_feature_str(
+        schema_madlib, boolean_cats, cat_features, con_features,
+        "cat_levels_in_text", "cat_n_levels")
 
     #oob_translated_view
     oob_translated_view = """
@@ -881,15 +903,19 @@ def _create_translated_view(
 
 def _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
                              feature_permute_index, n_perm):
+    # Get a count histogram of the values of variable 'feature_permute_index'
+    # We add '1' to the cat_features value since NULL values are coded as -1.
+    # With this shift, discrete_distribution_agg receives '0' as code for NULL,
+    # and the indices range from 1 to n_level
     sql_create_cat_feat_dist = """
             CREATE OR REPLACE VIEW {all_oob_view}_cat_feat_dist AS
             SELECT
                 sample_id,
                 gid,
                 {schema_madlib}.discrete_distribution_agg(
-                    cat_features[{feature_permute_index}], -- [0, level-1]
+                    cat_features[{feature_permute_index}] + 1, -- [0, 1 ... level]
                     1., -- constant weight
-                    cat_n_levels[{feature_permute_index}] -- level
+                    cat_n_levels[{feature_permute_index}] + 1 -- level + 1
                     ) AS distribution
             FROM
                 {all_oob_view}_translated
@@ -898,6 +924,9 @@ def _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
     plpy.notice("sql_create_cat_feat_dist:\n" + sql_create_cat_feat_dist)
     plpy.execute(sql_create_cat_feat_dist)
 
+    # Create a view for all OOB samples containing the permuted values for
+    # 'feature_permute_index'. Here we rescale the value for 'feature_permute_index'
+    # such that '-1' represents a NULL value and the levels range from 0 to (n_levels-1)
     sql_oob_permuted_view = """
             CREATE OR REPLACE VIEW {all_oob_view}_permuted AS
             SELECT
@@ -908,8 +937,8 @@ def _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
                 dep,
                 con_features,
                 cat_features[1:{feature_permute_index}-1]
-                        || {schema_madlib}.index_weighted_sample(
-                            distribution::double precision[])::integer
+                        ||  ({schema_madlib}.index_weighted_sample(
+                                distribution::double precision[]) - 1)::integer
                         || cat_features[{feature_permute_index}+1:array_upper(cat_features,1)]
                         AS cat_features
             FROM
@@ -930,6 +959,11 @@ def _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
 def _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
                             feature_permute_index, num_bins,
                             con_splits_table, n_perm):
+    # Get a count histogram of the values of variable 'feature_permute_index'
+    # We add '1' to the con_features value since NULL values are coded as NaN
+    # which is translated to -1 by _get_bin_index_by_value.
+    # With this shift, discrete_distribution_agg receives '0' as code for NULL,
+    # and the indices range from 1 to num_bins
     sql_create_con_feat_dist = """
             CREATE OR REPLACE VIEW {all_oob_view}_con_feat_dist AS
             SELECT
@@ -940,9 +974,9 @@ def _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
                         con_features[{feature_permute_index}],
                         con_splits,
                         {feature_permute_index}-1
-                        ),
+                        ) + 1,
                     1., -- constant weight
-                    {num_bins}
+                    {num_bins} + 1
                     ) AS distribution
             FROM
                 {all_oob_view}_translated
@@ -954,6 +988,9 @@ def _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
     plpy.notice("sql_create_con_feat_dist:\n"+sql_create_con_feat_dist)
     plpy.execute(sql_create_con_feat_dist)
 
+    # Create a view for all OOB samples containing the permuted values for
+    # 'feature_permute_index'. Here we rescale the value for 'feature_permute_index'
+    # such that '-1' represents a NULL value and the levels range from 0 to (num_bins-1)
     sql_oob_permuted_view = """
             CREATE OR REPLACE VIEW {all_oob_view}_permuted AS
             SELECT
@@ -966,8 +1003,8 @@ def _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
                     || {schema_madlib}._get_bin_value_by_index(
                             con_splits,
                             {feature_permute_index}-1,
-                            {schema_madlib}.index_weighted_sample(
-                                distribution::double precision[])::integer
+                            ({schema_madlib}.index_weighted_sample(
+                                distribution::double precision[]) - 1)::integer
                             )
                     || con_features[{feature_permute_index}+1:array_upper(con_features,1)]
                     AS con_features,
@@ -999,8 +1036,10 @@ def _calculate_variable_importance(
         oob_prediction_table, importance_table, cat_features_info_table,
         sample_id, id_col_name, dep, is_classification, cat_features,
         con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols, bins,
-        num_separators, n_perm, importance):
+        num_separators, n_perm):
     """Calculate variable importance for all predictors"""
+
+    _assert(n_perm > 0, "Random forest error: Number of permutations must be positive")
 
     bytea8 = schema_madlib + '.bytea8'
     bytea8arr = schema_madlib + '.bytea8[]'
@@ -1049,35 +1088,22 @@ def _calculate_variable_importance(
     oob_summary_table = unique_string()
     _create_oob_summary(oob_prediction_table, is_classification, oob_summary_table)
 
-    sql_create_empty_imp_tbl = """
-            CREATE TABLE {importance_table}
-            (
-                is_categorical boolean,
-                feature_index integer,
-                gid integer,
-                variable_importance double precision
-            );
-            """.format(**locals())
-    plpy.notice("sql_create_empty_imp_tbl:\n"+sql_create_empty_imp_tbl)
-    plpy.execute(sql_create_empty_imp_tbl)
+    #permute feature values
+    for feature_permute_index in range(1, len(cat_features)+1):
+        _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
+                                 feature_permute_index, n_perm)
+        _calculate_one_var_imp(schema_madlib, all_oob_view, oob_summary_table,
+                               model_table, is_classification,
+                               feature_permute_index, 'TRUE', importance_table)
 
-    if importance:
-        #permute feature values
-        for feature_permute_index in range(1, len(cat_features)+1):
-            _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
-                                     feature_permute_index, n_perm)
-            _calculate_one_var_imp(schema_madlib, all_oob_view, oob_summary_table,
-                                   model_table, is_classification,
-                                   feature_permute_index, 'TRUE', importance_table)
-
-        for feature_permute_index in range(1, len(con_features)+1):
-            _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
-                                    feature_permute_index, num_separators,
-                                    con_splits_table, n_perm)
-            _calculate_one_var_imp(schema_madlib, all_oob_view, oob_summary_table,
-                                   model_table, is_classification,
-                                   feature_permute_index, 'FALSE',
-                                   importance_table)
+    for feature_permute_index in range(1, len(con_features)+1):
+        _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
+                                feature_permute_index, num_separators,
+                                con_splits_table, n_perm)
+        _calculate_one_var_imp(schema_madlib, all_oob_view, oob_summary_table,
+                               model_table, is_classification,
+                               feature_permute_index, 'FALSE',
+                               importance_table)
 
     sql_cleanup_con_splits_table = """
             DROP TABLE {con_splits_table} CASCADE
@@ -1110,7 +1136,9 @@ def _calculate_one_var_imp(
                 permute_id,
                 gid,
                 (oob.score::float8 - permute.score::float8) / oob.size::float8
-                    AS normalized_subtraction
+                    AS normalized_subtraction,
+                oob.score::float8 as oob_score,
+                permute.score::float8 as permute_score
             FROM
             (
                 SELECT
@@ -1264,7 +1292,7 @@ def _create_summary_table(**kwargs):
                 {verbose}::boolean              AS verbose,
                 {importance}::boolean           AS importance,
                 {num_permutations}::integer     AS num_permutations,
-                {num_groups}::integer             AS num_all_groups,
+                {num_groups}::integer           AS num_all_groups,
                 {num_failed_groups}::integer    AS num_failed_groups,
                 {n_rows}::integer               AS total_rows_processed,
                 {n_rows_skipped}::integer       AS total_rows_skipped,
@@ -1380,8 +1408,8 @@ def _insert_into_result_table(schema_madlib, tree_states, output_table_name,
 def _forest_validate_args(
         training_table_name, output_table_name, id_col_name,
         list_of_features, dependent_variable, list_of_features_to_exclude,
-        grouping_cols, num_trees, num_random_features, max_tree_depth, min_split,
-        min_bucket, num_bins):
+        grouping_cols, num_trees, num_random_features, n_perm,
+        max_tree_depth, min_split, min_bucket, num_bins):
     """ Validate the arguments for the random forest training function"""
 
     input_tbl_valid(training_table_name, 'Random forest')
@@ -1413,6 +1441,7 @@ def _forest_validate_args(
                 "Random forest error: Invalid grouping column argument.")
 
     _assert(num_trees > 0, "Random forest error: num_trees must be positive.")
+    _assert(n_perm > 0, "Random forest error: num_permutations must be positive.")
     if num_random_features is not None:
         _assert(num_random_features > 0,
                 "Random forest error: num_random_features must be positive.")
