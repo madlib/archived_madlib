@@ -1531,10 +1531,6 @@ template <class Container, class DTree>
 inline
 TreeAccumulator<Container, DTree>&
 TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
-    std::stringstream debug;
-    debug << "cat_stats size = " << cat_stats.rows() << "x" << cat_stats.cols() << std::endl;
-    debug << "con_stats size = " << con_stats.rows() << "x" << con_stats.cols() << std::endl;
-    warning(debug.str());
 
     tree_type dt = std::get<0>(inTuple);
     const MappedIntegerVector& cat_features = std::get<1>(inTuple);
