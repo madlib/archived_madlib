@@ -68,8 +68,8 @@ endif (NOT EIGEN_TAR_SOURCE)
 # specify an alternative path to the PyXB tarball:
 # -DPYXB_TAR_SOURCE=/path/to/PyXB-x.x.x.tar.gz
 
-set(PYXB_VERSION "1.2.3")
-set(PYXB_TAR_MD5 e7e15abb99f686939ef4c4bead4f05e3)
+set(PYXB_VERSION "1.2.4")
+set(PYXB_TAR_MD5 cea2ffde4a36ca88f76c687ee6549cfd)
 
 set(PYXB_TAR "PyXB-${PYXB_VERSION}.tar.gz")
 set(PYXB_URL "${SOURCEFORGE_BASE_URL}/pyxb/files/${PYXB_TAR}")

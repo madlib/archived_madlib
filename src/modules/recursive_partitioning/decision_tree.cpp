@@ -62,7 +62,7 @@ initialize_decision_tree::run(AnyType & args){
     dt.feature_thresholds(0) = 0;
     dt.is_categorical(0) = 0;
     if (max_n_surr > 0){
-        dt.surr_indices.setConstant(dt.NON_EXISTING);
+        dt.surr_indices.setConstant(dt.SURR_NON_EXISTING);
         dt.surr_thresholds.setConstant(0);
         dt.surr_status.setConstant(0);
     }
@@ -455,12 +455,12 @@ display_text_tree::run(AnyType &args){
 // Remove me's subtree and make it a leaf
 void mark_subtree_removal_recur(MutableTree &dt, int me) {
     if (me < dt.predictions.rows() &&
-            dt.feature_indices(me) != dt.NON_EXISTING) {
+            dt.feature_indices(me) != dt.NODE_NON_EXISTING) {
         int left = static_cast<int>(dt.trueChild(static_cast<Index>(me))),
             right = static_cast<int>(dt.falseChild(static_cast<Index>(me)));
         mark_subtree_removal_recur(dt, left);
         mark_subtree_removal_recur(dt, right);
-        dt.feature_indices(me) = dt.NON_EXISTING;
+        dt.feature_indices(me) = dt.NODE_NON_EXISTING;
     }
 }
 
@@ -515,7 +515,7 @@ string print_debug_list(IterableContainer debug_list){
 
 /*
  * Pruning the tree by setting the pruned nodes'
- * feature_indices value to be NON_EXISTING.
+ * feature_indices value to be NODE_NON_EXISTING.
  *
  * Closely follow rpart's implementation. Please read the
  * source code of rpart/src/partition.c
@@ -526,7 +526,7 @@ SubTreeInfo prune_tree(MutableTree &dt,
                        double estimated_complexity,
                        std::vector<double> & node_complexities) {
     if (me >= dt.feature_indices.size() || /* out of range */
-            dt.feature_indices(me) == dt.NON_EXISTING)
+            dt.feature_indices(me) == dt.NODE_NON_EXISTING)
         return SubTreeInfo(-1, 0, 0, 0, 0);
 
     double risk = dt.computeRisk(me);
@@ -628,8 +628,8 @@ void make_cp_list(MutableTree & dt,
     cp_list.push_back(node_complexities[0] / root_risk);
     for (uint i = 1; i < node_complexities.size(); i++){
         Index parent_id = dt.parentIndex(i);
-        if (dt.feature_indices(i) != dt.NON_EXISTING &&
-                dt.feature_indices(parent_id) != dt.NON_EXISTING){
+        if (dt.feature_indices(i) != dt.NODE_NON_EXISTING &&
+                dt.feature_indices(parent_id) != dt.NODE_NON_EXISTING){
             double parent_cp = node_complexities[parent_id];
             if (node_complexities[i] > parent_cp)
                 node_complexities[i] = parent_cp;
@@ -700,19 +700,20 @@ prune_and_cplist::run(AnyType &args){
 /*
  * Fil a row of the frame matrix using data in tree
  */
-void fill_row(MutableNativeMatrix &frame, Tree &dt, int me, int i,
-        int n_cats) {
-    if (dt.is_categorical(me)) {
-        frame(i,0) = dt.feature_indices(me);
-    } else {
-        if (dt.feature_indices(me) >= 0)
-            frame(i,0) = dt.feature_indices(me) + n_cats;
-        else
-            frame(i,0) = dt.feature_indices(me);
-    }
+void fill_row(MutableNativeMatrix &frame, Tree &dt, int me, int i, int n_cats) {
+    frame(i,0) = static_cast<double>(dt.encodeIndex(dt.feature_indices(me),
+                dt.is_categorical(me), n_cats));
     frame(i,5) = 1; // complexity is not needed in plotting
-    frame(i,6) = 1; // ncompete is not needed in plotting
-    frame(i,7) = 1; // nsurrogate is not needed in plotting
+    frame(i,6) = 0; // ncompete is not needed in plotting
+
+    // How many surrogate variables have been computed for this split
+    int n_surrogates = 0;
+    for (int ii = 0; ii < dt.max_n_surr; ii ++) {
+        if (dt.surr_indices(me * dt.max_n_surr + ii) >= 0) {
+            n_surrogates ++;
+        }
+    }
+    frame(i,7) = n_surrogates;
 
     if (dt.is_regression) {
         frame(i,1) = dt.predictions(me,3); // n
@@ -721,12 +722,13 @@ void fill_row(MutableNativeMatrix &frame, Tree &dt, int me, int i,
         frame(i,4) = dt.predictions(me, 1) / dt.predictions(me,0); // yval
     } else {
         double total_records = dt.nodeWeightedCount(0);
-        double n_records_innode = dt.nodeWeightedCount(me);
+        double n_records_innode = static_cast<double>(dt.nodeCount(me));
+        double n_records_weighted_innode = dt.nodeWeightedCount(me);
         int n_dep_levels = static_cast<int>(dt.n_y_labels);
 
         // FIXME use weight sum as the total number
         frame(i,1) = n_records_innode;
-        frame(i,2) = n_records_innode;
+        frame(i,2) = n_records_weighted_innode;
         frame(i,3) = dt.computeMisclassification(me);
 
         Index max_index;
@@ -751,7 +753,7 @@ void fill_row(MutableNativeMatrix &frame, Tree &dt, int me, int i,
  */
 void transverse_tree(Tree &dt, MutableNativeMatrix &frame,
         int me, int &row, int n_cats) {
-    if (me < dt.feature_indices.size() && dt.feature_indices(me) != dt.NON_EXISTING) {
+    if (me < dt.feature_indices.size() && dt.feature_indices(me) != dt.NODE_NON_EXISTING) {
         fill_row(frame, dt, me, row++, n_cats);
         transverse_tree(dt, frame, static_cast<int>(dt.falseChild(me)), row, n_cats);
         transverse_tree(dt, frame, static_cast<int>(dt.trueChild(me)), row, n_cats);
@@ -767,7 +769,7 @@ AnyType convert_to_rpart_format::run(AnyType &args) {
     // number of nodes in the tree
     int n_nodes = 0;
     for (int i = 0; i < dt.feature_indices.size(); ++i) {
-        if (dt.feature_indices(i) != dt.NON_EXISTING) n_nodes++;
+        if (dt.feature_indices(i) != dt.NODE_NON_EXISTING) n_nodes++;
     }
 
     // number of columns in rpart frame
@@ -790,30 +792,62 @@ AnyType convert_to_rpart_format::run(AnyType &args) {
 // ------------------------------------------------------------
 
 // transverse the tree to get the internal nodes' split thresholds
-void transverse_tree_thresh(Tree &dt, MutableNativeColumnVector &thresh,
-        int me, int &row)
-{
+void
+transverse_tree_thresh(const Tree &dt, MutableNativeMatrix &thresh,
+        int me, int &row, int n_cats) {
+    // only for non-leaf nodes
     if (dt.feature_indices(me) >= 0) {
-        thresh[row++] = dt.feature_thresholds(me);
-        transverse_tree_thresh(dt, thresh, static_cast<int>(dt.falseChild(me)), row);
-        transverse_tree_thresh(dt, thresh, static_cast<int>(dt.trueChild(me)), row);
+        // primary
+        thresh(row,0) = dt.encodeIndex(dt.feature_indices(me),
+                                       dt.is_categorical(me),
+                                       n_cats);
+        thresh(row,1) = dt.feature_thresholds(me);
+        row++;
+
+        // surrogates
+        for (int ii = 0; ii < dt.max_n_surr; ii ++) {
+            int surr_ii = me * dt.max_n_surr + ii;
+            if (dt.surr_indices(surr_ii) >= 0) {
+                thresh(row,0) = dt.encodeIndex(dt.surr_indices(surr_ii),
+                                                dt.surr_status(surr_ii) == 1 || dt.surr_status(surr_ii) == -1,
+                                                n_cats);
+                thresh(row,1) = dt.surr_thresholds(surr_ii);
+                row++;
+            }
+        }
+
+        transverse_tree_thresh(dt, thresh, static_cast<int>(dt.falseChild(me)), row, n_cats);
+        transverse_tree_thresh(dt, thresh, static_cast<int>(dt.trueChild(me)), row, n_cats);
     }
 }
 
 // ------------------------------------------------------------
 
-AnyType get_split_thresholds::run(AnyType &args)
-{
+AnyType
+get_split_thresholds::run(AnyType &args) {
     Tree dt = args[0].getAs<ByteString>();
+    int n_cats = args[1].getAs<int>();
     // number of internal nodes
     int in_nodes = 0;
+    // count how many surrogate variables in the whole tree
+    int tot_surr_n = 0;
     for (int i = 0; i < dt.feature_indices.size(); ++i) {
-        if (dt.feature_indices(i) >= 0) in_nodes++;
+        if (dt.feature_indices(i) >= 0) {
+            in_nodes++;
+            for (int ii = 0; ii < dt.max_n_surr; ii ++) {
+                if (dt.surr_indices(i * dt.max_n_surr + ii) >= 0) {
+                    tot_surr_n ++;
+                }
+            }
+        }
     }
 
-    MutableNativeColumnVector thresh(this->allocateArray<double>(in_nodes));
+    MutableNativeMatrix thresh(
+            this->allocateArray<double>(2, in_nodes + tot_surr_n),
+            in_nodes + tot_surr_n,
+            2);
     int row = 0;
-    transverse_tree_thresh(dt, thresh, 0, row);
+    transverse_tree_thresh(dt, thresh, 0, row, n_cats);
     return thresh;
 }
 

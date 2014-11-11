@@ -38,7 +38,7 @@ public:
     MADLIB_DYNAMIC_STRUCT_TYPEDEFS;
 
     enum { MSE, MISCLASS, ENTROPY, GINI };
-    enum { IN_PROCESS_LEAF=-1, FINISHED_LEAF=-2, NON_EXISTING=-3 };
+    enum { IN_PROCESS_LEAF=-1, FINISHED_LEAF=-2, NODE_NON_EXISTING=-3 };
     enum { SURR_NON_EXISTING=-1 };
 
     // functions
@@ -69,7 +69,6 @@ public:
                             const double & max_threshold,
                             const bool & max_is_cat,
                             const uint16_t & min_split,
-                            const uint16_t & min_bucket,
                             const ColumnVector &true_stats,
                             const ColumnVector &false_stats,
                             bool & all_leaf_pure,
@@ -149,6 +148,10 @@ public:
         ArrayHandle<text*> &con_features_str,
         ArrayHandle<text*> &cat_levels_text,
         ArrayHandle<int> &cat_n_levels);
+
+    int encodeIndex(const int &feature_index,
+                      const int &is_categorical,
+                      const int &n_cat_features) const;
 
     // attributes
     // dimension information

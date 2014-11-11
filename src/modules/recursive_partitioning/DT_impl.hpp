@@ -202,13 +202,13 @@ DecisionTree<Container>::incrementInPlace() {
     // mark all newly allocated leaves as non-existing nodes, they will be
     //  categorized as leaf nodes by the parent during expansion
     size_t n_new_leaves = n_orig_nodes + 1;
-    feature_indices.segment(n_orig_nodes, n_new_leaves).setConstant(NON_EXISTING);
+    feature_indices.segment(n_orig_nodes, n_new_leaves).setConstant(NODE_NON_EXISTING);
     feature_thresholds.segment(n_orig_nodes, n_new_leaves).setConstant(0);
     is_categorical.segment(n_orig_nodes, n_new_leaves).setConstant(0);
 
     if (max_n_surr > 0){
         surr_indices.segment(n_orig_nodes*max_n_surr,
-                             n_new_leaves*max_n_surr).setConstant(NON_EXISTING);
+                             n_new_leaves*max_n_surr).setConstant(SURR_NON_EXISTING);
         surr_thresholds.segment(n_orig_nodes*max_n_surr,
                                 n_new_leaves*max_n_surr).setConstant(0);
         surr_status.segment(n_orig_nodes*max_n_surr,
@@ -293,7 +293,7 @@ DecisionTree<Container>::search(MappedIntegerVector cat_features,
     Index current = 0;
     int feature_index = feature_indices(current);
     while (feature_index != IN_PROCESS_LEAF && feature_index != FINISHED_LEAF) {
-        assert(feature_index != NON_EXISTING);
+        assert(feature_index != NODE_NON_EXISTING);
         bool is_split_true = false;
         if (is_categorical(current) != 0) {
             if (isNull(cat_features(feature_index), true)){
@@ -422,7 +422,6 @@ DecisionTree<Container>::updatePrimarySplit(
         const double & max_threshold,
         const bool & max_is_cat,
         const uint16_t & min_split,
-        const uint16_t & min_bucket,
         const ColumnVector &true_stats,
         const ColumnVector &false_stats,
         bool & all_leaf_pure,
@@ -540,7 +539,7 @@ DecisionTree<Container>::expand(const Accumulator &state,
 
                 updatePrimarySplit(current, static_cast<int>(max_feat),
                                    max_threshold, max_is_cat,
-                                   min_split, min_bucket,
+                                   min_split,
                                    max_stats.segment(0, sps),  // true_stats
                                    max_stats.segment(sps, sps),  // false_stats
                                    all_leaf_pure, all_leaf_small,
@@ -622,8 +621,8 @@ DecisionTree<Container>::pickSurrogates(
 
     assert(state.cat_stats.cols() == cat_agg_matrix.rows());
     assert(state.con_stats.cols() == con_agg_matrix.rows());
-    Matrix cat_stats_counts = state.cat_stats * cat_agg_matrix;
-    Matrix con_stats_counts = state.con_stats * con_agg_matrix;
+    Matrix cat_stats_counts(state.cat_stats * cat_agg_matrix);
+    Matrix con_stats_counts(state.con_stats * con_agg_matrix);
 
     // cat_stats_counts size = n_nodes x n_cats*2
     // con_stats_counts size = n_nodes x n_cons*2
@@ -828,7 +827,7 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
 
                 updatePrimarySplit(current, static_cast<int>(max_feat),
                                    max_threshold, max_is_cat,
-                                   min_split, min_bucket,
+                                   min_split,
                                    max_stats.segment(0, sps),  // true_stats
                                    max_stats.segment(sps, sps),  // false_stats
                                    all_leaf_pure, all_leaf_small,
@@ -1058,8 +1057,8 @@ DecisionTree<Container>::recomputeTreeDepth() const{
         uint32_t n_leaf_nodes = static_cast<uint16_t>(pow(2, depth_counter - 1));
         uint32_t leaf_start_index = n_leaf_nodes - 1;
         bool all_non_existing = true;
-        for (Index leaf_index=0; leaf_index < n_leaf_nodes; leaf_index++){
-            if (feature_indices(leaf_start_index + leaf_index) != NON_EXISTING){
+        for (uint32_t leaf_index=0; leaf_index < n_leaf_nodes; leaf_index++){
+            if (feature_indices(leaf_start_index + leaf_index) != NODE_NON_EXISTING){
                 all_non_existing = false;
                 break;
             }
@@ -1175,7 +1174,7 @@ DecisionTree<Container>::display(
     }
     else{
         for(Index index = 0; index < feature_indices.size() / 2; index++) {
-            if (feature_indices(index) != NON_EXISTING &&
+            if (feature_indices(index) != NODE_NON_EXISTING &&
                     feature_indices(index) != IN_PROCESS_LEAF &&
                     feature_indices(index) != FINISHED_LEAF) {
 
@@ -1185,7 +1184,7 @@ DecisionTree<Container>::display(
 
                 // Display the children
                 Index tc = trueChild(index);
-                if (feature_indices(tc) != NON_EXISTING) {
+                if (feature_indices(tc) != NODE_NON_EXISTING) {
                     display_string << "\"" << id_prefix << index << "\" -> "
                                    << "\"" << id_prefix << tc << "\"";
 
@@ -1200,7 +1199,7 @@ DecisionTree<Container>::display(
                 }
 
                 Index fc = falseChild(index);
-                if (feature_indices(fc) != NON_EXISTING) {
+                if (feature_indices(fc) != NODE_NON_EXISTING) {
                     display_string << "\"" << id_prefix << index << "\" -> "
                                    << "\"" << id_prefix << fc << "\"";
 
@@ -1277,7 +1276,7 @@ DecisionTree<Container>::print(
         ArrayHandle<text*> &dep_levels,
         uint16_t recursion_depth){
 
-    if (feature_indices(current) == NON_EXISTING){
+    if (feature_indices(current) == NODE_NON_EXISTING){
         return "";
     }
     std::stringstream print_string;
@@ -1356,6 +1355,22 @@ DecisionTree<Container>::getCatLabels(Index cat_index,
 }
 // -------------------------------------------------------------------------
 
+template <class Container>
+inline
+int
+DecisionTree<Container>::encodeIndex(const int &feature_index,
+        const int &is_categorical, const int &n_cat_features) const {
+    if (is_categorical != 0) {
+        return feature_index;
+    } else {
+        if (feature_index >= 0) {
+            return feature_index + n_cat_features;
+        } else {
+            return feature_index;
+        }
+    }
+}
+// -------------------------------------------------------------------------
 
 template <class Container>
 inline
@@ -1373,7 +1388,7 @@ DecisionTree<Container>::surr_display(
     std::string indentation(5, ' ');
     for(Index curr_node=0; curr_node < feature_indices.size() / 2; curr_node++){
         Index feat_index = feature_indices(curr_node);
-        if (feat_index != NON_EXISTING && feat_index != IN_PROCESS_LEAF &&
+        if (feat_index != NODE_NON_EXISTING && feat_index != IN_PROCESS_LEAF &&
                 feat_index != FINISHED_LEAF) {
             string feature_str = print_split(is_categorical(curr_node),
                                              false,
@@ -1536,7 +1551,7 @@ TreeAccumulator<Container, DTree>::operator<<(const tuple_type& inTuple) {
             uint16_t n_non_leaf_nodes = static_cast<uint16_t>(n_leaf_nodes - 1);
             Index dt_search_index = dt.search(cat_features, con_features);
             if (dt.feature_indices(dt_search_index) != dt.FINISHED_LEAF &&
-                 dt.feature_indices(dt_search_index) != dt.NON_EXISTING) {
+                 dt.feature_indices(dt_search_index) != dt.NODE_NON_EXISTING) {
                 Index row_index = dt_search_index - n_non_leaf_nodes;
                 assert(row_index >= 0);
                 // add this row into the stats for the node
