@@ -142,6 +142,7 @@ DecisionTree<Container>::bind(ByteStream_type& inStream) {
         >> feature_indices.rebind(n_nodes)
         >> feature_thresholds.rebind(n_nodes)
         >> is_categorical.rebind(n_nodes)
+        >> nonnull_split_count.rebind(n_nodes * 2)
         >> surr_indices.rebind(n_nodes * max_surrogates)
         >> surr_thresholds.rebind(n_nodes * max_surrogates)
         >> surr_status.rebind(n_nodes * max_surrogates)
@@ -187,6 +188,7 @@ DecisionTree<Container>::incrementInPlace() {
     feature_indices.segment(0, n_orig_nodes) = orig.feature_indices;
     feature_thresholds.segment(0, n_orig_nodes) = orig.feature_thresholds;
     is_categorical.segment(0, n_orig_nodes) = orig.is_categorical;
+    nonnull_split_count.segment(0, n_orig_nodes*2) = orig.nonnull_split_count;
     if (max_n_surr > 0){
         surr_indices.segment(0, n_orig_nodes*max_n_surr) = orig.surr_indices;
         surr_thresholds.segment(0, n_orig_nodes*max_n_surr) = orig.surr_thresholds;
@@ -205,6 +207,7 @@ DecisionTree<Container>::incrementInPlace() {
     feature_indices.segment(n_orig_nodes, n_new_leaves).setConstant(NODE_NON_EXISTING);
     feature_thresholds.segment(n_orig_nodes, n_new_leaves).setConstant(0);
     is_categorical.segment(n_orig_nodes, n_new_leaves).setConstant(0);
+    nonnull_split_count.segment(n_orig_nodes*2, n_new_leaves*2).setConstant(0);
 
     if (max_n_surr > 0){
         surr_indices.segment(n_orig_nodes*max_n_surr,
@@ -228,21 +231,27 @@ template <class Container>
 inline
 uint64_t
 DecisionTree<Container>::getMajorityCount(Index node_index) const {
+    // majority count is defined as the greater of the tuples passed in to
+    // the two split branches. We only count tuples that have a non-null
+    // value for the primary split of the node.
     if (feature_indices(node_index) < 0)
-        throw std::runtime_error("Requested count for a non-internal node");
-    uint64_t true_count = nodeCount(trueChild(node_index));
-    uint64_t false_count = nodeCount(falseChild(node_index));
-    return true_count >= false_count? true_count : false_count;
+        throw std::runtime_error("Requested count for a leaf/non-existing node");
+    uint64_t true_count = static_cast<uint64_t>(nonnull_split_count(node_index*2));
+    uint64_t false_count = static_cast<uint64_t>(nonnull_split_count(node_index*2 + 1));
+    return true_count >= false_count ? true_count : false_count;
 }
 
 template <class Container>
 inline
 bool
 DecisionTree<Container>::getMajoritySplit(Index node_index) const {
+    // majority count is defined as the greater of the tuples passed in to
+    // the two split branches. We only count tuples that have a non-null
+    // value for the primary split of the node.
     if (feature_indices(node_index) < 0)
-        throw std::runtime_error("Requested split for a non-internal node");
-    uint64_t true_count = nodeCount(trueChild(node_index));
-    uint64_t false_count = nodeCount(falseChild(node_index));
+        throw std::runtime_error("Requested count for a leaf/non-existing node");
+    uint64_t true_count = static_cast<uint64_t>(nonnull_split_count(node_index*2));
+    uint64_t false_count = static_cast<uint64_t>(nonnull_split_count(node_index*2 + 1));
     return (true_count >= false_count);
 }
 // -------------------------------------------------------------------------
@@ -260,7 +269,7 @@ DecisionTree<Container>::getSurrSplit(
             surr_base_index < (node_index+1) * max_n_surr; surr_base_index++){
 
         Index surr_feat_index = surr_indices(surr_base_index);
-        if (surr_feat_index == SURR_NON_EXISTING || surr_feat_index < 0)
+        if (surr_feat_index < 0)
             break;
 
         double surr_feat_threshold = surr_thresholds(surr_base_index);
@@ -415,7 +424,7 @@ DecisionTree<Container>::impurityGain(const ColumnVector &combined_stats,
 // ------------------------------------------------------------
 template <class Container>
 inline
-void
+bool
 DecisionTree<Container>::updatePrimarySplit(
         const Index node_index,
         const int & max_feat,
@@ -423,16 +432,7 @@ DecisionTree<Container>::updatePrimarySplit(
         const bool & max_is_cat,
         const uint16_t & min_split,
         const ColumnVector &true_stats,
-        const ColumnVector &false_stats,
-        bool & all_leaf_pure,
-        bool & all_leaf_small,
-        bool & children_not_allocated) {
-
-    if (children_not_allocated) {
-        // allocate the memory for child nodes if not allocated already
-        incrementInPlace();
-        children_not_allocated = false;
-    }
+        const ColumnVector &false_stats) {
 
     // current node
     feature_indices(node_index) = max_feat;
@@ -445,18 +445,23 @@ DecisionTree<Container>::updatePrimarySplit(
     feature_indices(falseChild(node_index)) = IN_PROCESS_LEAF;
     predictions.row(falseChild(node_index)) = false_stats;
 
-    if (all_leaf_pure){
-        // verify if current's children are pure
-        all_leaf_pure =
-            isChildPure(true_stats) &&
-            isChildPure(false_stats);
-    }
-    if (all_leaf_small){
-        // verify if current's children are too small to split further
-        uint64_t true_count = statCount(true_stats);
-        uint64_t false_count = statCount(false_stats);
-        all_leaf_small = (true_count < min_split && false_count < min_split);
-    }
+    // true_stats and false_stats only include the tuples for which the primary
+    // split is NULL. The number of tuples in these stats need to be stored to
+    // compute a majority branch during surrogate training.
+    uint64_t true_count = statCount(true_stats);
+    uint64_t false_count = statCount(false_stats);
+    nonnull_split_count(node_index*2) = static_cast<double>(true_count);
+    nonnull_split_count(node_index*2 + 1) = static_cast<double>(false_count);
+
+    // current node's children won't split if,
+    // 1. children are pure (responses are too similar to split further)
+    // 2. children are too small to split further (count < min_split)
+    bool children_wont_split = (isChildPure(true_stats) &&
+                                isChildPure(false_stats) &&
+                                true_count < min_split &&
+                                false_count < min_split
+                                );
+    return children_wont_split;
 }
 // -------------------------------------------------------------------------
 
@@ -472,8 +477,7 @@ DecisionTree<Container>::expand(const Accumulator &state,
                                 const uint16_t &max_depth) {
     uint16_t n_non_leaf_nodes = static_cast<uint16_t>(state.n_leaf_nodes - 1);
     bool children_not_allocated = true;
-    bool all_leaf_small = true;
-    bool all_leaf_pure = true;
+    bool children_wont_split = true;
 
     const uint16_t &sps = state.stats_per_split;  // short form for brevity
     for (Index i=0; i < state.n_leaf_nodes; i++) {
@@ -537,13 +541,19 @@ DecisionTree<Container>::expand(const Accumulator &state,
                 else
                     max_threshold = con_splits(max_feat, max_bin);
 
-                updatePrimarySplit(current, static_cast<int>(max_feat),
-                                   max_threshold, max_is_cat,
-                                   min_split,
-                                   max_stats.segment(0, sps),  // true_stats
-                                   max_stats.segment(sps, sps),  // false_stats
-                                   all_leaf_pure, all_leaf_small,
-                                   children_not_allocated);
+                if (children_not_allocated) {
+                    // allocate the memory for child nodes if not allocated already
+                    incrementInPlace();
+                    children_not_allocated = false;
+                }
+                children_wont_split &=
+                    updatePrimarySplit(
+                        current, static_cast<int>(max_feat),
+                        max_threshold, max_is_cat,
+                        min_split,
+                        max_stats.segment(0, sps),   // true_stats
+                        max_stats.segment(sps, sps)  // false_stats
+                    );
 
             } else {
                 feature_indices(current) = FINISHED_LEAF;
@@ -556,7 +566,7 @@ DecisionTree<Container>::expand(const Accumulator &state,
     //      tree_depth starts from 1 though max_depth expects root node depth as 0
     bool training_finished = (children_not_allocated ||
                               tree_depth >= (max_depth + 1) ||
-                              all_leaf_small || all_leaf_pure);
+                              children_wont_split);
     if (training_finished){
         // label any remaining IN_PROCESS_LEAF as FINISHED_LEAF
         for (Index i=0; i < feature_indices.size(); i++) {
@@ -564,13 +574,6 @@ DecisionTree<Container>::expand(const Accumulator &state,
                 feature_indices(i) = FINISHED_LEAF;
         }
     }
-
-    // FIXME: currently the prediction for root node is set by using the stats
-    // of either the first variable (when root is a leaf) or the max of all
-    // variables (when root is internal). This could result in fewer count than
-    // actually seen by root node and cause incorrect prediction.
-    // The easiest solution is to update the root node prediction after
-    // tree train using dependent variable distribution.
 
     return training_finished;
 }
@@ -737,10 +740,10 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
                                 const uint16_t &min_bucket,
                                 const uint16_t &max_depth,
                                 const int &n_random_features) {
+
     uint16_t n_non_leaf_nodes = static_cast<uint16_t>(state.n_leaf_nodes - 1);
     bool children_not_allocated = true;
-    bool all_leaf_small = true;
-    bool all_leaf_pure = true;
+    bool children_wont_split = true;
 
     //select cat and con features to be sampled
     int total_cat_con_features = state.n_cat_features + state.n_con_features;
@@ -817,7 +820,7 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
 
             // create and update child nodes if splitting current
             if (max_impurity_gain > 0 &&
-                    shouldSplitWeights(max_stats, min_split, min_bucket, sps)) {
+                    shouldSplit(max_stats, min_split, min_bucket, sps, max_depth)) {
 
                 double max_threshold;
                 if (max_is_cat)
@@ -825,13 +828,20 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
                 else
                     max_threshold = con_splits(max_feat, max_bin);
 
-                updatePrimarySplit(current, static_cast<int>(max_feat),
-                                   max_threshold, max_is_cat,
-                                   min_split,
-                                   max_stats.segment(0, sps),  // true_stats
-                                   max_stats.segment(sps, sps),  // false_stats
-                                   all_leaf_pure, all_leaf_small,
-                                   children_not_allocated);
+                if (children_not_allocated) {
+                    // allocate the memory for child nodes if not allocated already
+                    incrementInPlace();
+                    children_not_allocated = false;
+                }
+
+                children_wont_split &=
+                    updatePrimarySplit(
+                        current, static_cast<int>(max_feat),
+                        max_threshold, max_is_cat,
+                        min_split,
+                        max_stats.segment(0, sps),   // true_stats
+                        max_stats.segment(sps, sps)  // false_stats
+                    );
 
             } else {
                 feature_indices(current) = FINISHED_LEAF;
@@ -844,7 +854,7 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
     //      tree_depth starts from 1 though max_depth expects root node depth as 0
     bool training_finished = (children_not_allocated ||
                               tree_depth >= (max_depth + 1) ||
-                              all_leaf_small || all_leaf_pure);
+                              children_wont_split);
     if (training_finished){
         // label any remaining IN_PROCESS_LEAF as FINISHED_LEAF
         for (Index i=0; i < feature_indices.size(); i++) {
@@ -940,7 +950,7 @@ inline
 double
 DecisionTree<Container>::computeMisclassification(Index node_index) const {
     if (is_regression) {
-        return  0;
+        return 0;
     } else {
         return predictions.row(node_index).head(n_y_labels).sum() -
                 predictions.row(node_index).head(n_y_labels).maxCoeff();
@@ -1036,7 +1046,6 @@ DecisionTree<Container>::shouldSplitWeights(const ColumnVector &combined_stats,
     // that node. we therefore use statWeightedCount
     // we always want at least 1 tuple going into a child node. Hence the
     // minimum value for min_bucket is 1
-    //
     uint64_t thresh_min_bucket = (min_bucket == 0) ? 1u : min_bucket;
     double true_count = statWeightedCount(combined_stats.segment(0, stats_per_split));
     double false_count = statWeightedCount(combined_stats.segment(stats_per_split, stats_per_split));

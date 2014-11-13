@@ -39,7 +39,7 @@ public:
 
     enum { MSE, MISCLASS, ENTROPY, GINI };
     enum { IN_PROCESS_LEAF=-1, FINISHED_LEAF=-2, NODE_NON_EXISTING=-3 };
-    enum { SURR_NON_EXISTING=-1 };
+    enum { SURR_IS_MAJORITY=-1, SURR_NON_EXISTING=-2 };
 
     // functions
     DecisionTree(Init_type& inInitialization);
@@ -64,16 +64,13 @@ public:
                             MappedColumnVector con_features) const;
     double predict_response(Index feature_index) const;
 
-    void updatePrimarySplit(const Index node_index,
+    bool updatePrimarySplit(const Index node_index,
                             const int & max_feat,
                             const double & max_threshold,
                             const bool & max_is_cat,
                             const uint16_t & min_split,
                             const ColumnVector &true_stats,
-                            const ColumnVector &false_stats,
-                            bool & all_leaf_pure,
-                            bool & all_leaf_small,
-                            bool & children_not_allocated);
+                            const ColumnVector &false_stats);
 
     template <class Accumulator>
     bool expand(const Accumulator &state,
@@ -172,13 +169,21 @@ public:
     // The complete tree is broken into multiple vectors: each vector being the
     // collection of a single variable for all nodes.
 
-    // FIXME -1 and -2 should be replaced by enum values
     // -1 means leaf, -2 mean non-existing node
     IntegerVector_type feature_indices;
     // elements are of integer type for categorical
     ColumnVector_type feature_thresholds;
     // used as boolean array, 0 means continuous, otherwise categorical
     IntegerVector_type is_categorical;
+
+    // Used to keep count of the number of non-null rows that are split to the
+    // left and right children for each internal node.
+    // For leaf nodes, the value is 0.
+    // This is useful when using surrogates to compute the majority count/split
+    // for an internal node. Size = n_nodes x 2
+    ColumnVector_type nonnull_split_count;
+    // FIXME: we use a ColumnVector (elements of 'double' type) to store
+    // big int values, since we dont' yet have a vector type with uint64_t elements.
 
     // 'surrogate_indices' is of size n_nodes x max_n_surrogates
     // If a particular node has fewer than max_n_surrogates, then

@@ -299,67 +299,6 @@ def forest_train(
             dep_n_levels = 1
             dep_list = None
 
-        ##################################################################
-        #### create views and tables for training (growing) of trees
-        # store the prediction for all oob samples
-        # for classification, the prediction is of integer type here
-        oob_prediction_table = unique_string()
-        sql_create_oob_prediction_table = """
-                CREATE TABLE {oob_prediction_table} AS
-                SELECT
-                    {id_col_name},
-                    1 AS sample_id,
-                    1 AS gid,
-                    {dep} AS dep,
-                    {dep} AS oob_prediction
-                FROM {training_table_name}
-                LIMIT 0
-                """.format(**locals())
-        plpy.notice("sql_create_oob_prediction_table:\n" + sql_create_oob_prediction_table)
-        plpy.execute(sql_create_oob_prediction_table)
-
-        # store current bootstrap sample
-        tmp_id_to_count_table = unique_string()
-        sql_create_tmp_id_to_count = """
-                CREATE TEMP TABLE {tmp_id_to_count_table} AS
-                SELECT
-                    {id_col_name},
-                    {schema_madlib}.poisson_random(1) AS poisson_count
-                FROM {training_table_name}
-                LIMIT 0
-                """.format(**locals())
-        plpy.notice("sql_create_tmp_id_to_count:\n" + sql_create_tmp_id_to_count)
-        plpy.execute(sql_create_tmp_id_to_count)
-
-        # views dependent on current bootstrap sample
-        src_view = unique_string()
-        sql_create_src_view = """
-                CREATE VIEW {src_view} AS
-                SELECT *
-                FROM
-                    {training_table_name}
-                JOIN
-                    {tmp_id_to_count_table}
-                USING ({id_col_name})
-                WHERE poisson_count != 0
-                """.format(**locals())
-        plpy.notice("sql_create_src_view:\n" + sql_create_src_view)
-        plpy.execute(sql_create_src_view)
-
-        oob_view = unique_string()
-        sql_create_oob_view = """
-                CREATE VIEW {oob_view} AS
-                SELECT *
-                FROM
-                    {training_table_name}
-                JOIN
-                    {tmp_id_to_count_table}
-                USING ({id_col_name})
-                WHERE poisson_count = 0
-                """.format(**locals())
-        plpy.notice("sql_create_oob_view:\n" + sql_create_oob_view)
-        plpy.execute(sql_create_oob_view)
-
         # a table that maps gid/grp_key to actual columns
         grp_key_to_grp_cols = unique_string()
         # create the above table and perform binning
@@ -441,8 +380,80 @@ def forest_train(
             len(cat_features),
             bins['cat_origin']])
 
-        _create_empty_result_table(schema_madlib, output_table_name)
+        ##################################################################
+        #### create views and tables for training (growing) of trees
+        # store the prediction for all oob samples
+        # for classification, the prediction is of integer type here
+        oob_prediction_table = unique_string()
+        sql_create_oob_prediction_table = """
+                CREATE TABLE {oob_prediction_table} AS
+                SELECT
+                    {id_col_name},
+                    1 AS sample_id,
+                    1 AS gid,
+                    {dep} AS dep,
+                    {dep} AS oob_prediction
+                FROM {training_table_name}
+                LIMIT 0
+                """.format(**locals())
+        plpy.notice("sql_create_oob_prediction_table:\n" + sql_create_oob_prediction_table)
+        plpy.execute(sql_create_oob_prediction_table)
 
+        # store current bootstrap sample
+        tmp_id_to_count_table = unique_string()
+        sql_create_tmp_id_to_count = """
+                CREATE TEMP TABLE {tmp_id_to_count_table} AS
+                SELECT
+                    {id_col_name},
+                    {schema_madlib}.poisson_random(1) AS poisson_count
+                FROM {training_table_name}
+                LIMIT 0
+                """.format(**locals())
+        plpy.notice("sql_create_tmp_id_to_count:\n" + sql_create_tmp_id_to_count)
+        plpy.execute(sql_create_tmp_id_to_count)
+
+        # views dependent on current bootstrap sample
+        src_view = unique_string()
+        sql_create_src_view = """
+                CREATE VIEW {src_view} AS
+                SELECT *
+                FROM
+                    {training_table_name}
+                JOIN
+                    {tmp_id_to_count_table}
+                USING ({id_col_name})
+                WHERE poisson_count != 0
+                """.format(**locals())
+        plpy.notice("sql_create_src_view:\n" + sql_create_src_view)
+        plpy.execute(sql_create_src_view)
+
+        rows_duplicated_view = unique_string()
+        generate_series_name = unique_string()
+        sql_create_rows_duplicated_view = """
+                CREATE VIEW {rows_duplicated_view} AS
+                SELECT {src_view}.*,
+                       generate_series(1, {src_view}.poisson_count) as {generate_series_name}
+                FROM {src_view}
+                """.format(features_str=','.join(features), **locals())
+
+        plpy.notice("sql_create_rows_duplicated_view:\n" + sql_create_rows_duplicated_view)
+        plpy.execute(sql_create_rows_duplicated_view)
+
+        oob_view = unique_string()
+        sql_create_oob_view = """
+                CREATE VIEW {oob_view} AS
+                SELECT *
+                FROM
+                    {training_table_name}
+                JOIN
+                    {tmp_id_to_count_table}
+                USING ({id_col_name})
+                WHERE poisson_count = 0
+                """.format(**locals())
+        plpy.notice("sql_create_oob_view:\n" + sql_create_oob_view)
+        plpy.execute(sql_create_oob_view)
+
+        _create_empty_result_table(schema_madlib, output_table_name)
         ##################################################################
         #### training random forest
         tree_terminated = None
@@ -460,8 +471,8 @@ def forest_train(
 
             if grouping_cols is None:   # non-grouping case
                 tree_state = _tree_train_using_bins(
-                    schema_madlib, bins, src_view, cat_features, con_features,
-                    boolean_cats, num_bins, 'poisson_count', dep, min_split,
+                    schema_madlib, bins, rows_duplicated_view, cat_features, con_features,
+                    boolean_cats, num_bins, '1', dep, min_split,
                     min_bucket, max_tree_depth, filter_null, dep_n_levels,
                     is_classification, split_criterion, True,
                     num_random_features, max_n_surr)
@@ -472,8 +483,8 @@ def forest_train(
 
             else:
                 tree_states = _tree_train_grps_using_bins(
-                    schema_madlib, bins, src_view, cat_features, con_features,
-                    boolean_cats, num_bins, 'poisson_count', grouping_cols,
+                    schema_madlib, bins, rows_duplicated_view, cat_features, con_features,
+                    boolean_cats, num_bins, '1', grouping_cols,
                     grouping_array_str, dep, min_split, min_bucket,
                     max_tree_depth, filter_null, dep_n_levels,
                     is_classification, split_criterion, True,
