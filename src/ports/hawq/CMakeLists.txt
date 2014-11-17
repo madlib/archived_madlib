@@ -147,9 +147,14 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
     )
 
     include_directories(SYSTEM
+        # Note: the order that SERVER_INC is put above CLIENT_INC is important,
+        # because MADlib as a server application allows old version clients.
+        # In the case of conflicting header files, MADlib should take the one
+        # in SERVER_INC (e.g. pg_config.h)
         ${${DBMS_UC}_SERVER_INCLUDE_DIR}
         ${${DBMS_UC}_ADDITIONAL_INCLUDE_DIRS}
-    )
+        # dbconnector.hpp indirectly includes hdfs/hdfs.h (via storage/fd.h)
+        ${${DBMS_UC}_CLIENT_INCLUDE_DIR})
 
     add_madlib_connector_library(madlib_${DBMS}
         lib
@@ -202,9 +207,6 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         set_source_files_properties(${LEGACY_C_FILES} PROPERTIES
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
         )
-
-        # sparse_vector.c indirectly includes openssl/ssl.h (via libpq/libpq-be.h)
-        include_directories(SYSTEM ${${DBMS_UC}_CLIENT_INCLUDE_DIR})
 
     # END Legacy Code
 

@@ -14,6 +14,12 @@
 #ifndef MADLIB_POSTGRES_HEADERS
 #define MADLIB_POSTGRES_HEADERS
 
+// A recent change in the postgres port.h file plays some havoc with /usr/include/stdlib.h
+// (commit https://github.com/postgres/postgres/commit/a919937f112eb2f548d5f9bd1b3a7298375e6380)
+// Since we don't need anything from ports.h we can cheat and say its already been declared.
+// Warning: This could cause problems in the future...
+#define PG_PORT_H
+
 extern "C" {
     #include <postgres.h>
     #include <pg_config.h>         // Use the macro defined in the header to detect the platform

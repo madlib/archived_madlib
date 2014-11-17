@@ -83,18 +83,23 @@ if(NOT DEFINED ${PKG_NAME}_PG_CONFIG)
 endif(NOT DEFINED ${PKG_NAME}_PG_CONFIG)
 
 if(${PKG_NAME}_PG_CONFIG)
+    execute_process(COMMAND ${${PKG_NAME}_PG_CONFIG} --includedir-server
+        OUTPUT_VARIABLE ${PKG_NAME}_SERVER_INCLUDE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+
     execute_process(COMMAND ${${PKG_NAME}_PG_CONFIG} --includedir
         OUTPUT_VARIABLE ${PKG_NAME}_CLIENT_INCLUDE_DIR
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
 endif(${PKG_NAME}_PG_CONFIG)
 
-if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
+if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_SERVER_INCLUDE_DIR)
     set(${PKG_NAME}_VERSION_MAJOR 0)
     set(${PKG_NAME}_VERSION_MINOR 0)
     set(${PKG_NAME}_VERSION_PATCH 0)
     
-	set(CONFIG_FILE ${${PKG_NAME}_CLIENT_INCLUDE_DIR}/pg_config.h)
+    set(CONFIG_FILE ${${PKG_NAME}_SERVER_INCLUDE_DIR}/pg_config.h)
 
     if(EXISTS ${CONFIG_FILE})
         # Read and parse postgres version header file for version number
@@ -168,11 +173,6 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
             )
             set(${PKG_NAME}_EXECUTABLE "${${PKG_NAME}_EXECUTABLE}/postgres")
 
-            execute_process(COMMAND ${${PKG_NAME}_PG_CONFIG} --includedir-server
-                OUTPUT_VARIABLE ${PKG_NAME}_SERVER_INCLUDE_DIR
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-            )
-
             execute_process(COMMAND ${${PKG_NAME}_PG_CONFIG} --libdir
                 OUTPUT_VARIABLE ${PKG_NAME}_LIB_DIR
                 OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -207,7 +207,7 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
 		  "was requested.")
 	  endif(${PACKAGE_FIND_VERSION})
     endif(_PACKAGE_NAME STREQUAL "${_NEEDED_PG_CONFIG_PACKAGE_NAME}")
-endif(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_CLIENT_INCLUDE_DIR)
+endif(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_SERVER_INCLUDE_DIR)
 
 # Checks 'REQUIRED', 'QUIET' and versions. Note that the first parameter is
 # passed in original casing.

@@ -202,7 +202,8 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         )
 
         # sparse_vector.c indirectly includes openssl/ssl.h (via libpq/libpq-be.h)
-        include_directories(SYSTEM ${${DBMS_UC}_CLIENT_INCLUDE_DIR})
+        # removed due to we take out libpq/libpq-be.h
+        # include_directories(SYSTEM ${${DBMS_UC}_CLIENT_INCLUDE_DIR})
 
     # END Legacy Code
 

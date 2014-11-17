@@ -10,7 +10,6 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "catalog/pg_type.h"
-#include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "fmgr.h"
 #include "funcapi.h"
