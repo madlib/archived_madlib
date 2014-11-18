@@ -46,9 +46,11 @@ public:
     double_type dispersion; // to calculate loglik
     double_type dispersion_accum; // to accumulate the dispersion
 
-    convex::Newton<Container,GLMAccumulator> optimizer;
-
     Matrix_type vcov;
+    uint16_type         num_coef;   // number of variables
+    ColumnVector_type   beta;       // coefficients
+    ColumnVector_type   grad;       // accumulating value of gradient
+    Matrix_type         hessian;    // accumulating expected value of Hessian
 };
 
 // ------------------------------------------------------------------------

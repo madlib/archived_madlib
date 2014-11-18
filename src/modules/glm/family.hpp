@@ -40,7 +40,7 @@ class Poisson {
 public:
     static double variance(const double &mu) { return mu; }
     static double loglik(const double &y, const double &mu, const double &) {
-        if (mu == 0) return - std::numeric_limits<double>::infinity();
+        if (mu <= 0) return - std::numeric_limits<double>::infinity();
         double theta = std::log(mu);
         double a = 1.;
         double b = mu;

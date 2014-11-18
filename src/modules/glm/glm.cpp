@@ -39,7 +39,7 @@ typedef GLMAccumulator<MutableRootContainer> MutableGLMState;
     } \
  \
     if (state.empty()) { \
-        state.optimizer.num_coef = static_cast<uint16_t>(x.size()); \
+        state.num_coef = static_cast<uint16_t>(x.size()); \
         state.resize(); \
         if (!args[3].isNull()) { \
             GLMState prev_state = args[3].getAs<ByteString>(); \
@@ -220,6 +220,7 @@ glm_final::run(AnyType& args) {
     if (state.empty() || state.terminated) { return Null(); }
 
     state.apply();
+
     return state.storage();
 }
 
@@ -259,7 +260,7 @@ glm_result_t_stats::run(AnyType& args) {
     result.z_stats = result.coef.cwiseQuotient(result.std_err);
 
     uint64_t n = state.num_rows;
-    uint16_t p = state.optimizer.num_coef;
+    uint16_t p = state.num_coef;
     for (Index i = 0; i < p; i++) {
         result.p_values(i) = 2. * prob::cdf(
                 boost::math::complement(

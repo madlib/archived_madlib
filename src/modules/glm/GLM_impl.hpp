@@ -24,7 +24,7 @@ template <class Container, class Family, class Link>
 inline
 GLMAccumulator<Container,Family,Link>::GLMAccumulator(
         Init_type& inInitialization)
-  : Base(inInitialization), optimizer(inInitialization) {
+: Base(inInitialization) {
 
     this->initialize();
 }
@@ -41,7 +41,8 @@ GLMAccumulator<Container,Family,Link>::reset() {
     terminated = false;
     loglik = 0.;
     dispersion_accum = 0.;
-    optimizer.reset();
+    grad.setZero();
+    hessian.setZero();
 }
 
 /**
@@ -66,13 +67,21 @@ GLMAccumulator<Container,Family,Link>::bind(
         >> loglik
         >> dispersion
         >> dispersion_accum
-        >> optimizer;
+        >> num_coef;
+
+        uint16_t M = num_coef.isNull()
+            ? static_cast<uint16_t>(0)
+            : static_cast<uint16_t>(num_coef);
+        inStream
+            >> beta.rebind(M)
+            >> grad.rebind(M)
+            >> hessian.rebind(M, M);
 
     // bind vcov and optimizer.hessian onto the same memory as we don't need them
     // at the same time
-    vcov.rebind(optimizer.hessian.memoryHandle(),
-                optimizer.hessian.rows(),
-                optimizer.hessian.cols());
+    vcov.rebind(hessian.memoryHandle(),
+                hessian.rows(),
+                hessian.cols());
 }
 
 /**
@@ -100,30 +109,37 @@ GLMAccumulator<Container,Family,Link>::operator<<(
     } else if (x.size() > std::numeric_limits<uint16_t>::max()) {
         warning("Number of independent variables cannot be "
             "larger than 65535.");
-    } else if (optimizer.num_coef != static_cast<uint16_t>(x.size())) {
+    } else if (num_coef != static_cast<uint16_t>(x.size())) {
         warning("Inconsistent numbers of independent variables.");
     } else {
         // normal case
-        if (optimizer.beta.norm() == 0.) {
+        if (beta.norm() == 0.) {
             double mu = Link::init(y);
             double ita = Link::link_func(mu);
             double G_prime = Link::mean_derivative(ita);
             double V = Family::variance(mu);
             double w = G_prime * G_prime / V;
-            dispersion_accum += (y - mu) * (y - mu) / V;
+            // dispersion_accum += (y - mu) * (y - mu) / V;
             loglik += Family::loglik(y, mu, dispersion);
-            optimizer.hessian += x * trans(x) * w; // X_trans_W_X
-            optimizer.grad -= x * w * ita; // X_trans_W_Y
+            hessian += x * trans(x) * w; // X_trans_W_X
+            grad -= x * w * ita; // X_trans_W_Y
         } else {
-            double ita = trans(x) * optimizer.beta;
+            double ita = trans(x) * beta;
             double mu = Link::mean_func(ita);
             double G_prime = Link::mean_derivative(ita);
             double V = Family::variance(mu);
             double w = G_prime * G_prime / V;
             dispersion_accum += (y - mu) * (y - mu) / V;
             loglik += Family::loglik(y, mu, dispersion);
-            optimizer.hessian += x * trans(x) * w; // X_trans_W_X
-            optimizer.grad -= x * (y - mu) * G_prime / V; // X_trans_W_Y
+            
+            if (!std::isfinite(loglik)) {
+                terminated = true;
+                warning("Log-likelihood becomes negative infinite. Maybe the model is not proper for this data set.");
+                return *this;
+            }
+            
+            hessian += x * trans(x) * w; // X_trans_W_X
+            grad -= x * (y - mu) * G_prime / V; // X_trans_W_Y
         }
         num_rows ++;
         return *this;
@@ -146,14 +162,14 @@ GLMAccumulator<Container,Family,Link>::operator<<(
     if (this->empty()) {
         *this = inOther;
     } else if (inOther.empty()) {
-    } else if (optimizer.num_coef != inOther.optimizer.num_coef) {
+    } else if (num_coef != inOther.num_coef) {
         warning("Inconsistent numbers of independent variables.");
         terminated = true;
     } else {
         num_rows += inOther.num_rows;
         loglik += inOther.loglik;
-        optimizer.grad += inOther.optimizer.grad;
-        optimizer.hessian += inOther.optimizer.hessian;
+        grad += inOther.grad;
+        hessian += inOther.hessian;
         dispersion_accum += inOther.dispersion_accum;
     }
 
@@ -180,13 +196,21 @@ template <class Container, class Family, class Link>
 inline
 void
 GLMAccumulator<Container,Family,Link>::apply() {
-    if (!dbal::eigen_integration::isfinite(optimizer.hessian) ||
-            !dbal::eigen_integration::isfinite(optimizer.grad)) {
+    if (!dbal::eigen_integration::isfinite(hessian) ||
+            !dbal::eigen_integration::isfinite(grad)) {
         warning("Hessian or gradient is not finite.");
         terminated = true;
     } else {
-        optimizer.apply();
-        dispersion = dispersion_accum / static_cast<double>(num_rows);
+        SymmetricPositiveDefiniteEigenDecomposition<Matrix> decomposition(
+                hessian, EigenvaluesOnly, ComputePseudoInverse);
+
+        if (beta.norm() == 0.) {
+            dispersion = 1.;
+        } else {
+            dispersion = dispersion_accum / static_cast<double>(num_rows);
+        }
+        hessian = decomposition.pseudoInverse(); // become inverse after apply
+        beta -= hessian * grad;
     }
 }
 
@@ -208,14 +232,14 @@ GLMResult::compute(const GLMAccumulator<Container>& state) {
     // by reference, so we need to bind to db memory
     Allocator& allocator = defaultAllocator();
     uint64_t n = state.num_rows;
-    uint16_t p = state.optimizer.num_coef;
+    uint16_t p = state.num_coef;
     coef.rebind(allocator.allocateArray<double>(p));
     std_err.rebind(allocator.allocateArray<double>(p));
     z_stats.rebind(allocator.allocateArray<double>(p));
     p_values.rebind(allocator.allocateArray<double>(p));
 
     loglik = state.loglik;
-    coef = state.optimizer.beta;
+    coef = state.beta;
     dispersion = state.dispersion *
             static_cast<double>(n) / static_cast<double>(n - p);
     std_err = state.vcov.diagonal().cwiseSqrt();
