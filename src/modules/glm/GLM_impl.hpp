@@ -132,7 +132,7 @@ GLMAccumulator<Container,Family,Link>::operator<<(
             dispersion_accum += (y - mu) * (y - mu) / V;
             loglik += Family::loglik(y, mu, dispersion);
             
-            if (!std::isfinite(loglik)) {
+            if (!std::isfinite(static_cast<double>(loglik))) {
                 terminated = true;
                 warning("Log-likelihood becomes negative infinite. Maybe the model is not proper for this data set.");
                 return *this;
