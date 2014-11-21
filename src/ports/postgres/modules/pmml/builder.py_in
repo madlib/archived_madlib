@@ -161,7 +161,7 @@ class PMMLBuilder(object):
         self._build_header()
         self._build_data_dictionary()
         self._build_model()
-        pmml = PMML(self.header, self.data_dictionary, self.model, version='4.0')
+        pmml = PMML(self.header, self.data_dictionary, self.model, version='4.1')
 
         self._format(pmml)
 
@@ -901,7 +901,8 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         thresh from the _query_output_table is an array, convert it
         into a matrix format to simplify the following processing.
         """
-        thresh_vector = [float(x) for x in thresh_string.split(',')]
+        thresh_vector = ([] if thresh_string == '' 
+                           else [float(x) for x in thresh_string.split(',')])
         ncol = 2
         nrow = len(thresh_vector) / ncol
         thresh_matrix = [[0 for j in range(ncol)] for i in range(nrow)]
@@ -958,3 +959,128 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
                 count += 1
             cat_level_array.append(tmp)
         return cat_level_array
+
+
+class RandomForestPMMLBuilder(DecisionTreePMMLBuilder):
+    """Builder class for PMML model 'ForestModel'
+    """
+    def __init__(self, schema_madlib, model_type, model_table, name_spec):
+        DecisionTreePMMLBuilder.__init__(self, schema_madlib, model_type,
+                model_table, name_spec)
+        self.mining_schema = None
+
+    def _parse_summary(self):
+        self.y_str = self.summary['dependent_varname']
+        # assume that summary table sort the independent varnames (cat, con)
+        self.x_str = self.summary['independent_varnames']
+        self.x = [s.strip() for s in self.x_str.split(',')]
+        self.n_coef = len(self.x)
+
+        self.grouping_col = self.summary['grouping_cols']
+        self.grouping_str = '' if self.grouping_col is None \
+                else self.grouping_col + ','
+
+        self.cat_features = [s.strip()
+                for s in self.summary['cat_features'].split(',') if s.strip() != '']
+        self.con_features = [s.strip()
+                for s in self.summary['con_features'].split(',') if s.strip() != '']
+        self.n_cats = len(self.cat_features)
+
+        self.is_classification = self.summary['is_classification']
+        if self.is_classification:
+            # remove possible quotes around the values
+            self.y_levels = [s.strip().strip("\"")
+                    for s in self.summary['dependent_var_levels'].split(',')]
+
+        self.y_data_type = self.summary['dependent_var_type']
+        self.y_data_type = self.__class__.DATA_TYPE_DICT[self.y_data_type.lower()]
+
+        # figure out whether each x is categorical or continuous
+        self.x_optype = ['categorical' if x in self.cat_features else 'continuous'
+                for x in self.x]
+        self.model_table_group = self.model_table + "_group"
+        
+        self.x_data_type = [s.strip()
+                for s in self.summary['independent_var_types'].split(',')]
+        for i, t in enumerate(self.x_data_type):
+            self.x_data_type[i] = self.__class__.DATA_TYPE_DICT[t.lower()]
+
+    def _query_output_table(self):
+        """
+        Re-use _convert_to_rpart_format and _get_split_thresholds
+        functions to extract the tree information, and store in memory.
+        """
+        output_query = """
+                SELECT
+                    {grouping_str}
+                    gid,
+                    array_to_string(
+                        {schema_madlib}._convert_to_rpart_format(
+                            tree,
+                            {n_cats}
+                            ),
+                        ',') AS frame,
+                    cat_levels_in_text,
+                    cat_n_levels,
+                    array_to_string(
+                        {schema_madlib}._get_split_thresholds(
+                            tree,
+                            {n_cats}
+                            ),
+                        ',') AS thresholds
+                FROM
+                    {model_table}
+                JOIN
+                    {model_table_group}
+                using (gid)
+                """.format(**self.__dict__)
+        self.output = plpy.execute(output_query)
+
+    def _parse_output(self):
+        self.gids = [g['gid'] for g in self.output]
+        self.grouped_coefs = [{'coef':[]} for i in range(len(set(self.gids)))]
+      
+        #grouped_coefs groups trees based on gid
+        #difference from decision trees is that, key 'coef'
+        #points to a list of dictionaries instead of a single dictionary.
+        #each dictionary contains information on one tree of the forest.
+        for i in range(len(self.output)):
+            g = self.output[i]
+            gid = g['gid']
+            dl = self.grouped_coefs[gid-1]['coef']
+            if dl is None:
+                dl = []
+            dl.append({'frame': g['frame'], 
+                            'cat_levels' : g['cat_levels_in_text'],
+                            'cat_n' : g['cat_n_levels'],
+                            'thresholds' : g['thresholds'],
+                            'gid' : g['gid']})
+            self.grouped_coefs[gid-1]['coef'] = dl
+            self.grouped_coefs[gid-1].update(dict((k, v) for k, v
+                in self.output[i].items() if k not in
+                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds', 'gid']))
+
+        self.coef0 = self.grouped_coefs[0]['coef']
+        self.grouping_keys = [k for k in self.output[0] if k not in
+                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds', 'gid']]
+
+    def _create_single_model(self, coef0):
+        self._build_mining_schema() # construct MiningSchema
+      
+      # Create segmentation of tree models, combined based on 
+      # classification or regression
+        segment_forest = []
+        for i in range(len(coef0)):
+            node = self._build_node(coef0[i]) # construct Node tree
+            single_model = TreeModel(self.mining_schema, node, 
+                            functionName=self.function,
+                            algorithmName='randomForest_model',
+                            splitCharacteristic='binarySplit')
+            segment_forest.append(Segment(True_(), single_model))
+        segmentation = Segmentation(*segment_forest, 
+                                    multipleModelMethod=
+                                        'majorityVote' if self.is_classification else 'average')
+        return MiningModel(self.mining_schema, 
+                           segmentation,
+                           functionName=self.function)
+
