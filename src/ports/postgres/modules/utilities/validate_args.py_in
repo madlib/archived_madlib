@@ -150,7 +150,7 @@ def rename_table(schema_madlib, orig_name, new_name):
         ## to change the schema of the new table. This is to ensure that we
         ## change the schema of the correct table in case there are multiple
         ## tables with the same new name.
-        orig_table_schema = get_first_schema(schema_madlib, orig_name)
+        orig_table_schema = get_first_schema(orig_name)
 
     if orig_table_schema is None:
         raise AssertionError("Relation {0} not found during rename".
@@ -174,13 +174,12 @@ def rename_table(schema_madlib, orig_name, new_name):
 # -------------------------------------------------------------------------
 
 
-def get_first_schema(schema_madlib, table_name):
+def get_first_schema(table_name):
     """
     Return first schema name from search path that contains given table.
     The search does not include implicit schemas (like pg_catalog)
 
     Args:
-        @param schema_madlib: String, schema where MADlib is installed
         @param table_name: String, table name to search. If table name is
                            schema-qualified then the schema name is returned
                            directly.
@@ -206,13 +205,11 @@ def get_first_schema(schema_madlib, table_name):
         return None
 
     ## get all schemas that contain a table with this name
-    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
     schemas_w_table = _string_to_array(plpy.execute(
-        """SELECT {array_agg}(table_schema::text) AS schemas
+        """SELECT array_agg(table_schema::text) AS schemas
            FROM information_schema.tables
            WHERE table_name='{table_name}'""".
-        format(array_agg=array_agg_string,
-               table_name=table_name))[0]["schemas"])
+        format(table_name=table_name))[0]["schemas"])
 
     if not schemas_w_table:
         return None
@@ -305,7 +302,7 @@ def get_cols(tbl, schema_madlib="madlib"):
 #-------------------------------------------------------------------------
 
 
-def get_cols_and_types(tbl, schema_madlib="madlib"):
+def get_cols_and_types(tbl):
     """
     Get the data types for all columns in a table.
 
@@ -314,7 +311,6 @@ def get_cols_and_types(tbl, schema_madlib="madlib"):
 
     Args:
         @param tbl: string, Name of the table to search in
-        @param schema_madlib: string, Name of schema in which MADlib is installed
 
     Returns:
         Dictionary. Key is the column name and the Value is the data type
@@ -322,12 +318,8 @@ def get_cols_and_types(tbl, schema_madlib="madlib"):
     The data type returned will be the type name if it is a built-in type, or
     'ARRAY' if it is some array. For any other case it will be 'USER-DEFINED'.
     """
-    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
-
     if tbl is None or tbl.lower() == 'null':
         plpy.error('Input error: Table name (NULL) is invalid')
-    if not schema_madlib:
-        plpy.error('Input error: Invalid MADlib schema name')
 
     names = tbl.split(".")
 
@@ -335,17 +327,16 @@ def get_cols_and_types(tbl, schema_madlib="madlib"):
         raise TypeError("Input error: Invalid table name - {0}!".format(tbl))
     elif len(names) == 1:
         table = _unquote_name(names[0])
-        schema = get_first_schema(schema_madlib, table)
+        schema = get_first_schema(table)
     elif len(names) == 2:
         schema = _unquote_name(names[0])
         table = _unquote_name(names[1])
-    sql_string = """SELECT {array_agg_string}(quote_ident(column_name)::varchar) AS cols,
-                           {array_agg_string}(data_type::varchar) AS types
+    sql_string = """SELECT array_agg(quote_ident(column_name)::varchar) AS cols,
+                           array_agg(data_type::varchar) AS types
                     FROM information_schema.columns
                     WHERE table_name = '{table_name}'
                     AND table_schema = '{schema_name}'
-                """.format(array_agg_string=array_agg_string,
-                           table_name=table,
+                """.format(table_name=table,
                            schema_name=schema)
     result = plpy.execute(sql_string)[0]
     col_names = _string_to_array(result['cols'])
@@ -492,7 +483,7 @@ def __explicit_bool_to_text(tbl, cols, schema_madlib):
     """
     Patch madlib.bool_to_text for columns that are of type boolean.
     """
-    col_to_type = get_cols_and_types(tbl, schema_madlib)
+    col_to_type = get_cols_and_types(tbl)
     patched = []
     for col in cols:
         if col_to_type[col] == 'boolean':

@@ -19,8 +19,8 @@ mad_vec = version_wrapper.select_vecfunc()
 
 def __cv_combine_params_type_general(params, params_type, tbl_data,
                                      col_random_id, param_explored,
-                                     explore_value, tbl_input,
-                                     tbl_output):
+                                     explore_value, tbl_input, tbl_output,
+                                     grp_to_param_tbl=None):
     """
     Create argument list for SQL functions for training, validation and metric measuring
 
@@ -52,23 +52,7 @@ def __cv_combine_params_type_general(params, params_type, tbl_data,
         else:
             p = p.strip()
             p_type = params_type[i].strip('"')
-            if p == param_explored or "%explore%" in p:
-                if "=" in p:
-                    # p is a string with key-value pairs, each pair separated by ','
-                    pairs = preprocess_keyvalue_params(p)
-                    param_list = []
-                    for each_pair in pairs:
-                        key_value = [i.strip() for i in each_pair.split("=")]
-                        if key_value[1] == "%explore%":
-                            param_list.append(str(key_value[0]) + "=" +
-                                              str(explore_value))
-                        else:
-                            param_list.append(each_pair)
-                    rst.append("\'{" + ','.join(param_list) + "}\'::" + p_type)
-                else:
-                    rst.append("\'" + explore_value + "\'::" + p_type)
-
-            elif p == "%data%":
+            if p == "%data%":
                 rst.append("\'" + tbl_data + "\'::" + p_type)
             elif p == "%id%":
                 rst.append("\'" + col_random_id + "\'::" + p_type)
@@ -84,10 +68,40 @@ def __cv_combine_params_type_general(params, params_type, tbl_data,
                     rst.append("\'" + tbl_input + "\'::" + p_type)
                 else:
                     rst.append("\'" + tbl_output + "\'::" + p_type)
+            elif p == "%group_param_tbl%":
+                rst.append("\'" + tbl_output + "\'::" + p_type)
             else:
                 rst.append("\'" + p + "\'::" + p_type)
     return ','.join(rst)
 ## ========================================================================
+
+
+def _replace_explore(params, param_explored, explore_value):
+    """
+    Args:
+        @param arg
+
+    Returns:
+
+    """
+    for i, p in enumerate(params):
+        if p == param_explored or "%explore%" in p:
+            if "=" in p:
+                # p is a string with key-value pairs, each pair separated by ','
+                pairs = preprocess_keyvalue_params(p)
+                param_list = []
+                for each_pair in pairs:
+                    key_value = [i.strip() for i in each_pair.split("=")]
+                    if key_value[1] == "%explore%":
+                        param_list.append(str(key_value[0]) + "=" +
+                                          str(explore_value))
+                    else:
+                        param_list.append(each_pair)
+                params[i] = ','.join(param_list)
+            else:
+                params[i] = str(explore_value)
+
+# ----------------------------------------------------------------------
 
 
 def __cv_funcall_general(func, params, params_type, tbl_data, col_random_id,
@@ -124,14 +138,13 @@ def __cv_param_type_explored(params, params_type, param_explored):
 ## ========================================================================
 
 
-def __validate_cv_args(schema_madlib, modelling_func, modelling_params,
-                       modelling_params_type,
-                       param_explored, explore_values,
-                       predict_func, predict_params, predict_params_type,
-                       metric_func, metric_params, metric_params_type,
-                       data_tbl, data_id, id_is_random,
-                       validation_result,
-                       n_folds, data_cols):
+def _validate_cv_args(schema_madlib, modelling_func, modelling_params,
+                      modelling_params_type, param_explored,
+                      predict_func, predict_params, predict_params_type,
+                      metric_func, metric_params, metric_params_type,
+                      data_tbl, data_id, id_is_random,
+                      validation_result, n_folds, data_cols, **kwargs):
+
     if any(arg is None for arg in
             (modelling_func, modelling_params, modelling_params_type,
              predict_func, predict_params, predict_params_type,
@@ -152,10 +165,100 @@ def __validate_cv_args(schema_madlib, modelling_func, modelling_params,
         plpy.error("CV error: Is the data row ID random?")
 
     if n_folds <= 1:
-        plpy.error("CV error: Cross validation total fold number should be larger than 1!")
+        plpy.error("CV error: Cross validation total fold number should "
+                   "be larger than 1!")
 
-    return data_cols
+    n_rows = plpy.execute("SELECT count(*) AS n_rows FROM " + data_tbl
+                          )[0]["n_rows"]
+    if n_rows <= n_folds:
+        plpy.error("CV error: Number of rows less than number of folds")
+
+    return n_rows
 ## ========================================================================
+
+
+def _create_data_tbl_id(data_tbl, data_cols, tbl_all_data, data_id,
+                        id_is_random, col_random_id, tbl_random_id, **kwargs):
+    """ Ensure that the data table has a random id column by one of the following:
+            1. creating a copy of the data table with a random id added in
+            2. creating a mapping from existing id to a random id
+            3. use original table if it already has a random id
+    """
+    if data_id is None:
+        # unique ID column is not given, has to copy the data and create the ID
+        __cv_copy_data_with_id(data_tbl, data_cols, tbl_all_data, col_random_id)
+        tbl_used = tbl_all_data
+    elif id_is_random:
+        # unique ID column is given and is random
+        tbl_used = data_tbl
+        col_random_id = data_id
+    else:
+        # the provided unique ID is not random, create a table
+        # mapping the given ID to a random ID
+        __cv_generate_random_id(data_tbl, data_id, tbl_random_id, col_random_id)
+        tbl_used = data_tbl
+    return tbl_used, col_random_id
+# ----------------------------------------------------------------------
+
+
+def _one_step_cv(tbl_output_model, tbl_output_pred, tbl_output_error, tbl_accum_error,
+                 col_random_id, temp_param_explored, explore_value,
+                 output_created, explore_type_str, data_id,
+                 modelling_func, modelling_params, modelling_params_type, tbl_train,
+                 predict_func, predict_params, predict_params_type, tbl_valid,
+                 metric_func, metric_params, metric_params_type, **kwargs):
+    """
+    Args:
+        @param schema_madlib
+
+    Returns:
+    """
+   # train
+    plpy.execute("""
+        DROP TABLE IF EXISTS {tbl_output_model};
+        DROP TABLE IF EXISTS {tbl_output_model}_summary;
+        DROP TABLE IF EXISTS {tbl_output_pred};
+        DROP TABLE IF EXISTS {tbl_output_error}
+         """.format(**locals()))
+
+    __cv_funcall_general(
+        modelling_func, modelling_params, modelling_params_type,
+        tbl_train, col_random_id, temp_param_explored,
+        explore_value, None, tbl_output_model)
+
+    # validation
+    __cv_funcall_general(
+        predict_func, predict_params, predict_params_type,
+        tbl_valid, col_random_id, temp_param_explored,
+        explore_value, tbl_output_model, tbl_output_pred)
+
+    # measure the performance metric
+    __cv_funcall_general(
+        metric_func, metric_params, metric_params_type,
+        tbl_valid, col_random_id, temp_param_explored,
+        explore_value, tbl_output_pred, tbl_output_error)
+
+    # accumulate the measured metric result
+    if not output_created:
+        plpy.execute("""
+            DROP TABLE IF EXISTS {tbl_accum_error};
+            CREATE TEMP TABLE {tbl_accum_error} as
+                SELECT
+                    ({explore_value}){explore_type_str} as {temp_param_explored},
+                    {tbl_output_error}.*
+                FROM {tbl_output_error}
+        """.format(**locals()))
+        output_created = True
+    else:
+        plpy.execute("""
+            INSERT INTO {tbl_accum_error}
+                SELECT
+                    ({explore_value}){explore_type_str} as {temp_param_explored},
+                    {tbl_output_error}.*
+                FROM {tbl_output_error}
+        """.format(**locals()))
+    return output_created
+# ----------------------------------------------------------------------
 
 
 ## perform cross validation
@@ -173,24 +276,12 @@ def cross_validation_general(
 
     See dev-doc for details.
     """
-    if not data_cols:
-        data_cols = get_cols(data_tbl, schema_madlib)
-
-    __validate_cv_args(
-        schema_madlib, modelling_func, modelling_params, modelling_params_type,
-        param_explored, explore_values,
-        predict_func, predict_params, predict_params_type,
-        metric_func, metric_params, metric_params_type,
-        data_tbl, data_id, id_is_random,
-        validation_result,
-        n_folds, data_cols)
-
-    row_num = plpy.execute("SELECT count(*) AS row_num FROM " +
-                           data_tbl)[0]["row_num"]
-    if row_num <= n_folds:
-        plpy.error("CV error: Number of rows less than number of folds")
-
     with MinWarning("warning"):
+        if not data_cols:
+            data_cols = get_cols(data_tbl, schema_madlib)
+
+        n_rows = _validate_cv_args(**locals())
+
         explore_type = __cv_param_type_explored(modelling_params,
                                                 modelling_params_type,
                                                 param_explored)
@@ -206,30 +297,8 @@ def cross_validation_general(
         tbl_output_pred = unique_string()
         tbl_output_error = unique_string()
         tbl_accum_error = unique_string()
-        kwargs = dict(tbl_accum_error=tbl_accum_error,
-                      explore_type_str=explore_type_str,
-                      tbl_output_error=tbl_output_error,
-                      param_explored=param_explored,
-                      tbl_all_data=tbl_all_data,
-                      tbl_train=tbl_train,
-                      tbl_valid=tbl_valid,
-                      tbl_random_id=tbl_random_id,
-                      tbl_output_model=tbl_output_model,
-                      tbl_output_pred=tbl_output_pred)
 
-        if data_id is None:
-            # unique ID column is not given, has to copy the data and create the ID
-            __cv_copy_data_with_id(data_tbl, data_cols, tbl_all_data, col_random_id)
-            tbl_used = tbl_all_data
-        elif id_is_random:
-            # unique ID column is given and is random
-            tbl_used = data_tbl
-            col_random_id = data_id
-        else:
-            # the provided unique ID is not random, create a table
-            # mapping the given ID to a random ID
-            __cv_generate_random_id(data_tbl, data_id, tbl_random_id, col_random_id)
-            tbl_used = data_tbl
+        tbl_used, col_random_id = _create_data_tbl_id(**locals())
 
         # try to be as general as possible
         # validation using each explore_value
@@ -245,67 +314,20 @@ def cross_validation_general(
             data_folding_only = False
 
         output_created = False
-
         for k in range(n_folds):
             # split data into train and validation parts
             if not data_id or id_is_random:
                 __cv_split_data_using_id_col(tbl_used, data_cols, col_random_id,
-                                             row_num, tbl_train, tbl_valid,
+                                             n_rows, tbl_train, tbl_valid,
                                              n_folds, k+1)
             else:
                 __cv_split_data_using_id_tbl(tbl_used, data_cols, tbl_random_id,
-                                             col_random_id, data_id, row_num,
+                                             col_random_id, data_id, n_rows,
                                              tbl_train, tbl_valid, n_folds, k+1)
 
             for explore_value in temp_explore_values:
-                # train
-                plpy.execute("""
-                            drop table if exists {tbl_output_model};
-                            drop table if exists {tbl_output_model}_summary;
-                            drop table if exists {tbl_output_pred};
-                            drop table if exists {tbl_output_error}
-                             """.format(**kwargs))
-
-                __cv_funcall_general(
-                    modelling_func, modelling_params, modelling_params_type,
-                    tbl_train, col_random_id, temp_param_explored,
-                    explore_value, None, tbl_output_model)
-                # validation
-
-                __cv_funcall_general(
-                    predict_func, predict_params, predict_params_type,
-                    tbl_valid, col_random_id, temp_param_explored,
-                    explore_value, tbl_output_model, tbl_output_pred)
-                # measure the performance metric
-
-                __cv_funcall_general(
-                    metric_func, metric_params, metric_params_type,
-                    tbl_valid, col_random_id, temp_param_explored,
-                    explore_value, tbl_output_pred, tbl_output_error)
-
-                # accumulate the measured metric result
-                if not output_created:
-                    plpy.execute("""
-                        drop table if exists {tbl_accum_error};
-                        create temp table {tbl_accum_error} as
-                            select
-                                ({explore_value}){explore_type_str} as {temp_param_explored},
-                                {tbl_output_error}.*
-                            from {tbl_output_error}
-                    """.format(explore_value=explore_value,
-                               temp_param_explored=temp_param_explored,
-                               **kwargs))
-                    output_created = True
-                else:
-                    plpy.execute("""
-                        insert into {tbl_accum_error}
-                            select
-                                ({explore_value}){explore_type_str} as {temp_param_explored},
-                                {tbl_output_error}.*
-                            from {tbl_output_error}
-                    """.format(explore_value=explore_value,
-                               temp_param_explored=temp_param_explored,
-                               **kwargs))
+                _replace_explore(modelling_params, param_explored, explore_value)
+                output_created = _one_step_cv(**locals())
 
         # compute the averages and standard deviations for all measured metrics (not necessary one)
         __cv_summarize_result(tbl_accum_error, validation_result,
@@ -314,17 +336,140 @@ def cross_validation_general(
 
         # clean up the temporary tables
         plpy.execute("""
-            drop table if exists {tbl_all_data};
-            drop table if exists {tbl_train};
-            drop table if exists {tbl_valid};
-            drop table if exists {tbl_random_id};
-            drop table if exists {tbl_output_model};
-            drop table if exists {tbl_output_pred};
-            drop table if exists {tbl_output_error};
-            drop table if exists {tbl_accum_error};
-        """.format(**kwargs))
+            DROP TABLE IF EXISTS grp_key_to_cp;
+            DROP TABLE IF EXISTS {tbl_all_data};
+            DROP TABLE IF EXISTS {tbl_train};
+            DROP TABLE IF EXISTS {tbl_valid};
+            DROP TABLE IF EXISTS {tbl_random_id};
+            DROP TABLE IF EXISTS {tbl_output_model};
+            DROP TABLE IF EXISTS {tbl_output_pred};
+            DROP TABLE IF EXISTS {tbl_output_error};
+            DROP TABLE IF EXISTS {tbl_accum_error};
+        """.format(**locals()))
         return None
 ## ========================================================================
+
+
+def cross_validation_grouping_w_params(
+        schema_madlib,
+        modelling_func, modelling_params, modelling_params_type,
+        predict_func, predict_params, predict_params_type,
+        metric_func, metric_params, metric_params_type,
+        group_to_param_list_table, param_list_name, grouping_cols,
+        data_tbl, data_id, id_is_random, validation_result, param_explored,
+        data_cols, n_folds, **kwargs):
+    """
+        A general framework that runs cross-validation for modules that are
+        consistent with certain SQL API.
+
+        See dev-doc for details.
+    """
+    with MinWarning("warning"):
+        if not data_cols:
+            data_cols = get_cols(data_tbl, schema_madlib)
+
+        n_rows = _validate_cv_args(**locals())
+
+        explore_type_str = "::INTEGER"
+
+        # all temporary names
+        tbl_all_data = unique_string()
+        tbl_train = unique_string()
+        tbl_valid = unique_string()
+        col_random_id = unique_string()
+        tbl_random_id = unique_string()
+        tbl_output_model = unique_string()
+        tbl_output_pred = unique_string()
+        tbl_output_error = unique_string()
+        tbl_accum_error = unique_string()
+        grp_to_param_tbl = unique_string()
+        temp_param_explored = unique_string()
+
+        tbl_used, col_random_id = _create_data_tbl_id(**locals())
+
+        output_created = False
+
+        grouping_col_str = "" if not grouping_cols else grouping_cols + ','
+
+        plpy.execute("DROP TABLE IF EXISTS {0}".format(grp_to_param_tbl))
+        plpy.execute("""CREATE TABLE {tbl} AS
+                        SELECT {grouping_col_str}
+                               {param_list_name}[1] as explore_value
+                        FROM {group_to_param_list_table}
+                        LIMIT 0
+                     """.format(tbl=grp_to_param_tbl,
+                                grouping_col_str=grouping_col_str,
+                                param_list_name=param_list_name,
+                                group_to_param_list_table=group_to_param_list_table))
+
+        _replace_explore(modelling_params, unique_string(), grp_to_param_tbl)
+        # get the maximum size of the param list among all groups
+        max_len = plpy.execute("""
+            SELECT max(array_upper({0}, 1)) as max_len
+            FROM {1}
+            """.format(param_list_name, group_to_param_list_table))[0]["max_len"]
+
+        for k in range(n_folds):
+            # split data into train and validation parts
+            if not data_id or id_is_random:
+                __cv_split_data_using_id_col(tbl_used, data_cols, col_random_id,
+                                             n_rows, tbl_train, tbl_valid,
+                                             n_folds, k+1)
+            else:
+                __cv_split_data_using_id_tbl(tbl_used, data_cols, tbl_random_id,
+                                             col_random_id, data_id, n_rows,
+                                             tbl_train, tbl_valid, n_folds, k+1)
+
+            for explore_value in range(1, max_len + 1):
+                plpy.execute("TRUNCATE TABLE {0}".format(grp_to_param_tbl))
+                query = """
+                        INSERT INTO {grp_to_param_tbl}
+                        SELECT {grouping_col_str}
+                               (CASE WHEN {explore_value} <= array_upper({param_list_name}, 1)
+                                     THEN {param_list_name}[{explore_value}]
+                                     ELSE {param_list_name}[array_upper({param_list_name}, 1)]
+                                END) as explore_value
+                        FROM {group_to_param_list_table}
+                        """.format(**locals())
+                plpy.execute(query)
+
+                output_created = _one_step_cv(**locals())
+
+        # compute the averages and standard deviations of cv_error for each group and explore value
+        group_using_str = ('' if not grouping_cols
+                           else ("USING (" + grouping_cols + ")"))
+        sql_create_validation_result = """
+                CREATE TABLE {validation_result} AS
+                SELECT
+                    {grouping_col_str}
+                    {param_list_name}[{temp_param_explored}] AS {param_explored},
+                    avg(cv_error) AS cv_error_avg,
+                    stddev(cv_error) AS cv_error_stddev
+                FROM
+                    {tbl_accum_error}
+                JOIN
+                    {data_tbl}
+                USING ({data_id})
+                NATURAL JOIN
+                    {group_to_param_list_table}
+                WHERE {temp_param_explored} <= array_upper({param_list_name}, 1)
+                GROUP BY {grouping_col_str} {temp_param_explored}, {param_list_name}
+                """.format(**locals())
+        plpy.execute(sql_create_validation_result)
+
+        plpy.execute("""
+            DROP TABLE IF EXISTS {grp_to_param_tbl};
+            DROP TABLE IF EXISTS {tbl_all_data};
+            DROP TABLE IF EXISTS {tbl_train};
+            DROP TABLE IF EXISTS {tbl_valid};
+            DROP TABLE IF EXISTS {tbl_random_id};
+            DROP TABLE IF EXISTS {tbl_output_model};
+            DROP TABLE IF EXISTS {tbl_output_pred};
+            DROP TABLE IF EXISTS {tbl_output_error};
+            DROP TABLE IF EXISTS {tbl_accum_error};
+        """.format(**locals()))
+        return None
+# ----------------------------------------------------------------------
 
 
 def cv_linregr_train(schema_madlib, tbl_source, col_ind_var,

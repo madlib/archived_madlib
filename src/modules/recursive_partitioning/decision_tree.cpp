@@ -140,6 +140,8 @@ compute_leaf_stats_transition::run(AnyType & args){
     }
 
     // con_splits size = num_con_features x num_bins
+    // When num_con_features = 0, the input will be an empty string that is read
+    // as a ByteString
     ConSplitsResult<RootContainer> splits_results = args[7].getAs<ByteString>();
 
     // n_response_labels are the number of values the dependent variable takes

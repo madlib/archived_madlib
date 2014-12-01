@@ -12,8 +12,9 @@ import plpy
 from math import sqrt
 from operator import itemgetter
 from itertools import groupby
+from collections import Iterable
 
-from validation.cross_validation import cross_validation_general
+from validation.cross_validation import cross_validation_grouping_w_params
 from utilities.control import MinWarning
 from utilities.control import EnableOptimizer
 from utilities.control import EnableHashagg
@@ -231,14 +232,18 @@ SELECT {schema_madlib}.tree_train(
     n_bins,                 -- Number of bins to find possible node
                                 split threshold values for continuous
                                 variables, default is 100 (Must be greater than 1)
-    pruning_params          -- A comma-separated text containing
+    pruning_params,         -- A comma-separated text containing
                                 key=value pairs of parameters for pruning.
                                 Parameters accepted:
                                     'cp' - complexity parameter with default=0.01,
-                                    'n_folds' - (NOT IMPLEMENTED YET) number of cross-validation folds
+                                    'n_folds' - number of cross-validation folds
                                         with default value of 0 (= no cross-validation)
-    verbose                 -- Boolean, whether to print more info,
-                              default is False
+    surrogate_params,       -- A comma-separated text containing
+                                key=value pairs of parameters for computing surrogate splits.
+                                Parameters accepted:
+                                    'max_surrogates' - Maximum number of surrogates to
+                                        compute for each split
+    verbose                 -- Boolean, whether to print more info, default is False
 );
 
 ------------------------------------------------------------
@@ -253,6 +258,9 @@ are of type TEXT):
                                 categorical variables combined in a single array
     cat_n_levels            -- Number of distinct levels of all categorical variables
     tree_depth              -- Number of levels in the tree (root has level 0)
+    pruning_cp              -- The cost-complexity parameter used for pruning
+                                the trained tree(s). This would be different
+                                from the input cp value if cross-validation is used.
 
 The output summary table ('output_table_summary') has the following columns:
     'method'                -- Method name: 'tree_train'
@@ -272,7 +280,8 @@ The output summary table ('output_table_summary') has the following columns:
     dependent_var_levels    -- For classification, the distinct levels of
                                 the dependent variable
     dependent_var_type      -- The type of dependent variable
-    complexity_parameter    -- The complexity parameter (cp) used for training the output tree(s)
+    input_cp                -- The complexity parameter (cp) used for pruning the
+                                 trained tree(s) (before cross-validation is run)
     independent_var_types   -- The types of independent variables, comma-separated
 
         """
@@ -353,7 +362,14 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
                      dependent_variable, dep_is_bool,
                      grouping_cols, cat_features, con_features,
                      n_bins, boolean_cats, min_split, min_bucket, weights,
-                     max_depth, cp, n_folds, max_n_surr=0, **kwargs):
+                     max_depth, grp_key_to_cp, compute_cp_list=False,
+                     max_n_surr=0, **kwargs):
+    """
+        Args:
+            grp_key_to_cp : Dictionary, mapping from group key to the cp value
+                            for each group. For the no grouping case, the
+                            key is ''
+    """
     filter_null = _get_filter_str(schema_madlib, cat_features, con_features,
                                   boolean_cats, dependent_variable,
                                   grouping_cols, max_n_surr)
@@ -389,7 +405,6 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
         dep_list = []
 
     dep_n_levels = len(dep_list) if dep_list else 1
-    all_cols_types = get_cols_and_types(training_table_name, schema_madlib)
 
     if not grouping_cols:   # non-grouping case
         # 3)  Find the splitting bins, one dict containing two arrays:
@@ -402,16 +417,12 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
 
         # 4) Run tree train till the training is finished
         #  finished: 0 = running, 1 = finished training, 2 = terminated prematurely
-        tree_state = _tree_train_using_bins(**locals())
-        tree_states = [tree_state]
+        tree = _tree_train_using_bins(**locals())
+        tree['grp_key'] = ''
+        tree['cp'] = grp_key_to_cp[tree['grp_key']]
+        tree_states = [tree]
     else:
-        grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
-        grouping_cols_and_types = [(col, _get_col_value(all_cols_types, col))
-                                   for col in grouping_cols_list]
-        grouping_array_str = 'array_to_string(array[' + \
-            ','.join("(case when " + col + " then 'True' else 'False' end)::text"
-                     if col_type == 'boolean' else '(' + col + ')::text'
-                     for col, col_type in grouping_cols_and_types) + "], ',')"
+        grouping_array_str = get_grouping_array_str(training_table_name, grouping_cols)
 
         with EnableOptimizer(False):
             # we disable optimizer (ORCA) for platforms that use it
@@ -431,36 +442,78 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
 
                 # 3b) Load each group's tree state in memory and set to the initial tree
                 tree_states = _tree_train_grps_using_bins(**locals())
+                for tree in tree_states:
+                    if len(grp_key_to_cp.values()) == 1:
+                        # for train w/out CV, the cp value remains the same for
+                        # all groups. This is passed as a single-element list.
+                        tree['cp'] = grp_key_to_cp.values()[0]
+                    else:
+                        tree['cp'] = grp_key_to_cp[tree['grp_key']]
 
     # 5) prune the tree using provided 'cp' value and produce a list of
     #   cp values if cross-validation is required (cp_list = [] if not)
-    cp_list = set()
-    pruned_tree_depths = []
     for tree in tree_states:
-        tree['tree_state'], pruned_depth, curr_cp_list = _prune_and_cplist(
-            schema_madlib, tree['tree_state'], cp, compute_cp_list=(n_folds > 2))
-        if curr_cp_list:
-            cp_list |= set(curr_cp_list)
-        pruned_tree_depths.append(pruned_depth)
-    cp_list = list(cp_list)
+        if 'cp' in tree:
+            pruned_tree = _prune_and_cplist(schema_madlib, tree['tree_state'],
+                                            tree['cp'], compute_cp_list=compute_cp_list)
+            tree['tree_state'] = pruned_tree['tree_state']
+            tree['pruned_depth'] = pruned_tree['pruned_depth']
+            if 'cp_list' in pruned_tree:
+                tree['cp_list'] = pruned_tree['cp_list']
 
-    return tree_states, pruned_tree_depths, bins, dep_list, n_rows, cp_list
+    return tree_states, bins, dep_list, n_rows
 # -------------------------------------------------------------------------
+
+
+def get_grouping_array_str(table_name, grouping_cols, qualifier=None):
+    """
+    Args:
+        @param grouping_cols: list, List of columns used as grouping columns
+    """
+    if qualifier:
+        qualifier_str = qualifier + "."
+    else:
+        qualifier_str = ''
+
+    all_cols_types = get_cols_and_types(table_name)
+    grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
+    grouping_cols_and_types = [(col, _get_col_value(all_cols_types, col))
+                               for col in grouping_cols_list]
+    grouping_array_str = 'array_to_string(array[' + \
+        ','.join("(case when " + col + " then 'True' else 'False' end)::text"
+                 if col_type == 'boolean' else '(' + qualifier_str + col + ')::text'
+                 for col, col_type in grouping_cols_and_types) + "]::text[], ',')"
+    return grouping_array_str
+#------------------------------------------------------------------------------
 
 
 def _build_tree(schema_madlib, is_classification, split_criterion,
                 training_table_name, output_table_name, id_col_name,
                 dependent_variable, dep_is_bool,
-                grouping_cols, cat_features, con_features,
-                n_bins, boolean_cats, min_split, min_bucket, weights,
-                max_depth, cp, n_folds, max_n_surr=0, create_output=False,
-                **kwargs):
-    tree_states, pruned_tree_depths, bins, dep_list, n_rows, cp_list = \
-        _get_tree_states(**locals())
-    if create_output:
-        all_cols_types = get_cols_and_types(training_table_name, schema_madlib)
+                cat_features,  boolean_cats, con_features, grouping_cols,
+                weights, max_depth, min_split, min_bucket, n_bins,
+                cp_table, max_n_surr=0, msg_level="warning", **kwargs):
+
+    compute_cp_list = False
+    if grouping_cols:
+        grouping_array_str = get_grouping_array_str(cp_table, grouping_cols)
+    else:
+        grouping_array_str = "''::TEXT"
+    sql = """SELECT
+                    {0} AS grp_key,
+                    explore_value as cp_val
+              FROM {1}
+          """.format(grouping_array_str, cp_table)
+    grp_cp_values = plpy.execute(sql)
+    grp_key_to_cp = dict((row['grp_key'], row['cp_val']) for row in grp_cp_values)
+
+    with MinWarning(msg_level):
+        plpy.notice("Building tree for cross validation")
+        tree_states, bins, dep_list, n_rows = _get_tree_states(**locals())
+        all_cols_types = get_cols_and_types(training_table_name)
         n_all_rows = plpy.execute("select count(*) from " + training_table_name
                                   )[0]['count']
+        cp = grp_key_to_cp.values()[0]
         _create_output_tables(**locals())
 #------------------------------------------------------------------------------
 
@@ -497,7 +550,7 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                                     n_folds = Number of folds for cross-validation
         @param verbose_mode: str, Verbosity of output messages
     """
-    msg_level = "'notice'" if verbose_mode else "'warning'"
+    msg_level = "notice" if verbose_mode else "warning"
 
     #### Set default values for optional arguments
     min_split = 20 if (min_split is None and min_bucket is None) else min_split
@@ -532,7 +585,7 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                 "Decision tree error: No feature is selected for the model.")
 
         # 2)
-        all_cols_types = get_cols_and_types(training_table_name, schema_madlib)
+        all_cols_types = get_cols_and_types(training_table_name)
         cat_features, con_features, boolean_cats = _classify_features(
             all_cols_types, features)
         # get all rows
@@ -544,46 +597,40 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
             training_table_name, dependent_variable)
 
         # 4) Build the tree with provided cp value
-        tree_states, pruned_tree_depths, bins, dep_list, n_rows, cp_list = \
-            _get_tree_states(**locals())
-        dep_n_levels = len(dep_list) if dep_list else 1
+        compute_cp_list = (n_folds > 1)
+        grp_key_to_cp = {'': cp}
+        # main training function to get trained decision trees
+        plpy.notice("Getting initial tree")
+        tree_states, bins, dep_list, n_rows = _get_tree_states(**locals())
 
         # 5) Perform cross-validation to compute the lowest cp
+        dep_n_levels = len(dep_list) if dep_list else 1
         if n_folds > 1:
-            # returns cp value with lowest CV error
-            lowest_cp = _xvalidate(**locals())
-            if lowest_cp > cp:
-                cp = lowest_cp
-                # we prune each tree further using a lower cp value
-                # giving the optimal pruned tree. This time we don't compute
-                # the cp_list since n_folds = 0
-                for tree in tree_states:
-                    tree['tree_state'], _, _ = _prune_and_cplist(
-                        schema_madlib, tree['tree_state'], cp,
-                        compute_cp_list=False)
+            plpy.notice("Running cross validation")
+            _xvalidate(**locals())
 
+        plpy.notice("Creating output tables")
         _create_output_tables(**locals())
     return None
 # ------------------------------------------------------------
 
 
 def _create_output_tables(schema_madlib, training_table_name, output_table_name,
-                          tree_states, pruned_tree_depths, bins,
+                          tree_states, bins,
                           split_criterion, cat_features, con_features,
                           id_col_name, dependent_variable,
                           is_classification, n_all_rows, n_rows, dep_list, cp,
                           all_cols_types, grouping_cols=None, **kwargs):
     if not grouping_cols:
-        _create_result_table(schema_madlib, tree_states[0], pruned_tree_depths[0],
+        _create_result_table(schema_madlib, tree_states[0],
                              bins['cat_origin'], bins['cat_n'], cat_features,
                              con_features, output_table_name)
     else:
         _create_grp_result_table(
-            schema_madlib, tree_states, pruned_tree_depths, bins, cat_features,
+            schema_madlib, tree_states, bins, cat_features,
             con_features, output_table_name, grouping_cols, training_table_name)
 
     failed_groups = sum(row['finished'] != 1 for row in tree_states)
-
     _create_summary_table(
         schema_madlib, split_criterion, training_table_name,
         output_table_name, id_col_name, cat_features, con_features,
@@ -700,7 +747,7 @@ def _get_bins(schema_madlib, training_table_name, cat_features,
 
         plpy.execute("DROP TABLE {sample_table_name}".format(**locals()))
     else:
-        con_splits = {'con_splits': []}   # no continuous features present
+        con_splits = {'con_splits': ''}   # no continuous features present
 
     # For categorical variables, different from the continuous
     # variable case, we scan the whole table to extract all the
@@ -791,7 +838,7 @@ def _get_bins(schema_madlib, training_table_name, cat_features,
 # ------------------------------------------------------------
 
 
-def _create_result_table(schema_madlib, tree_state, tree_depth,
+def _create_result_table(schema_madlib, tree_state,
                          cat_origin, cat_n, cat_features,
                          con_features, output_table_name):
     """ Create the output table and the summary table
@@ -807,12 +854,13 @@ def _create_result_table(schema_madlib, tree_state, tree_depth,
                     $1 as tree,
                     $2 as cat_levels_in_text,
                     $3 as cat_n_levels,
-                    {tree_depth} as tree_depth
+                    {tree_depth} as tree_depth,
+                    {cp} as pruning_cp
             """.format(output_table=output_table_name,
-                       tree_depth=tree_depth)
-        sql_plan = plpy.prepare(sql, [
-            '{schema_madlib}.bytea8'.format(schema_madlib=schema_madlib),
-            'text[]', 'integer[]'])
+                       tree_depth=tree_state['pruned_depth'],
+                       cp=tree_state['cp'])
+        sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib),
+                                      'text[]', 'integer[]'])
         plpy.execute(sql_plan, [tree_state['tree_state'], cat_origin, cat_n])
     else:
         sql = """
@@ -821,11 +869,12 @@ def _create_result_table(schema_madlib, tree_state, tree_depth,
                     $1 as tree,
                     NULL::text[] as cat_levels_in_text,
                     NULL::integer[] as cat_n_levels,
-                    {tree_depth} as tree_depth
+                    {tree_depth} as tree_depth,
+                    {cp} as pruning_cp
             """.format(output_table=output_table_name,
-                       tree_depth=tree_depth)
-        sql_plan = plpy.prepare(sql, [
-            '{schema_madlib}.bytea8'.format(schema_madlib=schema_madlib)])
+                       tree_depth=tree_state['pruned_depth'],
+                       cp=tree_state['cp'])
+        sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib)])
         plpy.execute(sql_plan, [tree_state['tree_state']])
 # ------------------------------------------------------------
 
@@ -993,8 +1042,8 @@ def _get_bins_grps(
         con = [con_splits['con_splits'] for con_splits in con_splits_all]
         grp_key_con=[con_splits['grp_key'] for con_splits in con_splits_all]
     else:
-        con = []
         grp_key_con=[grp_key for grp_key in grp_to_col_to_row]
+        con = [''] * len(grp_key_con)
 
     return dict(con=con,
                 grp_key_con=grp_key_con,
@@ -1184,50 +1233,50 @@ def _one_step_for_grps(
                 s1.grp_key,
                 {apply_func} as result
             FROM (  SELECT
-                        {grouping_array_str} as grp_key,
-                        {aggregate} as agg_result
+                        {grouping_array_str} AS grp_key,
+                        {aggregate} AS agg_result
                     FROM
                         {training_table_name} as src,
                         ( SELECT
-                            grp_key            as {grp_key},
-                            finished           as {finished},
-                            tree_state         as {tree_state},
-                            con_splits         as {con_splits},
-                            cat_n_levels       as {cat_n_levels},
-                            cat_levels_in_text as {cat_levels_in_text}
+                            grp_key            AS {grp_key},
+                            finished           AS {finished},
+                            tree_state         AS {tree_state},
+                            con_splits         AS {con_splits},
+                            cat_n_levels       AS {cat_n_levels},
+                            cat_levels_in_text AS {cat_levels_in_text}
                           FROM
                             (   SELECT
-                                    unnest($1) as grp_key,
-                                    unnest($2) as finished,
-                                    unnest($3) as tree_state
-                            ) as tree_state_set
+                                    unnest($1) AS grp_key,
+                                    unnest($2) AS finished,
+                                    unnest($3) AS tree_state
+                            ) AS tree_state_set
                             JOIN (
                                 SELECT
-                                    unnest($4) as grp_key,
-                                    unnest($9) as con_splits
-                            ) as con_splits
+                                    unnest($4) AS grp_key,
+                                    unnest($9) AS con_splits
+                            ) AS con_splits
                             USING (grp_key)
                             JOIN
-                            {schema_madlib}._gen_cat_levels_set($5, $6, $7, $8) as cat_levels
+                                {schema_madlib}._gen_cat_levels_set($5, $6, $7, $8) AS cat_levels
                             USING (grp_key)
-                        ) as needed_data
+                        ) AS needed_data
                     WHERE {grouping_array_str} = {grp_key}
                         AND {filter_null}
                     GROUP BY {grouping_cols}
                  ) s1
                 JOIN (  SELECT
                             grp_key,
-                            tree_state as {tree_state},
-                            con_splits as {con_splits}
+                            tree_state AS {tree_state},
+                            con_splits AS {con_splits}
                         FROM (  SELECT
-                                    unnest($1) as grp_key,
-                                    unnest($3) as tree_state
-                                ) as tree_state_set
+                                    unnest($1) AS grp_key,
+                                    unnest($3) AS tree_state
+                             ) AS tree_state_set
                             JOIN
                              (  SELECT
-                                    unnest($4) as grp_key,
-                                    unnest($9) as con_splits
-                             ) as con_splits
+                                    unnest($4) AS grp_key,
+                                    unnest($9) AS con_splits
+                             ) AS con_splits
                             USING (grp_key)
                     ) s2
             USING (grp_key)
@@ -1306,12 +1355,13 @@ def _one_step_for_grps(
 
     # return all tree states (finished and unfinished)
     updated_unfinished.extend(finished_trees)
+
     return updated_unfinished
 # ------------------------------------------------------------
 
 
 def _create_grp_result_table(
-        schema_madlib, tree_states, pruned_tree_depths, bins, cat_features,
+        schema_madlib, tree_states, bins, cat_features,
         con_features, output_table_name, grouping_cols,
         training_table_name):
     """ Create the output table for grouping case.
@@ -1319,6 +1369,7 @@ def _create_grp_result_table(
     grp_key = unique_string()
     tree_state = unique_string()
     tree_depth = unique_string()
+    cp_col = unique_string()
     cat_levels_in_text = unique_string()
     cat_n_levels = unique_string()
     cat_levels_val = cat_levels_in_text if cat_features else "NULL::TEXT[]"
@@ -1332,7 +1383,8 @@ def _create_grp_result_table(
                 {tree_state} as tree,
                 {cat_levels_val} as cat_levels_in_text,
                 {cat_n_levels_val} as cat_n_levels,
-                {tree_depth} as tree_depth
+                {tree_depth} as tree_depth,
+                {cp_col} as pruning_cp
             FROM (
                 SELECT
                     {grouping_cols},
@@ -1344,7 +1396,8 @@ def _create_grp_result_table(
                 SELECT
                     unnest($1) as {grp_key},
                     unnest($2) as {tree_state},
-                    unnest($3) as {tree_depth}
+                    unnest($3) as {tree_depth},
+                    unnest($4) as {cp_col}
             ) s2
             USING ({grp_key})
             """
@@ -1356,7 +1409,7 @@ def _create_grp_result_table(
                         cat_n_levels as {cat_n_levels},
                         cat_levels_in_text as {cat_levels_in_text}
                     FROM
-                        {schema_madlib}._gen_cat_levels_set($4, $5, $6, $7)
+                        {schema_madlib}._gen_cat_levels_set($5, $6, $7, $8)
 
                 ) s3
                 USING ({grp_key})
@@ -1366,12 +1419,13 @@ def _create_grp_result_table(
         sql_plan = plpy.prepare(
             sql, ['text[]',
                   '{schema_madlib}.bytea8[]'.format(schema_madlib=schema_madlib),
-                  'integer[]',
+                  'integer[]', 'double precision[]',
                   'text[]', 'integer[]', 'integer', 'text[]'])
         plpy.execute(sql_plan, [
             [t['grp_key'] for t in tree_states],
             [t['tree_state'] for t in tree_states],
-            pruned_tree_depths,
+            [t['pruned_depth'] for t in tree_states],
+            [t['cp'] for t in tree_states],
             bins['grp_key_cat'],
             bins['cat_n'],
             len(cat_features),
@@ -1380,11 +1434,14 @@ def _create_grp_result_table(
         sql_plan = plpy.prepare(sql, [
             'text[]',
             '{schema_madlib}.bytea8[]'.format(schema_madlib=schema_madlib),
-            'integer[]'])
+            'integer[]',
+            'double precision[]'])
         plpy.execute(sql_plan, [
             [t['grp_key'] for t in tree_states],
             [t['tree_state'] for t in tree_states],
-            pruned_tree_depths])
+            [t['pruned_depth'] for t in tree_states],
+            [t['cp'] for t in tree_states]
+            ])
 # ------------------------------------------------------------
 
 
@@ -1434,6 +1491,11 @@ def _create_summary_table(
         grouping_cols_str = "NULL"
     n_rows_skipped = n_all_rows - n_rows
 
+    if isinstance(cp, Iterable):
+        cp_str = py_list_to_sql_string(cp, 'double precision')
+    else:
+        cp_str = str(cp) + "::double precision"
+
     sql = """
         CREATE TABLE {output_table_name}_summary AS
             SELECT
@@ -1453,7 +1515,7 @@ def _create_summary_table(
                 {n_rows_skipped}::integer      AS total_rows_skipped,
                 {dep_list_str}::text           AS dependent_var_levels,
                 '{dep_type}'::text             AS dependent_var_type,
-                {cp}::double precision         AS complexity_parameter,
+                {cp_str}                       AS input_cp,
                 '{indep_type}'::text           AS independent_var_types
         """.format(**locals())
     plpy.execute(sql)
@@ -1570,7 +1632,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
 
     # find which columns are of type boolean
     boolean_cats = set([key for key, value in
-                        (get_cols_and_types(source, schema_madlib)).iteritems()
+                        (get_cols_and_types(source)).iteritems()
                         if value == 'boolean'])
 
     cat_features_str, con_features_str = get_feature_str(
@@ -1847,7 +1909,25 @@ SELECT * FROM tree_predict_out;
 
 
 def _prune_and_cplist(schema_madlib, tree_state, cp, compute_cp_list=False):
-    """ Prune tree and return a list of cp values if cross-validating
+    """ Prune tree with given cost-complexity parameters
+        and return a list of cp values at which tree can be pruned
+
+        Args:
+            @param schema_madlib: str, MADlib schema name
+            @param tree_state: schema_madlib.bytea8, tree to prune
+            @param cp: float, cost-complexity parameter, all splits that have a
+                                complexity lower than 'cp' will be pruned
+            @param compute_cp_list: bool, optionally return a list of cp values that
+                                are the various complexity boundaries for the splits
+                                in the tree. This list can be used by cross-validation
+                                to explore different cp values.
+
+        Returns:
+            Dictionary containing following keys:
+                tree_state: pruned tree state
+                pruned_depth: depth of tree after pruning
+                cp_list: list of cp values at which tree can be pruned
+                         (returned only if compute_cp_list=True)
     """
     sql = """
         SELECT (pruned_tree).*
@@ -1863,18 +1943,18 @@ def _prune_and_cplist(schema_madlib, tree_state, cp, compute_cp_list=False):
 
     sql_plan = plpy.prepare(sql, ['{schema_madlib}.bytea8'.format(schema_madlib=schema_madlib)])
     pruned_tree = plpy.execute(sql_plan, [tree_state])[0]
-    return pruned_tree['tree_state'], pruned_tree['pruned_depth'], pruned_tree['cp_list']
+    return pruned_tree
 # -------------------------------------------------------------------------
 
 
-def _xvalidate(schema_madlib, training_table_name, output_table_name,
+def _xvalidate(schema_madlib, tree_states, training_table_name, output_table_name,
                id_col_name, dependent_variable,
                list_of_features, list_of_features_to_exclude,
                cat_features, con_features, boolean_cats,
                split_criterion, grouping_cols, weights, max_depth,
                min_split, min_bucket, n_bins, is_classification,
-               dep_is_bool, dep_n_levels, cp, cp_list, n_folds, n_rows,
-               max_n_surr, **kwargs):
+               dep_is_bool, dep_n_levels, n_folds, n_rows,
+               max_n_surr, msg_level='warning', **kwargs):
     """
     Run cross validation for decision tree over multiple cp values
 
@@ -1884,68 +1964,147 @@ def _xvalidate(schema_madlib, training_table_name, output_table_name,
     Side effect:
         Creates a table containing cross-validation error for each cp value
     """
+    # 1) create group_to_param_list_table for CV
+    group_to_param_list_table = unique_string()
+    param_list_name = unique_string()
+    if not grouping_cols:
+        plan = plpy.prepare("""
+                CREATE TABLE {group_to_param_list_table} AS
+                SELECT $1 AS {param_list_name}
+                """.format(**locals()), ["float8[]"])
+        plpy.execute(plan, [tree_states[0]['cp_list']])
+        plpy.notice("Running cross validation for cp values: {0}".format(
+                    str(tree_states[0]['cp_list'])))
+    else:
+        grp_list = []
+        cp_list = []
+        plpy.notice("Running cross validation for cp values:")
+        for tree in tree_states:
+            grp_list.extend([tree['grp_key']]*len(tree['cp_list']))
+            cp_list.extend(tree['cp_list'])
+            plpy.notice("{0} -> {1}".format(tree['grp_key'], str(tree['cp_list'])))
+
+        grouping_array_str = get_grouping_array_str(training_table_name,
+                                                    grouping_cols)
+        grp_key_str = unique_string()
+        plan = plpy.prepare("""
+                CREATE TABLE {group_to_param_list_table} AS
+                SELECT
+                    {grouping_cols},
+                    {param_list_name}
+                FROM
+                (
+                    SELECT {grp_key_str},
+                           array_agg(cp_value) as {param_list_name}
+                    FROM
+                    (
+                        SELECT unnest($1) as {grp_key_str},
+                               unnest($2) as cp_value
+                    ) unnested_grp_cp
+                    GROUP BY {grp_key_str}
+                ) grp_key_to_cp_list
+                JOIN
+                (
+                    SELECT
+                        {grouping_cols},
+                        {grouping_array_str} as {grp_key_str}
+                    FROM {training_table_name}
+                ) grp_key_to_grouping_cols
+                USING ({grp_key_str})
+                """.format(**locals()), ["text[]", "float8[]"])
+        plpy.execute(plan, [grp_list, cp_list])
+
+    # 2) call CV function to actually cross-validate _build_tree
+    # expect output table model_cv({grouping_cols), cp, avg, stddev)
     model_cv = output_table_name + "_cv"
     metric_function = "_tree_misclassified" if is_classification else "_tree_rmse"
     pred_name = '"estimated_{0}"'.format(dependent_variable.strip(' "'))
-    if cp_list:
-        plpy.notice("Running cross validation for cp values = " + str(cp_list))
     grouping_str = 'NULL' if not grouping_cols else '"' + grouping_cols + '"'
     cat_feature_str = _array_to_string(cat_features)
     con_feature_str = _array_to_string(con_features)
     boolean_cat_str = _array_to_string(boolean_cats)
-
     modeling_params = [str(i) for i in
-                       [is_classification,
+                       (is_classification,
                         split_criterion, "%data%", "%model%", id_col_name,
-                        dependent_variable,
-                        dep_is_bool, grouping_str,
-                        cat_feature_str, con_feature_str, boolean_cat_str,
-                        n_bins, min_split, min_bucket, max_depth, weights,
-                        "%explore%", 0, max_n_surr, "TRUE"]]
-    modeling_param_types = (["BOOLEAN"] + ["TEXT"] * 5 + ["BOOLEAN", "TEXT"] +
-                            ["VARCHAR[]"] * 3 + ["INTEGER"] * 4 +
-                            ["TEXT", "DOUBLE PRECISION", "INTEGER", "SMALLINT",
-                             "BOOLEAN"])
+                        dependent_variable, dep_is_bool,
+                        cat_feature_str, boolean_cat_str, con_feature_str,
+                        grouping_str, weights, max_depth,
+                        min_split, min_bucket, n_bins,
+                        "%explore%", max_n_surr, msg_level)]
+    modeling_param_types = (["BOOLEAN"] + ["TEXT"] * 5 + ["BOOLEAN"] +
+                            ["VARCHAR[]"] * 3 + ["TEXT"] * 2 + ["INTEGER"] * 4 +
+                            ["TEXT", "SMALLINT", "TEXT"])
 
-    cross_validation_general(
+    cross_validation_grouping_w_params(
         schema_madlib,
         schema_madlib + '.__build_tree',
         modeling_params,
         modeling_param_types,
-        'cp', [str(i) for i in cp_list],
         schema_madlib + '.tree_predict',
         ["%model%", "%data%", "%prediction%", "response"],
         ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"],
         schema_madlib + "." + metric_function,
-        ["%data%", str(dependent_variable), "%prediction%", str(pred_name),
-         str(id_col_name), "%error%"],
+        ["%data%", dependent_variable, "%prediction%", pred_name, id_col_name, "%error%"],
         ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"],
-        training_table_name, id_col_name,
-        False, model_cv, None, n_folds)
+        group_to_param_list_table, param_list_name, grouping_cols,
+        training_table_name, id_col_name, False, model_cv, 'cp', None, n_folds)
 
-    cv_cols = get_cols(model_cv, schema_madlib)
-    if cv_cols:
-        error_metric_name = None
-        for col in cv_cols:
-            if '_avg' in col.strip():
-                error_metric_name = col
-                break
-        if not error_metric_name:
-            raise RuntimeError("Invalid output table from cross-validation.")
-        if 'cp' in cv_cols:
-            min_cp_value = plpy.execute("""
-                    SELECT max(cp) as cp
-                    FROM {model_cv}
-                    WHERE {error_metric_name} IN
-                    (
-                        SELECT min({error_metric_name})
-                        FROM {model_cv}
-                    )
-                """.format(error_metric_name=error_metric_name,
-                           model_cv=model_cv)
-                )[0]["cp"]
-            return min_cp_value
-    return 0
+    # 3) find the best cp for each group from table {model_cv}
+    if not grouping_cols:
+        grouping_array_str_comma = "''::TEXT AS grp_key,"
+        group_by_str = ''
+        qualified_group_by_str = ''
+        group_select_str = ''
+    else:
+        grouping_array_qualified_str = get_grouping_array_str(training_table_name,
+                                                              grouping_cols,
+                                                              qualifier="min_cv_error")
+        grouping_array_str_comma = grouping_array_qualified_str + " AS grp_key,"
+        grouping_cols_list = grouping_cols.split(",")
+        qualified_group_by_str = "GROUP BY " + ','.join("min_cv_error." + i for i in grouping_cols_list)
+        group_by_str = "GROUP BY " + grouping_cols
+        group_select_str = grouping_cols + ","
+
+    plpy.notice(str(list(plpy.execute("SELECT * FROM {0}".format(model_cv)))))
+    validation_result_query = """
+            SELECT
+                {grouping_array_str_comma}
+                max(cp) AS cp
+            FROM
+                {model_cv}
+            NATURAL JOIN
+            ( SELECT
+                    {group_select_str}
+                    min(cv_error_avg) AS cv_error_avg
+                FROM {model_cv}
+                {group_by_str}
+            ) min_cv_error
+            {qualified_group_by_str}
+        """.format(**locals())
+    plpy.notice("validation_result_query:")
+    plpy.notice(validation_result_query)
+    validation_result = plpy.execute(validation_result_query)
+    plpy.notice("finished validation_result_query, validation_result = " + str(list(validation_result)))
+
+    grp_key_to_best_cp = dict((row['grp_key'], row['cp']) for row in validation_result)
+
+    plpy.notice("Finished cross validation, final pruning ...")
+    # 4) update tree_states to have the best cp cross-validated
+    for tree in tree_states:
+        best_cp = grp_key_to_best_cp[tree['grp_key']]
+        if best_cp > tree['cp']:
+            tree['cp'] = best_cp
+            # we prune each tree further using a higher cp value
+            # giving the optimal pruned tree.
+            # This time we don't need the cp_list.
+            pruned_tree = _prune_and_cplist(schema_madlib,
+                                            tree['tree_state'],
+                                            tree['cp'],
+                                            compute_cp_list=False)
+            tree['tree_state'] = pruned_tree['tree_state']
+            tree['pruned_depth'] = pruned_tree['pruned_depth']
+
+    plpy.execute("DROP TABLE {group_to_param_list_table}".format(**locals()))
 # ------------------------------------------------------------
 
 
@@ -2016,7 +2175,6 @@ def _tree_train_grps_using_bins(
     for key in bins['grp_key_con']:
         group_copy = dict(initialized_tree_state, grp_key=key)
         tree_states.append(group_copy)
-    plpy.notice("Started tree building for all groups")
 
     # The following is only used in random forest:
     # If a group already has a terminated tree (not finished
@@ -2029,6 +2187,7 @@ def _tree_train_grps_using_bins(
                 item['finished'] = 2  # won't continue in _one_step_for_grps
 
     plpy.notice("Started tree building for all groups")
+    level = 0
     while not all(t['finished'] for t in tree_states):
         tree_states = _one_step_for_grps(
             schema_madlib, training_table_name, cat_features,
@@ -2037,6 +2196,8 @@ def _tree_train_grps_using_bins(
             grouping_array_str, dep_var_str, min_split, min_bucket,
             max_depth, filter_null, dep_n_levels, subsample,
             n_random_features, max_n_surr)
+        level += 1
+        plpy.notice("Finished training for level " + str(level))
 
     return tree_states
 #------------------------------------------------------------------------------
