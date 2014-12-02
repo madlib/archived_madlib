@@ -36,3 +36,9 @@ DECLARE_UDF(stats, coxph_resid_stat_final)
  * @brief Scale residuals
  */
 DECLARE_UDF(stats, coxph_scale_resid)
+    
+/**
+ * @Brief Prediction function
+ */
+DECLARE_UDF(stats, coxph_predict_resp)
+DECLARE_UDF(stats, coxph_predict_terms)

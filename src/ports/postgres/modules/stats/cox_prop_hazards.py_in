@@ -11,6 +11,8 @@ Cox prop Hazards: Driver functions
 //"""
 
 import plpy
+import re
+
 from utilities.validate_args import table_exists
 from utilities.validate_args import table_is_empty
 from utilities.validate_args import get_cols
@@ -1214,6 +1216,7 @@ def cox_prop_hazards(schema_madlib, usage_string, **kwargs):
     plpy.warning("This function has been deprecated. Please use 'coxph_train' instead.")
     if usage_string == '':
         message = """
+q
 Summary
 ------------------------------------------------------------------------------------
     Functionality: Cox proprtional hazards regression (Breslow method)
@@ -1255,3 +1258,137 @@ Output:
     else:
         message = "No such option. Run SELECT {schema_madlib}.cox_prop_hazards()"
     return message.format(schema_madlib=schema_madlib);
+
+
+def _validate_predict(schema_madlib, model_table, source_table, id_col_name, 
+                      output_table, pred_type, reference):
+    """ Validate the arguments
+    """
+    _assert(pred_type in ('linear_predictors', 'risk', 'terms'), 
+            "Cox predict error: Invalid prediction type.")
+    _assert(reference in ('sample', 'strata'),
+            "Cox predict error: Invalid reference type.")
+    _assert(model_table and model_table.strip().lower() not in ('null', ''),
+            "Cox predict error: Invalid model table.")
+    _assert(table_exists(model_table),
+            "Cox predict error: Model table is missing.")
+    _assert(source_table and source_table.strip().lower() not in ('null', ''),
+            "Cox predict error: Invalid source table.")
+    _assert(table_exists(source_table),
+            "Cox predict error: source table is missing.")
+    _assert(not table_exists(output_table), 
+            "Cox predict error: output table already exists.")
+    _assert(columns_exist_in_table(
+                source_table,
+                [id_col_name],
+                schema_madlib),
+            "Cox predict error: ID column required in source table ({0})".format(source_table))
+    _assert(columns_exist_in_table(
+                model_table,
+                ["coef"],
+                schema_madlib),
+            "Cox predict error: Invalid model table ({0})".format(model_table))
+    model_summary = model_table + "_summary"
+    _assert(columns_exist_in_table(
+                model_summary,
+                ["independent_varname", "strata"],
+                schema_madlib),
+            "Cox predict error: Invalid summary table ({0})".format(model_summary))
+    
+def coxph_predict(schema_madlib, model_table, source_table, id_col_name, output_table, 
+                  pred_type, reference, **kwargs):
+    """
+        Cox prediction function
+    """
+    if pred_type is None:
+        pred_type = "linear_predictors"
+    if reference is None:
+        reference = "strata"
+    _validate_predict(schema_madlib, model_table, source_table, id_col_name, output_table, 
+                      pred_type, reference)
+    model_table_summary = model_table + "_summary"
+    summary_elements = plpy.execute("SELECT strata, independent_varname FROM {0}"
+                                   .format(model_table_summary))[0]
+    
+    strata = summary_elements['strata']
+    independent_varname = summary_elements['independent_varname']
+    independent_varname_str = re.search('ARRAY\[(.*)\]',independent_varname,re.IGNORECASE).group(1)
+   
+    list_of_avg_col_names = []
+    list_of_avg_col_names_with_aliases = []
+    for indep in independent_varname_str.split(","):
+        list_of_avg_col_names.append("avg_"+indep.strip())
+        list_of_avg_col_names_with_aliases.append("avg(" + indep.strip() + ") as avg_" + indep.strip())
+        
+    avg_comma_sep_str = ",".join(list_of_avg_col_names)
+    avg_substring = ",".join(list_of_avg_col_names_with_aliases)
+ 
+    select_strata = ""
+    group_by_strata = ""
+    where_strata = ""
+   
+    if pred_type == "terms":
+        strata = None
+    if strata is not None and reference == "strata":
+        select_strata = "{strata}".format(**locals()) + "," 
+        group_by_strata = "group by {strata}".format(**locals())
+        strat_cols_condition = ""
+        els = []
+        for s in strata.split(","):
+            els.append("t."+s+" = s."+s)
+        strat_cols_condition = " and ".join(els)
+        where_strata = "where {strat_cols_condition}".format(**locals())
+
+    if pred_type != "terms":
+        sql_predict = """
+            CREATE TABLE {output_table} AS 
+            SELECT {id_col_name}, 
+                   {schema_madlib}._coxph_predict_resp(coef, 
+                                        {independent_varname}, 
+                                        ARRAY[{avg_comma_sep_str}], 
+                                        '{pred_type}'::TEXT) AS {pred_type}
+            FROM (
+                SELECT 
+                    {select_strata} 
+                    {avg_substring}
+                FROM {source_table}
+                {group_by_strata}
+            ) t, 
+            {model_table} m, 
+            {source_table} s
+            {where_strata}
+        """.format(**locals())
+    else:
+        intermediate_col = unique_string()
+        terms_format = ', \n'.join([
+            '{interim}[{j}] as "{c}"'.
+            format(j=i+1, c=c.strip(' "'), interim=intermediate_col)
+            for i, c in enumerate (independent_varname_str.split(","))])
+        
+        sql_predict = """
+            CREATE TABLE {output_table} AS 
+                SELECT 
+                    {id_col_name}, 
+                    {terms_format}    
+                FROM (
+                    SELECT
+                        {id_col_name},
+                        {schema_madlib}._coxph_predict_terms(coef, 
+                                            {independent_varname}, 
+                                            ARRAY[{avg_comma_sep_str}])  
+                                                AS {intermediate_col}
+                    FROM (
+                        SELECT
+                            {select_strata}
+                            {avg_substring}
+                        FROM {source_table}
+                        {group_by_strata}
+                    ) t,
+                    {model_table} m,
+                    {source_table} s
+                    {where_strata}
+                ) subq
+        """.format(**locals())
+
+    plpy.notice("sql_predict:\n"+sql_predict)
+    plpy.execute(sql_predict)

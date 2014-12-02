@@ -234,6 +234,55 @@ string should be double-quoted; in this case the input would be '"MyTable"'.
 - The cox_prop_hazards_regr() and cox_prop_hazards() functions have been
 deprecated; coxph_train() should be used instead.
 
+@anchor predict
+@par Prediction Function
+The prediction function is provided to calculate the linear predictors or the risk
+for the given prediction data. It has the 
+following syntax:
+<pre class="syntax">
+coxph_predict(model_table,
+              source_table,
+              id_col_name,
+              output_table,
+              pred_type,
+              reference)
+</pre>
+
+\b Arguments 
+<DL class="arglist">
+  <DT>model_table</DT>
+  <DD>TEXT. Name of the table containing the cox model.</DD>
+  
+  <DT>source_table</DT>
+  <DD>TEXT. Name of the table containing the prediction data.</DD> 
+
+  <DT>id_col_name</DT>
+  <DD>TEXT. Name of the id column in the source table.</DD>
+
+  <DT>output_table</DT>
+  <DD>TEXT. Name of the table to store the prediction results in.</DD>
+        The output table is named by the <em>output_table</em> argument and has
+        the following columns:
+        <table class="output">
+            <tr>
+                <th>id</th>
+                <td>TEXT. The id column name from the source table.</td>
+            </tr>
+            <tr>
+                <th>predicted_result</th>
+                <td>DOUBLE PRECISION. Result of prediction based of the value of
+                the prediction type parameter.</td>
+            </tr>
+        </table>
+  
+  <DT>pred_type</DT>
+  <DD>TEXT, OPTIONAL. Type of prediction. This can be one of 'linear_predictors', 
+  'risk', or 'terms'. DEFAULT='linear_predictors'.</DD>
+
+  <DT>reference</DT>
+  <DD>TEXT, OPTIONAL. Reference level to use for centering predictions.
+  Can be one of 'strata', 'sample'. DEFAULT='strata'.</DD>
+
 @anchor examples
 @examp
 -# View online help for the proportional hazards training method.
@@ -304,6 +353,82 @@ hessian        | {{2.78043065745617,-2.25848560642414},{-2.25848560642414,8.5047
 num_iterations | 5
 </pre>
 
+-# Predicting using cox model.
+(This example uses the original data table to perform the prediction. Typically
+a different test dataset with the same features as the original training dataset 
+would be used for predition.)
+<pre class="example">
+\\\x off
+-- Display the linear predictors for the original dataset
+SELECT madlib.coxph_predict('sample_cox', 
+                            'sample_data',
+                            'id',
+                            'sample_pred');
+SELECT * FROM sample_pred;
+ id |  predicted_value   
+----+--------------------
+  0 |  -2.97110918125034
+  4 |  -2.41944126847803
+  6 |   -1.5167119566688
+  8 |  -1.96807661257341
+ 10 |  0.623090856508638
+ 12 |  -0.58054822590367
+ 14 |  -1.04863009128623
+ 16 | -0.714285901727259
+ 18 |   2.01061924317838
+ 20 |   2.98327228490375
+ 22 |   3.85256717775708
+ 24 |     5.507570916074
+  1 |  -2.93767476229444
+  3 |  -1.71731847040418
+  5 |  -1.09878171972008
+  7 |  -2.03494545048521
+  9 |  -1.78418730831598
+ 15 | -0.881457996506747
+ 19 |  -1.53342916614675
+ 11 |  0.993924357027849
+ 13 | -0.343452401208048
+ 17 |   1.02735877598375
+ 21 |   1.19453087076323
+ 23 |   5.35711603077246
+(24 rows)
+</pre>
+<pre class="example">
+-- Display the relative risk for the original dataset
+SELECT madlib.coxph_predict('sample_cox', 
+                            'sample_data',
+                            'id',
+                            'sample_pred',
+                            'risk');
+ id |  predicted_value   
+ ----+--------------------  
+  1 | 0.0529887971503509  
+  3 |  0.179546963459175
+  5 |   0.33327686110022
+  7 |  0.130687611255372
+  9 |  0.167933483703554
+ 15 |  0.414178600294289
+ 19 |  0.215794402223054
+ 11 |   2.70181658768287
+ 13 |  0.709317242984782
+ 17 |   2.79367735395696
+ 21 |   3.30200833843654
+ 23 |   212.112338046551
+  0 | 0.0512464372091503
+  4 | 0.0889713146524469
+  6 |  0.219432204682557
+  8 |  0.139725343898993
+ 10 |   1.86468261037506
+ 12 |  0.559591499901241
+ 14 |  0.350417460388247
+ 16 |  0.489541567796517
+ 18 |   7.46794038691975
+ 20 |   19.7523463121038
+ 22 |   47.1138577624204
+ 24 |   246.551504798816
+(24 rows)
+</pre>
+
 -# View online help for the function to test Proportional Hazards Assumption.
 <pre class="example">
 SELECT madlib.cox_zph();
@@ -328,7 +453,6 @@ rho        | {0.00237308357328641,0.0375600568840431}
 chi_square | {0.000100675718191977,0.0232317400546175}
 p_value    | {0.991994376850758,0.878855984657948}
 </pre>
-
 
 @anchor background
 @par Technical Background
@@ -619,7 +743,120 @@ RETURNS VOID AS $$
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+----------------------------------------------------------------------
+-- Cox regression: Prediction ----------------------------------------
+/**
+ * @brief Predict the linear Predictor or the risk for the given data.
+ *
+ * @param model_table Name of the table containing the cox model.
+ * @param source_table  Name of the table containing the prediction data.
+ * @param output_table Name of the table to store the prediction results into.
+ * @param pred_type Type of prediction. Can be one of 'linear_predictors', 'risk'
+ * or 'terms'.
+ * @param reference Reference level to use for centering predictions. Can
+ *                  be one of 'sample' or 'strata'.
+ * 
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_predict(
+    model_table   TEXT,
+    source_table  TEXT,
+    id_col_name   TEXT,
+    output_table  TEXT,
+    pred_type   TEXT,
+    reference   TEXT
+) RETURNS VOID AS $$
+PythonFunction(stats, cox_prop_hazards, coxph_predict)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_predict(
+    model_table     TEXT,
+    source_table    TEXT,
+    id_col_name     TEXT,
+    output_table    TEXT,
+    pred_type       TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.coxph_predict($1, $2, $3, $4, $5, NULL::TEXT);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_predict(
+    model_table     TEXT,
+    source_table    TEXT,
+    id_col_name     TEXT,
+    output_table    TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.coxph_predict($1, $2, $3, $4, NULL::TEXT, NULL::TEXT);
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._coxph_predict_resp(
+    coef                DOUBLE PRECISION[],
+    col_ind_var         DOUBLE PRECISION[],
+    mean_ind_var        DOUBLE PRECISION[],
+    pred_type           TEXT
+) RETURNS DOUBLE PRECISION
+AS 'MODULE_PATHNAME', 'coxph_predict_resp'
+LANGUAGE C STRICT IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._coxph_predict_terms(
+    coef                DOUBLE PRECISION[],
+    col_ind_var         DOUBLE PRECISION[],
+    mean_ind_var        DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'coxph_predict_terms'
+LANGUAGE C STRICT IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.coxph_predict(
+) RETURNS VARCHAR AS $$
+    help_str = """
+The Cox prediction function is used to predict the linear predictors, 
+relative risk or the linear terms of the given data. 
 ------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------
+SELECT MADLIB_SCHEMA.coxph_predict(
+    model_table,        -- TEXT. Name of the table containing the cox model.
+    source_table,       -- TEXT. Name of the table containing the prediction data.
+    id_col_name,        -- TEXT. Name of the id column in the source table.
+    output_table,       -- TEXT. Name of the table to store the prediction results in.
+    pred_type,          -- TEXT. Type of prediction. Can be one of 'linear_predictors', 
+                        --       'risk' or 'terms'. Default = 'linear_predictors'. 
+                        -- 'linear_predictors' calculates the dot product of the 
+                        -- independent variables and the coefficients. 
+                        -- 'risk' is the exponentiated value of the linear prediction.
+                        -- 'terms' correspond to the linear terms obtained by multiplying
+                        -- the independent variables with their corresponding coefficients 
+                        -- values (without further calculating the sum of these terms)
+                        -- The resulting predictions, in all of the above cases, are then 
+                        -- centered around a reference level.
+    reference           -- TEXT. Reference level to use for centering the predictions.
+                        --       Can be one of 'strata' or 'sample'. Default = 'strata'.
+                        -- Cox model is a relative risk model wherein the predictions are 
+                        -- relative to the sample that they are taken from. Therefore, all
+                        -- predictions are centered around the mean of the covariates within 
+                        -- each stratum by default. If it is instead desired to use the 
+                        -- mean over all samples, reference='sample' can be 
+                        -- specified. If there was no stratification involved, the reference 
+                        -- parameter does not have any effect.
+                        -- However, note that in the case of 'terms', the predictions 
+                        -- are always centered around the overall mean values
+                        -- of the covariates irrespective of whether or not stratification
+                        -- was involved. 
+)
+-------------------------------------------------------------
+The output is a table containing two columns: id column of 
+the row from the prediction.
+"""
+    return help_str
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+-------------------------------------------------------------------
 
 -- Utility function
 -- Move to utility folder later

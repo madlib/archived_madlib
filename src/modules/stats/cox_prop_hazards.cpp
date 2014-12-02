@@ -453,6 +453,70 @@ AnyType coxph_scale_resid::run(AnyType &args) {
     return scaled_residual;
 }
 
+AnyType coxph_predict_resp::run(AnyType &args) {
+    try {
+        args[0].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        throw std::runtime_error(
+            "coxph error: the coefficients contain NULL values");
+    }
+    // returns NULL if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    MappedColumnVector coefs = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector indep = args[1].getAs<MappedColumnVector>();
+    MappedColumnVector mean_indep = args[2].getAs<MappedColumnVector>();
+    std::string predtype    = args[3].getAs<std::string>();
+
+    if (coefs.size() != indep.size())
+        throw std::runtime_error(
+            "Coefficients and independent variables are of incompatible length");
+    if (coefs.size() != mean_indep.size())
+        throw std::runtime_error(
+            "Coefficients and mean vector of independent variables are of incompatible length");
+    
+    double dot = coefs.dot(indep);
+    double meandot = coefs.dot(mean_indep);
+    double diff = dot - meandot;
+
+    if (predtype.compare("linear_predictors")==0) return(diff);
+    if (predtype.compare("risk")==0) return(exp(diff));
+
+    throw std::runtime_error("Invalid prediction type!");
+}
+
+AnyType coxph_predict_terms::run(AnyType &args) {
+    try {
+        args[0].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        throw std::runtime_error(
+            "coxph error: the coefficients contain NULL values");
+    }
+    // returns NULL if args[1] (features) contains NULL values
+    try {
+        args[1].getAs<MappedColumnVector>();
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    MappedColumnVector coefs = args[0].getAs<MappedColumnVector>();
+    MappedColumnVector indep = args[1].getAs<MappedColumnVector>();
+    MappedColumnVector mean_indep = args[2].getAs<MappedColumnVector>();
+
+    if (coefs.size() != indep.size())
+        throw std::runtime_error(
+            "Coefficients and independent variables are of incompatible length");
+    if (coefs.size() != mean_indep.size())
+        throw std::runtime_error(
+            "Coefficients and mean vector of independent variables are of incompatible length");
+
+    return ColumnVector(coefs.cwiseProduct(indep - mean_indep));
+    
+}
 } // namespace stats
 } // namespace modules
 } // namespace madlib
