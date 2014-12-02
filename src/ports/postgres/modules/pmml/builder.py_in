@@ -85,10 +85,10 @@ class PMMLBuilder(object):
         self.header = Header(extension, application, timestamp, copyright=copyright)
 
     def _build_data_dictionary(self):
-        data_field_forest =      [DataField(*self.y_value_forest,
-                                            name=self.formula.y,
-                                            optype=self.y_optype,
-                                            dataType=self.y_data_type)]
+        data_field_forest = [DataField(*self.y_value_forest,
+                                       name=self.formula.y,
+                                       optype=self.y_optype,
+                                       dataType=self.y_data_type)]
         data_field_forest.extend([DataField(name=x_i,
                                             optype='continuous',
                                             dataType='double')
@@ -99,27 +99,28 @@ class PMMLBuilder(object):
                                   for k in self.grouping_keys])
 
         self.data_dictionary = DataDictionary(*data_field_forest,
-                numberOfFields=len(data_field_forest))
+                                              numberOfFields=len(data_field_forest))
 
     def _build_model(self):
-        if self.grouping_keys == []: # no grouping
+        if self.grouping_keys == []:  # no grouping
             self.model = self._create_single_model(self.coef0)
-        else: # grouping
+        else:  # grouping
             # MiningSchema
             mining_field_forest = \
-                    [MiningField(name=self.formula.y, usageType='predicted')]
+                [MiningField(name=self.formula.y, usageType='predicted')]
             mining_field_forest.extend(
-                    [MiningField(name=x_i) for x_i in self.formula.x])
+                [MiningField(name=x_i) for x_i in self.formula.x])
             mining_field_forest.extend(
-                    [MiningField(name=k) for k in self.grouping_keys])
+                [MiningField(name=k) for k in self.grouping_keys])
             grouping_mining_schema = MiningSchema(*mining_field_forest)
 
             # Segmentation
             segment_forest = []
-            for g in self.grouped_coefs: # one segment for each row in output table
-                predicate_forest = \
-                        [SimplePredicate(field=k, value_=g[k], operator='equal')
-                         for k in self.grouping_keys]
+            for g in self.grouped_coefs:  # one segment for each row in output table
+                predicate_forest = [SimplePredicate(field=k,
+                                                    value_=g[k],
+                                                    operator='equal')
+                                    for k in self.grouping_keys]
                 if len(predicate_forest) == 1:
                     predicate = predicate_forest[0]
                 else:
@@ -138,7 +139,7 @@ class PMMLBuilder(object):
     def _format(self, pmml):
         """Returns a pretty-printed XML string for the given PMML.
         """
-        bds.SetDefaultNamespace(binding.Namespace) # avoid ns:xxx prefix
+        bds.SetDefaultNamespace(binding.Namespace)  # avoid ns:xxx prefix
         declaration = "<?xml version=\"1.0\" standalone=\"yes\"?>\n"
         xml = pmml.toDOM().toprettyxml(indent="  ")
         self.pmml_str = declaration + "\n".join(xml.split("\n")[1:])
@@ -172,27 +173,27 @@ class RegressionPMMLBuilder(PMMLBuilder):
     Current implementation supports linear regression and logistic regression model.
     """
     PREDICT_SPEC_DICT = {
-            'logregr': {'function_name': 'classification',
-                        'y_optype':      'categorical',
-                        'y_data_type':   'boolean'},
-            'linregr': {'function_name': 'regression',
-                        'y_optype':      'continuous',
-                        'y_data_type':   'double'}
-            }
+        'logregr': {'function_name': 'classification',
+                    'y_optype':      'categorical',
+                    'y_data_type':   'boolean'},
+        'linregr': {'function_name': 'regression',
+                    'y_optype':      'continuous',
+                    'y_data_type':   'double'}
+        }
     OUTPUT_COLS = ['coef']
     SUMMARY_COLS = ['grouping_col', 'dependent_varname', 'independent_varname']
 
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        PMMLBuilder.__init__(self,
-                schema_madlib, model_type, model_table, name_spec)
+        PMMLBuilder.__init__(
+            self, schema_madlib, model_type, model_table, name_spec)
         self.mining_schema = None
 
     def _parse_summary(self):
         self.y_str = self.summary['dependent_varname']
         self.x_str = self.summary['independent_varname']
         self.grouping_col = self.summary['grouping_col']
-        self.grouping_str = '' if self.grouping_col is None \
-                else self.grouping_col + ','
+        self.grouping_str = ('' if self.grouping_col is None
+                             else self.grouping_col + ',')
 
     def _query_output_table(self):
         output_query = """
@@ -218,31 +219,31 @@ class RegressionPMMLBuilder(PMMLBuilder):
 
     def _build_mining_schema(self):
         if self.mining_schema is None:
-            mining_field_forest = \
-                    [MiningField(name=self.formula.y, usageType='predicted')]
+            mining_field_forest = [MiningField(name=self.formula.y,
+                                               usageType='predicted')]
             for i, x_i in enumerate(self.formula.x):
                 mining_field_forest.append(MiningField(name=x_i))
-            self.mining_schema =  MiningSchema(*mining_field_forest)
+            self.mining_schema = MiningSchema(*mining_field_forest)
 
     def _create_numeric_predictors(self, coef):
         numeric_predictor_forest = []
         for i, e in enumerate(coef):
             numeric_predictor_forest.append(
-                    NumericPredictor(name=self.formula.x[i], coefficient=e))
+                NumericPredictor(name=self.formula.x[i], coefficient=e))
         return numeric_predictor_forest
 
     def _create_model_regression(self, numeric_predictor_forest):
-        regression_table_forest = \
-                [RegressionTable(*numeric_predictor_forest, intercept='0')]
+        regression_table_forest = [RegressionTable(*numeric_predictor_forest,
+                                                   intercept='0')]
         return RegressionModel(self.mining_schema,
                                *regression_table_forest,
                                functionName=self.function)
 
     def _create_model_classification(self, numeric_predictor_forest):
         regression_table_forest = [
-                RegressionTable(*numeric_predictor_forest,
-                        targetCategory=True, intercept='0'),
-                RegressionTable(targetCategory=False, intercept='0')]
+            RegressionTable(*numeric_predictor_forest,
+                            targetCategory=True, intercept='0'),
+            RegressionTable(targetCategory=False, intercept='0')]
         return RegressionModel(self.mining_schema,
                                *regression_table_forest,
                                functionName=self.function,
@@ -262,8 +263,8 @@ class GeneralRegressionPMMLBuilder(RegressionPMMLBuilder):
     """Builder class for PMML model 'GeneralRegressionModel'.
     """
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        RegressionPMMLBuilder.__init__(self,
-                schema_madlib, model_type, model_table, name_spec)
+        RegressionPMMLBuilder.__init__(
+            self, schema_madlib, model_type, model_table, name_spec)
         self.parameter_list = None
         self.covariate_list = None
         self.ppmatrix = None
@@ -299,39 +300,39 @@ class GLMPMMLBuilder(GeneralRegressionPMMLBuilder):
     Inverse Gaussian.
     """
     PREDICT_SPEC_DICT = {
-            'gaussian':         {'function_name': 'regression',
-                                 'y_optype':      'continuous',
-                                 'y_data_type':   'double',
-                                 'distribution':  'normal'},
-            'binomial':         {'function_name': 'classification',
-                                 'y_optype':      'categorical',
-                                 'y_data_type':   'boolean',
-                                 'distribution':  'binomial'},
-            'gamma':            {'function_name': 'regression',
-                                 'y_optype':      'continuous',
-                                 'y_data_type':   'double',
-                                 'distribution':  'gamma'},
-            'poisson':          {'function_name': 'regression',
-                                 'y_optype':      'continuous',
-                                 'y_data_type':   'integer',
-                                 'distribution':  'poisson'},
-            'inverse_gaussian': {'function_name': 'regression',
-                                 'y_optype':      'continuous',
-                                 'y_data_type':   'double',
-                                 'distribution':  'igauss'}
-            }
+        'gaussian':         {'function_name': 'regression',
+                             'y_optype':      'continuous',
+                             'y_data_type':   'double',
+                             'distribution':  'normal'},
+        'binomial':         {'function_name': 'classification',
+                             'y_optype':      'categorical',
+                             'y_data_type':   'boolean',
+                             'distribution':  'binomial'},
+        'gamma':            {'function_name': 'regression',
+                             'y_optype':      'continuous',
+                             'y_data_type':   'double',
+                             'distribution':  'gamma'},
+        'poisson':          {'function_name': 'regression',
+                             'y_optype':      'continuous',
+                             'y_data_type':   'integer',
+                             'distribution':  'poisson'},
+        'inverse_gaussian': {'function_name': 'regression',
+                             'y_optype':      'continuous',
+                             'y_data_type':   'double',
+                             'distribution':  'igauss'}
+        }
     LINK_SPEC_DICT = {
-            'inverse':          {'linkFunction':  'power',
-                                 'linkParameter': '-1'},
-            'log':              {'linkFunction':  'log'},
-            'identity':         {'linkFunction':  'identity'},
-            'probit':           {'linkFunction':  'probit'},
-            'logit':            {'linkFunction':  'logit'},
-            'sqrt':             {'linkFunction':  'power',
-                                 'linkParameter': '0.5'},
-            'sqr_inverse':      {'linkFunction':  'power',
-                                 'linkParameter': '-2'}
-            }
+        'inverse':          {'linkFunction':  'power',
+                             'linkParameter': '-1'},
+        'log':              {'linkFunction':  'log'},
+        'identity':         {'linkFunction':  'identity'},
+        'probit':           {'linkFunction':  'probit'},
+        'logit':            {'linkFunction':  'logit'},
+        'sqrt':             {'linkFunction':  'power',
+                             'linkParameter': '0.5'},
+        'sqr_inverse':      {'linkFunction':  'power',
+                             'linkParameter': '-2'}
+        }
     SUMMARY_COLS = ['grouping_col',
                     'dependent_varname',
                     'independent_varname',
@@ -339,17 +340,17 @@ class GLMPMMLBuilder(GeneralRegressionPMMLBuilder):
                     ]
 
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        GeneralRegressionPMMLBuilder.__init__(self,
-                schema_madlib, model_type, model_table, name_spec)
+        GeneralRegressionPMMLBuilder.__init__(
+            self, schema_madlib, model_type, model_table, name_spec)
 
     def _parse_summary(self):
         self.y_str = self.summary['dependent_varname']
         self.x_str = self.summary['independent_varname']
         self.grouping_col = self.summary['grouping_col']
-        self.grouping_str = '' if self.grouping_col is None \
-                else self.grouping_col + ','
+        self.grouping_str = ('' if self.grouping_col is None
+                             else self.grouping_col + ',')
         self.family_params_dict = extract_family_params(
-                self.schema_madlib, self.summary['family_params'])
+            self.schema_madlib, self.summary['family_params'])
         self.family = self.family_params_dict['family']
         self.link = self.family_params_dict['link']
         self.link_spec = self.__class__.LINK_SPEC_DICT[self.link]
@@ -398,8 +399,8 @@ class MultiClassRegressionPMMLBuilder(GeneralRegressionPMMLBuilder):
     """Base builder class for Multinomial logistic and Ordinal.
     """
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        GeneralRegressionPMMLBuilder.__init__(self,
-                schema_madlib, model_type, model_table, name_spec)
+        GeneralRegressionPMMLBuilder.__init__(
+            self, schema_madlib, model_type, model_table, name_spec)
 
     def _construct_predict_spec(self):
         self.function = 'classification'
@@ -422,15 +423,15 @@ class OrdinalRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
                     'category_list']
 
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        MultiClassRegressionPMMLBuilder.__init__(self,
-                schema_madlib, model_type, model_table, name_spec)
+        MultiClassRegressionPMMLBuilder.__init__(
+            self, schema_madlib, model_type, model_table, name_spec)
 
     def _parse_summary(self):
         self.y_str = self.summary['dependent_varname']
         self.x_str = self.summary['independent_varname']
         self.grouping_col = self.summary['grouping_col']
-        self.grouping_str = '' if self.grouping_col is None \
-                else self.grouping_col + ','
+        self.grouping_str = ('' if self.grouping_col is None
+                             else self.grouping_col + ',')
         self.link = self.summary['link_func']
         self.cate_list = self.summary['category_list'].split(',')
 
@@ -449,7 +450,7 @@ class OrdinalRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
         self.coef0 = self.output[0]['coef']
         self.n_coef = len(self.output[0]['coef_feature'])
         self.grouping_keys = [k for k in self.output[0]
-                              if k not in ('coef','coef_feature')]
+                              if k not in ('coef', 'coef_feature')]
 
     def _create_single_model(self, coef):
         coef_threshold = coef[self.formula.n_coef:]
@@ -464,7 +465,9 @@ class OrdinalRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
         pcell_forest = []
         for i, e in enumerate(coef_threshold):
             pcell_forest.append(PCell(parameterName='p0',
-                    beta=e, df='1', targetCategory=self.cate_list[i]))
+                                      beta=e,
+                                      df='1',
+                                      targetCategory=self.cate_list[i]))
         for i, e in enumerate(coef_feature):
             # -e is used
             pcell_forest.append(PCell(parameterName="p"+str(i+1), beta=-e, df='1'))
@@ -492,15 +495,15 @@ class MultinomRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
                     'ref_category']
 
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
-        MultiClassRegressionPMMLBuilder.__init__(self,
-                schema_madlib, model_type, model_table, name_spec)
+        MultiClassRegressionPMMLBuilder.__init__(
+            self, schema_madlib, model_type, model_table, name_spec)
 
     def _parse_summary(self):
         self.y_str = self.summary['dependent_varname']
         self.x_str = self.summary['independent_varname']
         self.grouping_col = self.summary['grouping_col']
-        self.grouping_str = '' if self.grouping_col is None \
-                else self.grouping_col + ','
+        self.grouping_str = ('' if self.grouping_col is None
+                             else self.grouping_col + ',')
         self.cate_list = self.summary['category_list'].split(',')
         self.ref_cate = self.summary['ref_category']
 
@@ -516,7 +519,7 @@ class MultinomRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
 
     def _parse_output(self):
         self.grouping_keys = [k for k in self.output[0]
-                              if k not in ('coef','category')]
+                              if k not in ('coef', 'category')]
         coef_dict = defaultdict(dict)
         for r in self.output:
             # extract grouping values as key
@@ -538,10 +541,10 @@ class MultinomRegressionPMMLBuilder(MultiClassRegressionPMMLBuilder):
         pcell_forest = []
         for cate, coef_per_cate in coef.iteritems():
             pcell_forest.append(PCell(parameterName="p0",
-                    beta=0, df='1', targetCategory=cate))
+                                      beta=0, df='1', targetCategory=cate))
             for i, c in enumerate(coef_per_cate):
                 pcell_forest.append(PCell(parameterName="p"+str(i+1),
-                        beta=c, df='1', targetCategory=cate))
+                                          beta=c, df='1', targetCategory=cate))
 
         return GeneralRegressionModel(self.mining_schema,
                                       self.parameter_list,
@@ -559,25 +562,25 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
     """
     OUTPUT_COLS = ['tree']
     SUMMARY_COLS = ['grouping_cols', 'dependent_varname', 'independent_varnames',
-            'cat_features', 'con_features', 'is_classification',
-            'dependent_var_levels', 'dependent_var_type', 'independent_var_types']
+                    'cat_features', 'con_features', 'is_classification',
+                    'dependent_var_levels', 'dependent_var_type', 'independent_var_types']
     DATA_TYPE_DICT = {
-            'boolean':           'boolean',
-            'char':              'string',
-            'character':         'string',
-            'varchar':           'string',
-            'character varying': 'string',
-            'text':              'string',
-            'smallint':          'integer',
-            'int2':              'integer',
-            'integer':           'integer',
-            'int4':              'integer',
-            'int':               'integer',
-            'bigint':            'integer',
-            'int8':              'integer',
-            'float8':            'double',
-            'double precision':  'double'
-            }
+        'boolean':           'boolean',
+        'char':              'string',
+        'character':         'string',
+        'varchar':           'string',
+        'character varying': 'string',
+        'text':              'string',
+        'smallint':          'integer',
+        'int2':              'integer',
+        'integer':           'integer',
+        'int4':              'integer',
+        'int':               'integer',
+        'bigint':            'integer',
+        'int8':              'integer',
+        'float8':            'double',
+        'double precision':  'double'
+        }
 
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
         PMMLBuilder.__init__(self, schema_madlib, model_type, model_table, name_spec)
@@ -591,29 +594,31 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         self.n_coef = len(self.x)
 
         self.grouping_col = self.summary['grouping_cols']
-        self.grouping_str = '' if self.grouping_col is None \
-                else self.grouping_col + ','
+        self.grouping_str = ('' if self.grouping_col is None
+                             else self.grouping_col + ',')
 
         self.cat_features = [s.strip()
-                for s in self.summary['cat_features'].split(',') if s.strip() != '']
+                             for s in self.summary['cat_features'].split(',')
+                             if s.strip() != '']
         self.con_features = [s.strip()
-                for s in self.summary['con_features'].split(',') if s.strip() != '']
+                             for s in self.summary['con_features'].split(',')
+                             if s.strip() != '']
         self.n_cats = len(self.cat_features)
 
         self.is_classification = self.summary['is_classification']
         if self.is_classification:
             # remove possible quotes around the values
             self.y_levels = [s.strip().strip("\"")
-                    for s in self.summary['dependent_var_levels'].split(',')]
+                             for s in self.summary['dependent_var_levels'].split(',')]
 
         self.y_data_type = self.summary['dependent_var_type']
         self.y_data_type = self.__class__.DATA_TYPE_DICT[self.y_data_type.lower()]
 
         # figure out whether each x is categorical or continuous
         self.x_optype = ['categorical' if x in self.cat_features else 'continuous'
-                for x in self.x]
+                         for x in self.x]
         self.x_data_type = [s.strip()
-                for s in self.summary['independent_var_types'].split(',')]
+                            for s in self.summary['independent_var_types'].split(',')]
         for i, t in enumerate(self.x_data_type):
             self.x_data_type[i] = self.__class__.DATA_TYPE_DICT[t.lower()]
 
@@ -646,18 +651,20 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         self.output = plpy.execute(output_query)
 
     def _parse_output(self):
-        self.grouped_coefs = [{'coef' : {'frame' : g['frame'],
-                    'cat_levels' : g['cat_levels_in_text'],
-                    'cat_n' : g['cat_n_levels'],
-                    'thresholds' : g['thresholds']}}
-                for g in self.output]
+        self.grouped_coefs = [{'coef': {'frame': g['frame'],
+                               'cat_levels': g['cat_levels_in_text'],
+                               'cat_n': g['cat_n_levels'],
+                               'thresholds': g['thresholds']}}
+                              for g in self.output]
         for i in range(len(self.output)):
-            self.grouped_coefs[i].update(dict((k, v) for k, v
-                in self.output[i].items() if k not in
-                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds']))
+            self.grouped_coefs[i].update(
+                dict((k, v) for k, v in self.output[i].items()
+                     if k not in ['frame', 'cat_levels_in_text',
+                                  'cat_n_levels', 'thresholds']))
         self.coef0 = self.grouped_coefs[0]['coef']
         self.grouping_keys = [k for k in self.output[0] if k not in
-                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds']]
+                              ['frame', 'cat_levels_in_text',
+                               'cat_n_levels', 'thresholds']]
 
     def _construct_predict_spec(self):
         " Construct model attributes "
@@ -670,19 +677,19 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
     def _build_mining_schema(self):
         if self.mining_schema is None:
             mining_field_forest = [MiningField(name=self.formula.y,
-                usageType='predicted')]
+                                               usageType='predicted')]
             for i, x_i in enumerate(self.x):
                 mining_field_forest.append(MiningField(name=x_i))
             self.mining_schema = MiningSchema(*mining_field_forest)
 
     def _create_single_model(self, coef0):
-        self._build_mining_schema() # construct MiningSchema
-        node = self._build_node(coef0) # construct Node tree
+        self._build_mining_schema()   # construct MiningSchema
+        node = self._build_node(coef0)   # construct Node tree
 
         return TreeModel(self.mining_schema, node,
-                functionName=self.function,
-                algorithmName='cart',
-                splitCharacteristic='binarySplit')
+                         functionName=self.function,
+                         algorithmName='cart',
+                         splitCharacteristic='binarySplit')
 
     # Override
     def _build_data_dictionary(self):
@@ -693,26 +700,23 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         # Use correct x names before constructing Formula
         self.formula.x = self.x
 
-        data_field_forest = [DataField(
-                *self.y_value_forest,
-                name     = self.formula.y,
-                optype   = self.y_optype,
-                dataType = self.y_data_type)]
+        data_field_forest = [DataField(*self.y_value_forest,
+                                       name=self.formula.y,
+                                       optype=self.y_optype,
+                                       dataType=self.y_data_type)]
 
-        data_field_forest.extend(DataField(
-                name     = self.x[i],
-                optype   = self.x_optype[i],
-                dataType = self.x_data_type[i])
-                for i in range(len(self.x)))
+        data_field_forest.extend(DataField(name=self.x[i],
+                                           optype=self.x_optype[i],
+                                           dataType=self.x_data_type[i])
+                                 for i in range(len(self.x)))
 
-        data_field_forest.extend(DataField(
-                name=k,
-                optype='categorical',
-                dataType='string')
-                for k in self.grouping_keys)
+        data_field_forest.extend(DataField(name=k,
+                                           optype='categorical',
+                                           dataType='string')
+                                 for k in self.grouping_keys)
 
         self.data_dictionary = DataDictionary(*data_field_forest,
-                numberOfFields=len(data_field_forest))
+                                              numberOfFields=len(data_field_forest))
 
     def _build_node(self, coef):
         """ Construct the hierarchy of nodes
@@ -734,8 +738,8 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         # split values, double[][], including surrogates
         thresh = self._get_one_thresh_matrix(coef['thresholds'])
 
-        cat_name_to_id = dict((var, i)
-                for var, i in zip(self.cat_features, range(len(cat_levels))))
+        cat_name_to_id = dict((var, i) for var, i in
+                              zip(self.cat_features, range(len(cat_levels))))
 
         # Map from row number to indices of the primary and all surrogates
         row_to_thresh = {}
@@ -754,7 +758,7 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         # However, for categorical variables, we have to use CompoundPredicate
         # with the booleanOperator="or"
         def construct_predicate(i):
-            if i == 0: # root node always True
+            if i == 0:  # root node always True
                 return True_()
             parent = id_to_row[(row_id[i] - 1) / 2]
             is_left = 2 * row_id[parent] + 1 == row_id[i]
@@ -765,28 +769,28 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
 
             thresh_indices = row_to_thresh[parent]
             predicate_forests = [
-                    construct_predicate_using_thresh_row(
-                        thresh[thresh_index],
-                        is_left,
-                        (self.x[thresh[thresh_index][0]] in self.cat_features))
-                    for thresh_index in thresh_indices]
+                construct_predicate_using_thresh_row(
+                    thresh[thresh_index],
+                    is_left,
+                    (self.x[thresh[thresh_index][0]] in self.cat_features))
+                for thresh_index in thresh_indices]
 
-            to_print = [p.toDOM().toprettyxml(indent=' ') for p in predicate_forests]
+            # to_print = [p.toDOM().toprettyxml(indent=' ') for p in predicate_forests]
             # plpy.info("to_print:\n" + str(to_print))
 
             is_majority = (frame[i][2] > frame[sibling][2] or
-                    frame[i][2] == frame[sibling][2] and not is_left)
+                           frame[i][2] == frame[sibling][2] and not is_left)
             if is_majority:
                 predicate_forests.append(True_())
             else:
                 predicate_forests.append(False_())
 
             return CompoundPredicate(*predicate_forests,
-                              booleanOperator='surrogate')
+                                     booleanOperator='surrogate')
 
         # construct a predicate from a row in thresh
         def construct_predicate_using_thresh_row(thresh_row, is_left,
-                is_split_categorical):
+                                                 is_split_categorical):
             """consume a row in thresh
 
             NOTE: always compound with False due to PyXB bug which loses the
@@ -800,10 +804,10 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
                 else:
                     selected_level_indices = range(0, int(thresh_row[1]+1))
                 simple_predicates = [
-                        SimplePredicate(field=self.x[thresh_row[0]],
-                                        operator="equal",
-                                        value_=levels[l])
-                        for l in selected_level_indices]
+                    SimplePredicate(field=self.x[thresh_row[0]],
+                                    operator="equal",
+                                    value_=levels[l])
+                    for l in selected_level_indices]
 
                 if len(simple_predicates) == 1:
                     simple_predicates.append(False_())
@@ -862,14 +866,14 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
             if self.is_classification:
                 choice.extend(compute_score_distributions(i))
 
-            if frame[i][0] >= 0: # splitting node
+            if frame[i][0] >= 0:  # splitting node
                 choice.extend([construct_node(left_node(i)),
-                    construct_node(right_node(i))])
+                               construct_node(right_node(i))])
 
             return Node(predicate, *choice,
-                    id=row_id[i],
-                    score=score,
-                    recordCount=int(record_count))
+                        id=row_id[i],
+                        score=score,
+                        recordCount=int(record_count))
 
         return construct_node(0)
 
@@ -879,8 +883,7 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         frame from the _query_output_table is an array, convert it
         into a matrix format to simplify the following processing.
         """
-        frame_vector = [float(x) for x in
-                frame_string.split(',')]
+        frame_vector = [float(x) for x in frame_string.split(',')]
         n = len(frame_vector)
         ncol = 10 + 2 * len(self.y_levels) if self.is_classification else 8
         nrow = n / ncol
@@ -901,8 +904,8 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
         thresh from the _query_output_table is an array, convert it
         into a matrix format to simplify the following processing.
         """
-        thresh_vector = ([] if thresh_string == '' 
-                           else [float(x) for x in thresh_string.split(',')])
+        thresh_vector = ([] if thresh_string == ''
+                         else [float(x) for x in thresh_string.split(',')])
         ncol = 2
         nrow = len(thresh_vector) / ncol
         thresh_matrix = [[0 for j in range(ncol)] for i in range(nrow)]
@@ -932,8 +935,8 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
                 c[0] += 1
                 return
             c[0] += 1
-            compute_id(c, 2*r + 1) # left
-            compute_id(c, 2*r + 2) # right
+            compute_id(c, 2*r + 1)  # left
+            compute_id(c, 2*r + 2)  # right
 
         count = [0]
         compute_id(count, 0)
@@ -949,7 +952,8 @@ class DecisionTreePMMLBuilder(PMMLBuilder):
 
     # Helper function used only by _build_node
     def _get_cat_levels(self, cat_level_vector, cat_n):
-        if cat_n is None: return []
+        if cat_n is None:
+            return []
         cat_level_array = []
         count = 0
         for n in cat_n:
@@ -966,7 +970,7 @@ class RandomForestPMMLBuilder(DecisionTreePMMLBuilder):
     """
     def __init__(self, schema_madlib, model_type, model_table, name_spec):
         DecisionTreePMMLBuilder.__init__(self, schema_madlib, model_type,
-                model_table, name_spec)
+                                         model_table, name_spec)
         self.mining_schema = None
 
     def _parse_summary(self):
@@ -977,31 +981,33 @@ class RandomForestPMMLBuilder(DecisionTreePMMLBuilder):
         self.n_coef = len(self.x)
 
         self.grouping_col = self.summary['grouping_cols']
-        self.grouping_str = '' if self.grouping_col is None \
-                else self.grouping_col + ','
+        self.grouping_str = ('' if self.grouping_col is None
+                             else self.grouping_col + ',')
 
         self.cat_features = [s.strip()
-                for s in self.summary['cat_features'].split(',') if s.strip() != '']
+                             for s in self.summary['cat_features'].split(',')
+                             if s.strip() != '']
         self.con_features = [s.strip()
-                for s in self.summary['con_features'].split(',') if s.strip() != '']
+                             for s in self.summary['con_features'].split(',')
+                             if s.strip() != '']
         self.n_cats = len(self.cat_features)
 
         self.is_classification = self.summary['is_classification']
         if self.is_classification:
             # remove possible quotes around the values
             self.y_levels = [s.strip().strip("\"")
-                    for s in self.summary['dependent_var_levels'].split(',')]
+                             for s in self.summary['dependent_var_levels'].split(',')]
 
         self.y_data_type = self.summary['dependent_var_type']
         self.y_data_type = self.__class__.DATA_TYPE_DICT[self.y_data_type.lower()]
 
         # figure out whether each x is categorical or continuous
         self.x_optype = ['categorical' if x in self.cat_features else 'continuous'
-                for x in self.x]
+                         for x in self.x]
         self.model_table_group = self.model_table + "_group"
-        
+
         self.x_data_type = [s.strip()
-                for s in self.summary['independent_var_types'].split(',')]
+                            for s in self.summary['independent_var_types'].split(',')]
         for i, t in enumerate(self.x_data_type):
             self.x_data_type[i] = self.__class__.DATA_TYPE_DICT[t.lower()]
 
@@ -1038,49 +1044,49 @@ class RandomForestPMMLBuilder(DecisionTreePMMLBuilder):
 
     def _parse_output(self):
         self.gids = [g['gid'] for g in self.output]
-        self.grouped_coefs = [{'coef':[]} for i in range(len(set(self.gids)))]
-      
-        #grouped_coefs groups trees based on gid
-        #difference from decision trees is that, key 'coef'
-        #points to a list of dictionaries instead of a single dictionary.
-        #each dictionary contains information on one tree of the forest.
-        for i in range(len(self.output)):
-            g = self.output[i]
+        self.grouped_coefs = [{'coef': []} for _ in set(self.gids)]
+
+        # grouped_coefs groups trees based on gid
+        # difference from decision trees is that, key 'coef'
+        # points to a list of dictionaries instead of a single dictionary.
+        # each dictionary contains information on one tree of the forest.
+        for g in self.output:
             gid = g['gid']
             dl = self.grouped_coefs[gid-1]['coef']
             if dl is None:
                 dl = []
-            dl.append({'frame': g['frame'], 
-                            'cat_levels' : g['cat_levels_in_text'],
-                            'cat_n' : g['cat_n_levels'],
-                            'thresholds' : g['thresholds'],
-                            'gid' : g['gid']})
-            self.grouped_coefs[gid-1]['coef'] = dl
-            self.grouped_coefs[gid-1].update(dict((k, v) for k, v
-                in self.output[i].items() if k not in
-                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds', 'gid']))
+            dl.append({'frame': g['frame'],
+                       'cat_levels': g['cat_levels_in_text'],
+                       'cat_n': g['cat_n_levels'],
+                       'thresholds': g['thresholds'],
+                       'gid': g['gid']})
+            self.grouped_coefs[gid - 1]['coef'] = dl
+            self.grouped_coefs[gid - 1].update(
+                dict((k, v) for k, v in g.items()
+                     if k not in ['frame', 'cat_levels_in_text',
+                                  'cat_n_levels', 'thresholds', 'gid']))
 
         self.coef0 = self.grouped_coefs[0]['coef']
-        self.grouping_keys = [k for k in self.output[0] if k not in
-                ['frame', 'cat_levels_in_text', 'cat_n_levels', 'thresholds', 'gid']]
+        self.grouping_keys = [k for k in self.output[0]
+                              if k not in ['frame', 'cat_levels_in_text',
+                                           'cat_n_levels', 'thresholds', 'gid']]
 
     def _create_single_model(self, coef0):
-        self._build_mining_schema() # construct MiningSchema
-      
-      # Create segmentation of tree models, combined based on 
+        self._build_mining_schema()  # construct MiningSchema
+
+      # Create segmentation of tree models, combined based on
       # classification or regression
         segment_forest = []
-        for i in range(len(coef0)):
-            node = self._build_node(coef0[i]) # construct Node tree
-            single_model = TreeModel(self.mining_schema, node, 
-                            functionName=self.function,
-                            algorithmName='randomForest_model',
-                            splitCharacteristic='binarySplit')
+        for each_coef in coef0:
+            node = self._build_node(each_coef)  # construct Node tree
+            single_model = TreeModel(self.mining_schema, node,
+                                     functionName=self.function,
+                                     algorithmName='randomForest_model',
+                                     splitCharacteristic='binarySplit')
             segment_forest.append(Segment(True_(), single_model))
-        segmentation = Segmentation(*segment_forest, 
-                                    multipleModelMethod=
-                                        'majorityVote' if self.is_classification else 'average')
-        return MiningModel(self.mining_schema, 
+        multipleModelMethod = 'majorityVote' if self.is_classification else 'average'
+        segmentation = Segmentation(*segment_forest,
+                                    multipleModelMethod=multipleModelMethod)
+        return MiningModel(self.mining_schema,
                            segmentation,
                            functionName=self.function)
-
