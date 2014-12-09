@@ -21,6 +21,7 @@ function is available as the Multinomial regression module \ref grp_multinom</em
 <div class="toc"><b>Contents</b>
 <ul>
 <li class="level1"><a href="#train">Training Function</a></li>
+<li class="level1"><a href="#predict">Prediction Function</a></li>
 <li class="level1"><a href="#examples">Examples</a></li>
 <li class="level1"><a href="#background">Technical Background</a></li>
 <li class="level1"><a href="#literature">Literature</a></li>
@@ -172,6 +173,60 @@ Currently, only 'irls' and 'newton' are allowed for 'optimizer'.
 @note Table names can be optionally schema qualified and table and column names
 should follow the same case-sensitivity and quoting rules as in the database.
 
+@anchor predict
+@par Prediction Function
+The prediction function is provided to estimate the conditional mean given a new
+predictor. It has the following syntax:
+<pre class="syntax">
+mlogregr_predict(
+    tree_model,
+    new_data_table,
+    id_col_name,
+    output_table,
+    type)
+</pre>
+
+\b Arguments
+<DL class="arglist">
+  <DT>tree_model</DT>
+  <DD>TEXT. Name of the table containing the decision tree model. This should
+  be the output table returned from <em>tree_train</em>.</DD>
+
+  <DT>new_data_table</DT>
+  <DD>TEXT. Name of the table containing prediction data. This table is
+  expected to contain the same features that were used during training. The table
+  should also contain <em>id_col_name</em> used for identifying each row.</DD>
+
+  <DT>id_col_name</DT>
+  <DD>TEXT. Name of the column containing id information in the source data.
+  This is a mandatory argument and is used for correlating prediction table rows
+   with the source. The values of this column are expected to be unique for each tuple.
+  </DD>
+
+  <DT>output_table</DT>
+  <DD>TEXT. Name of the table to output prediction results to. If this table
+  already exists then an error is returned.
+  This output table contains the <em>id_col_name</em> column giving
+  the 'id' for each prediction.
+
+  If <em>type</em> = 'response', then the table has a single additional column with the prediction value of the response.
+  The type of this column depends on the type of the response variable used during training.
+
+  If <em>type</em> = 'prob', then the table has multiple additional columns, one for each possible category. The columns are labeled as
+  'estimated_prob_<em>category_value</em>', where <em>category_value</em> represents the values of categories (0 to K-1).</DD>
+
+  <DT>type</DT>
+  <DD>TEXT, optional, default: 'response'.
+
+  When <em>type</em> = 'prob', the
+  probabilities of each category (including the reference category) is given.
+
+  When <em>type</em> = 'response', a single output is provided which represents
+  the prediction category for each tuple. This represents the category with the
+  highest probability.
+  </DD>
+</DL>
+
 @anchor examples
 @examp
 
@@ -262,32 +317,49 @@ SELECT * FROM test3_output;
 </pre>
 Results:
 <pre class="result">
-&nbsp;-[ RECORD 1 ]--+----------------------------------------------------------
+-[ RECORD 1 ]--+------------------------------------------------------------
+category       | 1
 ref_category   | 0
-coef           | {1.45474045211601,-7.12908167688326,0.0849956182104024,0.87648787696783,-0.0172383499601956,0.127886153027713}
+coef           | {1.45474045211601,0.0849956182104023,-0.0172383499601956}
 loglikelihood  | -39.14759930999
-std_err        | {2.13085072854143,2.52104008297868,0.585021661344715,0.639575886323863,0.0431487356292145,0.0445757462972304}
-z_stats        | {0.682704063982831,-2.82783352990566,0.145286275409074,1.37042045472615,-0.399509967298419,2.86896269049475}
-p_values       | {0.494793861210936,0.00468641692252248,0.884484850387893,0.170555690550421,0.68951748096413,0.00411820373218958}
-odds_ratio     | {4.28337158128448,0.000801455044349484,1.08871229617973,2.40244718187161,0.982909380301134,1.13642361694409}
-condition_no   | 280069.034213892
+std_err        | {2.13085072854143,0.585021661344715,0.0431487356292144}
+z_stats        | {0.682704063982831,0.145286275409074,-0.39950996729842}
+p_values       | {0.494793861210936,0.884484850387893,0.689517480964129}
+odd_ratios     | {4.28337158128448,1.08871229617973,0.982909380301134}
+condition_no   | 280069.034217586
+num_iterations | 5
+-[ RECORD 2 ]--+------------------------------------------------------------
+category       | 2
+ref_category   | 0
+coef           | {-7.12908167688326,0.87648787696783,0.127886153027713}
+loglikelihood  | -39.14759930999
+std_err        | {2.52104008297868,0.639575886323862,0.0445757462972303}
+z_stats        | {-2.82783352990566,1.37042045472615,2.86896269049475}
+p_values       | {0.00468641692252239,0.170555690550421,0.00411820373218956}
+odd_ratios     | {0.000801455044349486,2.40244718187161,1.13642361694409}
+condition_no   | 280069.034217586
 num_iterations | 5
 </pre>
 -# View all parameters used during the training
 <pre class="example">
+\\x on
 SELECT * FROM test3_output_summary;
 </pre>
 Results:
 <pre class="result">
--[ RECORD 1 ]------------+----------------------------------------------
+-[ RECORD 1 ]------------+--------------------------------------------------
+method                   | mlogregr
 source_table             | test3
-output_table             | test3_output
+out_table                | test3_output
 dependent_varname        | cat
 independent_varname      | ARRAY[1, feat1, feat2]
 optimizer_params         | max_iter=20, optimizer=irls, precision=0.0001
 ref_category             | 0
-num_processed            | 57
+num_categories           | 3
+num_rows_processed       | 57
 num_missing_rows_skipped | 0
+variance_covariance      | {{4.54052482732554,3.01080140927409,-0.551901021610841,-0.380754019900586,-0.0784151362989211,-0.0510014701718268},{3.01080140927409,6.35564309998514,-0.351902272617974,-0.766730342510818,-0.051877550252329,-0.0954432017695571},{-0.551901021610841,-0.351902272617974,0.34225034424253,0.231740815080827,-0.00117521831508331,-0.00114043921343171},{-0.380754019900586,-0.766730342510818,0.231740815080827,0.409057314366954,-0.000556498286025567,-0.000404735750986327},{-0.0784151362989211,-0.051877550252329,-0.00117521831508331,-0.000556498286025569,0.00186181338639984,0.00121080293928445},{-0.0510014701718268,-0.0954432017695571,-0.00114043921343171,-0.000404735750986325,0.00121080293928446,0.00198699715795504}}
+coef                     | {{1.45474045211601,0.0849956182104023,-0.0172383499601956},{-7.12908167688326,0.87648787696783,0.127886153027713}}
 </pre>
 
 @anchor background
@@ -1001,4 +1073,54 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mlogregr_format(
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------
+
+-- returns the probabilities of each categories
+-- The user has to get the coef matrix from the summary table
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mlogregr_predict_prob(
+    coef            DOUBLE PRECISION[],
+    ref_category    INTEGER,
+    col_ind_var     DOUBLE PRECISION[]
+) RETURNS DOUBLE PRECISION[] AS
+    'MODULE_PATHNAME', 'mlogregr_predict_prob'
+LANGUAGE C STRICT IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------
+
+-- returns the index of the category that has the largest probability
+-- The user has to get the coef matrix from the summary table
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__mlogregr_predict_response(
+    coef            DOUBLE PRECISION[],
+    ref_category    INTEGER,
+    col_ind_var     DOUBLE PRECISION[]
+) RETURNS INTEGER AS
+    'MODULE_PATHNAME', 'mlogregr_predict_response'
+LANGUAGE C STRICT IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_predict(
+    model           TEXT,
+    source          TEXT,
+    id_col_name     TEXT,
+    output          TEXT,
+    pred_type       TEXT
+) RETURNS VOID AS $$
+PythonFunction(regress, multilogistic, mlogregr_predict)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlogregr_predict(
+    model           TEXT,
+    source          TEXT,
+    id_col_name     TEXT,
+    output          TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlogregr_predict($1, $2, $3, $4, 'response');
+$$ LANGUAGE SQL VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
 

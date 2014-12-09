@@ -12,10 +12,13 @@ Multinomial Logistic Regression: Driver functions
 """
 
 import plpy
-from utilities.validate_args import table_exists
-from utilities.validate_args import table_is_empty
+from utilities.control import MinWarning
 from utilities.utilities import preprocess_keyvalue_params
 from utilities.utilities import _assert
+from utilities.utilities import unique_string
+from utilities.validate_args import table_exists
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import columns_exist_in_table
 
 m4_ifdef(>>>__HAWQ__<<<, >>>
 def __runIterativeAlg(stateType, initialState, source, updateExpr,
@@ -778,5 +781,170 @@ SELECT madlib.mlogregr_train('test3',
 
     return help_string.format(schema_madlib=schema_madlib)
 # ---------------------------------------------------------------------------
+
+
+def _validate_predict(schema_madlib, model, source, id_col_name, output):
+       # validations for inputs
+    _assert(source and source.strip().lower() not in ('null', ''),
+            "Mlogregr error: Invalid data table name: {0}".format(source))
+    _assert(table_exists(source),
+            "Mlogregr error: Data table ({0}) does not exist".format(source))
+    _assert(not table_is_empty(source),
+            "Mlogregr error: Data table ({0}) is empty".format(source))
+    _assert(model and
+            model.strip().lower() not in ('null', ''),
+            "Mlogregr error: Invalid model table name: {0}".format(model))
+    _assert(table_exists(model),
+            "Mlogregr error: Model table ({0}) does not exist".format(model))
+    _assert(not table_is_empty(model),
+            "Mlogregr error: Model table ({0}) is empty".format(model))
+    model_summary = model + "_summary"
+    _assert(table_exists(model_summary),
+            "Mlogregr error: Model summary table ({0}) does not exist".format(model_summary))
+    _assert(not table_is_empty(model_summary),
+            "Mlogregr error: Model summary table ({0}) is empty".format(model_summary))
+    _assert(output and
+            output.strip().lower() not in ('null', ''),
+            "Mlogregr error: Invalid output table name: {0}".format(output))
+    _assert(not table_exists(output),
+            "Mlogregr error: Output table ({0}) already exists".format(output))
+
+    _assert(
+        columns_exist_in_table(source, [id_col_name], schema_madlib),
+        "Mlogregr error: Invalid source table ({0}. "
+        "Missing column {1})".format(source, id_col_name))
+    _assert(
+        columns_exist_in_table(
+            model_summary,
+            ["coef", "ref_category", "independent_varname", "dependent_varname"],
+            schema_madlib),
+        "Mlogregr error: Invalid model summary table ({0})".format(model_summary))
+# -------------------------------------------------------------------------
+
+
+def mlogregr_predict_help_message(schema_madlib, message, **kwargs):
+    """ Help message for multinomial logistic regression predict
+    """
+    if not message:
+        help_string = """
+------------------------------------------------------------
+                        SUMMARY
+------------------------------------------------------------
+Functionality: Multinomial Logistic Regression Prediction
+
+Prediction for a multinomial logistic regression model (trained using
+{schema_madlib}.mlogregr_predict) can be performed on a new data table.
+
+For more details on the function usage:
+    SELECT {schema_madlib}.mlogregr_predict('usage');
+        """
+    elif message.lower().strip() in ['usage', 'help', '?']:
+        help_string = """
+------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------
+SELECT {schema_madlib}.mlogregr_predict(
+    'tree_model',           -- Model table name (output of mlogregr_train)
+    'new_data_table',       -- Prediction source table
+    'id_col_name',          -- ID column name
+    'output_table',         -- Table name to store the tree model
+    'type'                  -- Type of prediction output
+);
+
+Note: The 'id_col_name' is used to corelate the prediction data row with
+the actual prediction in the output table.
+
+------------------------------------------------------------
+                        OUTPUT
+------------------------------------------------------------
+The output table ('output_table' above) has the '<id_col_name>' column giving
+the 'id' for each prediction and the prediction columns for the response
+variable (also called as dependent variable).
+
+If prediction type = 'response', then the table has a single column with the
+predicted category value.
+If prediction type = 'prob', then the table has multiple columns, one for each
+category of the response variable. The columns are labeled as
+'estimated_prob_<dep value>', where <dep value> represents for each category
+of the response.
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.mlogregr_predict('usage')"
+    return help_string.format(schema_madlib=schema_madlib)
+# ------------------------------------------------------------
+
+
+def mlogregr_predict(schema_madlib, model, source, id_col_name, output,
+                     pred_type='response', **kwargs):
+    """
+    Args:
+        @param schema_madlib: str, Name of MADlib schema
+        @param model: str, Name of table containing the model
+        @param source: str, Name of table containing prediction data
+        @param output: str, Name of table to output the results
+        @param pred_type: str, The type of output required:
+                            'response' gives the actual prediction value,
+                            'prob' gives the probability of the categories.
+
+    Returns:
+        None
+
+    Side effect:
+        Creates an output table containing the prediction for given source table
+
+    Throws:
+        None
+    """
+    _validate_predict(schema_madlib, model, source, id_col_name, output)
+    model_summary = model + "_summary"
+    # obtain the cat_features and con_features from model table
+    summary_elements = plpy.execute("SELECT ref_category, independent_varname,"
+                                    " dependent_varname, num_categories"
+                                    " FROM {0}".format(model_summary))[0]
+
+    ref_category = summary_elements['ref_category']
+    independent_varname = summary_elements['independent_varname']
+    dependent_varname = summary_elements['dependent_varname']
+    num_categories = summary_elements['num_categories']
+    pred_type = pred_type.strip().lower()
+
+    if pred_type == "response":
+        pred_name = '"estimated_{0}"'.format(
+            dependent_varname.replace('"', '').strip())
+        sql = """
+            CREATE TABLE {output} AS
+                SELECT
+                    {id_col_name},
+                    {schema_madlib}.__mlogregr_predict_response(
+                        coef,
+                        ref_category,
+                        {independent_varname}
+                    ) as {pred_name}
+                FROM {source} as s, {model_summary} as m
+            """.format(**locals())
+    else:
+        intermediate_col = unique_string()
+        score_format = ', \n'.join([
+            '{interim}[{j}] as "estimated_prob_{i}"'.
+            format(j=i+1, i=i, interim=intermediate_col)
+            for i in range(num_categories)])
+
+        sql = """
+            CREATE TABLE {output} AS
+                SELECT {id_col_name},
+                       {score_format}
+                FROM (
+                    SELECT {id_col_name},
+                            {schema_madlib}.__mlogregr_predict_prob(
+                                coef,
+                                ref_category,
+                                {independent_varname}
+                            ) as {intermediate_col}
+                    FROM {source} as s, {model_summary} as m
+                ) q
+            """.format(**locals())
+    with MinWarning('warning'):
+        plpy.execute(sql)
+
 
 m4_changequote(>>>`<<<, >>>'<<< )

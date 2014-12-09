@@ -57,3 +57,8 @@ DECLARE_UDF(regress, mlogregr_robust_step_final)
 DECLARE_UDF(regress, __sub_array)
 
 DECLARE_SR_UDF(regress, __mlogregr_format)
+
+
+DECLARE_UDF(regress, mlogregr_predict_prob)
+
+DECLARE_UDF(regress, mlogregr_predict_response)

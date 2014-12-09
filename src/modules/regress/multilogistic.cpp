@@ -90,7 +90,7 @@ public:
         size_t state_size = arraySize(inWidthOfX, inNumCategories);
         // GPDB limits the single array size to be 1GB, which means that the size
         // of a double array cannot be large than 134217727 because
-        // (134217727 * 8) / (1024 * 1024) = 1023. And solve 
+        // (134217727 * 8) / (1024 * 1024) = 1023. And solve
         // state_size = x^2 + 2^x + 6 <= 134217727 will give x <= 11584.
         if(state_size > 134217727)
             throw std::domain_error(
@@ -968,6 +968,71 @@ __mlogregr_format::SRF_next(void * user_fctx, bool * is_last_call) {
     ctx->curcall++;
 
     return tuple;
+}
+/* ------------------------------------------------------------ */
+
+
+AnyType mlogregr_predict_prob::run(AnyType &args)
+{
+    // dimension: N x (L - 1), where L is the number of categories
+    MappedMatrix coef = args[0].getAs<MappedMatrix>();
+
+    int ref_category = args[1].getAs<int>();
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    int L = static_cast<int>(coef.cols()) + 1; // number of categories
+
+    ColumnVector res(L);
+    int cat_index = 0;
+    for (int i = 0; i < L; i++) {
+        if (i == ref_category) {
+            res(i) = 1;
+        } else {
+            res(i) = exp(coef.col(cat_index).dot(x));
+            cat_index++;
+        }
+    }
+    res /= res.sum();
+    return res;
+}
+/* ------------------------------------------------------------ */
+
+AnyType mlogregr_predict_response::run(AnyType &args)
+{
+    // dimension: N x (L - 1), where L is the number of categories
+    MappedMatrix coef = args[0].getAs<MappedMatrix>();
+
+    int ref_category = args[1].getAs<int>();
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[2].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return Null();
+    }
+
+    ColumnVector linear_predictors(x.transpose() * coef);
+    Index max_cat = 0;
+    linear_predictors.maxCoeff(&max_cat);
+    double max_lp = linear_predictors(max_cat);
+
+    if (exp(max_lp) < 1){
+        // no category has high enough probability as reference category
+        return ref_category;
+    } else if (max_cat < ref_category){
+        return static_cast<uint>(max_cat);
+    }
+    else{
+        // since ref_category is not present in the coef matrix, index of
+        // categories after ref_category is 1 less than the actual index
+        return static_cast<uint>(max_cat + 1u);
+    }
 }
 
 } // namespace regress
