@@ -63,15 +63,6 @@ SELECT assert(
     'Cox-Proportional hazards (unique time of death): Wrong results'
 ) FROM coxph_out;
 
--- prediction --
-drop table if exists coxph_pred_out;
-SELECT coxph_predict('coxph_out', 'leukemia', 'id', 'coxph_pred_out', 'linear_predictors');
-drop table if exists coxph_pred_out;
-SELECT coxph_predict('coxph_out', 'leukemia', 'id', 'coxph_pred_out', 'risk');
-drop table if exists coxph_pred_out;
-SELECT coxph_predict('coxph_out', 'leukemia', 'id', 'coxph_pred_out', 'terms');
-SELECT * from coxph_pred_out;
-
 DROP TABLE IF EXISTS tmp_out;
 SELECT cox_prop_hazards('leukemia', 'tmp_out', 'timedeath', 'ARRAY[grp, wbc]', 'status');
 SELECT * from tmp_out;
@@ -655,6 +646,68 @@ SELECT assert(
     relative_error(p_values, ARRAY[0.0725471830500,0.000497075935]) < 1e-2,
     'Cox-Proportional hazards (unique time of death): Wrong results'
 ) FROM coxph_out;
+
+-- prediction --
+
+CREATE TABLE sample_data (
+    id integer NOT NULL,
+    grp double precision,
+    wbc double precision,
+    timedeath integer,
+    status boolean,
+    num integer NOT NULL
+);
+
+COPY sample_data (id, grp, wbc, timedeath, status, num) 
+FROM stdin 
+WITH DELIMITER AS ',';
+1,	0,	1.47,	34,	t,	1
+0,	0,	1.45,	35,	t,	1
+3,	0,	2.2000000000000002,	32,	t,	1
+4,	0,	1.78,	25,	t,	1
+5,	0,	2.5699999999999998,	23,	t,	1
+6,	0,	2.3199999999999998,	22,	t,	1
+7,	0,	2.0099999999999998,	20,	t,	1
+8,	0,	2.0499999999999998,	19,	t,	1
+9,	0,	2.1600000000000001,	17,	t,	1
+10,	0,	3.6000000000000001,	16,	t,	1
+15,	0,	2.7000000000000002,	10,	t,	1
+12,	0,	2.8799999999999999,	13,	t,	1
+19,	0,	2.3100000000000001,	6,	t,	1
+14,	0,	2.6000000000000001,	11,	t,	1
+11,	1,	2.2999999999999998,	15,	t,	0
+16,	0,	2.7999999999999998,	9,	t,	1
+13,	1,	1.5,	12,	t,	0
+18,	0,	4.4299999999999997,	7,	t,	1
+17,	1,	2.3199999999999998,	8,	t,	0
+20,	1,	3.4900000000000002,	5,	t,	0
+21,	1,	2.4199999999999999,	4,	t,	0
+22,	1,	4.0099999999999998,	3,	t,	0
+23,	1,	4.9100000000000001,	2,	t,	0
+24,	1,	5,	1,	t,	0
+\.
+
+drop table if exists sample_cox, sample_cox_summary;
+SELECT coxph_train('sample_data', 'sample_cox', 'timedeath', 'ARRAY[wbc]', 'status', 'grp,num');
+
+drop table if exists coxph_pred_out;
+SELECT coxph_predict('sample_cox', 'sample_data', 'id', 'coxph_pred_out', 'linear_predictors', 'overall');
+drop table if exists coxph_pred_out;
+SELECT coxph_predict('sample_cox', 'sample_data', 'id', 'coxph_pred_out', 'risk', 'strata');
+drop table if exists coxph_pred_out;
+SELECT coxph_predict('sample_cox', 'sample_data', 'id', 'coxph_pred_out', 'terms', 'strata');
+SELECT * from coxph_pred_out;
+
+SELECT array_agg(wbc order by id)  FROM coxph_pred_out;
+
+SELECT assert(relative_error(array_agg(wbc order by id), 
+                              ARRAY[-1.95694557008923,-1.92612752961539,-0.80126905232,-1.44844790227077,
+                                    -0.231135303553847,-0.616360809476924,-1.09404043682154,-1.03240435587385,
+                                    -0.862905133267692,1.35599378084923,-0.64717884995077,0.246544323790769,
+                                    -1.87990046890462,-0.184908242843077,-0.0308180404738462,0.123272161895384,
+                                    -0.616360809476924,2.63494246051385,-0.631769829713846,1.18649455824308,
+                                    -0.462270607107693,1.98776361056308,3.37457543188615,3.5132566140184]) < .4, 
+                                'prediction errorr while predicting terms') FROM coxph_pred_out;
 
 !>)
 m4_changequote(<!`!>,<!'!>)
