@@ -892,11 +892,13 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__build_tree(
     n_bins                INTEGER,
     cp_table              TEXT,
     max_n_surr            SMALLINT,
-    msg_level             TEXT)
+    msg_level             TEXT,
+    k                     INTEGER)
 RETURNS VOID AS $$
 PythonFunction(recursive_partitioning, decision_tree, _build_tree)
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
 -------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
@@ -1201,6 +1203,18 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_predict(
     source               TEXT,
     output               TEXT,
     pred_type            TEXT
+) RETURNS VOID AS $$
+PythonFunction(recursive_partitioning, decision_tree, tree_predict)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__tree_predict(
+    model                TEXT,
+    source               TEXT,
+    output               TEXT,
+    pred_type            TEXT,
+    use_existing_tables  BOOLEAN,
+    k                    INTEGER
 ) RETURNS VOID AS $$
 PythonFunction(recursive_partitioning, decision_tree, tree_predict)
 $$ LANGUAGE plpythonu VOLATILE
@@ -1658,31 +1672,25 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._tree_rmse(
     prediction_table       VARCHAR,
     pred_dep_name          VARCHAR,
     id_col_name            VARCHAR,
+    grouping_cols          TEXT,
     output_table           VARCHAR
 ) RETURNS VOID AS $$
-    old_messages = plpy.execute("SELECT setting FROM pg_settings "
-                                "WHERE name = 'client_min_messages'")[0]['setting']
-    plpy.execute('SET client_min_messages TO warning')
-    sql = """
-        CREATE TABLE {output_table} AS
-        SELECT
-            {source_table}.{id_col_name},
-            sqrt(avg(
-                    ({prediction_table}.{pred_dep_name} -
-                     {source_table}.{dependent_varname})^2
-                    )
-                ) as cv_error
-        FROM {prediction_table}, {source_table}
-        WHERE {prediction_table}.{id_col_name} = {source_table}.{id_col_name}
-        GROUP BY {source_table}.{id_col_name}
-        """.format(output_table=output_table,
-                   prediction_table=prediction_table,
-                   pred_dep_name=pred_dep_name,
-                   source_table=source_table,
-                   dependent_varname=dependent_varname,
-                   id_col_name=id_col_name)
-    plpy.execute(sql)
-    plpy.execute('SET client_min_messages TO ' + old_messages);
+    PythonFunction(recursive_partitioning, decision_tree, _tree_rmse)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._tree_rmse(
+    source_table           VARCHAR,
+    dependent_varname      VARCHAR,
+    prediction_table       VARCHAR,
+    pred_dep_name          VARCHAR,
+    id_col_name            VARCHAR,
+    grouping_cols          TEXT,
+    output_table           VARCHAR,
+    use_existing_tables    BOOLEAN,
+    k                      INTEGER
+) RETURNS VOID AS $$
+    PythonFunction(recursive_partitioning, decision_tree, _tree_rmse)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 -------------------------------------------------------------------------
@@ -1694,30 +1702,24 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._tree_misclassified(
     prediction_table       VARCHAR,
     pred_dep_name          VARCHAR,
     id_col_name            VARCHAR,
+    grouping_cols          TEXT,
     output_table           VARCHAR
 ) RETURNS VOID AS $$
-    old_messages = plpy.execute(
-        "SELECT setting FROM pg_settings WHERE name = 'client_min_messages'")[0]['setting']
-    plpy.execute('SET client_min_messages TO warning')
-    sql = """
-        CREATE TABLE {output_table} AS
-        SELECT
-            {source_table}.{id_col_name},
-            1.0 * sum(CASE WHEN ({prediction_table}.{pred_dep_name} =
-                           {source_table}.{dependent_varname})
-                THEN 0 ELSE 1 END) / count(*) as cv_error
-        FROM
-            {prediction_table}, {source_table}
-        WHERE
-          {prediction_table}.{id_col_name} = {source_table}.{id_col_name}
-        GROUP BY {source_table}.{id_col_name}
-        """.format(output_table=output_table,
-                   prediction_table=prediction_table,
-                   pred_dep_name=pred_dep_name,
-                   source_table=source_table,
-                   dependent_varname=dependent_varname,
-                   id_col_name=id_col_name)
-    plpy.execute(sql)
-    plpy.execute('SET client_min_messages TO ' + old_messages);
+    PythonFunction(recursive_partitioning, decision_tree, _tree_misclassified)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._tree_misclassified(
+    source_table           VARCHAR,
+    dependent_varname      VARCHAR,
+    prediction_table       VARCHAR,
+    pred_dep_name          VARCHAR,
+    id_col_name            VARCHAR,
+    grouping_cols          TEXT,
+    output_table           VARCHAR,
+    use_existing_tables    BOOLEAN,
+    k                      INTEGER
+) RETURNS VOID AS $$
+    PythonFunction(recursive_partitioning, decision_tree, _tree_misclassified)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

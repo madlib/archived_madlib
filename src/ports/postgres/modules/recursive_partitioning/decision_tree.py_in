@@ -486,13 +486,14 @@ def get_grouping_array_str(table_name, grouping_cols, qualifier=None):
     return grouping_array_str
 #------------------------------------------------------------------------------
 
-
+# XXX This function is used only in decision tree cross-validation.
+# So it has some specific code for cv.
 def _build_tree(schema_madlib, is_classification, split_criterion,
                 training_table_name, output_table_name, id_col_name,
                 dependent_variable, dep_is_bool,
                 cat_features,  boolean_cats, con_features, grouping_cols,
                 weights, max_depth, min_split, min_bucket, n_bins,
-                cp_table, max_n_surr=0, msg_level="warning", **kwargs):
+                cp_table, max_n_surr=0, msg_level="warning", k=0, **kwargs):
 
     compute_cp_list = False
     if grouping_cols:
@@ -514,7 +515,14 @@ def _build_tree(schema_madlib, is_classification, split_criterion,
         n_all_rows = plpy.execute("select count(*) from " + training_table_name
                                   )[0]['count']
         cp = grp_key_to_cp.values()[0]
+
+        # _create_output_tables(...) is a more general function that is
+        # used by other senarios. So we need to let it know that right now
+        # it is got called by CV.
+        use_existing_tables = table_exists(output_table_name) # create tables if it does not exist
+        running_cv = True # flag to indicate that cv fold ID needs to be included
         _create_output_tables(**locals())
+
 #------------------------------------------------------------------------------
 
 
@@ -620,22 +628,25 @@ def _create_output_tables(schema_madlib, training_table_name, output_table_name,
                           split_criterion, cat_features, con_features,
                           id_col_name, dependent_variable,
                           is_classification, n_all_rows, n_rows, dep_list, cp,
-                          all_cols_types, grouping_cols=None, **kwargs):
+                          all_cols_types, grouping_cols=None,
+                          use_existing_tables=False, running_cv=False, k=0, **kwargs):
     if not grouping_cols:
         _create_result_table(schema_madlib, tree_states[0],
                              bins['cat_origin'], bins['cat_n'], cat_features,
-                             con_features, output_table_name)
+                             con_features, output_table_name, use_existing_tables, running_cv, k)
     else:
         _create_grp_result_table(
             schema_madlib, tree_states, bins, cat_features,
-            con_features, output_table_name, grouping_cols, training_table_name)
+            con_features, output_table_name, grouping_cols, training_table_name,
+            use_existing_tables, running_cv, k)
 
     failed_groups = sum(row['finished'] != 1 for row in tree_states)
     _create_summary_table(
         schema_madlib, split_criterion, training_table_name,
         output_table_name, id_col_name, cat_features, con_features,
         dependent_variable, failed_groups, is_classification, n_all_rows,
-        n_rows, dep_list, all_cols_types, cp, grouping_cols)
+        n_rows, dep_list, all_cols_types, cp, grouping_cols, 1, use_existing_tables,
+        running_cv, k)
 # -------------------------------------------------------------------------
 
 
@@ -840,42 +851,50 @@ def _get_bins(schema_madlib, training_table_name, cat_features,
 
 def _create_result_table(schema_madlib, tree_state,
                          cat_origin, cat_n, cat_features,
-                         con_features, output_table_name):
+                         con_features, output_table_name,
+                         use_existing_tables=False, running_cv=False,
+                         k = 0):
     """ Create the output table and the summary table
 
     In the result table, we need the tree_state and also the categorical
     sorted levels, which will be used in the printing and the prediction
     functions.
     """
+    fold = ", " + str(k) + " as k" if running_cv else ""
+    if use_existing_tables:
+        # plpy.execute("truncate " + output_table_name)
+        header = "insert into " + output_table_name + " "
+    else:
+        header = "create table " + output_table_name + " as "
+
     if len(cat_features) > 0:
-        sql = """
-            create table {output_table} as
+        sql = header + """
                 SELECT
+                    {cp} as pruning_cp,
                     $1 as tree,
                     $2 as cat_levels_in_text,
                     $3 as cat_n_levels,
-                    {tree_depth} as tree_depth,
-                    {cp} as pruning_cp
-            """.format(output_table=output_table_name,
-                       tree_depth=tree_state['pruned_depth'],
-                       cp=tree_state['cp'])
+                    {tree_depth} as tree_depth
+                    {fold}
+            """.format(tree_depth=tree_state['pruned_depth'],
+                       cp=tree_state['cp'], fold=fold)
         sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib),
                                       'text[]', 'integer[]'])
         plpy.execute(sql_plan, [tree_state['tree_state'], cat_origin, cat_n])
     else:
-        sql = """
-            create table {output_table} as
+        sql = header + """
                 SELECT
+                    {cp} as pruning_cp,
                     $1 as tree,
                     NULL::text[] as cat_levels_in_text,
                     NULL::integer[] as cat_n_levels,
-                    {tree_depth} as tree_depth,
-                    {cp} as pruning_cp
-            """.format(output_table=output_table_name,
-                       tree_depth=tree_state['pruned_depth'],
-                       cp=tree_state['cp'])
+                    {tree_depth} as tree_depth
+                    {fold}
+            """.format(tree_depth=tree_state['pruned_depth'],
+                       cp=tree_state['cp'], fold=fold)
         sql_plan = plpy.prepare(sql, ['{0}.bytea8'.format(schema_madlib)])
         plpy.execute(sql_plan, [tree_state['tree_state']])
+
 # ------------------------------------------------------------
 
 
@@ -1363,7 +1382,8 @@ def _one_step_for_grps(
 def _create_grp_result_table(
         schema_madlib, tree_states, bins, cat_features,
         con_features, output_table_name, grouping_cols,
-        training_table_name):
+        training_table_name, use_existing_tables=False,
+        running_cv=False, k=0):
     """ Create the output table for grouping case.
     """
     grp_key = unique_string()
@@ -1376,8 +1396,14 @@ def _create_grp_result_table(
     cat_n_levels_val = cat_n_levels if cat_features else "NULL::INTEGER[]"
     grouping_array_str = bins['grouping_array_str']
 
-    sql = """
-        CREATE TABLE {output_table_name} AS
+    fold = ", " + str(k) + " as k" if running_cv else ""
+    if use_existing_tables:
+        # plpy.execute("truncate " + output_table_name)
+        header = "insert into " + output_table_name + " "
+    else:
+        header = "create table " + output_table_name + " as "
+
+    sql = header + """
             SELECT
                 {grouping_cols},
                 {tree_state} as tree,
@@ -1385,6 +1411,7 @@ def _create_grp_result_table(
                 {cat_n_levels_val} as cat_n_levels,
                 {tree_depth} as tree_depth,
                 {cp_col} as pruning_cp
+                {fold}
             FROM (
                 SELECT
                     {grouping_cols},
@@ -1471,7 +1498,8 @@ def _create_summary_table(
         training_table_name, output_table_name, id_col_name,
         cat_features, con_features, dependent_variable,
         num_failed_groups, is_classification, n_all_rows, n_rows,
-        dep_list, all_cols_types, cp, grouping_cols=None, n_groups=1):
+        dep_list, all_cols_types, cp, grouping_cols=None, n_groups=1,
+        use_existing_tables=False, running_cv=False, k=0):
     # dependent variables
     features = ', '.join(cat_features + con_features)
     if dep_list:
@@ -1496,8 +1524,14 @@ def _create_summary_table(
     else:
         cp_str = str(cp) + "::double precision"
 
-    sql = """
-        CREATE TABLE {output_table_name}_summary AS
+    fold = ", " + str(k) + " as k" if running_cv else ""
+    if use_existing_tables:
+        # plpy.execute("truncate " + output_table_name + "_summary")
+        header = "insert into " + output_table_name + "_summary "
+    else:
+        header = "create table " + output_table_name + "_summary as "
+
+    sql = header + """
             SELECT
                 'tree_train'::text             AS method,
                 '{is_classification}'::boolean AS is_classification,
@@ -1517,6 +1551,7 @@ def _create_summary_table(
                 '{dep_type}'::text             AS dependent_var_type,
                 {cp_str}                       AS input_cp,
                 '{indep_type}'::text           AS independent_var_types
+                {fold}
         """.format(**locals())
     plpy.execute(sql)
 # ------------------------------------------------------------
@@ -1553,7 +1588,7 @@ def _get_filter_str(schema_madlib, cat_features, con_features, boolean_cats,
 # -------------------------------------------------------------------------
 
 
-def _validate_predict(schema_madlib, model, source, output):
+def _validate_predict(schema_madlib, model, source, output, use_existing_tables):
        # validations for inputs
     _assert(source and source.strip().lower() not in ('null', ''),
             "Decision tree error: Invalid data table name: {0}".format(source))
@@ -1576,8 +1611,9 @@ def _validate_predict(schema_madlib, model, source, output):
     _assert(output and
             output.strip().lower() not in ('null', ''),
             "Decision tree error: Invalid output table name: {0}".format(output))
-    _assert(not table_exists(output),
-            "Decision tree error: Output table ({0}) already exists".format(output))
+    if not use_existing_tables:
+        _assert(not table_exists(output),
+                "Decision tree error: Output table ({0}) already exists".format(output))
     _assert(
         columns_exist_in_table(
             model,
@@ -1594,7 +1630,8 @@ def _validate_predict(schema_madlib, model, source, output):
 # -------------------------------------------------------------------------
 
 
-def tree_predict(schema_madlib, model, source, output, pred_type='response', **kwargs):
+def tree_predict(schema_madlib, model, source, output, pred_type='response',
+        use_existing_tables=False, k=0, **kwargs):
     """
     Args:
         @param schema_madlib: str, Name of MADlib schema
@@ -1616,7 +1653,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
     Throws:
         None
     """
-    _validate_predict(schema_madlib, model, source, output)
+    _validate_predict(schema_madlib, model, source, output, use_existing_tables)
     model_summary = model + "_summary"
     # obtain the cat_features and con_features from model table
     summary_elements = plpy.execute("SELECT * FROM {0}".format(model_summary))[0]
@@ -1639,6 +1676,14 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
         schema_madlib, boolean_cats, cat_features, con_features,
         "m.cat_levels_in_text", "m.cat_n_levels")
 
+    if use_existing_tables and table_exists(output):
+        plpy.execute("truncate " + output)
+        header = "INSERT INTO " + output + " "
+        use_fold = 'WHERE k = ' + str(k)
+    else:
+        header = "CREATE TABLE " + output + " AS "
+        use_fold = ''
+
     if not grouping_cols_str:
         using_str = ""
         join_str = ","
@@ -1650,14 +1695,14 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
                  '"estimated_{0}"').format(dep_varname.replace('"', '').strip())
 
     if not is_classification:
-        sql = """
-            CREATE TABLE {output} AS
+        sql = header + """
             SELECT {id_col_name},
                    {schema_madlib}._predict_dt_response(
                         tree,
                         {cat_features_str}::INTEGER[],
                         {con_features_str}::DOUBLE PRECISION[]) as {pred_name}
             FROM {source} as s {join_str} {model} as m {using_str}
+            {use_fold}
             """
     else:
         if dep_type.lower() == "boolean":
@@ -1667,8 +1712,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
         else:
             dep_cast_str = "{pred_name}::{dep_type}"
         if pred_type == "response":
-            sql = """
-                CREATE TABLE {output} AS
+            sql = header + """
                     SELECT
                         {id_col_name}
                        , %s
@@ -1683,6 +1727,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
                                    {con_features_str}::DOUBLE PRECISION[]) + 1]::TEXT
                            as {pred_name}
                         FROM {source} as s {join_str} {model} as m {using_str}
+                        {use_fold}
                     ) q
                 """ % (dep_cast_str)
         else:
@@ -1691,8 +1736,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
                 '{interim}[{j}] as "estimated_prob_{c}"'.
                 format(j=i+1, c=c.strip(' "'), interim=intermediate_col)
                 for i, c in enumerate(split_quoted_delimited_str(dep_levels))])
-            sql = """
-                CREATE TABLE {output} AS
+            sql = header + """
                 SELECT
                     {id_col_name},
                     {score_format}
@@ -1703,6 +1747,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response', **k
                                     {con_features_str}::DOUBLE PRECISION[])
                                         AS {intermediate_col}
                         FROM {source} as s {join_str} {model} as m {using_str}
+                        {use_fold}
                     ) q
                 """
     sql = sql.format(**locals())
@@ -2040,12 +2085,12 @@ def _xvalidate(schema_madlib, tree_states, training_table_name, output_table_nam
         schema_madlib + '.__build_tree',
         modeling_params,
         modeling_param_types,
-        schema_madlib + '.tree_predict',
-        ["%model%", "%data%", "%prediction%", "response"],
-        ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"],
+        schema_madlib + '.__tree_predict',
+        ["%model%", "%data%", "%prediction%", "response", "True"],
+        ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "BOOLEAN"],
         schema_madlib + "." + metric_function,
-        ["%data%", dependent_variable, "%prediction%", pred_name, id_col_name, "%error%"],
-        ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR"],
+        ["%data%", dependent_variable, "%prediction%", pred_name, id_col_name, grouping_cols, "%error%", "True"],
+        ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "TEXT", "VARCHAR", "BOOLEAN"],
         group_to_param_list_table, param_list_name, grouping_cols,
         training_table_name, id_col_name, False, model_cv, 'cp', None, n_folds)
 
@@ -2200,4 +2245,90 @@ def _tree_train_grps_using_bins(
         plpy.notice("Finished training for level " + str(level))
 
     return tree_states
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------
+
+def _tree_rmse(schema_madlib, source_table, dependent_varname, prediction_table,
+        pred_dep_name, id_col_name, grouping_cols, output_table, use_existing_tables=False,
+        k=0, **kwargs):
+    old_messages = plpy.execute("SELECT setting FROM pg_settings "
+                                "WHERE name = 'client_min_messages'")[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    fold = ", " + str(k) + " as k"
+    if use_existing_tables and table_exists(output_table):
+        # plpy.execute("truncate " + output_table)
+        header = "INSERT INTO " + output_table + " "
+    else:
+        header = "CREATE TABLE " + output_table + " AS "
+
+    grouping_str = '' if not grouping_cols else "GROUP BY " + grouping_cols
+    grouping_col_str = "" if not grouping_cols else grouping_cols + ','
+
+    sql = header + """
+        SELECT
+            {grouping_col_str}
+            sqrt(avg(
+                    ({prediction_table}.{pred_dep_name} -
+                     {source_table}.{dependent_varname})^2
+                    )
+                ) as cv_error
+            {fold}
+        FROM {prediction_table}, {source_table}
+        WHERE {prediction_table}.{id_col_name} = {source_table}.{id_col_name}
+        {grouping_str}
+        """.format(output_table=output_table,
+                   prediction_table=prediction_table,
+                   pred_dep_name=pred_dep_name,
+                   source_table=source_table,
+                   dependent_varname=dependent_varname,
+                   grouping_col_str=grouping_col_str,
+                   grouping_str=grouping_str,
+                   id_col_name=id_col_name,
+                   fold=fold)
+    plpy.execute(sql)
+    plpy.execute('SET client_min_messages TO ' + old_messages);
+
+# ------------------------------------------------------------
+
+def _tree_misclassified(schema_madlib, source_table, dependent_varname, prediction_table,
+        pred_dep_name, id_col_name, grouping_cols, output_table, use_existing_tables=False,
+        k=0, **kwargs):
+    old_messages = plpy.execute(
+        "SELECT setting FROM pg_settings WHERE name = 'client_min_messages'")[0]['setting']
+    plpy.execute('SET client_min_messages TO warning')
+
+    fold = ", " + str(k) + " as k"
+    if use_existing_tables and table_exists(output_table):
+        # plpy.execute("truncate " + output_table)
+        header = "INSERT INTO " + output_table + " "
+    else:
+        header = "CREATE TABLE " + output_table + " AS "
+
+    grouping_str = '' if not grouping_cols else "GROUP BY " + grouping_cols
+    grouping_col_str = "" if not grouping_cols else grouping_cols + ','
+
+    sql = header + """
+        SELECT
+            {grouping_col_str}
+            1.0 * sum(CASE WHEN ({prediction_table}.{pred_dep_name} =
+                           {source_table}.{dependent_varname})
+                THEN 0 ELSE 1 END) / count(*) as cv_error
+            {fold}
+        FROM
+            {prediction_table}, {source_table}
+        WHERE
+          {prediction_table}.{id_col_name} = {source_table}.{id_col_name}
+        {grouping_str}
+        """.format(output_table=output_table,
+                   prediction_table=prediction_table,
+                   pred_dep_name=pred_dep_name,
+                   source_table=source_table,
+                   dependent_varname=dependent_varname,
+                   grouping_col_str=grouping_col_str,
+                   grouping_str=grouping_str,
+                   id_col_name=id_col_name,
+                   fold=fold)
+    plpy.execute(sql)
+    plpy.execute('SET client_min_messages TO ' + old_messages);
+

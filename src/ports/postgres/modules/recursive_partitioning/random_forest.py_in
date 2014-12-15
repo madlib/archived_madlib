@@ -71,16 +71,20 @@ SELECT {schema_madlib}.forest_train(
                                 dependent_variable
     'features_to_exclude',  -- Comma separated column names to be
                                 excluded if list_of_features is '*'
-    'split_criterion',      -- How to split a node, options are
-                                'gini', 'misclassification' and
-                                'entropy' for classification, and
-                                'mse' for regression.
     'grouping_cols',        -- Comma separated column names used to
                                 group the data. A random forest model
                                 will be created for each group. Default
                                 is NULL
-    'weights',              -- A Column name containing weights for
-                                each observation. Default is NULL
+    num_trees,              -- Integer, default: 100. Maximum number of trees
+                                to grow in the Random Forest model. Actual
+                                number of trees grown may be slighlty different.
+    num_random_features,    -- Integer, default: sqrt(n) if classification tree,
+                                otherwise n/3. Number of features to randomly
+                                select at each split.
+    importance,             -- Boolean, whether to calculate variable importance,
+                               default is True
+    num_permutations        -- Number of times to permute each feature value while
+                               calculating variable importance, default is 1.
     max_tree_depth,         -- Maximum depth of any node, default is 10
     min_split,              -- Minimum number of observations that must
                                 exist in a node for a split to be
@@ -90,12 +94,12 @@ SELECT {schema_madlib}.forest_train(
     num_splits,             -- Number of bins to find possible node
                                 split threshold values for continuous
                                 variables, default is 100 (Must be greater than 1)
+    'surrogate_params',     -- Text, Comma-separated string of key-value pairs
+                                controlling the behavior of surrogate splits for
+                                each node in a tree. 'max_surrogates=n', where n
+                                is an positive integer with the default 0.
     verbose,                -- Boolean, whether to print more info,
                               default is False
-    importance,             -- Boolean, whether to calculate variable importance,
-                               default is True
-    num_permutations        -- Number of times to permute each feature value while
-                               calculating variable importance
 );
 
 ------------------------------------------------------------
@@ -103,31 +107,65 @@ SELECT {schema_madlib}.forest_train(
 ------------------------------------------------------------
 The output table ('output_table' above) has the following columns (
 quoted items are of text type.):
-    <grouping columns>      -- Grouping columns, only present when
-                                'grouping_cols' is not NULL or ''
-    forest                    -- The random forest model as a binary string
-    cat_levels_in_text      -- Distinct levels (casted to text) of all
-                                categorical variables combined in a single array
-    cat_n_levels            -- Number of distinct levels of all categorical variables
-    forest_depth              -- Number of levels in the forest (root has level 0)
+    gid                     -- Integer. group id that uniquely identifies
+                                a set of grouping column values.
+    sample_id               -- Integer. id of the bootstrap sample that
+                                this tree is a part of.
+    tree                    -- bytea8. trained tree model stored in binary
+                                format.
 
 The output summary table ('output_table_summary') has the following
 columns:
     'method'                -- Method name: 'forest_train'
+    is_classification       -- boolean. True if it is a classification model.
     'source_table'          -- Data table name
     'model_table'           -- Tree model table name
+    'id_col_name'           -- The ID column name
     'dependent_varname'     -- Response variable column name
     'independent_varnames'  -- Comma-separated feature column names
     'cat_features'          -- Comma-separated column names of categorical variables
     'con_features'          -- Comma-separated column names of continuous variables
     'grouping_cols'         -- Grouping column names
-    num_all_groups          -- Number of groups
+    num_trees               -- Number of trees grown by the model
+    num_random_features     -- Number of features randomly selected for each split.
+    max_tree_depth          -- Maximum depth of any node.
+    min_split               -- Minimum number of observations that must
+                                exist in a node for a split to be
+                                attemped.
+    min_bucket              -- Minimum number of observations in any
+                                terminal node.
+    num_splits              -- Number of bins to find possible node
+                                split threshold values for continuous
+                                variables.
+    verbose                 -- Boolean, whether to print more info.
+    importance              -- Boolean, whether to calculate variable importance,
+    num_permutations        -- Number of times to permute each feature value while
+                               calculating variable importance
+    num_all_groups          -- Int. Number of groups during forest training.
     num_failed_groups       -- Number of groups for which training failed
     total_rows_processed    -- Number of rows used in the model training
     total_rows_skipped      -- Number of rows skipped because NULL values
     dependent_var_levels    -- For classification, the distinct levels of
                                 the dependent variable
     dependent_var_type      -- The type of dependent variable
+
+A third table contains the information about the grouping ('output_table_group') and
+it has the following columns:
+    gid                     -- Integer. group id that uniquely identifies a set
+                                of grouping column values.
+    <...>                   -- Grouping columns, if provided in input. Same type as
+                                in the training data table. This could be multiple
+                                columns depending on the grouping_cols input.
+    success                 -- Boolean, indicator of the success of the group.
+    cat_levels_in_text      -- text[]. Ordered levels of categorical variables.
+    cat_n_levels            -- integer[]. Number of levels for each categorical variable.
+    oob_error               -- double precision. Out-of-bag error for the random forest model.
+    cat_var_importance      -- double precision[]. Variable importance for categorical
+                                features. The order corresponds to the order of the
+                                variables as found in cat_features in <output_table>_summary.
+    con_var_importance      -- double precision[]. Variable importance for continuous
+                                features. The order corresponds to the order of the
+                                variables as found in con_features in <model_table>_summary.
         """
     elif message.lower().strip() in ['example', 'examples']:
         help_string = """
@@ -889,10 +927,10 @@ def _create_translated_view(
     oob_translated_view = """
             CREATE OR REPLACE VIEW {all_oob_view}_translated AS
             SELECT
-                sample_id,
-                gid,
+                {oob_prediction_table}.sample_id,
+                {oob_prediction_table}.gid,
                 {id_col_name},
-                dep,
+                {oob_prediction_table}.dep,
                 {cat_features_str}::integer[] as cat_features,
                 {con_features_str}::double precision[] as con_features,
                 cat_n_levels
@@ -1270,7 +1308,7 @@ def _create_summary_table(**kwargs):
             "$dep_list$")
     else:
         kwargs['dep_list_str'] = "NULL"
-    
+
     kwargs['indep_type'] = ', '.join(_get_col_value(kwargs['all_cols_types'], col)
                            for col in kwargs['cat_features'] + kwargs['con_features'])
     kwargs['dep_type'] = _get_dep_type(kwargs['training_table_name'],

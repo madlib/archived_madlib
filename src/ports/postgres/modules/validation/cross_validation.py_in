@@ -206,21 +206,48 @@ def _one_step_cv(tbl_output_model, tbl_output_pred, tbl_output_error, tbl_accum_
                  output_created, explore_type_str, data_id,
                  modelling_func, modelling_params, modelling_params_type, tbl_train,
                  predict_func, predict_params, predict_params_type, tbl_valid,
-                 metric_func, metric_params, metric_params_type, **kwargs):
+                 metric_func, metric_params, metric_params_type, k=0, append_k=False,
+                 use_existing_tables=False, **kwargs):
     """
     Args:
         @param schema_madlib
 
     Returns:
     """
-   # train
-    plpy.execute("""
-        DROP TABLE IF EXISTS {tbl_output_model};
-        DROP TABLE IF EXISTS {tbl_output_model}_summary;
-        DROP TABLE IF EXISTS {tbl_output_pred};
-        DROP TABLE IF EXISTS {tbl_output_error}
-         """.format(**locals()))
+    # Some modules, such as decision tree,
+    # support appending the results from different cv folds
+    # to one single table to improve the performance,
+    # while most of other modules create its own
+    # output tables in each cv fold.
+    if not use_existing_tables:
+        plpy.execute("""
+                DROP TABLE IF EXISTS {tbl_output_model};
+                DROP TABLE IF EXISTS {tbl_output_model}_summary;
+                DROP TABLE IF EXISTS {tbl_output_pred};
+                DROP TABLE IF EXISTS {tbl_output_error}
+             """.format(**locals()))
 
+    # In case the functions need cv fold number k
+    # For example, in decision tree cv, we keep append
+    # results to the same tables and use k to distinguish
+    # them.
+    if append_k:
+        # We do not want to change the original values
+        # that are passed into this function, so '+='
+        # cannot be used here. Otherwise, every call to
+        # this function would append a new item to the
+        # lists. (modelling_params += [str(k)] is wrong).
+        modelling_params = modelling_params + [str(k)]
+        modelling_params_type = modelling_params_type + ['INTEGER']
+        predict_params = predict_params + [str(k)]
+        predict_params_type = predict_params_type + ['INTEGER']
+        metric_params = metric_params + [str(k)]
+        metric_params_type = metric_params_type + ['INTEGER']
+        use_fold = 'WHERE k = ' + str(k)
+    else:
+        use_fold = ''
+
+    # train
     __cv_funcall_general(
         modelling_func, modelling_params, modelling_params_type,
         tbl_train, col_random_id, temp_param_explored,
@@ -247,6 +274,7 @@ def _one_step_cv(tbl_output_model, tbl_output_pred, tbl_output_error, tbl_accum_
                     ({explore_value}){explore_type_str} as {temp_param_explored},
                     {tbl_output_error}.*
                 FROM {tbl_output_error}
+                {use_fold}
         """.format(**locals()))
         output_created = True
     else:
@@ -256,6 +284,7 @@ def _one_step_cv(tbl_output_model, tbl_output_pred, tbl_output_error, tbl_accum_
                     ({explore_value}){explore_type_str} as {temp_param_explored},
                     {tbl_output_error}.*
                 FROM {tbl_output_error}
+                {use_fold}
         """.format(**locals()))
     return output_created
 # ----------------------------------------------------------------------
@@ -349,7 +378,9 @@ def cross_validation_general(
         return None
 ## ========================================================================
 
-
+# XXX Currently, this function is used only by the decision tree,
+# which appends the outputs from different cv folds to a single
+# table to reduce catalog changes and thus improve the performance.
 def cross_validation_grouping_w_params(
         schema_madlib,
         modelling_func, modelling_params, modelling_params_type,
@@ -433,6 +464,16 @@ def cross_validation_grouping_w_params(
                         """.format(**locals())
                 plpy.execute(query)
 
+                # XXX Decision tree uses existing tables to store the outputs
+                # from all cv folds.
+                use_existing_tables = True
+                # XXX To reduce the number of truncations on the existing tables
+                # including the model table and error table, we just append new
+                # results to them together with the fold ID.
+                # XXX The prediction table is to big and we have to use table truncation
+                # to speed up the search in the prediction table.
+                append_k = True # k is fold ID to distinguish different sets of results.
+
                 output_created = _one_step_cv(**locals())
 
         # compute the averages and standard deviations of cv_error for each group and explore value
@@ -447,9 +488,6 @@ def cross_validation_grouping_w_params(
                     stddev(cv_error) AS cv_error_stddev
                 FROM
                     {tbl_accum_error}
-                JOIN
-                    {data_tbl}
-                USING ({data_id})
                 NATURAL JOIN
                     {group_to_param_list_table}
                 WHERE {temp_param_explored} <= array_upper({param_list_name}, 1)
