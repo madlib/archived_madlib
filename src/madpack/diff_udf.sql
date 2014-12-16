@@ -77,11 +77,11 @@ $$
 $$ LANGUAGE plpythonu;
 
 
+DROP TABLE IF EXISTS functions_madlib_v17;
 DROP TABLE IF EXISTS functions_madlib_v16;
-DROP TABLE IF EXISTS functions_madlib_v141;
 
-SELECT get_functions('madlib_v16');
-sELECT get_functions('madlib_v141');
+SELECT get_functions('madlib_v17');
+sELECT get_functions('madlib_v16');
 
 SELECT
     --'\t-' || name || ':' || '\n\t\t-rettype: ' || retype || '\n\t\t-argument: ' || argtypes
@@ -90,13 +90,13 @@ SELECT
 FROM
 (
 SELECT
-    v141.name, v141.retype, v141.argtypes, v141.type
+    v16.name, v16.retype, v16.argtypes, v16.type
 FROM
-    functions_madlib_v141 AS v141
-    LEFT JOIN
     functions_madlib_v16 AS v16
+    LEFT JOIN
+    functions_madlib_v17 AS v17
     USING (name, retype, argtypes)
-WHERE v16.name IS NULL
+WHERE v17.name IS NULL
 ) q
 ORDER by type, "Dropped UDFs";
 
@@ -109,13 +109,14 @@ SELECT
 FROM
 (
 SELECT
-    v141.name, v141.retype, v141.argtypes, v141.type
+    v16.name, v16.retype, v16.argtypes, v16.type
 FROM
-    functions_madlib_v141 AS v141
-    JOIN
     functions_madlib_v16 AS v16
+    JOIN
+    functions_madlib_v17 AS v17
     USING (name, retype, argtypes)
-WHERE v141.retype in ('summary_result') -- '__logregr_result', 'summary_result', 'linregr_result', 'mlogregr_result', 'marginal_logregr_result', 'marginal_mlogregr_result', 'intermediate_cox_prop_hazards_result', '__utils_scaled_data')
+WHERE FALSE
+-- WHERE v16.retype in () -- '__logregr_result', 'summary_result', 'linregr_result', 'mlogregr_result', 'marginal_logregr_result', 'marginal_mlogregr_result', 'intermediate_cox_prop_hazards_result', '__utils_scaled_data')
 ) q
 ORDER by type, "Changed UDFs";
 
@@ -128,13 +129,13 @@ SELECT
 FROM
 (
 SELECT
-    v141.name, v141.retype, v141.argtypes, v141.type
+    v16.name, v16.retype, v16.argtypes, v16.type
 FROM
-    functions_madlib_v141 AS v141
-    JOIN
     functions_madlib_v16 AS v16
+    JOIN
+    functions_madlib_v17 AS v17
     USING (name, retype, argtypes)
-WHERE v141.argtypes SIMILAR TO '%summary_result%' -- '%(__logregr_result|summary_result|linregr_result|mlogregr_result|marginal_logregr_result|marginal_mlogregr_result|intermediate_cox_prop_hazards_result|__utils_scaled_data)%'
+WHERE v16.argtypes SIMILAR TO 'jhafbvkheibiev' -- '%(__logregr_result|summary_result|linregr_result|mlogregr_result|marginal_logregr_result|marginal_mlogregr_result|intermediate_cox_prop_hazards_result|__utils_scaled_data)%'
 ) q
 ORDER by type, "Suspected UDFs";
 

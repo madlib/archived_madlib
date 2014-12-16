@@ -660,7 +660,9 @@ def __db_upgrade(schema, dbrev):
             abort = True
 
     if abort:
-        __error('------- Upgrade aborted. -------', True)
+        __error("""------- Upgrade aborted. -------
+                Backup and drop all objects that depend on MADlib before trying upgrade again.
+                Use madpack reinstall to automatically drop these objects only if appropriate.""", True)
     else:
         __info("No dependency problem found, continuing to upgrade ...", True)
 
@@ -1053,8 +1055,7 @@ def main(argv):
 
         # Currently Madlib can only be installed in 'madlib' schema in HAWQ
         if portid == 'hawq' and schema.lower() != 'madlib':
-            __info("*** Installation is currently restricted to 'madlib' schema ***", True)
-            schema = 'madlib'
+            __error("*** Installation is currently restricted to 'madlib' schema ***", True)
 
         # Get MADlib version in DB
         dbrev = __get_madlib_dbver(schema)
@@ -1124,8 +1125,8 @@ def main(argv):
     ###
     # COMMAND: uninstall/reinstall
     ###
-    if args.command[0] in ('uninstall', 'reinstall') and portid == 'hawq':
-        __info("uninstall is currently unavailable for the HAWQ port", True)
+    if args.command[0] in ('uninstall',) and portid == 'hawq':
+        __error("madpack uninstall is currently not available for HAWQ", True)
 
     if args.command[0] in ('uninstall', 'reinstall') and portid != 'hawq':
         if __get_rev_num(dbrev) == ['0']:
@@ -1191,18 +1192,28 @@ def main(argv):
     # COMMAND: install/reinstall
     ###
     if args.command[0] in ('install', 'reinstall'):
-        # Refresh MADlib version in DB
+        # Refresh MADlib version in DB, None for GP/PG
         if args.command[0] == 'reinstall':
             dbrev = __get_madlib_dbver(schema)
             print ""
 
         __info("*** Installing MADlib ***", True)
 
-        # 1) Compare OS and DB versions. Continue if OS > DB.
+        # 1) Compare OS and DB versions.
+        # noop if OS <= DB.
         __print_revs(rev, dbrev, con_args, schema)
-        if portid != 'hawq' and __get_rev_num(dbrev) >= __get_rev_num(rev):
+        if __get_rev_num(dbrev) >= __get_rev_num(rev):
             __info("Current MADlib version already up to date.", True)
             return
+        # proceed to create objects if nothing installed in DB or for HAWQ
+        elif dbrev is None or portid == 'hawq' and args.command[0] == 'reinstall':
+            pass
+        # error and refer to upgrade if OS > DB
+        else:
+            __error("""Aborting installation: existing MADlib version detected in {0} schema
+                    To upgrade the {0} schema to MADlib v{1} please run the following command:
+                    madpack upgrade -s {0} -p {2} [-c ...]
+                    """.format(schema, rev, portid), True)
 
         # 2) Run installation
         try:
