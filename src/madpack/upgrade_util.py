@@ -305,7 +305,12 @@ class ChangeHandler(UpgradeBase):
         dependencies
         """
         for udt in self._udt:
-            self._run_sql("DROP TYPE IF EXISTS {0}.{1}".format(self._schema, udt))
+            if udt in ('svec', 'bytea8'):
+                # because the recv and send functions and the type depends on each other
+                if self._portid != 'hawq':
+                    self._run_sql("DROP TYPE IF EXISTS {0}.{1} CASCADE".format(self._schema, udt))
+            else:
+                self._run_sql("DROP TYPE IF EXISTS {0}.{1}".format(self._schema, udt))
 
     def drop_changed_udf(self):
         """

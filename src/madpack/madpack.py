@@ -1194,8 +1194,8 @@ def main(argv):
     if args.command[0] in ('install', 'reinstall'):
         # Refresh MADlib version in DB, None for GP/PG
         if args.command[0] == 'reinstall':
-            dbrev = __get_madlib_dbver(schema)
-            print ""
+            print "Setting MADlib database version to be None for reinstall"
+            dbrev = None
 
         __info("*** Installing MADlib ***", True)
 

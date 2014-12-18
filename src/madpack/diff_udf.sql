@@ -78,10 +78,10 @@ $$ LANGUAGE plpythonu;
 
 
 DROP TABLE IF EXISTS functions_madlib_v17;
-DROP TABLE IF EXISTS functions_madlib_v16;
+DROP TABLE IF EXISTS functions_madlib_v10;
 
 SELECT get_functions('madlib_v17');
-sELECT get_functions('madlib_v16');
+sELECT get_functions('madlib_v10');
 
 SELECT
     --'\t-' || name || ':' || '\n\t\t-rettype: ' || retype || '\n\t\t-argument: ' || argtypes
@@ -90,9 +90,9 @@ SELECT
 FROM
 (
 SELECT
-    v16.name, v16.retype, v16.argtypes, v16.type
+    v10.name, v10.retype, v10.argtypes, v10.type
 FROM
-    functions_madlib_v16 AS v16
+    functions_madlib_v10 AS v10
     LEFT JOIN
     functions_madlib_v17 AS v17
     USING (name, retype, argtypes)
@@ -105,18 +105,18 @@ ORDER by type, "Dropped UDFs";
 SELECT
     --'\t-' || name || ':' || '\n\t\t-rettype: ' || retype || '\n\t\t-argument: ' || argtypes
     '    - ' || name || ':' || '\n        rettype: ' || retype || '\n        argument: ' || argtypes AS "Changed UDFs"
-    , type
+--    , type
 FROM
 (
 SELECT
-    v16.name, v16.retype, v16.argtypes, v16.type
+    v10.name, v10.retype, v10.argtypes, v10.type
 FROM
-    functions_madlib_v16 AS v16
+    functions_madlib_v10 AS v10
     JOIN
     functions_madlib_v17 AS v17
     USING (name, retype, argtypes)
-WHERE FALSE
--- WHERE v16.retype in () -- '__logregr_result', 'summary_result', 'linregr_result', 'mlogregr_result', 'marginal_logregr_result', 'marginal_mlogregr_result', 'intermediate_cox_prop_hazards_result', '__utils_scaled_data')
+-- WHERE FALSE
+WHERE v10.retype in ('bytea8') -- '__logregr_result', 'summary_result', 'linregr_result', 'mlogregr_result', 'marginal_logregr_result', 'marginal_mlogregr_result', 'intermediate_cox_prop_hazards_result', '__utils_scaled_data')
 ) q
 ORDER by type, "Changed UDFs";
 
@@ -125,17 +125,17 @@ ORDER by type, "Changed UDFs";
 SELECT
     --'\t-' || name || ':' || '\n\t\t-rettype: ' || retype || '\n\t\t-argument: ' || argtypes
     '    - ' || name || ':' || '\n        rettype: ' || retype || '\n        argument: ' || argtypes AS "Suspected UDFs"
-    , type
+--    , type
 FROM
 (
 SELECT
-    v16.name, v16.retype, v16.argtypes, v16.type
+    v10.name, v10.retype, v10.argtypes, v10.type
 FROM
-    functions_madlib_v16 AS v16
+    functions_madlib_v10 AS v10
     JOIN
     functions_madlib_v17 AS v17
     USING (name, retype, argtypes)
-WHERE v16.argtypes SIMILAR TO 'jhafbvkheibiev' -- '%(__logregr_result|summary_result|linregr_result|mlogregr_result|marginal_logregr_result|marginal_mlogregr_result|intermediate_cox_prop_hazards_result|__utils_scaled_data)%'
+WHERE v10.argtypes SIMILAR TO '%bytea8%' -- '%(__logregr_result|summary_result|linregr_result|mlogregr_result|marginal_logregr_result|marginal_mlogregr_result|intermediate_cox_prop_hazards_result|__utils_scaled_data)%'
 ) q
 ORDER by type, "Suspected UDFs";
 
