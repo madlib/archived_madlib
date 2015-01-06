@@ -1,4 +1,4 @@
-![](./doc/imgs/magnetic-icon.png) ![](./doc/imgs/agile-icon.png) ![](./doc/imgs/deep-icon.png)
+![](https://github.com/madlib/madlib/blob/master/doc/imgs/magnetic-icon.png) ![](https://github.com/madlib/madlib/blob/master/doc/imgs/agile-icon.png) ![](https://github.com/madlib/madlib/blob/master/doc/imgs/deep-icon.png)
 =================================================
 **MADlib** is an open-source library for scalable in-database analytics.
 It provides data-parallel implementations of mathematical, statistical and
@@ -14,8 +14,7 @@ User and Developer Documentation
 ==================================
 The latest documentation of MADlib modules can be found at [`MADlib
 Docs`](http://doc.madlib.net) or can be accessed directly from the MADlib
-installation directory by opening
-[`doc/user/html/index.html`](doc/user/html/index.html).
+installation directory by opening `doc/user/html/index.html`.
 
 
 Architecture
@@ -24,7 +23,7 @@ The following block-diagram gives a high-level overview of MADlib's
 architecture.
 
 
-![MADlib Architecture](./doc/imgs/architecture.png)
+![MADlib Architecture](https://github.com/madlib/madlib/blob/master/doc/imgs/architecture.png)
 
 
 Third Party Components
@@ -37,17 +36,17 @@ MADlib incorporates material from the following third-party components
 4. [`doxypy 0.4.2`](http://code.foosel.org/doxypy) "is an input filter for Doxygen"
 5. [`Eigen 3.2.2`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
 6. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "is a YAML parser and emitter for Python"
-7. [`PyXB 1.2.3`](http://pyxb.sourceforge.net/) "is a Python library for XML Schema Bindings"
+7. [`PyXB 1.2.4`](http://pyxb.sourceforge.net/) "is a Python library for XML Schema Bindings"
 
 Licensing
 ==========
 License information regarding MADlib and included third-party libraries can be
-found inside the [`license`](/license) directory.
+found inside the [`license`](https://github.com/madlib/madlib/blob/master/license) directory.
 
 Release Notes
 =============
 Changes between MADlib versions are described in the
-[`ReleaseNotes.txt`](/ReleaseNotes.txt) file.
+[`ReleaseNotes.txt`](https://github.com/madlib/madlib/blob/master/ReleaseNotes.txt) file.
 
 Papers and Talks
 =================
