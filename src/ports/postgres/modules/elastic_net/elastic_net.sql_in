@@ -121,7 +121,7 @@ the dependent variable expression to the <em>excluded</em> string.</DD>
 <DD>TEXT. The regression type, either 'gaussian' ('linear') or 'binomial' ('logistic').</DD>
 
 <DT>alpha</DT>
-<DD>FLOAT8. Elastic net control parameter, value in [0, 1].</DD>
+<DD>FLOAT8. Elastic net control parameter, value in [0, 1], 1 for L-1 regularization, 0 for L-2.</DD>
 
 <DT>lambda_value</DT>
 <DD>FLOAT8. Regularization parameter, positive.</DD>
@@ -283,13 +283,11 @@ large datasets on multiple machines. This algorithm, therefore, provides the
 
 @anchor predict
 @par Prediction Function
-The prediction function returns a double value for each data point.
-When predicting with binomial models, the return value is 1 if the predicted
-result is TRUE, and 0 if the prediction is FALSE.
 
-The predict function has the following syntax:
-(Note: Due to UDF support constraint, this function is not available in the
-HAWQ port, but alternative prediction functions are available.)
+<h4>Per-Tuple Prediction</h4>
+The prediction function returns a double value for Gaussian family and boolean value for Binomial family.
+
+The predict function has the following syntax (elastic_net_gaussian_predict() and elastic_net_binomial_predict()):
 <pre class="syntax">
 elastic_net_<family>_predict(
                      coefficients,
@@ -297,58 +295,36 @@ elastic_net_<family>_predict(
                      ind_var
                    )
 </pre>
+
 \b Arguments
 <DL class="arglist">
-  <DT>family</DT>
-  <DD>TEXT. The type of regression, either 'gaussian' (for 'linear') or 'binomal' (for 'logistic').</DD>
   <DT>coefficients</DT>
-  <DD>DOUBLE PRECISION[]. Fitting coefficients.</DD>
+  <DD>DOUBLE PRECISION[]. Fitting coefficients, usually coef_all or coef_nonzero.</DD>
   <DT>intercept</DT>
-  <DD>The intercept for the model.</DD>
+  <DD>DOUBLE PRECISION. The intercept for the model.</DD>
   <DT>ind_var</DT>
+  <DD>DOUBLE PRECISION[]. Independent variables that corresponds to coefficients, use <EM>features</EM> column in <EM>tbl_result</EM> for coef_all, and <EM>features_selected</EM> for coef_nonzero. See also <a href="#additional_example">examples</a>.</DD>
 </DL>
 
-There are several different formats of the prediction function:
-
--#
-<pre class="example">
-SELECT madlib.elastic_net_gaussian_predict( coefficients,
-                                            intercept,
-                                            ind_var
-) FROM tbl_result, tbl_new_source LIMIT 10;
+For binomial family, there is a function (elastic_net_binomial_prob()) that outputs the probability of the instance being True:
+<pre class="syntax">
+elastic_net_binomial_prob(
+                     coefficients,
+                     intercept,
+                     ind_var
+                   )
 </pre>
 
--#
-<pre class="example">
-SELECT madlib.elastic_net_binomial_predict ( coefficients,
-                                             intercept,
-                                             ind_var
-                                           )
-FROM tbl_result, tbl_new_source LIMIT 10;
-</pre>
-\n
-This returns 10 BOOLEAN values.
-
--#
-<pre class="example">
-SELECT madlib.elastic_net_binomial_prob( coefficients,
-                                         intercept,
-                                         ind_var
-                                       )
-FROM tbl_result, tbl_new_source LIMIT 10;
-</pre>
-\n
-This returns 10 probability values for the class.
-
-Alternatively, you can use another prediction function that stores the prediction
-result in a table. This is useful if you want to use elastic net together with the
+<h4>Per-Table Prediction</h4>
+Alternatively, you can use another prediction function that stores the prediction result in a table (elastic_net_predict()).
+This is useful if you want to use elastic net together with the
 general cross validation function.
-<pre class="example">
-SELECT madlib.elastic_net_predict( tbl_model,
-                                   tbl_new_sourcedata,
-                                   col_id,
-                                   tbl_predict
-                                 );
+<pre class="syntax">
+elastic_net_predict( tbl_model,
+                     tbl_new_sourcedata,
+                     col_id,
+                     tbl_predict
+                   )
 </pre>
 \b Arguments
 <dl class="arglist">
@@ -425,18 +401,124 @@ SELECT madlib.elastic_net_train( 'houses',
 \\x on
 SELECT * FROM houses_en;
 </pre>
+Result:
+<pre class="result">
+-[ RECORD 1 ]-----+--------------------------------------------
+family            | gaussian
+features          | {tax,bath,size}
+features_selected | {tax,bath,size}
+coef_nonzero      | {27.6945611671,11509.0099734,49.0945557639}
+coef_all          | {27.6945611671,11509.0099734,49.0945557639}
+intercept         | -11145.5061503
+log_likelihood    | -490118975.406
+standardize       | t
+iteration_run     | 322
+</pre>
 -# Use the prediction function to evaluate residuals.
 <pre class="example">
-SELECT *, price - predict as residual FROM (
+\\x off
+SELECT id, price, predict, price - predict AS residual
+FROM (
     SELECT
         houses.*,
-        madlib.elastic_net_predict( 'gaussian',
-                                    m.coef_nonzero,
-                                    m.intercept,
-                                    ARRAY[tax,bath,size]
-                                  )
-                                  as predict
-    FROM houses, houses_en m) s;
+        madlib.elastic_net_gaussian_predict(
+            m.coef_all,
+            m.intercept,
+            ARRAY[tax,bath,size]
+            ) AS predict
+    FROM houses, houses_en m) s
+ORDER BY id;
+</pre>
+
+@anchor additional_example
+<h4>Additional Example (when coef_nonzero is different from coef_all)</h4>
+-# Reuse the <a href="#examples">houses</a> table above and train the model with alpha=1 (L-1) and a large lambda (30000).
+<pre class="example">
+DROP TABLE IF EXISTS houses_en2;
+SELECT madlib.elastic_net_train( 'houses',
+                                 'houses_en2',
+                                 'price',
+                                 'array[tax, bath, size]',
+                                 'gaussian',
+                                 1,
+                                 30000,
+                                 TRUE,
+                                 NULL,
+                                 'fista',
+                                 '',
+                                 NULL,
+                                 10000,
+                                 1e-6
+                               );
+</pre>
+-# View the resulting model and see coef_nonzero is different from coef_all.
+<pre class="example">
+-- Turn on expanded display to make it easier to read results.
+\\x on
+SELECT * FROM houses_en2;
+</pre>
+Result:
+<pre class="result">
+-[ RECORD 1 ]-----+--------------------------------------------
+features          | {tax,bath,size}
+features_selected | {tax,size}
+coef_nonzero      | {13.3261747481,22.7347986045}
+coef_all          | {13.3261747481,0,22.7347986045}
+intercept         | 68877.5045405
+log_likelihood    | -1694746275.43
+standardize       | t
+iteration_run     | 115
+</pre>
+-# We can still use the prediction function with coef_all to evaluate residuals.
+<pre class="example">
+\\x off
+SELECT id, price, predict, price - predict AS residual
+FROM (
+    SELECT
+        houses.*,
+        madlib.elastic_net_gaussian_predict(
+            m.coef_all,
+            m.intercept,
+            ARRAY[tax,bath,size]
+            ) AS predict
+    FROM houses, houses_en2 m) s
+ORDER BY id;
+</pre>
+-# While we can also speed up the prediction function with coef_nonzero to evaluate residuals. This requires user to examine the feature_selected column in the result table to construct the correct independent variables.
+<pre class="example">
+\\x off
+SELECT id, price, predict, price - predict AS residual
+FROM (
+    SELECT
+        houses.*,
+        madlib.elastic_net_gaussian_predict(
+            m.coef_nonzero,
+            m.intercept,
+            ARRAY[tax,size]
+            ) AS predict
+    FROM houses, houses_en2 m) s
+ORDER BY id;
+</pre>
+The two queries are expected to give same residuals:
+<pre class="result">
+ id | price  |     predict      |     residual
+----+--------+------------------+-------------------
+  1 |  50000 |  94245.742567344 |  -44245.742567344
+  3 |  22500 |  93242.914556232 |  -70742.914556232
+  5 | 133000 | 120570.253114742 |   12429.746885258
+  7 | 260000 | 154482.653115284 |  105517.346884716
+  9 | 160000 | 127499.863983754 |   32500.136016246
+ 11 |  87000 | 114415.797184981 |  -27415.797184981
+ 13 | 140000 |  150201.89180353 |   -10201.89180353
+ 15 |  65000 |  110504.97610329 |   -45504.97610329
+  2 |  85000 |  114926.05405835 |   -29926.05405835
+  4 |  90000 | 110026.514757197 |  -20026.514757197
+  6 |  90500 | 105510.375306125 |  -15010.375306125
+  8 | 142500 | 104539.017736473 |   37960.982263527
+ 10 | 240000 | 181347.915720063 |   58652.084279937
+ 12 | 118600 | 118884.405888047 | -284.405888046997
+ 14 | 148000 | 131701.624106042 |   16298.375893958
+(15 rows)
 </pre>
 
 @anchor notes
@@ -735,8 +817,15 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  * @param coefficients      The fitting coefficients
  * @param intercept         The fitting intercept
  * @param ind_var           Features (independent variables)
+ * @returns float8
  *
- * returns a double value. When regress_family is 'binomial' or 'logistic',
+ * Note: Please use function elastic_net_gaussian_predict() or
+ * elastic_net_binomial_predict() instead if you could. This function
+ * is not supported in HAWQ and may be deprecated in the future,
+ * as users are confused between this function and the table
+ * output function with the same name.
+ *
+ * When regress_family is 'binomial' or 'logistic',
  * this function returns 1 for True and 0 for False
  */
 m4_changequote(`<!',`!>')
