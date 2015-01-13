@@ -747,6 +747,7 @@ void fill_row(MutableNativeMatrix &frame, Tree &dt, int me, int i, int n_cats) {
     }
 }
 
+
 // ------------------------------------------------------------
 
 /*
@@ -790,8 +791,6 @@ AnyType convert_to_rpart_format::run(AnyType &args) {
 
     return frame;
 }
-
-// ------------------------------------------------------------
 
 // transverse the tree to get the internal nodes' split thresholds
 void
@@ -851,7 +850,70 @@ get_split_thresholds::run(AnyType &args) {
     int row = 0;
     transverse_tree_thresh(dt, thresh, 0, row, n_cats);
     return thresh;
+    }
+
+// ------------------------------------------------------------
+
+/*
+ * PivotalR: randomForest
+ * Fil a row of the frame matrix using data in tree
+ */
+void fill_one_row(MutableNativeMatrix &frame, Tree &dt, int me, int i,
+        int &node_index) {
+    int feature_index = dt.feature_indices(me);
+    if (feature_index == dt.FINISHED_LEAF) {
+        frame(i,0) = 0;
+        frame(i,1) = 0;
+        frame(i,2) = 0;
+        frame(i,4) = -1;
+        node_index--;
+    } else {
+        frame(i,0) = node_index * 2;
+        frame(i,1) = node_index * 2 + 1;
+        frame(i,4) = 1;
+    }
+    frame(i,2) = feature_index;
+    frame(i,3) = dt.feature_thresholds(me);
+
+    if (dt.is_regression) {
+        frame(i,5) = dt.predictions(me,1) / dt.predictions(me,0); // yval
+    } else {
+        Index max_index;
+        dt.predictions.row(me).head(dt.n_y_labels).maxCoeff(&max_index);
+        // start from 1 to be consistent with R convention
+        frame(i,5) = static_cast<double>(max_index + 1);
+    }
 }
+
+/*
+ * PivotalR: randomForest
+ * Convert to R's randomForest format for getTree(..) function
+ * 
+ */
+AnyType 
+convert_to_random_forest_format::run(AnyType &args) {
+    Tree dt = args[0].getAs<ByteString>();
+
+    // number of nodes in the tree
+    int n_nodes = 0;
+    for (int i = 0; i < dt.feature_indices.size(); ++i) {
+        if (dt.feature_indices(i) != dt.NODE_NON_EXISTING) n_nodes++;
+    }
+
+    // number of columns in randomForest frame
+
+    MutableNativeMatrix frame(this->allocateArray<double>(
+                6, n_nodes), n_nodes, 6);
+
+    int row = 0;
+    int node_index = 1;
+    for (int i = 0; i<n_nodes; i++,node_index++,row++) {
+        fill_one_row(frame, dt, i, row, node_index);
+    }
+
+    return frame;
+}
+// ------------------------------------------------------------
 
 } // namespace recursive_partitioning
 } // namespace modules
