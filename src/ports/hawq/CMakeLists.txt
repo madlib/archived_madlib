@@ -162,7 +162,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         ${MAD_DBAL_SOURCES}
     )
 
-    if(CMAKE_COMPILER_IS_GNUCXX)
+    if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         # The source code specifies that we are POSIX.1-2001 compliant:
         # On the Mac, this is done in $GP_HOME/include/pg_config_manual.h.
         # On Linux, gcc predefines _GNU_SOURCE, which leads to
@@ -180,7 +180,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         # but most compilers allow it. SunPro needs an extra option.
         set_source_files_properties(${MAD_DBAL_SOURCES} PROPERTIES
             COMPILE_FLAGS "${CMAKE_CXX_FLAGS} -features=zla")
-    endif(CMAKE_COMPILER_IS_GNUCXX)
+    endif(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
@@ -189,7 +189,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         # "Source file properties are visible only to targets added in the same
         # directory (CMakeLists.txt)." We therefore have to set them for each
         # version of this port!
-        if(CMAKE_COMPILER_IS_GNUCC)
+        if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
             # FIXME: Is there a portable (not just for gcc) way of including a header file?
             # Due to Greenplum bug MPP-13254, we need to include <sys/time.h>
             # before <postgres.h>
@@ -202,7 +202,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
             # dereferencing type-punned pointer will break strict-aliasing rules
             set_source_files_properties(${LEGACY_C_FILES} PROPERTIES
                 COMPILE_FLAGS "-fno-strict-aliasing -include sys/time.h ${ADDITIONAL_GCC_FLAGS}")
-        endif(CMAKE_COMPILER_IS_GNUCC)
+        endif(CMAKE_COMPILER_IS_GNUCC OR CMAKE_C_COMPILER_ID MATCHES "Clang")
 
         set_source_files_properties(${LEGACY_C_FILES} PROPERTIES
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC"
