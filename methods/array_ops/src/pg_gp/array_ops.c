@@ -800,12 +800,12 @@ array_normalize(PG_FUNCTION_ARGS){
  * This function checks if an array contains NULL values.
  */
 PG_FUNCTION_INFO_V1(array_contains_null);
-bool array_contains_null(PG_FUNCTION_ARGS){
+Datum array_contains_null(PG_FUNCTION_ARGS){
     ArrayType *arg = PG_GETARG_ARRAYTYPE_P(0);
     if(ARR_HASNULL(arg)){
-        return(true);
+        return BoolGetDatum(true);
     } else {
-        return(false);
+        return BoolGetDatum(false);
     }
 }
 
