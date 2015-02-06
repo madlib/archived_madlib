@@ -17,9 +17,9 @@ m4_include(`SQLCommon.m4')
 
 <div class="toc"><b>Contents</b>
 <ul>
-<li><a href="#train">Training Function</a></li>
-<li><a href="#classify">Classify Function</a></li>
-<li><a href="#probabilities">Probabilities Function</a></li>
+<li><a href="#train">Training Function(s)</a></li>
+<li><a href="#classify">Classify Function(s)</a></li>
+<li><a href="#probabilities">Probabilities Function(s)</a></li>
 <li><a href="#adhoc">Ad Hoc Computation</a></li>
 <li><a href="#notes">Implementation Notes</a></li>
 <li><a href="#examples">Examples</a></li>
@@ -42,15 +42,17 @@ independently contribute to the probability that a data point belongs to a
 certain class \f$ c \f$.
 
 Naives Bayes classification estimates feature probabilities and class priors
-using maximum likelihood or Laplacian smoothing. These parameters are then used
-to classifying new data.
+using maximum likelihood or Laplacian smoothing. For numeric attributes,
+Gaussian smoothing can be used to estimate the feature probabilities.These 
+parameters are then used to classify new data. 
 
 
 @anchor train
-@par Training Function
+@par Training Function(s)
 
 
-Precompute feature probabilities and class priors:
+For data with only categorical attributes, precompute feature probabilities and class priors
+using the following function:
 
 <pre class="syntax">
 create_nb_prepared_data_tables ( trainingSource,
@@ -62,21 +64,44 @@ create_nb_prepared_data_tables ( trainingSource,
                                )
 </pre>
 
+For data containing both categorical and numeric attributes, use the following form to 
+precompute the Gaussian parameters (mean and variance) for numeric attributes alongside
+the feature probabilities for categorical attributes and class priors.
+
+<pre class="syntax">
+create_nb_prepared_data_tables ( trainingSource,
+                                 trainingClassColumn,
+                                 trainingAttrColumn,
+                                 numericAttrsColumnIndices,
+                                 numAttrs,
+                                 featureProbsName,
+                                 numericAttrParamsName,
+                                 classPriorsName
+                               )
+</pre>
+
 The \e trainingSource is expected to be of the following form:
 <pre>{TABLE|VIEW} <em>trainingSource</em> (
     ...
     <em>trainingClassColumn</em> INTEGER,
-    <em>trainingAttrColumn</em> INTEGER[],
+    <em>trainingAttrColumn</em> INTEGER[] OR NUMERIC[] OR FLOAT8[],
     ...
 )</pre>
 
+\e numericAttrsColumnIndices should be of type TEXT, specified as an array of 
+indices (starting from 1) in the \e trainingAttrColumn attributes-array that 
+correspond to numeric attributes.
 
 The two output tables are:
 - \e featureProbsName &ndash; stores feature probabilities
-- \e classPriorsName< &ndash; stores the class priors
+- \e classPriorsName &ndash; stores the class priors
+
+In addition to the above, if the function specifying numeric attributes is used,
+an additional table \e numericAttrParamsName is created which stores the 
+Gaussian parameters for the numeric attributes.
 
 @anchor classify
-@par Classify Function
+@par Classify Function(s)
 
 Perform Naive Bayes classification:
 <pre class="syntax">
@@ -89,6 +114,21 @@ create_nb_classify_view ( featureProbsName,
                           destName
                         )
 </pre>
+
+For data with numeric attributes, use the following version:
+
+<pre class="syntax">
+create_nb_classify_view ( featureProbsName,
+                          classPriorsName,
+                          classifySource,
+                          classifyKeyColumn,
+                          classifyAttrColumn,
+                          numAttrs,
+                          numericAttrParamsName,
+                          destName
+                        )
+</pre>
+
 
 The <b>data to classify</b> is expected to be of the following form:
 <pre>{TABLE|VIEW} <em>classifySource</em> (
@@ -108,7 +148,7 @@ key | nb_classification
 </pre>
 
 @anchor probabilities
-@par Probabilities Function
+@par Probabilities Function(s)
 
 Compute Naive Bayes probabilities.
 <pre class="syntax">
@@ -121,6 +161,21 @@ create_nb_probs_view( featureProbsName,
                       destName
                     )
 </pre>
+
+For data with numeric attributes , use the following version:
+
+<pre class="syntax">
+create_nb_probs_view( featureProbsName,
+                      classPriorsName,
+                      classifySource,
+                      classifyKeyColumn,
+                      classifyAttrColumn,
+                      numAttrs,
+                      numericAttrParamsName,
+                      destName
+                    )
+</pre>
+
 
 This creates the view <tt><em>destName</em></tt> mapping
 <em>classifyKeyColumn</em> and every single class to the Naive Bayes
@@ -142,6 +197,10 @@ precomputation step. In this case, replace the function arguments
 <pre>'<em>featureProbsName</em>', '<em>classPriorsName</em>'</pre>
 with
 <pre>'<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>'</pre>
+for data without any any numeric attributes and with
+<pre>'<em>trainingSource</em>', '<em>trainingClassColumn</em>', '<em>trainingAttrColumn</em>', '<em>numericAttrsColumnIndices</em>'</pre>
+for data containing numeric attributes as well.
+
 
 @anchor notes
 @par Implementation Notes
@@ -160,23 +219,31 @@ affect the quality of the results.
 the classification result is an array of these two classes, but the order
 of the two classes is random.
 
-- The current implementation of Naive Bayes classification is only suitable
-for discontinuous (categorial) attributes.\n
+- The current implementation of Naive Bayes classification is suitable
+for discontinuous (categorial) attributes as well as continuous (numeric)
+attributes.\n
 For continuous data, a typical assumption, usually used for small datasets,
 is that the continuous values associated with each class are distributed
 according to a Gaussian distribution,
-and then the probabilities \f$ P(A_i = a \mid C=c) \f$ can be estimated.
-Another common technique for handling continuous values, which is better for
-large data sets, is to use binning to discretize the values, and convert the
-continuous data into categorical bins. These approaches are currently not
-implemented and planned for future releases.
+and the probabilities \f$ P(A_i = a \mid C=c) \f$ are estimated using the 
+Gaussian Distribution formula:
+\f[
+P(A_i=a \mid C=c) = \frac{1}{\sqrt{2\pi\sigma^{2}_c}}exp\left(-\frac{(a-\mu_c)^{2}}{2\sigma^{2}_c}\right)
+\f]
+where \f$\mu_c\f$ and \f$\sigma^{2}_c\f$ are the population mean and variance 
+of the attribute for the class \f$c\f$.\n
+Another common technique for handling continuous values, which is better for 
+large data sets, is to use binning to discretize the values, and convert the 
+continuous data into categorical bins. This approach is currently not implemented.
 
-- One can still provide floating point data to the naive Bayes
-classification function. Floating point numbers can be used as symbolic
-substitutions for categorial data. The classification would work best if
-there are sufficient data points for each floating point attribute. However,
-if floating point numbers are used as continuous data, no warning is raised and
-the result may not be as expected.
+- One can provide floating point data to the Naive Bayes
+classification function. If the corresponding attribute index is not specified 
+in \e numericAttrsColumnIndices, floating point numbers will be used as symbolic 
+substitutions for categorial data. In this case, the classification would work 
+best if there are sufficient data points for each floating point attribute. However, 
+if floating point numbers are used as continuous data without the attribute being 
+marked as of type numeric in \e numericAttrsColumnIndices, no warning is raised 
+and the result may not be as expected.
 
 @anchor examples
 @examp
@@ -292,6 +359,146 @@ Result:
    1 |     2 |     0.6
    2 |     1 |    0.75
    2 |     2 |    0.25
+(4 rows)
+</pre>
+
+The following is an example of using a dataset with both numeric and 
+categorical attributes
+
+-#  The training and the classification data. Attributes {height(numeric),weight(numeric),shoe size(categorical)},
+Class{sex(1=male,2=female)}
+<pre class="example">
+SELECT * FROM gaussian_data;
+</pre>
+Result:
+<pre class="result">
+ id | sex |  attributes   
+&nbsp;----+-----+---------------
+  1 |   1 | {6,180,12}
+  2 |   1 | {5.92,190,12}
+  3 |   1 | {5.58,170,11}
+  4 |   1 | {5.92,165,11}
+  5 |   2 | {5,100,6}
+  6 |   2 | {5.5,150,6}
+  7 |   2 | {5.42,130,7}
+  8 |   2 | {5.75,150,8}
+(8 rows)
+</pre>
+<pre class="example">
+SELECT * FROM gaussian_test;
+</pre>
+Result:
+<pre class="result">
+ id | sex |  attributes  
+----+-----+--------------
+  9 |   1 | {5.8,180,11}
+ 10 |   2 | {5,160,6}
+(2 rows)
+</pre>
+
+-#  Precompute feature probabilities and class priors.
+<pre class="example">
+SELECT madlib.create_nb_prepared_data_tables( 'gaussian_data',
+                                              'sex',
+                                              'attributes',
+                                              'ARRAY[1,2]',
+                                              3,
+                                              'categ_feature_probs',
+                                              'numeric_attr_params',
+                                              'class_priors'
+                                            );
+</pre>
+
+-#  Optionally check the contents of the precomputed tables.
+<pre class="example">
+SELECT * FROM class_priors;
+</pre>
+Result:
+<pre class="result">
+class | class_cnt | all_cnt 
+&nbsp;-------+-----------+---------
+     1 |         4 |       8
+     2 |         4 |       8
+(2 rows)
+</pre>
+<pre class="example">
+SELECT * FROM categ_feature_probs;
+</pre>
+Result:
+<pre class="result">
+ class | attr | value | cnt | attr_cnt 
+-------+------+-------+-----+----------
+     2 |    3 |     6 |   2 |        5
+     1 |    3 |    12 |   2 |        5
+     2 |    3 |     7 |   1 |        5
+     1 |    3 |    11 |   2 |        5
+     2 |    3 |     8 |   1 |        5
+     2 |    3 |    12 |   0 |        5
+     1 |    3 |     6 |   0 |        5
+     2 |    3 |    11 |   0 |        5
+     1 |    3 |     8 |   0 |        5
+     1 |    3 |     7 |   0 |        5
+(10 rows)
+</pre>
+<pre class="example">
+SELECT * FROM numeric_attr_params;
+</pre>
+Result:
+<pre class="result">
+class | attr |      attr_mean       |        attr_var        
+-------+------+----------------------+------------------------
+     1 |    1 |   5.8550000000000000 | 0.03503333333333333333
+     1 |    2 | 176.2500000000000000 |   122.9166666666666667
+     2 |    1 |   5.4175000000000000 | 0.09722500000000000000
+     2 |    2 | 132.5000000000000000 |   558.3333333333333333
+(4 rows)
+</pre>
+
+-#  Create the view with Naive Bayes classification and check the results.
+<pre class="example">
+SELECT madlib.create_nb_classify_view( 'categ_feature_probs',
+                                       'class_priors',
+                                       'gaussian_test',
+                                       'id',
+                                       'attributes',
+                                       3,
+                                       'numeric_attr_params',
+                                       'classify_view'
+                                     );
+&nbsp;
+SELECT * FROM classify_view;
+</pre>
+Result:
+<pre class="result">
+ key | nb_classification
+&nbsp;----+-------------------
+   9 | {1}
+   10 | {2}
+(2 rows)
+</pre>
+
+-#  Look at the probabilities for each class
+<pre class="example">
+SELECT madlib.create_nb_probs_view( 'categ_feature_probs',
+                                       'class_priors',
+                                       'gaussian_test',
+                                       'id',
+                                       'attributes',
+                                       3,
+                                       'numeric_attr_params',
+                                       'probs_view'
+                                  );
+&nbsp;
+SELECT * FROM probs_view;
+</pre>
+Result:
+<pre class="result">
+ key | class |       nb_prob        
+-----+-------+----------------------
+   9 |     1 |    0.993556745948775
+   9 |     2 |  0.00644325405122553
+  10 |     1 | 5.74057538627122e-05
+  10 |     2 |    0.999942594246137
 (4 rows)
 </pre>
 
@@ -505,6 +712,21 @@ AS $$PythonFunction(bayes, bayes, create_prepared_data_table)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_prepared_data_tables(
+    "trainingSource" VARCHAR,
+    "trainingClassColumn" VARCHAR,
+    "trainingAttrColumn" VARCHAR,
+    "numericAttrsColumnIndices" VARCHAR,
+    "numAttrs" INTEGER,
+    "featureProbsDestName" VARCHAR,
+    "numericFeatureStatsDestName" VARCHAR,
+    "classPriorsDestName" VARCHAR)
+RETURNS VOID
+AS $$PythonFunction(bayes, bayes, create_prepared_data_table)$$
+LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
 /**
  * @brief Create a view with columns <tt>(key, nb_classification)</tt>
  *
@@ -543,6 +765,8 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  * @sa This function is a wrapper for bayes::create_classification(). See there
  *     for details.
  */
+
+/* default API without any numeric attributes and pre-trained data*/
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
     "featureProbsSource" VARCHAR,
     "classPriorsSource" VARCHAR,
@@ -556,6 +780,22 @@ AS $$PythonFunction(bayes, bayes, create_classification_view)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+/* API with numeric attributes and pre-trained data */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
+    "featureProbsSource" VARCHAR,
+    "classPriorsSource" VARCHAR,
+    "classifySource" VARCHAR,
+    "classifyKeyColumn" VARCHAR,
+    "classifyAttrColumn" VARCHAR,
+    "numAttrs" INTEGER,
+    "numericFeatureStatsSource" VARCHAR,
+    "destName" VARCHAR)
+RETURNS VOID
+AS $$PythonFunction(bayes, bayes, create_classification_view)$$
+LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* API without numeric attrs but ad-hoc computation */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
@@ -570,6 +810,21 @@ AS $$PythonFunction(bayes, bayes, create_classification_view)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+/* API with numeric attrs but ad-hoc computation */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_classify_view(
+    "trainingSource" VARCHAR,
+    "trainingClassColumn" VARCHAR,
+    "trainingAttrColumn" VARCHAR,
+    "numericAttrsColumnIndices" VARCHAR,
+    "classifySource" VARCHAR,
+    "classifyKeyColumn" VARCHAR,
+    "classifyAttrColumn" VARCHAR,
+    "numAttrs" INTEGER,
+    "destName" VARCHAR)
+RETURNS VOID
+AS $$PythonFunction(bayes, bayes, create_classification_view)$$
+LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 /**
  * @brief Create view with columns <tt>(key, class, nb_prob)</tt>
@@ -612,6 +867,8 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  * @internal
  * @sa This function is a wrapper for bayes::create_bayes_probabilities().
  */
+
+/* API without support for numeric attributes and with support for pre-computed data */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
     "featureProbsSource" VARCHAR,
     "classPriorsSource" VARCHAR,
@@ -625,6 +882,22 @@ AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+/* API with support for numeric attributes and with support for pre-computed data */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
+    "featureProbsSource" VARCHAR,
+    "classPriorsSource" VARCHAR,
+    "classifySource" VARCHAR,
+    "classifyKeyColumn" VARCHAR,
+    "classifyAttrColumn" VARCHAR,
+    "numAttrs" INTEGER,
+    "numericFeatureStatsSource" VARCHAR,
+    "destName" VARCHAR)
+RETURNS VOID
+AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
+LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* API without support for numeric attributes and without support for pre-computed data */
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
     "trainingSource" VARCHAR,
     "trainingClassColumn" VARCHAR,
@@ -639,3 +912,18 @@ AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
 LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+/* API with support for numeric attributes but without support for pre-computed data */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.create_nb_probs_view(
+    "trainingSource" VARCHAR,
+    "trainingClassColumn" VARCHAR,
+    "trainingAttrColumn" VARCHAR,
+    "numericAttrsColumnIndices" VARCHAR,
+    "classifySource" VARCHAR,
+    "classifyKeyColumn" VARCHAR,
+    "classifyAttrColumn" VARCHAR,
+    "numAttrs" INTEGER,
+    "destName" VARCHAR)
+RETURNS VOID
+AS $$PythonFunction(bayes, bayes, create_bayes_probabilities_view)$$
+LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

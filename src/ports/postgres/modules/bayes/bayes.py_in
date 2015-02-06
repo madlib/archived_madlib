@@ -48,7 +48,10 @@ def __nb_validate_args(**kwargs):
     @param trainingSource name of relation containing training data
     @param trainingClassColumn name of column with class
     @param trainingAttrColumn name of column with attributes array
+    @param numericAttrsColumnIndices list of column names that are to be treaded as of type numeric
     @param numAttrs Number of attributes to use for classification
+    @param numericFeatureStatsDestName Name of relation containing the descriptive statistics 
+           (mean,var) of the numerical features
     @param classPriorsDestName Name of class-priors relation to create
     @param featureProbsDestName Name of feature-probabilities relation to create
     @param classPriorsSource Relation (class, class_cnt, all_cnt) where
@@ -56,6 +59,8 @@ def __nb_validate_args(**kwargs):
            \em trainingSource
     @param featureProbsSource Relation (class, attr, value, cnt, attr_cnt) where
            (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+    @param numericFeatureStatsSource Relation (class,attr,attr_mean,attr_var) 
+           where mean is the mean of the numeric attr and var is its stddev, used for gaussian smoothing
     @param classifySource Name of the relation that contains data to be classified
     @param classifyKeyColumn Name of column in \em classifySource that can
            serve as unique identifier
@@ -63,7 +68,7 @@ def __nb_validate_args(**kwargs):
     @param destName Name of the table or view to create
     """
 
-    for k in ('classPriorsDestName', 'featureProbsDestName', 'destName'):
+    for k in ('classPriorsDestName', 'featureProbsDestName', 'destName','numericFeatureStatsDestName'):
         if k in kwargs:
             out = kwargs[k]
             if out is None or out == '':
@@ -78,7 +83,11 @@ def __nb_validate_args(**kwargs):
             plpy.error("Naive Bayes error: 'numAttrs' should be > 0!")
 
     model_tbl = {'classPriorsSource': ('class', 'class_cnt', 'all_cnt'),
-            'featureProbsSource': ('class', 'attr', 'value', 'cnt', 'attr_cnt')}
+            'featureProbsSource': ('class', 'attr', 'value', 'cnt', 'attr_cnt'),
+            'numericFeatureStatsSource' : ('class','attr','attr_mean','attr_var')}
+    
+    empty_tables = []
+
     for mdl in model_tbl:
         if mdl in kwargs:
             tbl = kwargs[mdl]
@@ -89,8 +98,7 @@ def __nb_validate_args(**kwargs):
                 plpy.error("Naive Bayes error: " + \
                         "{0} '{1}' does not exist!".format(mdl, tbl))
             if table_is_empty(tbl):
-                plpy.error("Naive Bayes error: " + \
-                        "{0} '{1}' is empty!".format(mdl, tbl))
+                empty_tables += [mdl]
 
             for c in model_tbl[mdl]:
                 if c is None or c == '':
@@ -98,6 +106,20 @@ def __nb_validate_args(**kwargs):
             if not columns_exist_in_table(tbl, model_tbl[mdl]):
                 plpy.error("Naive Bayes error: {0} '{1}' does not have the" + \
                         "necessary column(s)!".format(mdl, tbl))
+
+    # classPriorsSource should never be empty
+    if 'classPriorsSource' in empty_tables:
+        plpy.error("Naive Bayes error: " + \
+                "{0} '{1}' is empty!".format('classPriorsSource', kwargs['classPriorsSource']))
+
+    #at most one of the other tables can be empty
+    if 'featureProbsSource' in empty_tables and 'numericFeatureStatsSource' in empty_tables:
+        plpy.error("Naive Bayes error: " + \
+                "{0} '{1}' and {2} '{3}' are empty!".format(
+                'featureProbsSource', 
+                kwargs['featureProbsSource'],
+                'numericFeatureStatsSource',
+                kwargs['numericFeatureStatsSource']))
 
     if 'trainingSource' in kwargs:
         tbl = kwargs['trainingSource']
@@ -157,6 +179,15 @@ def __nb_validate_args(**kwargs):
             plpy.error("Naive Bayes error:" + \
                     "'numAttrs' {0} is out of bound!".format(str(n_attr)))
 
+def __get_numeric_attr_indices(numericFeatureStatsSource):
+    """ Return the SQL array containing the indices of the 
+        numeric attributes in the numericFeatureStatsSource
+        table
+    """
+    return """
+        SELECT array_agg(DISTINCT(attr))
+        FROM {0} as numericFeatureStatsSource
+    """.format(numericFeatureStatsSource)
 
 def __get_feature_probs_sql(**kwargs):
     """Return SQL query with columns (class, attr, value, cnt, attr_cnt).
@@ -178,6 +209,8 @@ def __get_feature_probs_sql(**kwargs):
     @param trainingClassColumn name of column with class
     @param trainingAttrColumn name of column with attributes array
     @param numAttrs Number of attributes to use for classification
+    @param numericAttrsColumnIndices Indices of the attributes which are numeric
+           and hence must be removed from the feature probs table
 
     For meanings of \#(c,i,a), \#c, and \#i see the general description of
     \ref bayes.
@@ -194,43 +227,64 @@ def __get_feature_probs_sql(**kwargs):
 
     # {trainingSource} cannot be a subquery, because we use it more than once in
     # our generated SQL.
-    return """
+    sql = """
         SELECT
             class,
             attr,
             value,
-            coalesce(cnt, 0) AS cnt,
+            cnt,
             attr_cnt
-        FROM
-        (
-            SELECT *
-            FROM
-                {classPriorsSource} AS classes
-            CROSS JOIN
-                {attrValuesSource} AS attr_values
-        ) AS required_triples
-        LEFT OUTER JOIN
-        (
+        FROM(
             SELECT
-                trainingSource.{trainingClassColumn} AS class,
-                generate_series(1, {numAttrs}) AS attr,
-                unnest(trainingSource.{trainingAttrColumn}) AS value,
-                count(*) AS cnt
-            FROM
-                {trainingSource} AS trainingSource
-            WHERE
-                {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
-            GROUP BY
                 class,
                 attr,
-                value
-        ) AS triple_counts
-        USING (class, attr, value)
-        INNER JOIN
-            {attrCountsSource} AS attr_counts
-        USING (attr)
-        """.format(**kwargs)
+                value,
+                coalesce(cnt, 0) AS cnt,
+                attr_cnt
+            FROM
+            (
+                SELECT *
+                FROM
+                    {classPriorsSource} AS classes
+                CROSS JOIN
+                    {attrValuesSource} AS attr_values
+            ) AS required_triples
+            LEFT OUTER JOIN
+            (
+                SELECT
+                    trainingSource.{trainingClassColumn} AS class,
+                    generate_series(1, {numAttrs}) AS attr,
+                    unnest(trainingSource.{trainingAttrColumn}) AS value,
+                    count(*) AS cnt
+                FROM
+                    {trainingSource} AS trainingSource
+                WHERE
+                    {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
+                GROUP BY
+                    class,
+                    attr,
+                    value
+            ) AS triple_counts
+            USING (class, attr, value)
+            INNER JOIN
+                {attrCountsSource} AS attr_counts
+            USING (attr)
+        ) p
+        """
 
+    if kwargs.has_key("numericAttrsColumnIndices") \
+            and kwargs['numericAttrsColumnIndices'].lower() != 'array[]':
+        sql += """
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM( 
+                SELECT unnest({numericAttrsColumnIndices}::INTEGER[]) as attr
+            ) q
+            WHERE p.attr=q.attr
+        )
+        """
+        
+    return sql.format(**kwargs)
 
 def __get_attr_values_sql(**kwargs):
     """
@@ -302,6 +356,45 @@ def __get_attr_counts_sql(**kwargs):
         GROUP BY attr
         """.format(**kwargs)
 
+def __get_attr_numeric_stats_sql(**kwargs):
+    """
+    Return SQL query with columns (class,attr, attr_mean,attr_var) for 
+    numeric attributes
+
+    @param trainingSource Name of relation containing the training data
+    @param trainingClassColumn Name of the class column in the training source table
+    @param trainingAttrColumn Name of attributes-array column in training data
+    @param numAttrs Number of attributes to use for classification
+    @param numericAttrsColumnIndices Indices of attributes in trainingAttrColumn array to be treated as numeric
+    
+    """
+
+    return """
+        SELECT
+            class,attr, avg(value) AS attr_mean , variance(value) as attr_var
+        FROM
+        (
+            SELECT
+                l.class,l.attr,l.value
+            FROM (
+                SELECT
+                    trainingSource.{trainingClassColumn} as class,
+                    generate_series(1, {numAttrs}) AS attr,
+                    unnest(trainingSource.{trainingAttrColumn}) AS value
+                FROM
+                    {trainingSource} AS trainingSource
+                WHERE
+                    {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
+                ) l
+            INNER JOIN (
+                SELECT
+                    unnest({numericAttrsColumnIndices}::INTEGER[]) AS attr
+                ) m
+            ON (l.attr=m.attr)
+        ) p
+        GROUP BY class,attr
+        """.format(**kwargs)
+
 
 def __get_class_priors_sql(**kwargs):
     """
@@ -335,6 +428,37 @@ def __get_class_priors_sql(**kwargs):
                 {schema_madlib}.array_contains_null({trainingAttrColumn}) = 'f'
             ) m
         """.format(**kwargs)
+
+def __get_class_prior_prob_values_sql(**kwargs):
+    """
+    Return SQL query with columns (key, class, log_prob), where log_prob
+    is the class prior probability. This will return all possible combinations 
+    of key,class so that they can later be grouped together and added with the 
+    log probabilites of the attributes.
+
+    @param numAttrs Number of attributes to use for classification
+    @param classifySource Name of the relation that contains data to be classified
+    @param classifyKeyColumn Name of column in \em classifySource that can
+           serve as unique identifier
+    @param classifyAttrColumn Name of attributes-array column in \em classifySource
+    @param classPriorsSource
+           Relation (class, class_cnt, all_cnt) where
+           class is c, class_cnt is \#c, all_cnt is the number of training
+           samples.
+    """
+
+    return """
+        SELECT
+            classify.{classifyKeyColumn} AS key,
+            classes.class,
+            log(classes.class_cnt::DOUBLE PRECISION/classes.all_cnt) 
+        FROM
+            {classifySource} AS classify,
+            {classPriorsSource} AS classes
+        WHERE
+            {schema_madlib}.array_contains_null({classifyAttrColumn}) = 'f'
+    """.format(**kwargs)
+
 
 
 def __get_keys_and_prob_values_sql(**kwargs):
@@ -377,11 +501,9 @@ def __get_keys_and_prob_values_sql(**kwargs):
             CASE WHEN count(*) < 1 THEN 0 -- ignoring NULL attributes for now
                                           -- {numAttrs} THEN NULL
                  ELSE
-                    log(classPriors.class_cnt::DOUBLE PRECISION /
-                        classPriors.all_cnt) +
-                        sum( log((featureProbs.cnt::DOUBLE PRECISION +
-                            {smoothingFactor})/ (classPriors.class_cnt +
-                            {smoothingFactor} * featureProbs.attr_cnt)) )
+                    sum( log((featureProbs.cnt::DOUBLE PRECISION +
+                        {smoothingFactor})/ (classPriors.class_cnt +
+                        {smoothingFactor} * featureProbs.attr_cnt)) )
                  END
             AS log_prob
         FROM
@@ -423,6 +545,72 @@ def __get_keys_and_prob_values_sql(**kwargs):
         GROUP BY classify.{classifyKeyColumn}, classes.class
     ) t2
     ON t1.key = t2.key AND t1.class=t2.class
+    """.format(**kwargs)
+
+def __get_keys_and_probs_values_numeric_attrs_sql(**kwargs):
+    """
+    This calculates the log probabilites of numeric attributes 
+    based on the gaussian smoothing formula.
+    This will result in a table of the form (key,class,<sum of prob_values for
+    all_numeric_attrs>).These probabilites can then be added to the log
+    probabilities obtained in __get_keys_and_probs_values and the class priors
+    computed in __get_class_prior_prob_values_sql to compute the final
+    log probabilities.    
+ 
+    @param numAttrs Number of attributes to use for classification
+    @param classifySource Name of the relation that contains data to be classified
+    @param classifyKeyColumn Name of column in \em classifySource that can
+           serve as unique identifier
+    @param classifyAttrColumn Name of attributes-array column in \em classifySource
+    @param classPriorsSource
+           Relation (class, class_cnt, all_cnt) where
+           class is c, class_cnt is \#c, all_cnt is the number of training
+           samples.
+    @param numericFeatureStatsSource
+           Relation (class, attr, attr_mean, attr_var) for gaussian smoothing
+           of continuous attributes.
+    """
+
+    # {classifySource} cannot be a subquery, because we use it more than once in
+    # our generated SQL.
+    return """
+    SELECT s2.key, s2.class, s1.log_prob FROM
+    (
+        SELECT
+            classify.key,
+            numericFeatureStatsSource.class,
+            sum(-0.5*(log(2*pi()*attr_var::DOUBLE PRECISION) + log(exp(1.0))*(((attr_mean::DOUBLE PRECISION-value)^2)/(attr_var::DOUBLE PRECISION)))) 
+            AS log_prob
+        FROM
+            {numericFeatureStatsSource} AS numericFeatureStatsSource,
+            (
+                SELECT
+                    classifySource.{classifyKeyColumn} AS key,
+                    generate_series(1, {numAttrs}) AS attr,
+                    unnest(classifySource.{classifyAttrColumn}) AS value
+                FROM
+                    {classifySource} AS classifySource
+                WHERE
+                    {schema_madlib}.array_contains_null({classifyAttrColumn}) = 'f'
+            ) AS classify
+        WHERE
+            numericFeatureStatsSource.attr = classify.attr
+        GROUP BY
+            classify.key,numericFeatureStatsSource.class
+    ) s1
+    RIGHT OUTER JOIN
+    (
+        SELECT
+            classify.{classifyKeyColumn} AS key,
+            classes.class
+        FROM
+            {classifySource} AS classify,
+            {classPriorsSource} AS classes
+        WHERE
+            {schema_madlib}.array_contains_null({classifyAttrColumn}) = 'f'
+        GROUP BY classify.{classifyKeyColumn}, classes.class
+    ) s2
+    ON s1.key = s2.key AND s1.class=s2.class
     """.format(**kwargs)
 
 
@@ -471,11 +659,13 @@ def create_prepared_data(**kwargs):
     @param trainingSource Name of relation containing the training data
     @param trainingClassColumn Name of class column in training data
     @param trainingAttrColumn Name of attributes-array column in training data
+    @param numericAttrsColumnIndices Name of indices-array (index starting from 1) that contains indices of numeric attrs
     @param numAttrs Number of attributes to use for classification
 
     @param whatToCreate (Optional) Either \c 'TABLE' OR \c 'VIEW' (the default).
     @param classPriorsDestName Name of class-priors relation to create
     @param featureProbsDestName Name of feature-probabilities relation to create
+    @param numericFeatureStatsDestName Name of the statistics table for numeric attributes
 
     """
     if not kwargs.has_key('numAttrs'):
@@ -492,6 +682,20 @@ def create_prepared_data(**kwargs):
         kwargs["trainingAttrColumn"],
         kwargs["numAttrs"])
 
+    # if only one of these is present, error out
+    if kwargs.has_key('numericAttrsColumnIndices') ^ kwargs.has_key('numericFeatureStatsDestName'):
+        plpy.error("Both 'numericAttrsColumnIndices' and 'numericFeatureStatsDestName' must be provided");
+
+    # verify if the attributes specified in the numericAttrsColumnIndices are
+    # really numeric in nature. TODO
+    if kwargs.has_key('numericAttrsColumnIndices') and kwargs.has_key('numericFeatureStatsDestName'):
+        __verify_numeric_attr_type(
+            kwargs["trainingSource"],
+            kwargs["trainingAttrColumn"],
+            kwargs["numericAttrsColumnIndices"],
+            kwargs["numAttrs"]);
+
+    # create the tables for the categorical kind attributes
     if kwargs['whatToCreate'] == 'TABLE':
         # FIXME: ANALYZE is not portable.
         kwargs.update(dict(
@@ -524,11 +728,11 @@ def create_prepared_data(**kwargs):
                 attr_values_sql = "(" + __get_attr_values_sql(**kwargs) + ")"
                 )
             )
-
-
+    
     kwargs.update(dict(
             sql = __get_class_priors_sql(**kwargs)
         ))
+
     plpy.execute("""
         CREATE {whatToCreate} {classPriorsDestName}
         AS
@@ -546,9 +750,33 @@ def create_prepared_data(**kwargs):
     kwargs.update(dict(
             classPriorsSource = kwargs['classPriorsDestName']
         ))
+
+
+    # Create the attr-mean-var-class table (for later use in computing probs). 
+    # This can be directly computed using the sql query. no need for intermediate table
+    # Also update here the pointer to this globally created table
+    if kwargs.has_key('numericAttrsColumnIndices') and kwargs.has_key('numericFeatureStatsDestName'):
+        plpy.execute("""
+            CREATE {whatToCreate} {numericFeatureStatsDestName}
+            AS
+            {sql}
+            m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (class, attr)');
+            """.format(
+                whatToCreate = kwargs['whatToCreate'],
+                numericFeatureStatsDestName = kwargs['numericFeatureStatsDestName'],
+                sql = __get_attr_numeric_stats_sql(**kwargs)
+                )
+            )
+    else:
+        kwargs.update(dict(
+                numericAttrsColumnIndices = 'ARRAY[]'
+            ))
+
     kwargs.update(dict(
             sql = __get_feature_probs_sql(**kwargs)
         ))
+
+
     plpy.execute("""
         CREATE {whatToCreate} {featureProbsDestName}
         AS
@@ -556,6 +784,8 @@ def create_prepared_data(**kwargs):
         m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY (class, attr, value)');
         """.format(**kwargs)
         )
+
+     
     if kwargs['whatToCreate'] == 'TABLE':
         plpy.execute("""
             m4_ifdef(`__HAWQ__', `',
@@ -565,6 +795,15 @@ def create_prepared_data(**kwargs):
             DROP TABLE {attrValuesSource};
             """.format(**kwargs))
 
+    if kwargs.has_key('numericAttrsColumnIndices') and kwargs.has_key('numericFeatureStatsDestName'):
+        if kwargs['whatToCreate'] == 'TABLE':
+            plpy.execute("""
+                m4_ifdef(`__HAWQ__', `',
+                `ALTER TABLE {numericFeatureStatsDestName} ADD PRIMARY KEY (class, attr);')
+                ANALYZE {numericFeatureStatsDestName};
+                """.format(**kwargs))
+
+        
 
 def create_classification_view(**kwargs):
     """Wrapper around create_classification() to create a view (and not a table)
@@ -609,6 +848,10 @@ def create_classification(**kwargs):
     @param featureProbsSource
            Relation (class, attr, value, cnt, attr_cnt) where
            (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+    In addition to the above, for numeric attributes provide:
+    @param numericFeatureStatsSource
+            Relation (class,attr,attr_mean,attr_var) where
+            attr_mean and attr_vat are the mean and variance of attr respectively
 
     Or have this function operate on the "raw" training data:
     @param trainingSource
@@ -617,9 +860,11 @@ def create_classification(**kwargs):
            Name of class column in training data
     @param trainingAttrColumn
            Name of attributes-array column in \em trainingSource
+    In addition to the above, for numeric attributes provide:
+    @param numericAttrsColumnIndices
+           Array containing attribute indices of numeric attributes
 
     """
-
     __init_prepared_data(kwargs)
 
     if kwargs.has_key('trainingSource') <> kwargs.has_key('trainingAttrColumn'):
@@ -646,15 +891,56 @@ def create_classification(**kwargs):
         kwargs["numAttrs"])
 
     kwargs.update(
-        keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
+        keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")",
+        class_prior_prob_values = "(" + __get_class_prior_prob_values_sql(**kwargs) + ")"
         )
-    plpy.execute("""
-        CREATE {whatToCreate} {destName} AS
-        SELECT
-            key,
-            {schema_madlib}.argmax(class, log_prob) AS nb_classification
-        FROM {keys_and_prob_values} AS keys_and_nb_values
-        GROUP BY key
+
+    # if there are any numeric attributes in the test data, compute their probabilities as well.
+    if kwargs.has_key('numericFeatureStatsSource'):
+        kwargs.update(dict(
+            numeric_attrs_keys_and_prob_values = "(" + __get_keys_and_probs_values_numeric_attrs_sql(**kwargs) + ")"
+            ))
+        # now add these probabilities to the original table
+        plpy.execute("""
+            CREATE {whatToCreate} {destName} AS
+            SELECT
+                p.key,
+                {schema_madlib}.argmax(p.class, (p.log_prob)) AS nb_classification
+            FROM(
+                SELECT 
+                    key,
+                    class,
+                    sum(log_prob) as log_prob
+                FROM( 
+                        {keys_and_prob_values} 
+                        UNION ALL
+                        {numeric_attrs_keys_and_prob_values} 
+                        UNION ALL
+                        {class_prior_prob_values}
+                ) x
+                GROUP BY key,class
+            ) p
+            GROUP BY p.key
+            """.format(**kwargs))
+    else:
+        plpy.execute("""
+            CREATE {whatToCreate} {destName} AS
+            SELECT
+                key,
+                {schema_madlib}.argmax(class, log_prob) AS nb_classification
+            FROM (
+                    SELECT
+                        key,
+                        class,
+                        sum(log_prob) as log_prob
+                    FROM(
+                        {keys_and_prob_values}
+                        UNION ALL
+                        {class_prior_prob_values}
+                    ) x
+                    GROUP BY key,class
+            ) AS keys_and_nb_values
+            GROUP BY key
         """.format(**kwargs))
 
 
@@ -695,6 +981,10 @@ def create_bayes_probabilities(**kwargs):
     @param featureProbsSource
            Relation (class, attr, value, cnt, attr_cnt) where
            (class, attr, value) = (c,i,a), cnt = \#(c,i,a), and attr_cnt = \#i
+    In addition to the above, for numeric attributes provide:
+    @param numericFeatureStatsSource
+            Relation (class,attr,attr_mean,attr_var) where
+            attr_mean and attr_vat are the mean and variance of attr respectively
 
     Or have this function operate on the "raw" training data:
     @param trainingSource
@@ -703,6 +993,9 @@ def create_bayes_probabilities(**kwargs):
            Name of class column in training data
     @param trainingAttrColumn
            Name of attributes-array column in training data
+    In addition to the above, for numeric attributes provide:
+    @param numericAttrsColumnIndices
+           Array containing attribute indices of numeric attributes
 
     @internal
     \par Implementation Notes:
@@ -762,30 +1055,86 @@ where P(A = a | C = c) = ||  P(A_i = a_i | C = c).
         kwargs["numAttrs"])
 
     kwargs.update(dict(
-        keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")"
+        keys_and_prob_values = "(" + __get_keys_and_prob_values_sql(**kwargs) + ")",
+        class_prior_prob_values = "(" + __get_class_prior_prob_values_sql(**kwargs) + ")"
         ))
-    plpy.execute("""
-        CREATE {whatToCreate} {destName} AS
-        SELECT
-            key,
-            class,
-            nb_prob / sum(nb_prob) OVER (PARTITION BY key) AS nb_prob
-        FROM
-        (
+
+    # if there are any numeric attributes in the test data, compute their probabilities as well.
+    if kwargs.has_key('numericFeatureStatsSource'):
+        kwargs.update(dict(
+            numeric_attrs_keys_and_prob_values = "(" + __get_keys_and_probs_values_numeric_attrs_sql(**kwargs) + ")"
+            ))
+        #use the modified version of the query to calculate final probabilities
+        #by adding the probabilities for the numeric attrs as well
+        plpy.execute("""
+            CREATE {whatToCreate} {destName} AS
             SELECT
                 key,
                 class,
-                CASE WHEN max(log_prob) - max(max(log_prob)) OVER (PARTITION BY key) < -300 THEN 0
-                     ELSE pow(10, max(log_prob) - max(max(log_prob)) OVER (PARTITION BY key))
-                END AS nb_prob
+                nb_prob / sum(nb_prob) OVER (PARTITION BY key) AS nb_prob
             FROM
-                {keys_and_prob_values} AS keys_and_nb_values
-            GROUP BY
+            (
+                SELECT
+                    p.key,
+                    p.class,
+                    CASE WHEN max(p.log_prob) - max(max(p.log_prob)) OVER (PARTITION BY p.key) < -300 THEN 0
+                         ELSE pow(10, max(p.log_prob) - max(max(p.log_prob)) OVER (PARTITION BY p.key))
+                    END AS nb_prob
+                FROM
+                    (
+                        SELECT 
+                            key,
+                            class,
+                            sum(log_prob) as log_prob
+                        FROM(
+                            {keys_and_prob_values} 
+                            UNION ALL
+                            {numeric_attrs_keys_and_prob_values} 
+                            UNION ALL
+                            {class_prior_prob_values}
+                        ) x
+                        GROUP BY key,class
+                    ) p 
+                GROUP BY
+                    p.key, p.class
+            ) AS keys_and_nb_values
+            ORDER BY
                 key, class
-        ) AS keys_and_nb_values
-        ORDER BY
-            key, class
-        """.format(**kwargs))
+            """.format(**kwargs))
+
+    else:
+        plpy.execute("""
+            CREATE {whatToCreate} {destName} AS
+            SELECT
+                key,
+                class,
+                nb_prob / sum(nb_prob) OVER (PARTITION BY key) AS nb_prob
+            FROM
+            (
+                SELECT
+                    key,
+                    class,
+                    CASE WHEN max(log_prob) - max(max(log_prob)) OVER (PARTITION BY key) < -300 THEN 0
+                         ELSE pow(10, max(log_prob) - max(max(log_prob)) OVER (PARTITION BY key))
+                    END AS nb_prob
+                FROM(
+                    SELECT
+                        key,
+                        class,
+                        sum(log_prob) as log_prob
+                    FROM(
+                        {keys_and_prob_values}
+                        UNION ALL
+                        {class_prior_prob_values}
+                    ) x
+                    GROUP BY key,class
+                ) p
+                GROUP BY
+                    key, class
+            ) AS keys_and_nb_values
+            ORDER BY
+                key, class
+            """.format(**kwargs))
 
 
 def __init_prepared_data(kwargs):
@@ -799,10 +1148,26 @@ def __init_prepared_data(kwargs):
         kwargs.update(dict(
                 classPriorsSource = "(" + __get_class_priors_sql(**kwargs) + ")"
             ))
+    if kwargs.has_key('numericAttrsColumnIndices') and 'numericFeatureStatsSource' not in kwargs:
+        # sanity check the indices before executing any sql query
+        __verify_numeric_attr_type(
+            kwargs["trainingSource"],
+            kwargs["trainingAttrColumn"],
+            kwargs["numericAttrsColumnIndices"],
+            kwargs["numAttrs"]);
+        kwargs.update(dict(
+                numericFeatureStatsSource = "(" + __get_attr_numeric_stats_sql(**kwargs) + ")" 
+            ))
+    elif 'numericFeatureStatsSource' in kwargs:
+        kwargs.update(dict(
+            numericAttrsColumnIndices =  __get_numeric_attr_indices(kwargs['numericFeatureStatsSource'])
+        ))
+
     if not 'featureProbsSource' in kwargs:
         kwargs.update(dict(
                 featureProbsSource = "(" + __get_feature_probs_sql(**kwargs) + ")"
             ))
+        
     if not 'smoothingFactor' in kwargs:
         kwargs.update(dict(
                 smoothingFactor = 1
@@ -822,3 +1187,41 @@ def __verify_attr_num(sourceTable, attrColumn, numAttr):
     if (dsize <> 0):
         plpy.error('found %d records in "%s" where "%s" was not of expected length (%d)'\
             % (dsize, sourceTable, attrColumn, numAttr))
+
+def __verify_numeric_attr_type(sourceTable, attrColumn, numericAttrsColumnIndices, numAttr):
+    """
+    Verify if the attribute indices provided in numericAttrsColumnIndices are 
+    actually numeric 
+    """
+    #check if all data is composed of integers
+    result = plpy.execute("""
+                SELECT * FROM (
+                    SELECT unnest({0}::TEXT[])
+                ) x
+                WHERE x.unnest !~ '^[0-9]+$'
+                """.format(numericAttrsColumnIndices)
+              )
+    
+    if len(result)>0:
+        plpy.error("Invalid array index %s specified for numeric attribute"%result[0]['unnest']) 
+    
+    #check for ranges
+    result = plpy.execute("""
+                SELECT max(unnest),min(unnest) 
+                FROM unnest({0}::INTEGER[])
+                """.format(numericAttrsColumnIndices)
+            )
+
+    #empty array
+    if result[0]['max'] is None and result[0]['min'] is None:
+        plpy.error('No indices specified for numeric attributes')
+
+    #bounds checking
+    maxidx = int(result[0]['max']);
+    minidx = int(result[0]['min']);
+    nattrs = int(numAttr)
+    if maxidx > nattrs :
+        plpy.error('Invalid index value %d is greater than the number of attributes'%maxidx);
+    if minidx < 1:
+        plpy.error('Invalid index value %d is less than 1'%minidx);
+    
