@@ -223,7 +223,7 @@ def forest_train(
         grouping_cols, num_trees, num_random_features,
         importance, num_permutations, max_tree_depth,
         min_split, min_bucket, num_bins,
-        surrogate_params, verbose=False, **kwargs):
+        surrogate_params, verbose=False, sample_ratio=None, **kwargs):
     """ Random forest main training function
 
     Args:
@@ -239,14 +239,15 @@ def forest_train(
         @param grouping_cols: str, List of grouping columns to group the data
         @param num_trees: int, Number of trees in the forest
         @param num_random_features: int, Number of random features used in spliting nodes
+        @param importance: boolean, Whether or not to calculate variable importance
+        @param num_permutations: int, Number of times to permute each feature value
+                                 during calculation of variable importance
         @param max_tree_depth: int, Maximum depth of each tree
         @param min_split: int, Minimum tuples in a node before splitting it
         @param min_bucket: int, Minimum tuples in each child before splitting a node
         @param num_bins: int, Number of bins for quantizing a continuous variables
         @param verbose: str, Verbosity of output messages
-        @param importance: boolean, Whether or not to calculate variable importance
-        @param num_permutations: int, Number of times to permute each feature value
-                                 during calculation of variable importance
+        @param sample_ratio: float, subsampling ratio for generating src_view
     """
     msg_level = "'notice'" if verbose else "'warning'"
 
@@ -261,6 +262,7 @@ def forest_train(
         min_bucket = min_split // 3 if not min_bucket else min_bucket
         min_split = min_bucket * 3 if not min_split else min_split
         num_bins = 100 if num_bins is None else num_bins
+        sample_ratio = 1 if sample_ratio is None else sample_ratio
 
         surrogate_param_dict = extract_keyvalue_params(surrogate_params,
                                                        dict(max_surrogates=int),
@@ -277,7 +279,7 @@ def forest_train(
                               list_of_features_to_exclude, grouping_cols,
                               num_trees, num_random_features,
                               num_permutations, max_tree_depth,
-                              min_split, min_bucket, num_bins)
+                              min_split, min_bucket, num_bins, sample_ratio)
 
         ##################################################################
         #### preprocess arguments
@@ -437,29 +439,27 @@ def forest_train(
         plpy.notice("sql_create_oob_prediction_table:\n" + sql_create_oob_prediction_table)
         plpy.execute(sql_create_oob_prediction_table)
 
-        # store current bootstrap sample
-        tmp_id_to_count_table = unique_string()
-        sql_create_tmp_id_to_count = """
-                CREATE TEMP TABLE {tmp_id_to_count_table} AS
+        # to store poisson count defining bootstrap sample
+        training_pois_cnt_table = unique_string()
+        subsample_random_column = unique_string()
+        sql_create_training_pois_cnt = """
+                CREATE TEMP TABLE {training_pois_cnt_table} AS
                 SELECT
-                    {id_col_name},
+                    *,
+                    1.::double precision,
                     {schema_madlib}.poisson_random(1) AS poisson_count
                 FROM {training_table_name}
                 LIMIT 0
                 """.format(**locals())
-        plpy.notice("sql_create_tmp_id_to_count:\n" + sql_create_tmp_id_to_count)
-        plpy.execute(sql_create_tmp_id_to_count)
+        plpy.notice("sql_create_training_pois_cnt:\n" + sql_create_training_pois_cnt)
+        plpy.execute(sql_create_training_pois_cnt)
 
         # views dependent on current bootstrap sample
         src_view = unique_string()
         sql_create_src_view = """
                 CREATE VIEW {src_view} AS
                 SELECT *
-                FROM
-                    {training_table_name}
-                JOIN
-                    {tmp_id_to_count_table}
-                USING ({id_col_name})
+                FROM {training_pois_cnt_table}
                 WHERE poisson_count != 0
                 """.format(**locals())
         plpy.notice("sql_create_src_view:\n" + sql_create_src_view)
@@ -469,11 +469,14 @@ def forest_train(
         generate_series_name = unique_string()
         sql_create_rows_duplicated_view = """
                 CREATE VIEW {rows_duplicated_view} AS
-                SELECT {src_view}.*,
-                       generate_series(1, {src_view}.poisson_count) as {generate_series_name}
+                SELECT
+                    {src_view}.*,
+                    generate_series(
+                        1,
+                        {src_view}.poisson_count
+                        ) AS {generate_series_name}
                 FROM {src_view}
                 """.format(features_str=','.join(features), **locals())
-
         plpy.notice("sql_create_rows_duplicated_view:\n" + sql_create_rows_duplicated_view)
         plpy.execute(sql_create_rows_duplicated_view)
 
@@ -481,11 +484,7 @@ def forest_train(
         sql_create_oob_view = """
                 CREATE VIEW {oob_view} AS
                 SELECT *
-                FROM
-                    {training_table_name}
-                JOIN
-                    {tmp_id_to_count_table}
-                USING ({id_col_name})
+                FROM {training_pois_cnt_table}
                 WHERE poisson_count = 0
                 """.format(**locals())
         plpy.notice("sql_create_oob_view:\n" + sql_create_oob_view)
@@ -496,16 +495,46 @@ def forest_train(
         #### training random forest
         tree_terminated = None
         for sample_id in range(1, num_trees + 1):
-            sql_refresh_tmp_id_to_count = """
-                    TRUNCATE TABLE {tmp_id_to_count_table} CASCADE;
-                    INSERT INTO {tmp_id_to_count_table}
+            if 1 - sample_ratio < 1e-6:
+                random_sample_expr = "0.::double precision"
+            else:
+                random_sample_expr = "random()"
+
+            sql_refresh_training_pois_cnt = """
+                    TRUNCATE TABLE {training_pois_cnt_table} CASCADE;
+                    INSERT INTO {training_pois_cnt_table}
                     SELECT
-                        {id_col_name},
+                        *,
                         {schema_madlib}.poisson_random(1) AS poisson_count
-                    FROM {training_table_name}
+                    FROM
+                    (
+                        SELECT
+                            *,
+                            {random_sample_expr} AS {subsample_random_column}
+                        FROM {training_table_name}
+                    ) subq
+                    WHERE {subsample_random_column} < {sample_ratio}
                     """.format(**locals())
-            plpy.notice("sql_refresh_tmp_id_to_count:\n" + sql_refresh_tmp_id_to_count)
-            plpy.execute(sql_refresh_tmp_id_to_count)
+            plpy.notice("sql_refresh_training_pois_cnt:\n" + sql_refresh_training_pois_cnt)
+            plpy.execute(sql_refresh_training_pois_cnt)
+
+            if verbose:
+                tup_cnt_in_view = plpy.execute("""
+                        SELECT
+                            count(*) AS c,
+                            sum(poisson_count) AS s
+                        FROM {src_view}
+                        """.format(**locals()))[0]
+                src_cnt = tup_cnt_in_view['c']
+                dup_cnt = tup_cnt_in_view['s']
+                oob_cnt = plpy.execute("""
+                        SELECT count(*) AS c FROM {oob_view}
+                        """.format(**locals()))[0]['c']
+                plpy.notice("""
+                src_cnt: {src_cnt},
+                oob_cnt: {oob_cnt},
+                dup_cnt: {dup_cnt}.
+                """.format(**locals()))
 
             if grouping_cols is None:   # non-grouping case
                 tree_state = _tree_train_using_bins(
@@ -591,7 +620,7 @@ def forest_train(
         _create_summary_table(**locals())
 
         sql_cleanup = """
-                DROP TABLE {tmp_id_to_count_table} CASCADE;
+                DROP TABLE {training_pois_cnt_table} CASCADE;
                 DROP TABLE {oob_prediction_table} CASCADE;
                 DROP TABLE {importance_table} CASCADE;
                 DROP TABLE {oob_error_table} CASCADE;
@@ -1461,7 +1490,7 @@ def _forest_validate_args(
         training_table_name, output_table_name, id_col_name,
         list_of_features, dependent_variable, list_of_features_to_exclude,
         grouping_cols, num_trees, num_random_features, n_perm,
-        max_tree_depth, min_split, min_bucket, num_bins):
+        max_tree_depth, min_split, min_bucket, num_bins, sample_ratio):
     """ Validate the arguments for the random forest training function"""
 
     input_tbl_valid(training_table_name, 'Random forest')
@@ -1502,6 +1531,8 @@ def _forest_validate_args(
     _assert(min_split > 0, "Random forest error: min_split must be positive.")
     _assert(min_bucket > 0, "Random forest error: min_bucket must be positive.")
     _assert(num_bins > 1, "Random forest error: number of bins must be at least 2.")
+    _assert(sample_ratio > 0 and sample_ratio <= 1,
+            "Random forest error: sample_ratio must be in (0, 1].")
 # ------------------------------------------------------------
 
 
