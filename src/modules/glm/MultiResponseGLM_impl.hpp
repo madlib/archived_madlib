@@ -132,13 +132,7 @@ MultiResponseGLMAccumulator<Container,Family,Link>::operator<<(
         Matrix XXt(x * trans(x));
         for (int i = 0; i < C; i ++) {
             for (int j = 0; j < C; j ++) {
-                for (int x_i = 0; x_i < num_features; x_i ++) {
-                   for (int x_j = 0; x_j < num_features; x_j ++) {
-                        optimizer.hessian(i*num_features + x_i,
-                                          j*num_features + x_j)
-                                += GtVinvG(i,j) * XXt(x_i,x_j);
-                   }
-                }
+                optimizer.hessian.block(i*N, j*N, N, N) += GtVinvG(i,j) * XXt;
             }
         }
 

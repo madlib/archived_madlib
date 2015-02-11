@@ -90,7 +90,7 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # common (and useful) extension that we do not want to hear warnings about
     # it.
     # FIXME: SSE2 may cause failues in Greenplum when using some Eigen operations. Tracker no.74929244
-    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -msse2 -fstrict-aliasing"
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -mno-sse2 -fstrict-aliasing"
         CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
 
