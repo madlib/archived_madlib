@@ -1146,7 +1146,8 @@ def _one_step(schema_madlib, training_table_name, cat_features,
                         {weights},
                         $2,
                         $4,
-                        {dep_n_levels}::smallint
+                        {dep_n_levels}::smallint,
+                        {subsample}::boolean
                     ),
                     $4,
                     {min_split}::smallint,
@@ -1172,6 +1173,7 @@ def _one_step(schema_madlib, training_table_name, cat_features,
     #   internal nodes. Hence we at least need the root be an internal node i.e.
     #   we need the tree_depth to be 1 or more.
     if max_n_surr > 0 and updated_tree['tree_depth'] > 0:
+        dup_count_expr = weights + "::integer" if subsample else '1'
         surr_sql = """
                 SELECT
                     {schema_madlib}._dt_surr_apply(
@@ -1181,7 +1183,8 @@ def _one_step(schema_madlib, training_table_name, cat_features,
                             {cat_features_str},
                             {con_features_str},
                             $2,
-                            $4),
+                            $4,
+                            {dup_count_expr}),
                         $4) as result
                 FROM {training_table_name}
                 WHERE {filter_null}
@@ -1244,7 +1247,8 @@ def _one_step_for_grps(
             {weights},
             {cat_n_levels},
             {con_splits},
-            {dep_n_levels}::smallint)
+            {dep_n_levels}::smallint,
+            {subsample}::boolean)
         """.format(**locals())
 
     sql = """
@@ -1335,13 +1339,16 @@ def _one_step_for_grps(
             """.format(schema_madlib=schema_madlib,
                        tree_state=tree_state,
                        con_splits=con_splits)
+
+        dup_count_expr = weights + "::integer" if subsample else '1'
         surr_aggregate = """
                 {schema_madlib}._compute_surr_stats(
                     {tree_state},
                     {cat_features_str},
                     {con_features_str},
                     {cat_n_levels},
-                    {con_splits})
+                    {con_splits},
+                    {dup_count_expr})
             """.format(**locals())
 
         # update the tree to compute surrogates for the layer above the just

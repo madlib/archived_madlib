@@ -1476,7 +1476,8 @@ TreeAccumulator<Container, DTree>::bind(ByteStream_type& inStream) {
              >> n_con_features
              >> total_n_cat_levels
              >> n_leaf_nodes
-             >> stats_per_split ;
+             >> stats_per_split
+             >> weights_as_rows ;
 
     uint16_t n_bins_tmp = 0;
     uint16_t n_cat = 0;
@@ -1484,7 +1485,6 @@ TreeAccumulator<Container, DTree>::bind(ByteStream_type& inStream) {
     uint32_t tot_levels = 0;
     uint16_t n_leafs = 0;
     uint16_t n_stats = 0;
-
 
     if (!n_rows.isNull()){
         n_bins_tmp = n_bins;
@@ -1514,12 +1514,13 @@ void
 TreeAccumulator<Container, DTree>::rebind(
         uint16_t in_n_bins, uint16_t in_n_cat_feat,
         uint16_t in_n_con_feat, uint32_t in_n_total_levels,
-        uint16_t tree_depth, uint16_t in_n_stats) {
+        uint16_t tree_depth, uint16_t in_n_stats, bool in_weights_as_rows) {
 
     n_bins = in_n_bins;
     n_cat_features = in_n_cat_feat;
     n_con_features = in_n_con_feat;
     total_n_cat_levels = in_n_total_levels;
+    weights_as_rows = in_weights_as_rows;
     if (tree_depth > 0)
         n_leaf_nodes = static_cast<uint16_t>(pow(2, tree_depth - 1));
     else
@@ -1614,6 +1615,7 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
     const MappedColumnVector& con_features = std::get<2>(inTuple);
     const MappedIntegerVector& cat_levels = std::get<3>(inTuple);
     const MappedMatrix& con_splits = std::get<4>(inTuple);
+    const int dup_count = std::get<5>(inTuple);
 
     if ((cat_features.size() + con_features.size()) >
                     std::numeric_limits<uint16_t>::max()) {
@@ -1662,7 +1664,8 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
                             updateSurrStats(true,
                                             is_primary_true == is_surrogate_true,
                                             row_index,
-                                            col_index);
+                                            col_index, 
+                                            dup_count);
                         }
                     }
                 }
@@ -1677,7 +1680,8 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
                             updateSurrStats(false,
                                             is_primary_true == is_surrogate_true,
                                             row_index,
-                                            col_index);
+                                            col_index,
+                                            dup_count);
                         }
                     }
                 }
@@ -1727,14 +1731,14 @@ TreeAccumulator<Container, DTree>::updateNodeStats(bool is_regression,
                                                   const double weight) {
     ColumnVector stats(stats_per_split);
     stats.fill(0);
-
+    int n_rows = this->weights_as_rows ? static_cast<int>(weight) : 1; 
     if (is_regression){
         double w_response = weight * response;
-        stats << weight, w_response, w_response * response, 1;
+        stats << weight, w_response, w_response * response, n_rows;
     } else {
         assert(response >= 0);
         stats(static_cast<uint16_t>(response)) = weight;
-        stats.tail(1)(0) = 1;
+        stats.tail(1)(0) = n_rows;
     }
     node_stats.row(node_index) += stats;
 }
@@ -1754,12 +1758,13 @@ TreeAccumulator<Container, DTree>::updateStats(bool is_regression,
                                                const double weight) {
     ColumnVector stats(stats_per_split);
     stats.fill(0);
+    int n_rows = this->weights_as_rows ? static_cast<int>(weight) : 1; 
     if (is_regression){
         double w_response = weight * response;
-        stats << weight, w_response, w_response * response, 1;
+        stats << weight, w_response, w_response * response, n_rows;
     } else {
         stats(static_cast<uint16_t>(response)) = weight;
-        stats.tail(1)(0) = 1;
+        stats.tail(1)(0) = n_rows;
     }
 
     if (is_cat) {
@@ -1778,16 +1783,16 @@ inline
 void
 TreeAccumulator<Container, DTree>::updateSurrStats(
         const bool is_cat, const bool surr_agrees,
-        Index row_index, Index stats_index) {
+        Index row_index, Index stats_index, const int dup_count) {
 
     // Note: the below works only if stats_per_split = 2
     // 1st position for <= surrogate split and
     // 2nd position for > split
     ColumnVector stats(stats_per_split);
     if (surr_agrees)
-        stats << 1, 0;
+        stats << dup_count, 0;
     else
-        stats << 0, 1;
+        stats << 0, dup_count;
 
     if (is_cat) {
         cat_stats.row(row_index).segment(stats_index, stats_per_split) += stats;

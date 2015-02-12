@@ -160,12 +160,14 @@ compute_leaf_stats_transition::run(AnyType & args){
         // For regression, REGRESS_N_STATS determines the number of stats per split
         uint16_t stats_per_split = dt.is_regression ?
             REGRESS_N_STATS : static_cast<uint16_t>(n_response_labels + 1);
+        const bool weights_as_rows = args[9].getAs<bool>();
         state.rebind(static_cast<uint16_t>(splits_results.con_splits.cols()),
                      static_cast<uint16_t>(cat_features.size()),
                      static_cast<uint16_t>(con_features.size()),
                      static_cast<uint32_t>(cat_levels.sum()),
                      static_cast<uint16_t>(dt.tree_depth),
-                     stats_per_split
+                     stats_per_split, 
+                     weights_as_rows
                     );
         // compute cumulative sum of the levels of the categorical variables
         int current_sum = 0;
@@ -298,7 +300,8 @@ compute_surr_stats_transition::run(AnyType & args){
                          static_cast<uint16_t>(con_features.size()),
                          static_cast<uint32_t>(cat_levels.sum()),
                          static_cast<uint16_t>(dt.tree_depth - 1),
-                         2
+                         2,
+                         false // dummy, only used in compute_leaf_stat
                         );
             // compute cumulative sum of the levels of the categorical variables
             int current_sum = 0;
@@ -308,8 +311,9 @@ compute_surr_stats_transition::run(AnyType & args){
             }
         }
 
+        const int dup_count = args[6].getAs<int>();
         state << MutableLevelState::surr_tuple_type(
-            dt, cat_features, con_features, cat_levels, splits_results.con_splits);
+            dt, cat_features, con_features, cat_levels, splits_results.con_splits, dup_count);
     }
     return state.storage();
 }

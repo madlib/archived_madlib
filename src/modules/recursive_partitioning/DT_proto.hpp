@@ -233,7 +233,9 @@ public:
                         MappedIntegerVector, // categorical feature values
                         MappedColumnVector,  // continuous feature values
                         MappedIntegerVector, // levels for each categorical feature
-                        MappedMatrix         // split values for each continuous feature
+                        MappedMatrix,        // split values for each continuous feature
+                        int                  // duplicated count for each tuple 
+                                             //   (used in random forest)
                        > surr_tuple_type;
 
     // functions
@@ -241,7 +243,7 @@ public:
     void bind(ByteStream_type& inStream);
     void rebind(uint16_t n_bins, uint16_t n_cat_feat,
                 uint16_t n_con_feat, uint32_t n_total_levels,
-                uint16_t tree_depth, uint16_t n_stats);
+                uint16_t tree_depth, uint16_t n_stats, bool weights_as_rows);
 
     TreeAccumulator& operator<<(const tuple_type& inTuple);
     TreeAccumulator& operator<<(const surr_tuple_type& inTuple);
@@ -265,8 +267,8 @@ public:
                      const double weight);
 
     // apply the tuple using indices
-    void updateSurrStats(bool is_cat, bool surr_agrees,
-                         Index row_index, Index stats_index);
+    void updateSurrStats(const bool is_cat, const bool surr_agrees,
+                         Index row_index, Index stats_index, const int dup_count);
 
     // attributes
     uint64_type n_rows;  // number of rows mapped to this node
@@ -286,6 +288,9 @@ public:
     // i.e. (w_1, w_2, ..., w_c, 1)
     // For surrogates calculation, stats_per_split = 1
     uint16_type stats_per_split;
+
+    // treat weights as duplicated rows (used for random forest)
+    bool_type weights_as_rows;
 
     // training statistics
     // cumulative sum of the levels of categorical variables
