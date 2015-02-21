@@ -11,6 +11,8 @@ import plpy
 from math import sqrt
 
 from utilities.control import MinWarning
+from utilities.control import EnableOptimizer
+from utilities.control import EnableHashagg
 from utilities.validate_args import get_cols_and_types
 from utilities.validate_args import is_var_valid
 from utilities.validate_args import input_tbl_valid
@@ -252,368 +254,375 @@ def forest_train(
     msg_level = "'notice'" if verbose else "'warning'"
 
     with MinWarning(msg_level):
-        ##################################################################
-        #### set default values
-        if grouping_cols is not None and grouping_cols.strip() == '':
-            grouping_cols = None
-        num_trees = 100 if num_trees is None else num_trees
-        max_tree_depth = 10 if max_tree_depth is None else max_tree_depth
-        min_split = 20 if min_split is None and min_bucket is None else min_split
-        min_bucket = min_split // 3 if not min_bucket else min_bucket
-        min_split = min_bucket * 3 if not min_split else min_split
-        num_bins = 100 if num_bins is None else num_bins
-        sample_ratio = 1 if sample_ratio is None else sample_ratio
+        with EnableOptimizer(False):
+            # we disable optimizer (ORCA) for platforms that use it
+            #  since ORCA doesn't provide an easy way to disable hashagg
+            with EnableHashagg(False):
+                # we disable hashagg since large number of groups could
+                # result in excessive memory usage.
+                ##################################################################
+                #### set default values
+                if grouping_cols is not None and grouping_cols.strip() == '':
+                    grouping_cols = None
+                num_trees = 100 if num_trees is None else num_trees
+                max_tree_depth = 10 if max_tree_depth is None else max_tree_depth
+                min_split = 20 if min_split is None and min_bucket is None else min_split
+                min_bucket = min_split // 3 if not min_bucket else min_bucket
+                min_split = min_bucket * 3 if not min_split else min_split
+                num_bins = 100 if num_bins is None else num_bins
+                sample_ratio = 1 if sample_ratio is None else sample_ratio
 
-        surrogate_param_dict = extract_keyvalue_params(surrogate_params,
-                                                       dict(max_surrogates=int),
-                                                       dict(max_surrogates=0))
-        max_n_surr = surrogate_param_dict['max_surrogates']
-        _assert(max_n_surr >= 0,
-                "Maximum number of surrogates ({0}) should be non-negative".
-                format(max_n_surr))
+                surrogate_param_dict = extract_keyvalue_params(surrogate_params,
+                                                               dict(max_surrogates=int),
+                                                               dict(max_surrogates=0))
+                max_n_surr = surrogate_param_dict['max_surrogates']
+                _assert(max_n_surr >= 0,
+                        "Maximum number of surrogates ({0}) should be non-negative".
+                        format(max_n_surr))
 
-        ##################################################################
-        #### validate arguments
-        _forest_validate_args(training_table_name, output_table_name, id_col_name,
-                              list_of_features, dependent_variable,
-                              list_of_features_to_exclude, grouping_cols,
-                              num_trees, num_random_features,
-                              num_permutations, max_tree_depth,
-                              min_split, min_bucket, num_bins, sample_ratio)
+                ##################################################################
+                #### validate arguments
+                _forest_validate_args(training_table_name, output_table_name, id_col_name,
+                                      list_of_features, dependent_variable,
+                                      list_of_features_to_exclude, grouping_cols,
+                                      num_trees, num_random_features,
+                                      num_permutations, max_tree_depth,
+                                      min_split, min_bucket, num_bins, sample_ratio)
 
-        ##################################################################
-        #### preprocess arguments
+                ##################################################################
+                #### preprocess arguments
 
-        # expand "*" syntax and exclude some features
-        features = _get_features_to_use(schema_madlib, training_table_name,
-                                        list_of_features,
-                                        list_of_features_to_exclude, id_col_name,
-                                        '1', dependent_variable, grouping_cols)
-        _assert(bool(features),
-                "Random forest error: No feature is selected for the model.")
+                # expand "*" syntax and exclude some features
+                features = _get_features_to_use(schema_madlib, training_table_name,
+                                                list_of_features,
+                                                list_of_features_to_exclude, id_col_name,
+                                                '1', dependent_variable, grouping_cols)
+                _assert(bool(features),
+                        "Random forest error: No feature is selected for the model.")
 
-        is_classification, is_bool = _is_dep_categorical(training_table_name,
-                                                         dependent_variable)
-        split_criterion = 'gini' if is_classification else 'mse'
+                is_classification, is_bool = _is_dep_categorical(training_table_name,
+                                                                 dependent_variable)
+                split_criterion = 'gini' if is_classification else 'mse'
 
-        if num_random_features is None:
-            n_all_features = len(features)
-            num_random_features = (sqrt(n_all_features) if is_classification
-                                   else n_all_features / 3)
-        _assert(num_random_features <= len(features),
-                "Random forest error: Number of features to be selected is more "
-                "than the actual number of features.")
+                if num_random_features is None:
+                    n_all_features = len(features)
+                    num_random_features = (sqrt(n_all_features) if is_classification
+                                           else n_all_features / 3)
+                _assert(num_random_features <= len(features),
+                        "Random forest error: Number of features to be selected is more "
+                        "than the actual number of features.")
 
-        all_cols_types = get_cols_and_types(training_table_name)
-        cat_features, con_features, boolean_cats = _classify_features(
-            all_cols_types, features)
+                all_cols_types = get_cols_and_types(training_table_name)
+                cat_features, con_features, boolean_cats = _classify_features(
+                    all_cols_types, features)
 
-        filter_null = _get_filter_str(schema_madlib, cat_features, con_features,
-                                      boolean_cats, dependent_variable,
-                                      grouping_cols, max_n_surr)
-        # the total number of records
-        n_all_rows = plpy.execute("""
-                select count(*) from {source_table}
-                """.format(source_table=training_table_name))[0]['count']
+                filter_null = _get_filter_str(schema_madlib, cat_features, con_features,
+                                              boolean_cats, dependent_variable,
+                                              grouping_cols, max_n_surr)
+                # the total number of records
+                n_all_rows = plpy.execute("""
+                        select count(*) from {source_table}
+                        """.format(source_table=training_table_name))[0]['count']
 
-        if is_classification:
-            # For classifications, we also need to map dependent_variable to integers
-            n_rows, dep_list = _get_n_and_deplist(training_table_name,
-                                                  dependent_variable,
-                                                  filter_null)
-            dep_list.sort()
-            dep_col_str = ("case when " + dependent_variable +
-                           " then 'True' else 'False' end") if is_bool else dependent_variable
-            dep = ("(CASE " +
-                   "\n               ".join([
-                        "WHEN ({dep_col})::text = $${c}$$ THEN {i}".format(
-                            dep_col=dep_col_str, c=c, i=i)
-                        for i, c in enumerate(dep_list)]) +
-                   "\nEND)")
-            dep_n_levels = len(dep_list)
-        else:
-            n_rows = plpy.execute(
-                "SELECT count(*) FROM {source_table} where {filter_null}".format(
-                    source_table=training_table_name, filter_null=filter_null))[0]['count']
-            dep = dependent_variable
-            dep_n_levels = 1
-            dep_list = None
+                if is_classification:
+                    # For classifications, we also need to map dependent_variable to integers
+                    n_rows, dep_list = _get_n_and_deplist(training_table_name,
+                                                          dependent_variable,
+                                                          filter_null)
+                    dep_list.sort()
+                    dep_col_str = ("case when " + dependent_variable +
+                                   " then 'True' else 'False' end") if is_bool else dependent_variable
+                    dep = ("(CASE " +
+                           "\n               ".join([
+                                "WHEN ({dep_col})::text = $${c}$$ THEN {i}".format(
+                                    dep_col=dep_col_str, c=c, i=i)
+                                for i, c in enumerate(dep_list)]) +
+                           "\nEND)")
+                    dep_n_levels = len(dep_list)
+                else:
+                    n_rows = plpy.execute(
+                        "SELECT count(*) FROM {source_table} where {filter_null}".format(
+                            source_table=training_table_name, filter_null=filter_null))[0]['count']
+                    dep = dependent_variable
+                    dep_n_levels = 1
+                    dep_list = None
 
-        # a table that maps gid/grp_key to actual columns
-        grp_key_to_grp_cols = unique_string()
-        # create the above table and perform binning
-        if grouping_cols is None:
-            sql_grp_key_to_grp_cols = """
-                    CREATE TABLE {grp_key_to_grp_cols} AS
-                    SELECT ''::text AS grp_key, 1 AS gid
-                    """.format(**locals())
-            plpy.notice("sql_grp_key_to_grp_cols:\n" + sql_grp_key_to_grp_cols)
-            plpy.execute(sql_grp_key_to_grp_cols)
+                # a table that maps gid/grp_key to actual columns
+                grp_key_to_grp_cols = unique_string()
+                # create the above table and perform binning
+                if grouping_cols is None:
+                    sql_grp_key_to_grp_cols = """
+                            CREATE TABLE {grp_key_to_grp_cols} AS
+                            SELECT ''::text AS grp_key, 1 AS gid
+                            """.format(**locals())
+                    plpy.notice("sql_grp_key_to_grp_cols:\n" + sql_grp_key_to_grp_cols)
+                    plpy.execute(sql_grp_key_to_grp_cols)
 
-            # find the bins, one dict containing two arrays: categorical
-            # bins, and continuous bins
-            num_groups = 1
-            bins = _get_bins(schema_madlib, training_table_name, cat_features,
-                             con_features, num_bins, dep, boolean_cats,
-                             n_rows, is_classification, dep_n_levels,
-                             filter_null)
-            # some features may be dropped because they have only one value
-            cat_features = bins['cat_features']
-            bins['grp_key_cat'] = ['']
-        else:
-            grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
-            grouping_cols_and_types = [(col, _get_col_value(all_cols_types, col))
-                                       for col in grouping_cols_list]
-            grouping_array_str = "array_to_string(array[" + \
-                    ','.join("(case when " + col + " then 'True' else 'False' end)::text"
-                         if col_type == 'boolean' else '(' + col + ')::text'
-                         for col, col_type in grouping_cols_and_types) + \
-                    "], ',')"
-            grouping_cols_str = ('' if grouping_cols is None
-                                 else grouping_cols + ",")
-            sql_grp_key_to_grp_cols = """
-                    CREATE TABLE {grp_key_to_grp_cols} AS
-                    SELECT
-                        {grouping_cols},
-                        {grouping_array_str} AS grp_key,
-                        (row_number() over ())::integer AS gid
-                    FROM {training_table_name}
-                    GROUP BY {grouping_cols}
-                    """.format(**locals())
-            plpy.notice("sql_grp_key_to_grp_cols:\n" + sql_grp_key_to_grp_cols)
-            plpy.execute(sql_grp_key_to_grp_cols)
+                    # find the bins, one dict containing two arrays: categorical
+                    # bins, and continuous bins
+                    num_groups = 1
+                    bins = _get_bins(schema_madlib, training_table_name, cat_features,
+                                     con_features, num_bins, dep, boolean_cats,
+                                     n_rows, is_classification, dep_n_levels,
+                                     filter_null)
+                    # some features may be dropped because they have only one value
+                    cat_features = bins['cat_features']
+                    bins['grp_key_cat'] = ['']
+                else:
+                    grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
+                    grouping_cols_and_types = [(col, _get_col_value(all_cols_types, col))
+                                               for col in grouping_cols_list]
+                    grouping_array_str = "array_to_string(array[" + \
+                            ','.join("(case when " + col + " then 'True' else 'False' end)::text"
+                                 if col_type == 'boolean' else '(' + col + ')::text'
+                                 for col, col_type in grouping_cols_and_types) + \
+                            "], ',')"
+                    grouping_cols_str = ('' if grouping_cols is None
+                                         else grouping_cols + ",")
+                    sql_grp_key_to_grp_cols = """
+                            CREATE TABLE {grp_key_to_grp_cols} AS
+                            SELECT
+                                {grouping_cols},
+                                {grouping_array_str} AS grp_key,
+                                (row_number() over ())::integer AS gid
+                            FROM {training_table_name}
+                            GROUP BY {grouping_cols}
+                            """.format(**locals())
+                    plpy.notice("sql_grp_key_to_grp_cols:\n" + sql_grp_key_to_grp_cols)
+                    plpy.execute(sql_grp_key_to_grp_cols)
 
-            # find bins
-            num_groups = plpy.execute("""
-                    SELECT count(*) FROM {grp_key_to_grp_cols}
-                    """.format(**locals()))[0]['count']
-            bins = _get_bins_grps(schema_madlib, training_table_name,
-                                  cat_features, con_features, num_bins, dep,
-                                  boolean_cats, grouping_cols,
-                                  grouping_array_str, n_rows,
-                                  is_classification, dep_n_levels, filter_null)
-            cat_features = bins['cat_features']
+                    # find bins
+                    num_groups = plpy.execute("""
+                            SELECT count(*) FROM {grp_key_to_grp_cols}
+                            """.format(**locals()))[0]['count']
+                    plpy.notice("Analyzing data to compute split boundaries for variables")
+                    bins = _get_bins_grps(schema_madlib, training_table_name,
+                                          cat_features, con_features, num_bins, dep,
+                                          boolean_cats, grouping_cols,
+                                          grouping_array_str, n_rows,
+                                          is_classification, dep_n_levels, filter_null)
+                    cat_features = bins['cat_features']
 
-        # a table for converting cat_features to integers
-        cat_features_info_table = unique_string()
-        sql_cat_features_info = """
-                CREATE TABLE {cat_features_info_table} AS
-                SELECT
-                    gid,
-                    cat_n_levels,
-                    cat_levels_in_text
-                FROM
-                (
-                    SELECT *
-                    FROM {schema_madlib}._gen_cat_levels_set($1, $2, $3, $4)
-                ) subq
-                JOIN
-                    {grp_key_to_grp_cols}
-                USING (grp_key)
-                """.format(**locals())
-        plpy.notice("sql_cat_features_info:\n" + sql_cat_features_info)
-        plan_cat_features_info = plpy.prepare(
-            sql_cat_features_info, ['text[]', 'integer[]', 'integer', 'text[]'])
-        plpy.execute(plan_cat_features_info, [
-            bins['grp_key_cat'],
-            bins['cat_n'],
-            len(cat_features),
-            bins['cat_origin']])
+                # a table for converting cat_features to integers
+                cat_features_info_table = unique_string()
+                sql_cat_features_info = """
+                        CREATE TABLE {cat_features_info_table} AS
+                        SELECT
+                            gid,
+                            cat_n_levels,
+                            cat_levels_in_text
+                        FROM
+                        (
+                            SELECT *
+                            FROM {schema_madlib}._gen_cat_levels_set($1, $2, $3, $4)
+                        ) subq
+                        JOIN
+                            {grp_key_to_grp_cols}
+                        USING (grp_key)
+                        """.format(**locals())
+                plpy.notice("sql_cat_features_info:\n" + sql_cat_features_info)
+                plan_cat_features_info = plpy.prepare(
+                    sql_cat_features_info, ['text[]', 'integer[]', 'integer', 'text[]'])
+                plpy.execute(plan_cat_features_info, [
+                    bins['grp_key_cat'],
+                    bins['cat_n'],
+                    len(cat_features),
+                    bins['cat_origin']])
 
-        ##################################################################
-        #### create views and tables for training (growing) of trees
-        # store the prediction for all oob samples
-        # for classification, the prediction is of integer type here
-        oob_prediction_table = unique_string()
-        sql_create_oob_prediction_table = """
-                CREATE TABLE {oob_prediction_table} AS
-                SELECT
-                    {id_col_name},
-                    1 AS sample_id,
-                    1 AS gid,
-                    {dep} AS dep,
-                    {dep} AS oob_prediction
-                FROM {training_table_name}
-                LIMIT 0
-                """.format(**locals())
-        plpy.notice("sql_create_oob_prediction_table:\n" + sql_create_oob_prediction_table)
-        plpy.execute(sql_create_oob_prediction_table)
+                ##################################################################
+                #### create views and tables for training (growing) of trees
+                # store the prediction for all oob samples
+                # for classification, the prediction is of integer type here
+                oob_prediction_table = unique_string()
+                sql_create_oob_prediction_table = """
+                        CREATE TABLE {oob_prediction_table} AS
+                        SELECT
+                            {id_col_name},
+                            1 AS sample_id,
+                            1 AS gid,
+                            {dep} AS dep,
+                            {dep} AS oob_prediction
+                        FROM {training_table_name}
+                        LIMIT 0
+                        """.format(**locals())
+                plpy.notice("sql_create_oob_prediction_table:\n" + sql_create_oob_prediction_table)
+                plpy.execute(sql_create_oob_prediction_table)
 
-        # to store poisson count defining bootstrap sample
-        training_pois_cnt_table = unique_string()
-        subsample_random_column = unique_string()
-        sql_create_training_pois_cnt = """
-                CREATE TEMP TABLE {training_pois_cnt_table} AS
-                SELECT
-                    *,
-                    1.::double precision,
-                    {schema_madlib}.poisson_random(1) AS poisson_count
-                FROM {training_table_name}
-                LIMIT 0
-                """.format(**locals())
-        plpy.notice("sql_create_training_pois_cnt:\n" + sql_create_training_pois_cnt)
-        plpy.execute(sql_create_training_pois_cnt)
-
-        # views dependent on current bootstrap sample
-        src_view = unique_string()
-        sql_create_src_view = """
-                CREATE VIEW {src_view} AS
-                SELECT *
-                FROM {training_pois_cnt_table}
-                WHERE poisson_count != 0
-                """.format(**locals())
-        plpy.notice("sql_create_src_view:\n" + sql_create_src_view)
-        plpy.execute(sql_create_src_view)
-
-        oob_view = unique_string()
-        sql_create_oob_view = """
-                CREATE VIEW {oob_view} AS
-                SELECT *
-                FROM {training_pois_cnt_table}
-                WHERE poisson_count = 0
-                """.format(**locals())
-        plpy.notice("sql_create_oob_view:\n" + sql_create_oob_view)
-        plpy.execute(sql_create_oob_view)
-
-        _create_empty_result_table(schema_madlib, output_table_name)
-        ##################################################################
-        #### training random forest
-        tree_terminated = None
-        for sample_id in range(1, num_trees + 1):
-            if 1 - sample_ratio < 1e-6:
-                random_sample_expr = "0.::double precision"
-            else:
-                random_sample_expr = "random()"
-
-            sql_refresh_training_pois_cnt = """
-                    TRUNCATE TABLE {training_pois_cnt_table} CASCADE;
-                    INSERT INTO {training_pois_cnt_table}
-                    SELECT
-                        *,
-                        {schema_madlib}.poisson_random(1) AS poisson_count
-                    FROM
-                    (
+                # to store poisson count defining bootstrap sample
+                training_pois_cnt_table = unique_string()
+                subsample_random_column = unique_string()
+                sql_create_training_pois_cnt = """
+                        CREATE TEMP TABLE {training_pois_cnt_table} AS
                         SELECT
                             *,
-                            {random_sample_expr} AS {subsample_random_column}
+                            1.::double precision,
+                            {schema_madlib}.poisson_random(1) AS poisson_count
                         FROM {training_table_name}
-                    ) subq
-                    WHERE {subsample_random_column} < {sample_ratio}
-                    """.format(**locals())
-            plpy.notice("sql_refresh_training_pois_cnt:\n" + sql_refresh_training_pois_cnt)
-            plpy.execute(sql_refresh_training_pois_cnt)
+                        LIMIT 0
+                        """.format(**locals())
+                plpy.notice("sql_create_training_pois_cnt:\n" + sql_create_training_pois_cnt)
+                plpy.execute(sql_create_training_pois_cnt)
 
-            if verbose:
-                tup_cnt_in_view = plpy.execute("""
-                        SELECT
-                            count(*) AS c,
-                            sum(poisson_count) AS s
-                        FROM {src_view}
-                        """.format(**locals()))[0]
-                src_cnt = tup_cnt_in_view['c']
-                dup_cnt = tup_cnt_in_view['s']
-                oob_cnt = plpy.execute("""
-                        SELECT count(*) AS c FROM {oob_view}
-                        """.format(**locals()))[0]['c']
-                plpy.notice("""
-                src_cnt: {src_cnt},
-                oob_cnt: {oob_cnt},
-                dup_cnt: {dup_cnt}.
-                """.format(**locals()))
+                # views dependent on current bootstrap sample
+                src_view = unique_string()
+                sql_create_src_view = """
+                        CREATE VIEW {src_view} AS
+                        SELECT *
+                        FROM {training_pois_cnt_table}
+                        WHERE poisson_count != 0
+                        """.format(**locals())
+                plpy.notice("sql_create_src_view:\n" + sql_create_src_view)
+                plpy.execute(sql_create_src_view)
 
-            if grouping_cols is None:   # non-grouping case
-                tree_state = _tree_train_using_bins(
-                    schema_madlib, bins, src_view, cat_features, con_features,
-                    boolean_cats, num_bins, 'poisson_count', dep, min_split,
-                    min_bucket, max_tree_depth, filter_null, dep_n_levels,
-                    is_classification, split_criterion, True,
-                    num_random_features, max_n_surr)
-                tree_states = [dict(tree_state=tree_state['tree_state'],
-                                    grp_key='')]
+                oob_view = unique_string()
+                sql_create_oob_view = """
+                        CREATE VIEW {oob_view} AS
+                        SELECT *
+                        FROM {training_pois_cnt_table}
+                        WHERE poisson_count = 0
+                        """.format(**locals())
+                plpy.notice("sql_create_oob_view:\n" + sql_create_oob_view)
+                plpy.execute(sql_create_oob_view)
 
-                tree_terminated = {'': tree_state['finished']}
+                _create_empty_result_table(schema_madlib, output_table_name)
+                ##################################################################
+                #### training random forest
+                tree_terminated = None
+                for sample_id in range(1, num_trees + 1):
+                    if 1 - sample_ratio < 1e-6:
+                        random_sample_expr = "0.::double precision"
+                    else:
+                        random_sample_expr = "random()"
 
-            else:
-                tree_states = _tree_train_grps_using_bins(
-                    schema_madlib, bins, src_view, cat_features, con_features,
-                    boolean_cats, num_bins, 'poisson_count', grouping_cols,
-                    grouping_array_str, dep, min_split, min_bucket,
-                    max_tree_depth, filter_null, dep_n_levels,
-                    is_classification, split_criterion, True,
-                    num_random_features, tree_terminated=tree_terminated,
-                    max_n_surr=max_n_surr)
+                    sql_refresh_training_pois_cnt = """
+                            TRUNCATE TABLE {training_pois_cnt_table} CASCADE;
+                            INSERT INTO {training_pois_cnt_table}
+                            SELECT
+                                *,
+                                {schema_madlib}.poisson_random(1) AS poisson_count
+                            FROM
+                            (
+                                SELECT
+                                    *,
+                                    {random_sample_expr} AS {subsample_random_column}
+                                FROM {training_table_name}
+                            ) subq
+                            WHERE {subsample_random_column} < {sample_ratio}
+                            """.format(**locals())
+                    plpy.notice("sql_refresh_training_pois_cnt:\n" + sql_refresh_training_pois_cnt)
+                    plpy.execute(sql_refresh_training_pois_cnt)
 
-                # If a tree for a group is terminated (not finished properly),
-                # then we do not need to compute other trees, and can just
-                # stop calculating that group further.
-                if tree_terminated is None:
-                    tree_terminated = dict((item['grp_key'], item['finished'])
-                                           for item in tree_states)
-                else:
-                    for item in tree_states:
-                        if item['grp_key'] not in tree_terminated:
-                            tree_terminated[item['grp_key']] = item['finished']
-                        elif item['finished'] == 2:
-                            tree_terminated[item['grp_key']] = 2
+                    if verbose:
+                        tup_cnt_in_view = plpy.execute("""
+                                SELECT
+                                    count(*) AS c,
+                                    sum(poisson_count) AS s
+                                FROM {src_view}
+                                """.format(**locals()))[0]
+                        src_cnt = tup_cnt_in_view['c']
+                        dup_cnt = tup_cnt_in_view['s']
+                        oob_cnt = plpy.execute("""
+                                SELECT count(*) AS c FROM {oob_view}
+                                """.format(**locals()))[0]['c']
+                        plpy.notice("""
+                        src_cnt: {src_cnt},
+                        oob_cnt: {oob_cnt},
+                        dup_cnt: {dup_cnt}.
+                        """.format(**locals()))
 
-            _insert_into_result_table(
-                schema_madlib, tree_states, output_table_name,
-                grp_key_to_grp_cols, sample_id)
+                    if grouping_cols is None:   # non-grouping case
+                        tree_state = _tree_train_using_bins(
+                            schema_madlib, bins, src_view, cat_features, con_features,
+                            boolean_cats, num_bins, 'poisson_count', dep, min_split,
+                            min_bucket, max_tree_depth, filter_null, dep_n_levels,
+                            is_classification, split_criterion, True,
+                            num_random_features, max_n_surr)
+                        tree_states = [dict(tree_state=tree_state['tree_state'],
+                                            grp_key='')]
 
-            _calculate_oob_prediction(
-                schema_madlib, output_table_name, cat_features_info_table,
-                oob_prediction_table, oob_view, sample_id, id_col_name,
-                cat_features, con_features, boolean_cats, grouping_cols,
-                grp_key_to_grp_cols, dep)
+                        tree_terminated = {'': tree_state['finished']}
 
-        ###################################################################
-        #### evaluating and summerizing random forest
+                    else:
+                        tree_states = _tree_train_grps_using_bins(
+                            schema_madlib, bins, src_view, cat_features, con_features,
+                            boolean_cats, num_bins, 'poisson_count', grouping_cols,
+                            grouping_array_str, dep, min_split, min_bucket,
+                            max_tree_depth, filter_null, dep_n_levels,
+                            is_classification, split_criterion, True,
+                            num_random_features, tree_terminated=tree_terminated,
+                            max_n_surr=max_n_surr)
 
-        oob_error_table = unique_string()
-        _calculate_oob_error(schema_madlib, oob_prediction_table,
-                             oob_error_table, id_col_name, is_classification)
+                        # If a tree for a group is terminated (not finished properly),
+                        # then we do not need to compute other trees, and can just
+                        # stop calculating that group further.
+                        if tree_terminated is None:
+                            tree_terminated = dict((item['grp_key'], item['finished'])
+                                                   for item in tree_states)
+                        else:
+                            for item in tree_states:
+                                if item['grp_key'] not in tree_terminated:
+                                    tree_terminated[item['grp_key']] = item['finished']
+                                elif item['finished'] == 2:
+                                    tree_terminated[item['grp_key']] = 2
 
-        importance_table = unique_string()
-        sql_create_empty_imp_tbl = """
-                CREATE TABLE {importance_table}
-                (
-                    is_categorical boolean,
-                    feature_index integer,
-                    gid integer,
-                    variable_importance double precision
-                );
-                """.format(**locals())
-        plpy.notice("sql_create_empty_imp_tbl:\n"+sql_create_empty_imp_tbl)
-        plpy.execute(sql_create_empty_imp_tbl)
-        # we populate the importance_table only if variable importance is to be
-        # calculated, otherwise we use an empty table which will be used later
-        # for an outer join.
-        if importance:
-            _calculate_variable_importance(
-                schema_madlib, training_table_name, output_table_name,
-                oob_prediction_table, importance_table, cat_features_info_table,
-                sample_id, id_col_name, dep, is_classification, cat_features,
-                con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols,
-                bins, num_bins, num_permutations)
+                    _insert_into_result_table(
+                        schema_madlib, tree_states, output_table_name,
+                        grp_key_to_grp_cols, sample_id)
 
-        _create_group_table(schema_madlib, output_table_name,
-                            oob_error_table, importance_table,
-                            cat_features_info_table, grp_key_to_grp_cols,
-                            grouping_cols, tree_terminated)
+                    _calculate_oob_prediction(
+                        schema_madlib, output_table_name, cat_features_info_table,
+                        oob_prediction_table, oob_view, sample_id, id_col_name,
+                        cat_features, con_features, boolean_cats, grouping_cols,
+                        grp_key_to_grp_cols, dep)
 
-        num_failed_groups = sum(1 for v in tree_terminated.values() if v != 1)
-        _create_summary_table(**locals())
+                ###################################################################
+                #### evaluating and summerizing random forest
 
-        sql_cleanup = """
-                DROP TABLE {training_pois_cnt_table} CASCADE;
-                DROP TABLE {oob_prediction_table} CASCADE;
-                DROP TABLE {importance_table} CASCADE;
-                DROP TABLE {oob_error_table} CASCADE;
-                DROP TABLE {cat_features_info_table} CASCADE;
-                DROP TABLE {grp_key_to_grp_cols} CASCADE;
-                """.format(**locals())
-        plpy.notice("sql_cleanup:\n" + sql_cleanup)
-        plpy.execute(sql_cleanup)
+                oob_error_table = unique_string()
+                _calculate_oob_error(schema_madlib, oob_prediction_table,
+                                     oob_error_table, id_col_name, is_classification)
+
+                importance_table = unique_string()
+                sql_create_empty_imp_tbl = """
+                        CREATE TABLE {importance_table}
+                        (
+                            is_categorical boolean,
+                            feature_index integer,
+                            gid integer,
+                            variable_importance double precision
+                        );
+                        """.format(**locals())
+                plpy.notice("sql_create_empty_imp_tbl:\n"+sql_create_empty_imp_tbl)
+                plpy.execute(sql_create_empty_imp_tbl)
+                # we populate the importance_table only if variable importance is to be
+                # calculated, otherwise we use an empty table which will be used later
+                # for an outer join.
+                if importance:
+                    _calculate_variable_importance(
+                        schema_madlib, training_table_name, output_table_name,
+                        oob_prediction_table, importance_table, cat_features_info_table,
+                        sample_id, id_col_name, dep, is_classification, cat_features,
+                        con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols,
+                        bins, num_bins, num_permutations)
+
+                _create_group_table(schema_madlib, output_table_name,
+                                    oob_error_table, importance_table,
+                                    cat_features_info_table, grp_key_to_grp_cols,
+                                    grouping_cols, tree_terminated)
+
+                num_failed_groups = sum(1 for v in tree_terminated.values() if v != 1)
+                _create_summary_table(**locals())
+
+                sql_cleanup = """
+                        DROP TABLE {training_pois_cnt_table} CASCADE;
+                        DROP TABLE {oob_prediction_table} CASCADE;
+                        DROP TABLE {importance_table} CASCADE;
+                        DROP TABLE {oob_error_table} CASCADE;
+                        DROP TABLE {cat_features_info_table} CASCADE;
+                        DROP TABLE {grp_key_to_grp_cols} CASCADE;
+                        """.format(**locals())
+                plpy.notice("sql_cleanup:\n" + sql_cleanup)
+                plpy.execute(sql_cleanup)
 
     return None
 # ------------------------------------------------------------
@@ -767,8 +776,14 @@ def forest_predict(schema_madlib, model, source, output, pred_type='response',
         """.format(**locals())
 
     with MinWarning('warning'):
-        plpy.notice("sql_prediction:\n"+sql_prediction)
-        plpy.execute(sql_prediction)
+        with EnableOptimizer(False):
+            # we disable optimizer (ORCA) for platforms that use it
+            #  since ORCA doesn't provide an easy way to disable hashagg
+            with EnableHashagg(False):
+                # we disable hashagg since large number of groups could
+                # result in excessive memory usage.
+                plpy.notice("sql_prediction:\n"+sql_prediction)
+                plpy.execute(sql_prediction)
 
     return None
 # ------------------------------------------------------------
@@ -1497,11 +1512,6 @@ def _forest_validate_args(
             "Random forest error: Invalid dependent variable ({0}).".
             format(dependent_variable))
     
-    if (list_of_features.strip() and list_of_features.strip() == '*'):
-        if (list_of_features_to_exclude is not None and list_of_features_to_exclude.strip()):
-            _assert(is_var_valid(training_table_name, list_of_features_to_exclude.strip()),
-                    "Random forest error: Some of the excluded features do not exist.")
-
     if grouping_cols is not None and grouping_cols.strip() != '':
         _assert(is_var_valid(training_table_name, grouping_cols),
                 "Random forest error: Invalid grouping column argument.")
