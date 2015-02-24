@@ -43,6 +43,9 @@ INSERT INTO patients(ID, second_attack, treatment, trait_anxiety) VALUES
 (21, 0, 0, NULL),
 (22, 0, NULL, 60);
 
+CREATE MATERIALIZED VIEW patients_mat_view AS 
+  (SELECT * FROM patients) ;
+
 drop table if exists temp_result;
 drop table if exists temp_result_summary;
 select logregr_train(
@@ -69,6 +72,36 @@ SELECT assert(
     num_missing_rows_skipped = 3,
     'Logistic regression with IRLS optimizer (patients test): Wrong results'
 ) FROM temp_result;
+
+-- Run the same test as above, but use the materialized view of patients.
+--   Here we test only that materialized views are accessible.
+drop table if exists temp_result;
+drop table if exists temp_result_summary;
+select logregr_train(
+    'patients_mat_view',
+    'temp_result',
+    'second_attack',
+    'ARRAY[1, treatment, trait_anxiety]',
+    Null,
+    20,
+    'irls'
+);
+
+-- The coefficients are from the source above, the other values have been
+-- computed with the IRLS optimizer in MADlib
+SELECT assert(
+    relative_error(coef, ARRAY[-6.36, -1.02, 0.119]) < 1e-3 AND
+    relative_error(log_likelihood, -9.41) < 1e-3 AND
+    relative_error(std_err, ARRAY[3.21, 1.17, 0.0550]) < 0.002 AND
+    relative_error(z_stats, ARRAY[-1.98, -0.874, 2.17]) < 0.002 AND
+    relative_error(p_values, ARRAY[0.0477, 0.382, 0.0304]) < 1e-3 AND
+    relative_error(odds_ratios, ARRAY[0.00172, 0.359, 1.13]) < 0.004 AND
+    relative_error(condition_no, sqrt(106329)) < 1e-2 AND
+    num_rows_processed = 20 AND
+    num_missing_rows_skipped = 3,
+    'Logistic regression with IRLS optimizer (patients test): Wrong results'
+) FROM temp_result;
+
 
 drop table if exists temp_result;
 drop table if exists temp_result_summary;
