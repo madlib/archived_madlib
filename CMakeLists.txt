@@ -46,6 +46,11 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
     set(SOLARIS TRUE)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
 
+if(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+    set(FREEBSD TRUE)
+    include_directories("/usr/local/include")
+endif(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
       "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
@@ -102,11 +107,12 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     endif(APPLE)
 endif(CMAKE_COMPILER_IS_GNUCXX)
 
-set(M4_ARGUMENTS
-    # force a `m4_' prefix to all builtins
-    "--prefix-builtins"
-)
-
+# force a `m4_' prefix to all builtins
+if(FREEBSD)
+set(M4_ARGUMENTS "-P")
+else()
+set(M4_ARGUMENTS "--prefix-builtins")
+endif()
 
 # Read and parse Version.yml file
 file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
