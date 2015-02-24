@@ -107,11 +107,12 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     endif(APPLE)
 endif(CMAKE_COMPILER_IS_GNUCXX)
 
-set(M4_ARGUMENTS
-    # force a `m4_' prefix to all builtins
-    "--prefix-builtins"
-)
-
+# force a `m4_' prefix to all builtins
+if(FREEBSD)
+set(M4_ARGUMENTS "-P")
+else()
+set(M4_ARGUMENTS "--prefix-builtins")
+endif()
 
 # Read and parse Version.yml file
 file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
