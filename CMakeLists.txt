@@ -46,6 +46,10 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
     set(SOLARIS TRUE)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
 
+if(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+    set(FREEBSD TRUE)
+endif(${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
+
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
       "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
@@ -89,7 +93,6 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # - long long is not part of the C++ 1998/2003 standard, but it is such a
     # common (and useful) extension that we do not want to hear warnings about
     # it.
-    # FIXME: SSE2 may cause failues in Greenplum when using some Eigen operations. Tracker no.74929244
     set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -Wno-clobbered -mno-sse2 -fstrict-aliasing"
         CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
@@ -102,11 +105,12 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     endif(APPLE)
 endif(CMAKE_COMPILER_IS_GNUCXX)
 
-set(M4_ARGUMENTS
-    # force a `m4_' prefix to all builtins
-    "--prefix-builtins"
-)
-
+# force a `m4_' prefix to all builtins
+if(FREEBSD)
+set(M4_ARGUMENTS "-P")
+else()
+set(M4_ARGUMENTS "--prefix-builtins")
+endif()
 
 # Read and parse Version.yml file
 file(READ "${MADLIB_VERSION_YML}" _MADLIB_VERSION_CONTENTS)
