@@ -6,8 +6,8 @@
 
 import plpy
 from control import MinWarning
-from utilities import __mad_version
 from utilities import unique_string as _unique_string
+
 
 class GroupIterationController:
     """
@@ -34,8 +34,8 @@ class GroupIterationController:
             state_type=self.schema_madlib+".bytea8",
             col_grp_null=_unique_string(),
             col_grp_key=_unique_string(),
-            grouping_col="NULL" if arg_dict["grouping_col"] is None \
-                    else arg_dict["grouping_col"],
+            grouping_col=("NULL" if arg_dict["grouping_col"] is None
+                          else arg_dict["grouping_col"]),
             )
 
         self.new_states = {}
@@ -43,16 +43,15 @@ class GroupIterationController:
         self.finished_states = {}
         self.failed_grp_keys = []
 
-
     def __enter__(self):
         with MinWarning('warning'):
             ############################
             # create state table
             # currently assuming that groups is passed as a valid array
-            group_col = ("NULL::integer as {col_grp_null}" if self.is_group_null \
-                        else "{grouping_col}").format(**self.kwargs)
-            groupby_str = ("{col_grp_null}" if self.is_group_null \
-                        else "{grouping_col}").format(**self.kwargs)
+            group_col = ("NULL::integer as {col_grp_null}" if self.is_group_null
+                         else "{grouping_col}").format(**self.kwargs)
+            groupby_str = ("{col_grp_null}" if self.is_group_null
+                           else "{grouping_col}").format(**self.kwargs)
             plpy.execute("""
                 DROP TABLE IF EXISTS {rel_state};
                 CREATE TEMPORARY TABLE {rel_state} AS (
@@ -72,8 +71,8 @@ class GroupIterationController:
             # checking null in group values
             # We cannot allow NULL due to array_to_string cannot handle it well.
             if not self.is_group_null:
-                null_test = " OR ".join([g.strip() + " is NULL" for g in
-                            self.kwargs['grouping_col'].split(",")])
+                null_test = (" OR ".join([g.strip() + " is NULL" for g in
+                             self.kwargs['grouping_col'].split(",")]))
                 null_count = plpy.execute("""
                     SELECT count(*) FROM {rel_state} WHERE {null_test}
                     """.format(null_test=null_test, **self.kwargs))[0]['count']
@@ -119,13 +118,14 @@ class GroupIterationController:
 
         plpy.execute(insert_plan, [self.failed_grp_keys, [None]])
 
-
     def __exit__(self, type, value, tb):
         self.in_with = False
 
-
     def test(self, condition):
         """
+        Return True if the given expression is TRUE for all in-progress groups.
+        Also returns True if there are no groups currently in-progress.
+
         Evaluate the given expression for all in-progress groups.
         Move groups with expression as True from self.new_states to
         self.finished_states. The expression may depend on the current
@@ -138,6 +138,11 @@ class GroupIterationController:
         @return True if \c expression in all non-failed groups is True,
                 otherwise False
         """
+        if not self.new_states:
+            # self.new_states can become empty if the last of the groups failed
+            # in the previous update
+            return True
+
         condition = condition.format(iteration=self.iteration, **self.kwargs)
         eval_plan = plpy.prepare("""
             SELECT
@@ -167,9 +172,6 @@ class GroupIterationController:
                                    self.new_states.keys(),
                                    self.new_states.values()])
 
-        if ret_tuples.nrows() == 0:
-            plpy.error("Unexpected error caused by no states in state table")
-
         self.old_states = {}
         for t in ret_tuples:
             if t['_expression']:
@@ -178,7 +180,6 @@ class GroupIterationController:
                 del self.new_states[k]
 
         return len(self.new_states) == 0
-
 
     def update(self, newState, **updateKwargs):
         """
@@ -236,10 +237,10 @@ class GroupIterationController:
                 groupby_str=groupby_str,
                 using_str=using_str,
                 as_string='AS _grp' if self.is_group_null else '',
-                _grp_key="array_to_string(ARRAY[{grouping_str}], "
-                         "',')".format(**self.kwargs) if self.is_group_null \
-                        else self.kwargs['col_grp_key'],
-                newState = newState,
+                _grp_key=("array_to_string(ARRAY[{grouping_str}], "
+                          "',')".format(**self.kwargs) if self.is_group_null
+                          else self.kwargs['col_grp_key']),
+                newState=newState,
                 **self.kwargs),
             ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)])
 

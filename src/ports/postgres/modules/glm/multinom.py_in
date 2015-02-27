@@ -10,17 +10,11 @@
 @brief Generalized Linear Models: Driver functions
 """
 import plpy
-from collections import defaultdict
 
 from utilities.in_mem_group_control import GroupIterationController
 from utilities.utilities import unique_string
-from utilities.validate_args import table_exists
-from utilities.validate_args import columns_exist_in_table
-from utilities.validate_args import table_is_empty
 from utilities.validate_args import __explicit_bool_to_text
 from utilities.utilities import _string_to_array
-from utilities.utilities import __mad_version
-from utilities.utilities import extract_keyvalue_params
 from utilities.validate_args import input_tbl_valid
 from utilities.validate_args import output_tbl_valid
 from utilities.validate_args import cols_in_tbl_valid
@@ -69,12 +63,12 @@ def __compute_multinom(arg_dict):
 
 
 def multinom(schema_madlib, source_table, model_table,
-        dependent_varname, independent_varname, ref_category, link_func,
-        grouping_col, optim_params, verbose, **kwargs):
+             dependent_varname, independent_varname, ref_category, link_func,
+             grouping_col, optim_params, verbose, **kwargs):
 
-    category_list = __multinom_validate_args(schema_madlib, source_table,
-            model_table, dependent_varname, independent_varname, ref_category,
-            link_func, grouping_col)
+    category_list = __multinom_validate_args(
+        schema_madlib, source_table, model_table, dependent_varname,
+        independent_varname, ref_category, link_func, grouping_col)
 
     # default values
     ref_category = category_list[0] if ref_category is None else ref_category
@@ -85,20 +79,21 @@ def multinom(schema_madlib, source_table, model_table,
                                                optim_params,
                                                'Multinom')
 
-    return __multinom_compute(schema_madlib, source_table,
-            model_table, dependent_varname, independent_varname,
-            ref_category, category_list, link_func, grouping_col,
-            optim_params_dict, verbose)
+    return __multinom_compute(
+        schema_madlib, source_table, model_table, dependent_varname,
+        independent_varname, ref_category, category_list, link_func,
+        grouping_col, optim_params_dict, verbose)
 
 # ========================================================================
 
 
-def __multinom_validate_args(schema_madlib, source_table, model_table,
+def __multinom_validate_args(
+        schema_madlib, source_table, model_table,
         dependent_varname, independent_varname, ref_category,
         link_func, grouping_col):
 
     __glm_validate_args(schema_madlib, source_table, model_table,
-        dependent_varname, independent_varname, grouping_col)
+                        dependent_varname, independent_varname, grouping_col)
 
     if link_func is not None and link_func not in ('logit'):
         plpy.error("Multinom error: Invalid link function!\n"
@@ -133,8 +128,8 @@ def __multinom_validate_args(schema_madlib, source_table, model_table,
     category_list = [str(c) for c in category_list]
     if ref_category is not None and ref_category not in category_list:
         plpy.error("Multinom error: Given ref_category is not found!"
-                "'{ref_category}' is not found in source table {source_table}.".
-                format(**locals()))
+                   "'{ref_category}' is not found in source table {source_table}.".
+                   format(**locals()))
 
     # set the reference category in the first position of category list in order to
     # map the reference category to integer 0
@@ -142,7 +137,7 @@ def __multinom_validate_args(schema_madlib, source_table, model_table,
         i = category_list.index(ref_category)
         category_list[0], category_list[i] = category_list[i], category_list[0]
 
-    if grouping_col is not None:
+    if grouping_col:
         grouped_category_counts = plpy.execute("""
             SELECT array_agg(category_count) AS counts
             FROM (
@@ -157,25 +152,24 @@ def __multinom_validate_args(schema_madlib, source_table, model_table,
             """.format(**locals()))[0]['counts']
         if any(c != len(category_list) for c in grouped_category_counts):
             plpy.error("Multinom error: Categories are not consistent across "
-                    "all groups!")
+                       "all groups!")
 
     return category_list
-
 # ========================================================================
 
 
 def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
-         ind_col, ref_category, category_list, link_func, grouping_col,
-         optim_params_dict, verbose):
+                       ind_col, ref_category, category_list, link_func,
+                       grouping_col, optim_params_dict, verbose):
 
     old_msg_level = plpy.execute("""
         SELECT setting FROM pg_settings
         WHERE name='client_min_messages'
         """)[0]['setting']
     if verbose:
-       plpy.execute("SET client_min_messages TO info")
+        plpy.execute("SET client_min_messages TO info")
     else:
-       plpy.execute("SET client_min_messages TO warning")
+        plpy.execute("SET client_min_messages TO warning")
 
     args = {'schema_madlib': schema_madlib,
             'rel_source': tbl_source,
@@ -188,7 +182,7 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
             'ref_category': ref_category,
             'num_cate': len(category_list),
             'link': link_func
-           }
+            }
     args.update(optim_params_dict)
 
     # return an array of dict
@@ -209,11 +203,11 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
     # when aggregate is called
     category_expr_tmp = """\n               """.join([
             "WHEN ({dep_col})::text = '{c}' THEN {i}".
-                format(dep_col=dep_col,c=c,i=i)
+            format(dep_col=dep_col, c=c, i=i)
             for i, c in enumerate(category_list)])
     args['category_expr'] = "CASE " + category_expr_tmp + "\nEND"
 
-    ######## REAL COMPUTATION
+    # REAL COMPUTATION #
     iteration_run = __compute_multinom(args)
 
     # output table
@@ -283,14 +277,14 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
         (
             SELECT '{{{category_str}}}'::varchar[] AS category_list
         ) q5
-        """.format(grouping_str1 = grouping_str1,
-                   grouping_str2 = grouping_str2,
-                   iteration_run = iteration_run,
-                   using_str     = using_str,
-                   join_str      = join_str,
-                   glm_result    = glm_result,
+        """.format(grouping_str1=grouping_str1,
+                   grouping_str2=grouping_str2,
+                   iteration_run=iteration_run,
+                   using_str=using_str,
+                   join_str=join_str,
+                   glm_result=glm_result,
                    **args)
-   # plpy.info(q_out_table)
+    # plpy.info(q_out_table)
     plpy.execute(q_out_table)
 
     # summary table
@@ -345,8 +339,8 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
     plpy.execute("SET client_min_messages TO " + old_msg_level)
 
     return None
-
 # ========================================================================
+
 
 def multinom_help_msg(schema_madlib, message, **kwargs):
     """ Help message for multinomial linear regression model
@@ -513,8 +507,9 @@ SELECT * from test3_output;
 #   Multinomial prediction function
 # ===============================================================================
 
+
 def multinom_predict(schema_madlib, model_table, predict_table,
-                        predicted_value_tab, predict_type, verbose, **kwargs):
+                     predicted_value_tab, predict_type, verbose, **kwargs):
     """
     Compute the predicted value for multinomial regresssion
 
@@ -531,16 +526,16 @@ def multinom_predict(schema_madlib, model_table, predict_table,
            the required arguments by this function.
     """
 
-    ##  Validate the argument
+    #  Validate the argument
     input_tbl_valid(model_table, 'multinom_predict')
     input_tbl_valid(predict_table, 'multinom_predict')
     output_tbl_valid(predicted_value_tab, 'multinom_predict')
     cols_in_tbl_valid(predict_table, _string_to_array("id"), 'multinom_predict')
 
     if verbose:
-       plpy.execute("SET client_min_messages TO info")
+        plpy.execute("SET client_min_messages TO info")
     else:
-       plpy.execute("SET client_min_messages TO warning")
+        plpy.execute("SET client_min_messages TO warning")
 
     if predict_type is None:
         predict_type = 'response'
@@ -594,8 +589,8 @@ def multinom_predict(schema_madlib, model_table, predict_table,
 
                 score_format = '\n'.join([
                          "score_arr[{j}] as \"{c}\",".
-                        format(j=i+1, c=c)
-                        for i, c in enumerate(cate_list)])
+                         format(j=i+1, c=c)
+                         for i, c in enumerate(cate_list)])
 
                 score_map = '\n'.join([
                          "WHEN category='{c}' THEN {j}".
