@@ -1,6 +1,5 @@
 import plpy
 from utilities import __mad_version
-from utilities import split_quoted_delimited_str
 import re
 
 version_wrapper = __mad_version()
@@ -25,7 +24,6 @@ DELETE, or UPDATE statements).
 """
 
 
-## -------------------------------------------------------------------------
 def _unquote_name(input_str):
     """
     Returns input_str with starting and trailing double quotes stripped
@@ -50,10 +48,10 @@ def _unquote_name(input_str):
             return input_str.lower()
     else:
         return input_str
-
-
 # -------------------------------------------------------------------------
-def _get_table_schema_names(tbl):
+
+
+def _get_table_schema_names(tbl, only_first_schema=False):
     """
     Returns a pair containing a set of schema names and the table name from
     input string.
@@ -78,6 +76,9 @@ def _get_table_schema_names(tbl):
     if len(names) == 1:
         all_schemas = _string_to_array(plpy.execute(
             "SELECT current_schemas(True) ""AS cs")[0]["cs"])
+        if only_first_schema:
+            # restricted to the first schema in search path
+            all_schemas = [plpy.execute("SELECT current_schema() AS cs")[0]["cs"]]
         schema_str = "('{0}')".format("','".join(_unquote_name(s)
                                                  for s in all_schemas))
         table = _unquote_name(names[0])
@@ -88,10 +89,10 @@ def _get_table_schema_names(tbl):
         plpy.error("Incorrect table name ({0}) provided! Table name "
                    "should be of the form: <schema name>.<table name>".format(tbl))
     return (schema_str.strip(), table.strip())
-## -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 
 
-def table_exists(tbl):
+def table_exists(tbl, only_first_schema=False):
     """
     Returns True if the table exists in the database.
 
@@ -102,7 +103,7 @@ def table_exists(tbl):
         @param tbl Name of the table. Can be schema qualified. If it is not
                     qualified then the current schema is used.
     """
-    schema_str, table = _get_table_schema_names(tbl)
+    schema_str, table = _get_table_schema_names(tbl, only_first_schema)
     if schema_str and table:
         does_table_exist = plpy.execute(
             """
@@ -116,7 +117,7 @@ def table_exists(tbl):
         return bool(does_table_exist)
     else:
         return False
-#-------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 
 
 def rename_table(schema_madlib, orig_name, new_name):
@@ -490,7 +491,7 @@ def __explicit_bool_to_text(tbl, cols, schema_madlib):
             patched.append(col)
 
     return patched
-#-------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 
 
 def array_col_has_no_null(tbl, col):
@@ -514,7 +515,7 @@ def array_col_has_no_null(tbl, col):
         if row_len != l:
             return False
     return True
- # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
 
 
 def is_var_valid(tbl, var):
@@ -550,7 +551,7 @@ def output_tbl_valid(tbl, module):
     if tbl is None or tbl.strip() == '':
         plpy.error("{module} error: NULL/empty output table name!".format(**locals()))
 
-    if table_exists(tbl):
+    if table_exists(tbl, only_first_schema=True):
         plpy.error("""{module} error: Output table '{tbl}' already exists.
             Drop it before calling the function.""".format(**locals()))
 # -------------------------------------------------------------------------
@@ -574,7 +575,6 @@ def regproc_valid(qualified_name, args_str, module):
             """.format(**locals()))
     except:
         plpy.error("""{module} error: Required function "{qualified_name}({args_str})" not found!""".format(**locals()))
-# -------------------------------------------------------------------------
 # -------------------------------------------------------------------------
 
 

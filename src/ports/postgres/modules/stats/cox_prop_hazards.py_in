@@ -752,11 +752,11 @@ def _validate_params(schema_madlib, source_table, output_table,
     # _assert(source_table is not None and table_exists(source_table),
     #         "Cox error: Source data table does not exist!")
 
-    _assert(not table_exists(output_table),
+    _assert(not table_exists(output_table, only_first_schema=True),
             "Cox error: Output table {0}"
             " already exists!".format(str(output_table)))
 
-    _assert(not table_exists(output_table + "_summary"),
+    _assert(not table_exists(output_table + "_summary", only_first_schema=True),
             "Cox error: Output table {0}_summary"
             " already exists!".format(str(output_table)))
 
@@ -1071,8 +1071,8 @@ def _validate_zph_params(schema_madlib, cox_model_table, output_table):
             "Cox error: Model table {0} or summary table {0}_summary "
             "does not exist!".format(cox_model_table))
 
-    _assert((not table_exists(output_table)) and
-            (not table_exists(output_table + "_residual")),
+    _assert((not table_exists(output_table, only_first_schema=True)) and
+            (not table_exists(output_table + "_residual", only_first_schema=True)),
             "Cox error: Output table {0} or residual table {0}_residual "
             "already exists!".format(output_table))
 
@@ -1217,7 +1217,6 @@ def cox_prop_hazards(schema_madlib, usage_string, **kwargs):
     plpy.warning("This function has been deprecated. Please use 'coxph_train' instead.")
     if usage_string == '':
         message = """
-q
 Summary
 ------------------------------------------------------------------------------------
     Functionality: Cox proprtional hazards regression (Breslow method)
@@ -1261,11 +1260,11 @@ Output:
     return message.format(schema_madlib=schema_madlib);
 
 
-def _validate_predict(schema_madlib, model_table, source_table, id_col_name, 
+def _validate_predict(schema_madlib, model_table, source_table, id_col_name,
                       output_table, pred_type, reference):
     """ Validate the arguments
     """
-    _assert(pred_type in ('linear_predictors', 'risk', 'terms'), 
+    _assert(pred_type in ('linear_predictors', 'risk', 'terms'),
             "Cox predict error: Invalid prediction type.")
     _assert(reference in ('overall', 'strata'),
             "Cox predict error: Invalid reference type.")
@@ -1277,7 +1276,7 @@ def _validate_predict(schema_madlib, model_table, source_table, id_col_name,
             "Cox predict error: Invalid source table.")
     _assert(table_exists(source_table),
             "Cox predict error: source table is missing.")
-    _assert(not table_exists(output_table), 
+    _assert(not table_exists(output_table, only_first_schema=True),
             "Cox predict error: output table already exists.")
     _assert(columns_exist_in_table(
                 source_table,
@@ -1295,8 +1294,9 @@ def _validate_predict(schema_madlib, model_table, source_table, id_col_name,
                 ["independent_varname", "strata"],
                 schema_madlib),
             "Cox predict error: Invalid summary table ({0})".format(model_summary))
-    
-def coxph_predict(schema_madlib, model_table, source_table, id_col_name, output_table, 
+
+
+def coxph_predict(schema_madlib, model_table, source_table, id_col_name, output_table,
                   pred_type, reference, **kwargs):
     """
         Cox prediction function
@@ -1305,33 +1305,33 @@ def coxph_predict(schema_madlib, model_table, source_table, id_col_name, output_
         pred_type = "linear_predictors"
     if reference is None:
         reference = "strata"
-    _validate_predict(schema_madlib, model_table, source_table, id_col_name, output_table, 
+    _validate_predict(schema_madlib, model_table, source_table, id_col_name, output_table,
                       pred_type, reference)
     model_table_summary = model_table + "_summary"
     summary_elements = plpy.execute("SELECT strata, independent_varname FROM {0}"
                                    .format(model_table_summary))[0]
-    
+
     strata = summary_elements['strata']
     independent_varname = summary_elements['independent_varname']
     independent_varname_str = re.search('ARRAY\[(.*)\]',independent_varname,re.IGNORECASE).group(1)
-   
+
     list_of_avg_col_names = []
     list_of_avg_col_names_with_aliases = []
     for indep in independent_varname_str.split(","):
         list_of_avg_col_names.append("avg_"+indep.strip())
         list_of_avg_col_names_with_aliases.append("avg(" + indep.strip() + ") as avg_" + indep.strip())
-        
+
     avg_comma_sep_str = ",".join(list_of_avg_col_names)
     avg_substring = ",".join(list_of_avg_col_names_with_aliases)
- 
+
     select_strata = ""
     group_by_strata = ""
     where_strata = ""
-   
+
     if pred_type == "terms":
         strata = None
     if strata is not None and reference == "strata":
-        select_strata = "{strata}".format(**locals()) + "," 
+        select_strata = "{strata}".format(**locals()) + ","
         group_by_strata = "group by {strata}".format(**locals())
         strat_cols_condition = ""
         els = []
@@ -1342,20 +1342,20 @@ def coxph_predict(schema_madlib, model_table, source_table, id_col_name, output_
 
     if pred_type != "terms":
         sql_predict = """
-            CREATE TABLE {output_table} AS 
-            SELECT {id_col_name}, 
-                   {schema_madlib}._coxph_predict_resp(coef, 
-                                        {independent_varname}, 
-                                        ARRAY[{avg_comma_sep_str}], 
+            CREATE TABLE {output_table} AS
+            SELECT {id_col_name},
+                   {schema_madlib}._coxph_predict_resp(coef,
+                                        {independent_varname},
+                                        ARRAY[{avg_comma_sep_str}],
                                         '{pred_type}'::TEXT) AS {pred_type}
             FROM (
-                SELECT 
-                    {select_strata} 
+                SELECT
+                    {select_strata}
                     {avg_substring}
                 FROM {source_table}
                 {group_by_strata}
-            ) t, 
-            {model_table} m, 
+            ) t,
+            {model_table} m,
             {source_table} s
             {where_strata}
         """.format(**locals())
@@ -1365,18 +1365,18 @@ def coxph_predict(schema_madlib, model_table, source_table, id_col_name, output_
             '{interim}[{j}] as "{c}"'.
             format(j=i+1, c=c.strip(' "'), interim=intermediate_col)
             for i, c in enumerate (independent_varname_str.split(","))])
-        
+
         sql_predict = """
-            CREATE TABLE {output_table} AS 
-                SELECT 
-                    {id_col_name}, 
-                    {terms_format}    
+            CREATE TABLE {output_table} AS
+                SELECT
+                    {id_col_name},
+                    {terms_format}
                 FROM (
                     SELECT
                         {id_col_name},
-                        {schema_madlib}._coxph_predict_terms(coef, 
-                                            {independent_varname}, 
-                                            ARRAY[{avg_comma_sep_str}])  
+                        {schema_madlib}._coxph_predict_terms(coef,
+                                            {independent_varname},
+                                            ARRAY[{avg_comma_sep_str}])
                                                 AS {intermediate_col}
                     FROM (
                         SELECT
@@ -1395,3 +1395,139 @@ def coxph_predict(schema_madlib, model_table, source_table, id_col_name, output_
         plpy.notice("sql_predict:\n"+sql_predict)
         plpy.execute(sql_predict)
     return None
+
+
+def coxph_predict_help_message(schema_madlib, message, **kwargs):
+    """ Help message for prediction using a CoxPH model
+
+    @brief
+    Args:
+        @param schema_madlib string, Name of the schema madlib
+        @param message string, Help message indicator
+
+    Returns:
+        String. Help message string
+    """
+    if not message:
+        help_string = """
+        -----------------------------------------------------------------------
+                                    SUMMARY
+        -----------------------------------------------------------------------
+        Functionality: Prediction using a CoxPH model
+
+        The prediction function is provided to calculate the linear
+        predictors, risk or the linear terms for the given prediction data.
+
+        For more details on function usage:
+            SELECT {schema_madlib}.coxph_predict('usage')
+
+        For an example on using the function:
+            SELECT {schema_madlib}.coxph_predict('example')
+        """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+        -----------------------------------------------------------------------
+                                    USAGE
+        -----------------------------------------------------------------------
+        SELECT {schema_madlib}.coxph_predict(
+            'model_table',      -- TEXT. Name of the table containing the cox model.
+            'source_table',     -- TEXT. Name of the table containing the prediction data.
+            'id_col_name',      -- TEXT. Name of the id column in the source table.
+            'output_table',     -- TEXT. Name of the table to store the prediction results in.
+            'pred_type',        -- TEXT. Type of prediction. Can be one of 'linear_predictors',
+                                            'risk' or 'terms'. Default = 'linear_predictors'.
+                                      'linear_predictors' calculates the dot product of the
+                                          independent variables and the coefficients.
+                                      'risk' is the exponentiated value of the linear prediction.
+                                      'terms' correspond to the linear terms obtained by multiplying
+                                              the independent variables with their corresponding coefficients
+                                              values (without further calculating the sum of these terms)
+                                      The resulting predictions, in all of the above cases, are then
+                                      centered around a reference level.
+            'reference'         -- TEXT. Reference level to use for centering the predictions.
+                                          Can be one of 'strata' or 'overall'. Default = 'strata'.
+                                    Cox model is a relative risk model wherein the predictions are
+                                    relative to the sample that they are taken from. Therefore, all
+                                    predictions are centered around the mean of the covariates within
+                                    each stratum by default. If it is instead desired to use the
+                                    mean over all samples, reference='overall' can be
+                                    specified. If there was no stratification involved, the reference
+                                    parameter does not have any effect.
+
+                                    Note 1:  For pred_type = 'terms', the predictions are always
+                                    centered around the overall mean values of the covariates
+                                    independent of stratification.
+
+                                    Note 2: R uses 'sample' instead of 'overall' when referring to
+                                    the overall mean value of the covariates as being the reference
+                                    level.
+        )
+        -----------------------------------------------------------------------
+                                   OUTUPT
+        -----------------------------------------------------------------------
+        The <output table> ('output_table' above) has the following columns
+                - id                TEXT. The id column name from the source table
+                - predicted_result  DOUBLE PRECISION. Result of prediction based of the value of
+                                        the pred_type parameter
+        """
+    elif message in ['example', 'examples']:
+        help_string = """
+        DROP TABLE IF EXISTS sample_data;
+        CREATE TABLE sample_data (
+            id INTEGER NOT NULL,
+            grp DOUBLE PRECISION,
+            wbc DOUBLE PRECISION,
+            timedeath INTEGER,
+            status BOOLEAN
+        );
+
+        -- Insert sample data
+        COPY sample_data FROM STDIN DELIMITER '|';
+          0 |   0 | 1.45 |        35 | t
+          1 |   0 | 1.47 |        34 | t
+          3 |   0 |  2.2 |        32 | t
+          4 |   0 | 1.78 |        25 | t
+          5 |   0 | 2.57 |        23 | t
+          6 |   0 | 2.32 |        22 | t
+          7 |   0 | 2.01 |        20 | t
+          8 |   0 | 2.05 |        19 | t
+          9 |   0 | 2.16 |        17 | t
+         10 |   0 |  3.6 |        16 | t
+         11 |   1 |  2.3 |        15 | t
+         12 |   0 | 2.88 |        13 | t
+         13 |   1 |  1.5 |        12 | t
+         14 |   0 |  2.6 |        11 | t
+         15 |   0 |  2.7 |        10 | t
+         16 |   0 |  2.8 |         9 | t
+         17 |   1 | 2.32 |         8 | t
+         18 |   0 | 4.43 |         7 | t
+         19 |   0 | 2.31 |         6 | t
+         20 |   1 | 3.49 |         5 | t
+         21 |   1 | 2.42 |         4 | t
+         22 |   1 | 4.01 |         3 | t
+         23 |   1 | 4.91 |         2 | t
+         24 |   1 |    5 |         1 | t
+        \.
+
+        -- Run coxph function
+        SELECT {schema_madlib}.coxph_train(
+            'sample_data',
+            'sample_cox',
+            'timedeath',
+            'ARRAY[grp,wbc]',
+            'status');
+
+        -- View the Cox PH model
+        SELECT * FROM sample_cox;
+
+        -- Predict back on the original dataset
+        SELECT madlib.coxph_predict('sample_cox',
+                                    'sample_data',
+                                    'id',
+                                    'sample_pred',
+                                    'risk');
+        """
+    else:
+        help_string = "No such option. Use {schema_madlib}.coxph_predict()"
+
+    return help_string.format(schema_madlib=schema_madlib)
