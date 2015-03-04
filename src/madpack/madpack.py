@@ -113,60 +113,64 @@ def __run_sql_query(sql, show_error):
          @param sql query text to execute
          @param show_error displays the SQL error msg
     """
-    return ____run_sql_query(sql, show_error, portid, con_args)
+    return ____run_sql_query(sql, show_error, con_args)
 #------------------------------------------------------------------------------
 
 
-def ____run_sql_query(sql, show_error, portid=portid, con_args=con_args):
-    # psql
-    if portid in ('greenplum', 'postgres', 'hawq'):
-        # Define sqlcmd
-        sqlcmd = 'psql'
-        delimiter = ' <$madlib_delimiter$> '
+def ____run_sql_query(sql, show_error, con_args=con_args):
+    # Define sqlcmd
+    sqlcmd = 'psql'
+    delimiter = ' <$madlib_delimiter$> '
 
-        # Test the DB cmd line utility
-        std, err = subprocess.Popen(['which', sqlcmd], stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE).communicate()
-        if std == '':
-            __error("Command not found: %s" % sqlcmd, True)
+    # Test the DB cmd line utility
+    std, err = subprocess.Popen(['which', sqlcmd], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE).communicate()
+    if std == '':
+        __error("Command not found: %s" % sqlcmd, True)
 
-        # Run the query
-        runcmd = [sqlcmd,
-                  '-h', con_args['host'].split(':')[0],
-                  '-p', con_args['host'].split(':')[1],
-                  '-d', con_args['database'],
-                  '-U', con_args['user'],
-                  '-F', delimiter,
-                  '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
-        runenv = os.environ
+    # Run the query
+    runcmd = [sqlcmd,
+              '-h', con_args['host'].split(':')[0],
+              '-p', con_args['host'].split(':')[1],
+              '-d', con_args['database'],
+              '-U', con_args['user'],
+              '-F', delimiter,
+              '--no-password',
+              '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
+    runenv = os.environ
+    if 'password' in con_args:
         runenv["PGPASSWORD"] = con_args['password']
-        runenv["PGOPTIONS"] = '-c search_path=public -c client_min_messages=notice'
-        std, err = subprocess.Popen(runcmd, env=runenv, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE).communicate()
-        if err:
-            if show_error:
-                __error("SQL command failed: \nSQL: %s \n%s" % (sql, err), False)
+    runenv["PGOPTIONS"] = '-c search_path=public -c client_min_messages=notice'
+    std, err = subprocess.Popen(runcmd, env=runenv, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE).communicate()
+
+    if err:
+        if show_error:
+            __error("SQL command failed: \nSQL: %s \n%s" % (sql, err), False)
+        if 'password' in err:
+            raise EnvironmentError
+        else:
             raise Exception
 
-        # Convert the delimited output into a dictionary
-        results = []  # list of rows
-        i = 0
-        for line in std.splitlines():
-            if i == 0:
-                cols = [name for name in line.split(delimiter)]
-            else:
-                row = {}  # dict of col_name:col_value pairs
-                c = 0
-                for val in line.split(delimiter):
-                    row[cols[c]] = val
-                    c += 1
-                results.insert(i, row)
-            i += 1
-        # Drop the last line: "(X rows)"
-        try:
-            results.pop()
-        except:
-            pass
+    # Convert the delimited output into a dictionary
+    results = []  # list of rows
+    i = 0
+    for line in std.splitlines():
+        if i == 0:
+            cols = [name for name in line.split(delimiter)]
+        else:
+            row = {}  # dict of col_name:col_value pairs
+            c = 0
+            for val in line.split(delimiter):
+                row[cols[c]] = val
+                c += 1
+            results.insert(i, row)
+        i += 1
+    # Drop the last line: "(X rows)"
+    try:
+        results.pop()
+    except:
+        pass
 
     return results
 #------------------------------------------------------------------------------
@@ -252,9 +256,11 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
                   '-p', con_args['host'].split(':')[1],
                   '-d', con_args['database'],
                   '-U', con_args['user'],
+                  '--no-password',
                   '-f', tmpfile]
         runenv = os.environ
-        runenv["PGPASSWORD"] = con_args['password']
+        if 'password' in con_args:
+            runenv["PGPASSWORD"] = con_args['password']
         runenv["PGOPTIONS"] = '-c client_min_messages=notice'
 
     # Open log file
@@ -285,10 +291,9 @@ def __get_madlib_dbver(schema):
         @param schema MADlib schema name
     """
     try:
-        row = __run_sql_query("SELECT count(*) AS cnt FROM pg_tables "
-                              "WHERE schemaname='%s' AND "
-                              "tablename='migrationhistory'" %
-                              (schema), True)
+        row = __run_sql_query("SELECT count(*) AS cnt FROM pg_tables " +
+                              "WHERE schemaname='" + schema + "' AND " +
+                              "tablename='migrationhistory'", True)
         if int(row[0]['cnt']) > 0:
             row = __run_sql_query("""SELECT version FROM %s.migrationhistory
                 ORDER BY applied DESC LIMIT 1""" % schema, True)
@@ -1037,21 +1042,24 @@ def main(argv):
             if c_db is None:
                 c_db = os.environ.get('PGDATABASE', c_user)
 
-        ##
-        # Try connecting to the database
-        ##
-        __info("Testing database connection...", verbose)
-
-        # Get password
-        if c_pass is None:
-            c_pass = getpass.getpass("Password for user %s: " % c_user)
-
         # Set connection variables
         global con_args
         con_args['host'] = c_host + ':' + c_port
         con_args['database'] = c_db
         con_args['user'] = c_user
-        con_args['password'] = c_pass
+
+        ##
+        # Try connecting to the database
+        ##
+        __info("Testing database connection...", verbose)
+
+        try:
+            ____run_sql_query("SELECT 1", False)
+        except EnvironmentError:
+            con_args['password'] = getpass.getpass("Password for user %s: " % c_user)
+            ____run_sql_query("SELECT 1", False)
+        except:
+            __error('Failed to connect to database', True)
 
         # Currently Madlib can only be installed in 'madlib' schema in HAWQ
         if portid == 'hawq' and schema.lower() != 'madlib':
