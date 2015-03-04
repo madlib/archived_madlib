@@ -68,6 +68,8 @@ static inline Datum element_set(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_sqrt(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_square(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_dot(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_contains(Datum element, Oid elt_type, Datum result,
@@ -100,6 +102,7 @@ static inline float8 float8_mult(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_div(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_set(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_sqrt(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_square(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_dot(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_contains(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_max(float8 op1, float8 op2, float8 opt_op);
@@ -181,6 +184,15 @@ float8_sqrt(float8 op1, float8 op2, float8 opt_op){
             errdetail("Arrays with negative values can not be input of array_sqrt")));
     }
     return sqrt(op1);
+}
+
+static
+inline
+float8
+float8_square(float8 op1, float8 op2, float8 opt_op){
+    (void) op2;
+    (void) opt_op;
+    return op1*op1;
 }
 
 static
@@ -512,8 +524,14 @@ array_contains(PG_FUNCTION_ARGS){
 PG_FUNCTION_INFO_V1(array_add);
 Datum
 array_add(PG_FUNCTION_ARGS){
-    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
-    if (PG_ARGISNULL(1)) { PG_RETURN_NULL(); }
+    // special handling for madlib.sum()
+    if (PG_ARGISNULL(0) && PG_ARGISNULL(1)) { PG_RETURN_NULL(); }
+    if (PG_ARGISNULL(0)) {
+        PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(1));
+    }
+    if (PG_ARGISNULL(1)) {
+        PG_RETURN_ARRAYTYPE_P(PG_GETARG_ARRAYTYPE_P(0));
+    }
 
     ArrayType *v1 = PG_GETARG_ARRAYTYPE_P(0);
     ArrayType *v2 = PG_GETARG_ARRAYTYPE_P(1);
@@ -599,6 +617,26 @@ array_sqrt(PG_FUNCTION_ARGS){
     Datum v2 = 0;
 
     ArrayType *res = General_Array_to_Array(v1, v2, element_sqrt);
+
+    if (v1 != x) { pfree(v1); }
+    PG_FREE_IF_COPY(x, 0);
+
+    PG_RETURN_ARRAYTYPE_P(res);
+}
+
+/*
+ * This function takes the square for each element.
+ */
+PG_FUNCTION_INFO_V1(array_square);
+Datum
+array_square(PG_FUNCTION_ARGS){
+    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
+
+    ArrayType *x = PG_GETARG_ARRAYTYPE_P(0);
+    ArrayType *v1 = array_to_float8_array(x);
+    Datum v2 = 0;
+
+    ArrayType *res = General_Array_to_Array(v1, v2, element_square);
 
     if (v1 != x) { pfree(v1); }
     PG_FREE_IF_COPY(x, 0);
@@ -1115,6 +1153,17 @@ Datum
 element_sqrt(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_sqrt);
+}
+
+/*
+ * Assign result to be square(elt1).
+ */
+static
+inline
+Datum
+element_square(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
+    return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_square);
 }
 
 /*

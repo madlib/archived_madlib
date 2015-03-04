@@ -16,3 +16,4 @@ DECLARE_UDF(recursive_partitioning, print_con_splits)
 
 DECLARE_UDF(recursive_partitioning, get_bin_value_by_index)
 DECLARE_UDF(recursive_partitioning, get_bin_index_by_value)
+DECLARE_UDF(recursive_partitioning, get_bin_indices_by_values)

@@ -376,7 +376,14 @@ AnyType coxph_improved_strata_step_final::run(AnyType& args)
 
 AnyType array_avg_transition::run(AnyType& args)
 {
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+    if (args[1].isNull()) { return args[0]; }
+    MappedColumnVector x;
+    try {
+        MappedColumnVector xx = args[1].getAs<MappedColumnVector>();
+        x.rebind(xx.memoryHandle(), xx.size());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
     bool use_abs = args[2].getAs<bool>();
     MutableArrayHandle<double> state = NULL;
     if(args[0].isNull())

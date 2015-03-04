@@ -65,7 +65,7 @@ if(CMAKE_COMPILER_IS_GNUCC)
     # http://pubs.opengroup.org/onlinepubs/9699919799/functions/V2_chap02.html#tag_15_02_01_01
     # We specify that we are POSIX.1-2001 compliant and XSI-conforming. We only
     # need to specify _XOPEN_SOURCE as _POSIX_C_SOURCE will be set implicitly.
-    set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra -D_XOPEN_SOURCE=600"
+    set(CMAKE_C_FLAGS "-std=c99 -pedantic -Wall -Wextra -Wno-clobbered -D_XOPEN_SOURCE=600"
         CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
 
@@ -90,7 +90,7 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # common (and useful) extension that we do not want to hear warnings about
     # it.
     # FIXME: SSE2 may cause failues in Greenplum when using some Eigen operations. Tracker no.74929244
-    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -mno-sse2 -fstrict-aliasing"
+    set(CMAKE_CXX_FLAGS "-std=gnu++98 -fdiagnostics-show-option -Wall -Wextra -pedantic -Wconversion -Wno-long-long -Wno-clobbered -mno-sse2 -fstrict-aliasing"
         CACHE STRING
         "Flags used by the compiler during all build types." FORCE)
 

@@ -393,6 +393,7 @@ predict_dt_response::run(AnyType &args){
             con_features.rebind(xx_con.memoryHandle(), xx_con.size());
         }
     } catch (const ArrayWithNullException &e) {
+        // reach here only if surrogates are not used
         return Null();
     }
     return dt.predict_response(cat_features, con_features);

@@ -25,4 +25,5 @@
 #include "linalg/svd.hpp"
 #include "tsa/arima.hpp"
 #include "recursive_partitioning/decision_tree.hpp"
+#include "recursive_partitioning/random_forest.hpp"
 #include "recursive_partitioning/feature_encoding.hpp"

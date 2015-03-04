@@ -8,6 +8,7 @@
  */ /* ----------------------------------------------------------------------- */
 
 #include <sstream>
+#include <algorithm>
 #include <dbconnector/dbconnector.hpp>
 #include "feature_encoding.hpp"
 #include "ConSplits.hpp"
@@ -225,25 +226,101 @@ get_bin_value_by_index::run(AnyType &args) {
 AnyType
 get_bin_index_by_value::run(AnyType &args) {
     double bin_value = args[0].getAs<double>();
-
     // we return a -1 index is the value is NaN
-    if (std::isnan(bin_value))
-        return -1;
+    if (std::isnan(bin_value)) { return -1; }
 
     ConSplitsResult<RootContainer> con_splits_results = args[1].getAs<ByteString>();
+    if (con_splits_results.con_splits.cols() <= 0) { return Null(); }
+
     int feature_index = args[2].getAs<int>();
     // assuming we use <= to create bins by values in con_splits
     // and each row in con_splits is sorted in ascending order
     // see TreeAccumulator::operator<<(const tuple_type&)
     // and dst_compute_con_splits_final::run(AnyType &)
+    // each v_i covering ranges (-inf,v_0], ..., (v_{n-2}, v_{n-1}]
+    int result = -1;
+    int low = 0;
+    int high = static_cast<int>(con_splits_results.con_splits.cols()) - 1;
+    if (bin_value > con_splits_results.con_splits(feature_index, high)) {
+        // covering range (v_{n-1}, +inf)
+        result = high + 1;
+    }
+    while (low < high) {
+        int mid = (low + high) / 2;
+        if (bin_value <= con_splits_results.con_splits(feature_index, mid)) {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    result = high;
+
+#ifndef NDEBUG
+    // test code for binary search (mimic std::lower_bound())
+    if (low != high) {
+        dbout << "bin_value: " << bin_value
+            << "\ncon_splits_results.con_splits.row(feature_index): " << con_splits_results.con_splits.row(feature_index)
+            << "\nlow: " << low << ", high: " << high << std::endl;
+        throw std::runtime_error("low_bound() has bug!");
+    }
+
     for (int i = 0; i < con_splits_results.con_splits.cols(); i ++) {
-        // covering ranges (-inf,v_0], ..., (v_{n-2}, v_{n-1}]
         if (bin_value <= con_splits_results.con_splits(feature_index, i)) {
+            if (i != result) {
+                dbout << "bin_value: " << bin_value
+                    << "\ncon_splits_results.con_splits.row(feature_index): " << con_splits_results.con_splits.row(feature_index)
+                    << "\nresult: " << result << ", i: " << i << std::endl;
+                throw std::runtime_error("low_bound() has bug!");
+            }
             return i;
         }
     }
-    // covering range (v_{n-1}, +inf)
-    return static_cast<int>(con_splits_results.con_splits.cols());
+#endif
+
+    return result;
+}
+// --------------------------------------------------------------
+
+AnyType
+get_bin_indices_by_values::run(AnyType &args) {
+    // Null-handling is done by declaring it as strict
+    MappedColumnVector bin_values = args[0].getAs<MappedColumnVector>();
+    ConSplitsResult<RootContainer> con_splits_results = args[1].getAs<ByteString>();
+
+    if (con_splits_results.con_splits.cols() <= 0) { return Null(); }
+
+    MutableNativeIntegerVector bin_indices(
+            this->allocateArray<int>(bin_values.size()));
+
+    // assuming we use <= to create bins by values in con_splits
+    // and each row in con_splits is sorted in ascending order
+    // see TreeAccumulator::operator<<(const tuple_type&)
+    // and dst_compute_con_splits_final::run(AnyType &)
+    // each v_i covering ranges (-inf,v_0], ..., (v_{n-2}, v_{n-1}]
+    for (Index i = 0; i < bin_values.size(); i ++) {
+        int low = 0;
+        int high = static_cast<int>(con_splits_results.con_splits.cols()) - 1;
+        if (std::isnan(bin_values(i))) {
+            // we return a -1 index is the value is NaN
+            bin_indices(i) = -1;
+        } else if (bin_values(i) > con_splits_results.con_splits(i, high)) {
+            // covering range (v_{n-1}, +inf)
+            bin_indices(i) = high + 1;
+        } else {
+            // binary search
+            while (low < high) {
+                int mid = (low + high) / 2;
+                if (bin_values(i) <= con_splits_results.con_splits(i, mid)) {
+                    high = mid;
+                } else {
+                    low = mid + 1;
+                }
+            }
+            bin_indices(i) = high;
+        }
+    }
+
+    return bin_indices;
 }
 
 } // namespace recursive_partitioning

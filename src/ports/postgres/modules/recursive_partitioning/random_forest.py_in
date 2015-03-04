@@ -272,16 +272,17 @@ def forest_train(
                 num_bins = 100 if num_bins is None else num_bins
                 sample_ratio = 1 if sample_ratio is None else sample_ratio
 
-                surrogate_param_dict = extract_keyvalue_params(surrogate_params,
-                                                               dict(max_surrogates=int),
-                                                               dict(max_surrogates=0))
+                surrogate_param_dict = extract_keyvalue_params(
+                    surrogate_params,
+                    dict(max_surrogates=int),   # type of variable
+                    dict(max_surrogates=0))     # default value of variable
                 max_n_surr = surrogate_param_dict['max_surrogates']
                 _assert(max_n_surr >= 0,
                         "Maximum number of surrogates ({0}) should be non-negative".
                         format(max_n_surr))
 
                 ##################################################################
-                #### validate arguments
+                # validate arguments
                 _forest_validate_args(training_table_name, output_table_name, id_col_name,
                                       list_of_features, dependent_variable,
                                       list_of_features_to_exclude, grouping_cols,
@@ -290,18 +291,21 @@ def forest_train(
                                       min_split, min_bucket, num_bins, sample_ratio)
 
                 ##################################################################
-                #### preprocess arguments
-
+                # preprocess arguments
                 # expand "*" syntax and exclude some features
-                features = _get_features_to_use(schema_madlib, training_table_name,
+                features = _get_features_to_use(schema_madlib,
+                                                training_table_name,
                                                 list_of_features,
-                                                list_of_features_to_exclude, id_col_name,
-                                                '1', dependent_variable, grouping_cols)
+                                                list_of_features_to_exclude,
+                                                id_col_name,
+                                                '1', dependent_variable,
+                                                grouping_cols)
+
                 _assert(bool(features),
                         "Random forest error: No feature is selected for the model.")
 
-                is_classification, is_bool = _is_dep_categorical(training_table_name,
-                                                                 dependent_variable)
+                is_classification, is_bool = _is_dep_categorical(
+                    training_table_name, dependent_variable)
                 split_criterion = 'gini' if is_classification else 'mse'
 
                 if num_random_features is None:
@@ -316,9 +320,10 @@ def forest_train(
                 cat_features, con_features, boolean_cats = _classify_features(
                     all_cols_types, features)
 
-                filter_null = _get_filter_str(schema_madlib, cat_features, con_features,
-                                              boolean_cats, dependent_variable,
-                                              grouping_cols, max_n_surr)
+                filter_null = _get_filter_str(schema_madlib, cat_features,
+                                              con_features, boolean_cats,
+                                              dependent_variable, grouping_cols,
+                                              max_n_surr)
                 # the total number of records
                 n_all_rows = plpy.execute("""
                         select count(*) from {source_table}
@@ -341,8 +346,9 @@ def forest_train(
                     dep_n_levels = len(dep_list)
                 else:
                     n_rows = plpy.execute(
-                        "SELECT count(*) FROM {source_table} where {filter_null}".format(
-                            source_table=training_table_name, filter_null=filter_null))[0]['count']
+                        "SELECT count(*) FROM {source_table} where {filter_null}".
+                        format(source_table=training_table_name,
+                               filter_null=filter_null))[0]['count']
                     dep = dependent_variable
                     dep_n_levels = 1
                     dep_list = None
@@ -361,10 +367,10 @@ def forest_train(
                     # find the bins, one dict containing two arrays: categorical
                     # bins, and continuous bins
                     num_groups = 1
-                    bins = _get_bins(schema_madlib, training_table_name, cat_features,
-                                     con_features, num_bins, dep, boolean_cats,
-                                     n_rows, is_classification, dep_n_levels,
-                                     filter_null)
+                    bins = _get_bins(schema_madlib, training_table_name,
+                                     cat_features, con_features, num_bins, dep,
+                                     boolean_cats, n_rows, is_classification,
+                                     dep_n_levels, filter_null)
                     # some features may be dropped because they have only one value
                     cat_features = bins['cat_features']
                     bins['grp_key_cat'] = ['']
@@ -429,8 +435,11 @@ def forest_train(
                     len(cat_features),
                     bins['cat_origin']])
 
+                con_splits_table = unique_string()
+                _create_con_splits_table(schema_madlib, con_splits_table, grouping_cols, grp_key_to_grp_cols, bins)
+
                 ##################################################################
-                #### create views and tables for training (growing) of trees
+                # create views and tables for training (growing) of trees
                 # store the prediction for all oob samples
                 # for classification, the prediction is of integer type here
                 oob_prediction_table = unique_string()
@@ -441,7 +450,9 @@ def forest_train(
                             1 AS sample_id,
                             1 AS gid,
                             {dep} AS dep,
-                            {dep} AS oob_prediction
+                            {dep} AS oob_prediction,
+                            ARRAY[1.0]::float8[] AS cat_imp_score,
+                            ARRAY[1.0]::float8[] AS con_imp_score
                         FROM {training_table_name}
                         LIMIT 0
                         """.format(**locals())
@@ -485,8 +496,9 @@ def forest_train(
                 plpy.execute(sql_create_oob_view)
 
                 _create_empty_result_table(schema_madlib, output_table_name)
+
                 ##################################################################
-                #### training random forest
+                # training random forest
                 tree_terminated = None
                 for sample_id in range(1, num_trees + 1):
                     if 1 - sample_ratio < 1e-6:
@@ -571,39 +583,38 @@ def forest_train(
 
                     _calculate_oob_prediction(
                         schema_madlib, output_table_name, cat_features_info_table,
-                        oob_prediction_table, oob_view, sample_id, id_col_name,
-                        cat_features, con_features, boolean_cats, grouping_cols,
-                        grp_key_to_grp_cols, dep)
+                        con_splits_table, oob_prediction_table, oob_view,
+                        sample_id, id_col_name, cat_features, con_features,
+                        boolean_cats, grouping_cols, grp_key_to_grp_cols, dep,
+                        num_permutations, is_classification, importance, num_bins)
 
                 ###################################################################
-                #### evaluating and summerizing random forest
+                # evaluating and summerizing random forest
 
                 oob_error_table = unique_string()
                 _calculate_oob_error(schema_madlib, oob_prediction_table,
-                                     oob_error_table, id_col_name, is_classification)
+                                     oob_error_table, id_col_name,
+                                     is_classification)
 
                 importance_table = unique_string()
                 sql_create_empty_imp_tbl = """
                         CREATE TABLE {importance_table}
                         (
-                            is_categorical boolean,
-                            feature_index integer,
                             gid integer,
-                            variable_importance double precision
+                            cat_var_importance float8[],
+                            con_var_importance float8[]
                         );
                         """.format(**locals())
                 plpy.notice("sql_create_empty_imp_tbl:\n"+sql_create_empty_imp_tbl)
                 plpy.execute(sql_create_empty_imp_tbl)
+
                 # we populate the importance_table only if variable importance is to be
                 # calculated, otherwise we use an empty table which will be used later
                 # for an outer join.
                 if importance:
-                    _calculate_variable_importance(
-                        schema_madlib, training_table_name, output_table_name,
-                        oob_prediction_table, importance_table, cat_features_info_table,
-                        sample_id, id_col_name, dep, is_classification, cat_features,
-                        con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols,
-                        bins, num_bins, num_permutations)
+                    _calculate_variable_importance(schema_madlib,
+                            oob_prediction_table, is_classification,
+                            importance_table, len(cat_features), len(con_features))
 
                 _create_group_table(schema_madlib, output_table_name,
                                     oob_error_table, importance_table,
@@ -619,6 +630,7 @@ def forest_train(
                         DROP TABLE {importance_table} CASCADE;
                         DROP TABLE {oob_error_table} CASCADE;
                         DROP TABLE {cat_features_info_table} CASCADE;
+                        DROP TABLE {con_splits_table} CASCADE;
                         DROP TABLE {grp_key_to_grp_cols} CASCADE;
                         """.format(**locals())
                 plpy.notice("sql_cleanup:\n" + sql_cleanup)
@@ -898,9 +910,10 @@ def get_tree(schema_madlib, model_table, gid, sample_id,
 
 
 def _calculate_oob_prediction(
-        schema_madlib, model_table, cat_features_info_table,
+        schema_madlib, model_table, cat_features_info_table, con_splits_table,
         oob_prediction_table, oob_view, sample_id, id_col_name, cat_features,
-        con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols, dep):
+        con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols, dep,
+        num_permutations, is_classification, importance, num_bins):
     """Calculate predication for out-of-bag sample"""
 
     cat_features_str, con_features_str = get_feature_str(
@@ -909,6 +922,62 @@ def _calculate_oob_prediction(
 
     join_str = "," if grouping_cols is None else "JOIN"
     using_str = "" if grouping_cols is None else "USING (" + grouping_cols + ")"
+
+    oob_var_dist_view = unique_string()
+    if importance:
+        sql_create_oob_var_dist_view = """
+            CREATE VIEW {oob_var_dist_view} AS
+            SELECT
+                gid,
+                {schema_madlib}.vectorized_distribution_agg(
+                    {schema_madlib}.array_scalar_add(
+                        {cat_features_str}::integer[],
+                        1 -- -1 shift to 0 for nulls
+                    ),
+                    {schema_madlib}.array_scalar_add(
+                        cat_n_levels,
+                        1 -- -1 shift to 0 for nulls
+                    )
+                ) AS cat_feature_distributions,
+                {schema_madlib}.vectorized_distribution_agg(
+                    {schema_madlib}.array_scalar_add(
+                        {schema_madlib}._get_bin_indices_by_values(
+                            {con_features_str}::double precision[],
+                            con_splits
+                        ), -- bin_indices, -1 for NaN
+                        1 -- -1 shift to 0 for nulls
+                    ),
+                    {schema_madlib}.array_fill(
+                        {schema_madlib}.array_of_float({n_con})::integer[],
+                        ({num_bins}+1)::integer
+                    )
+                    -- level of any continuous feature == num_bins
+                ) AS con_index_distributions
+            FROM
+                {oob_view}
+            {join_str}
+                {grp_key_to_grp_cols}
+            {using_str}
+            JOIN
+                {cat_features_info_table}
+            USING (gid)
+            JOIN
+                {con_splits_table}
+            USING (gid)
+            GROUP BY gid
+        """.format(n_con=len(con_features), **locals())
+    else:
+        sql_create_oob_var_dist_view = """
+            CREATE VIEW {oob_var_dist_view} AS
+            SELECT
+                gid,
+                NULL::float8[] AS cat_feature_distributions,
+                NULL::float8[] AS con_index_distributions
+            FROM {cat_features_info_table}
+        """.format(**locals())
+        
+    plpy.notice("sql_create_oob_var_dist_view : " + str(sql_create_oob_var_dist_view))
+    plpy.execute(sql_create_oob_var_dist_view)
 
     sql_oob_predict = """
             INSERT INTO {oob_prediction_table}
@@ -921,7 +990,27 @@ def _calculate_oob_prediction(
                     tree,
                     {cat_features_str}::integer[],
                     {con_features_str}::double precision[]
-                    ) AS oob_prediction
+                ) AS oob_prediction,
+                {schema_madlib}._rf_cat_imp_score(
+                    tree,
+                    {cat_features_str}::integer[],
+                    {con_features_str}::double precision[],
+                    cat_info.cat_n_levels,
+                    {num_permutations},
+                    {dep},
+                    {is_classification},
+                    cat_feature_distributions -- if distribution is NULL, returns NULL
+                ) AS cat_imp_score,
+                {schema_madlib}._rf_con_imp_score(
+                    tree,
+                    {cat_features_str}::integer[],
+                    {con_features_str}::double precision[],
+                    con_info.con_splits,
+                    {num_permutations},
+                    {dep},
+                    {is_classification},
+                    con_index_distributions -- if distribution is NULL, returns NULL
+                ) AS con_imp_score
             FROM
                 {oob_view}
             {join_str}
@@ -935,201 +1024,25 @@ def _calculate_oob_prediction(
             ) m
             USING (gid)
             JOIN
-                {cat_features_info_table}
+                {cat_features_info_table} cat_info
+            USING (gid)
+            JOIN
+                {con_splits_table} con_info
+            USING (gid)
+            LEFT OUTER JOIN -- empty if variable importance is disabled
+                {oob_var_dist_view}
             USING (gid)
     """.format(**locals())
     plpy.notice("sql_oob_predict : " + str(sql_oob_predict))
-    return plpy.execute(sql_oob_predict)
+    plpy.execute(sql_oob_predict)
 # -------------------------------------------------------------------------
 
 
-def _create_translated_view(
-        schema_madlib, cat_features_info_table, training_table,
-        all_oob_view, oob_prediction_table, cat_features, con_features,
-        boolean_cats, id_col_name):
-
-    cat_features_str, con_features_str = get_feature_str(
-        schema_madlib, boolean_cats, cat_features, con_features,
-        "cat_levels_in_text", "cat_n_levels")
-
-    #oob_translated_view
-    oob_translated_view = """
-            CREATE OR REPLACE VIEW {all_oob_view}_translated AS
-            SELECT
-                {oob_prediction_table}.sample_id,
-                {oob_prediction_table}.gid,
-                {id_col_name},
-                {oob_prediction_table}.dep,
-                {cat_features_str}::integer[] as cat_features,
-                {con_features_str}::double precision[] as con_features,
-                cat_n_levels
-            FROM
-                {cat_features_info_table}
-            JOIN
-                {oob_prediction_table}
-            USING (gid)
-            JOIN
-                {training_table}
-            USING ({id_col_name})
-        """.format(**locals())
-
-    plpy.notice("oob_translated_view:\n" + oob_translated_view)
-    plpy.execute(oob_translated_view)
-#------------------------------------------------------------------------------
-
-
-def _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
-                             feature_permute_index, n_perm):
-    # Get a count histogram of the values of variable 'feature_permute_index'
-    # We add '1' to the cat_features value since NULL values are coded as -1.
-    # With this shift, discrete_distribution_agg receives '0' as code for NULL,
-    # and the indices range from 1 to n_level
-    sql_create_cat_feat_dist = """
-            CREATE OR REPLACE VIEW {all_oob_view}_cat_feat_dist AS
-            SELECT
-                sample_id,
-                gid,
-                {schema_madlib}.discrete_distribution_agg(
-                    cat_features[{feature_permute_index}] + 1, -- [0, 1 ... level]
-                    1., -- constant weight
-                    cat_n_levels[{feature_permute_index}] + 1 -- level + 1
-                    ) AS distribution
-            FROM
-                {all_oob_view}_translated
-            GROUP BY sample_id, gid
-            """.format(**locals())
-    plpy.notice("sql_create_cat_feat_dist:\n" + sql_create_cat_feat_dist)
-    plpy.execute(sql_create_cat_feat_dist)
-
-    # Create a view for all OOB samples containing the permuted values for
-    # 'feature_permute_index'. Here we rescale the value for 'feature_permute_index'
-    # such that '-1' represents a NULL value and the levels range from 0 to (n_levels-1)
-    sql_oob_permuted_view = """
-            CREATE OR REPLACE VIEW {all_oob_view}_permuted AS
-            SELECT
-                {id_col_name},
-                sample_id,
-                gid,
-                permute_id,
-                dep,
-                con_features,
-                cat_features[1:{feature_permute_index}-1]
-                        ||  ({schema_madlib}.index_weighted_sample(
-                                distribution::double precision[]) - 1)::integer
-                        || cat_features[{feature_permute_index}+1:array_upper(cat_features,1)]
-                        AS cat_features
-            FROM
-            (
-                SELECT * FROM generate_series(1, {n_perm}) AS permute_id
-            ) permute
-            CROSS JOIN
-                {all_oob_view}_translated
-            JOIN
-                {all_oob_view}_cat_feat_dist
-            USING (sample_id, gid)
-            """.format(**locals())
-    plpy.notice("sql_oob_permuted_view:\n"+sql_oob_permuted_view)
-    plpy.execute(sql_oob_permuted_view)
-#------------------------------------------------------------------------------
-
-
-def _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
-                            feature_permute_index, num_bins,
-                            con_splits_table, n_perm):
-    # Get a count histogram of the values of variable 'feature_permute_index'
-    # We add '1' to the con_features value since NULL values are coded as NaN
-    # which is translated to -1 by _get_bin_index_by_value.
-    # With this shift, discrete_distribution_agg receives '0' as code for NULL,
-    # and the indices range from 1 to num_bins
-    sql_create_con_feat_dist = """
-            CREATE OR REPLACE VIEW {all_oob_view}_con_feat_dist AS
-            SELECT
-                sample_id,
-                gid,
-                {schema_madlib}.discrete_distribution_agg(
-                    {schema_madlib}._get_bin_index_by_value(
-                        con_features[{feature_permute_index}],
-                        con_splits,
-                        {feature_permute_index}-1
-                        ) + 1,
-                    1., -- constant weight
-                    {num_bins} + 1
-                    ) AS distribution
-            FROM
-                {all_oob_view}_translated
-            JOIN
-                {con_splits_table}
-            USING (gid)
-            GROUP BY sample_id, gid
-            """.format(**locals())
-    plpy.notice("sql_create_con_feat_dist:\n"+sql_create_con_feat_dist)
-    plpy.execute(sql_create_con_feat_dist)
-
-    # Create a view for all OOB samples containing the permuted values for
-    # 'feature_permute_index'. Here we rescale the value for 'feature_permute_index'
-    # such that '-1' represents a NULL value and the levels range from 0 to (num_bins-1)
-    sql_oob_permuted_view = """
-            CREATE OR REPLACE VIEW {all_oob_view}_permuted AS
-            SELECT
-                {id_col_name},
-                sample_id,
-                gid,
-                permute_id,
-                dep,
-                con_features[1:{feature_permute_index}-1]
-                    || {schema_madlib}._get_bin_value_by_index(
-                            con_splits,
-                            {feature_permute_index}-1,
-                            ({schema_madlib}.index_weighted_sample(
-                                distribution::double precision[]) - 1)::integer
-                            )
-                    || con_features[{feature_permute_index}+1:array_upper(con_features,1)]
-                    AS con_features,
-                cat_features
-            FROM
-            (
-                SELECT * FROM generate_series(1, {n_perm}) AS permute_id
-            ) permute
-            CROSS JOIN
-                {con_splits_table}
-            JOIN
-            (
-                SELECT *
-                FROM
-                    {all_oob_view}_translated
-                JOIN
-                    {all_oob_view}_con_feat_dist
-                USING (sample_id, gid)
-            ) subq
-            USING (gid)
-            """.format(**locals())
-    plpy.notice("sql_oob_permuted_view:\n"+sql_oob_permuted_view)
-    plpy.execute(sql_oob_permuted_view)
-#------------------------------------------------------------------------------
-
-
-def _calculate_variable_importance(
-        schema_madlib, training_table, model_table,
-        oob_prediction_table, importance_table, cat_features_info_table,
-        sample_id, id_col_name, dep, is_classification, cat_features,
-        con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols, bins,
-        num_separators, n_perm):
-    """Calculate variable importance for all predictors"""
-
-    _assert(n_perm > 0, "Random forest error: Number of permutations must be positive")
+def _create_con_splits_table(schema_madlib, con_splits_table, grouping_cols,
+                             grp_key_to_grp_cols, bins):
 
     bytea8 = schema_madlib + '.bytea8'
     bytea8arr = schema_madlib + '.bytea8[]'
-    plpy.notice("Starting _calculate_variable_importance ...")
-
-    all_oob_view = unique_string()
-    _create_translated_view(
-        schema_madlib, cat_features_info_table, training_table,
-        all_oob_view, oob_prediction_table, cat_features, con_features,
-        boolean_cats, id_col_name)
-
-    con_splits_table = unique_string()
-
     if grouping_cols is None:
         sql_create_con_splits_table = """
             CREATE TABLE {con_splits_table} AS
@@ -1160,115 +1073,15 @@ def _calculate_variable_importance(
         plpy.notice("sql_create_con_splits_table:\n"+sql_create_con_splits_table)
         sql_create_con_splits_plan = plpy.prepare(sql_create_con_splits_table,
                                                   ['text[]', bytea8arr])
-        plpy.execute(sql_create_con_splits_plan, [bins['grp_key_con'], bins['con']])
-
-    oob_summary_table = unique_string()
-    _create_oob_summary(oob_prediction_table, is_classification, oob_summary_table)
-
-    #permute feature values
-    for feature_permute_index in range(1, len(cat_features)+1):
-        _permute_oob_categorical(schema_madlib, all_oob_view, id_col_name,
-                                 feature_permute_index, n_perm)
-        _calculate_one_var_imp(schema_madlib, all_oob_view, oob_summary_table,
-                               model_table, is_classification,
-                               feature_permute_index, 'TRUE', importance_table)
-
-    for feature_permute_index in range(1, len(con_features)+1):
-        _permute_oob_continuous(schema_madlib, all_oob_view, id_col_name,
-                                feature_permute_index, num_separators,
-                                con_splits_table, n_perm)
-        _calculate_one_var_imp(schema_madlib, all_oob_view, oob_summary_table,
-                               model_table, is_classification,
-                               feature_permute_index, 'FALSE',
-                               importance_table)
-
-    sql_cleanup_con_splits_table = """
-            DROP TABLE {con_splits_table} CASCADE
-            """.format(**locals())
-    plpy.notice("sql_cleanup_con_splits_table:\n"+sql_cleanup_con_splits_table)
-    plpy.execute(sql_cleanup_con_splits_table)
-
-    plpy.notice("Finished _calculate_variable_importance.")
-#------------------------------------------------------------------------------
+        plpy.execute(sql_create_con_splits_plan,
+                     [bins['grp_key_con'], bins['con']])
+# ------------------------------------------------------------------------------
 
 
-def _calculate_one_var_imp(
-        schema_madlib, all_oob_view, oob_summary_table, model_table,
-        is_classification, feature_permute_index, is_categorical,
-        importance_table):
+def _calculate_variable_importance(schema_madlib, oob_prediction_table,
+        is_classification, importance_table, n_cat, n_con):
     if not is_classification:
-        score_expression = "-((dep - permuted_prediction)^2)".format(**locals())
-    else:
-        score_expression = """
-                CASE WHEN dep = permuted_prediction::integer
-                    THEN 1.
-                    ELSE 0.
-                END""".format(**locals())
-
-    norm_subtraction_view = unique_string()
-    sql_create_norm_subtraction_view = """
-            CREATE VIEW {norm_subtraction_view} AS
-            SELECT
-                sample_id,
-                permute_id,
-                gid,
-                (oob.score::float8 - permute.score::float8) / oob.size::float8
-                    AS normalized_subtraction,
-                oob.score::float8 as oob_score,
-                permute.score::float8 as permute_score
-            FROM
-            (
-                SELECT
-                    sample_id,
-                    gid,
-                    permute_id,
-                    sum({score_expression}) AS score
-                FROM
-                (
-                    SELECT
-                        sample_id,
-                        gid,
-                        permute_id,
-                        dep,
-                        {schema_madlib}._predict_dt_response(
-                            tree,
-                            cat_features,
-                            con_features
-                            ) AS permuted_prediction
-                    FROM
-                        {all_oob_view}_permuted
-                    JOIN
-                        {model_table}
-                    USING (sample_id, gid)
-                ) premuted_prediction_table
-                GROUP BY sample_id, gid, permute_id
-            ) permute
-            JOIN
-                {oob_summary_table} oob
-            USING (sample_id, gid)
-            """.format(**locals())
-    plpy.notice("sql_create_norm_subtraction_view:\n" + sql_create_norm_subtraction_view)
-    plpy.execute(sql_create_norm_subtraction_view)
-
-    sql_insert_one_var_imp = """
-            INSERT INTO {importance_table}
-            SELECT
-                {is_categorical},
-                {feature_permute_index},
-                gid,
-                avg(normalized_subtraction)
-            FROM
-                {norm_subtraction_view}
-            GROUP BY gid
-            """.format(**locals())
-    plpy.notice("sql_insert_one_var_imp:\n" + sql_insert_one_var_imp)
-    plpy.execute(sql_insert_one_var_imp)
-#------------------------------------------------------------------------------
-
-
-def _create_oob_summary(oob_prediction_table, is_classification, oob_summary_table):
-    if not is_classification:
-        score_expression = "-((dep - oob_prediction)^2)".format(**locals())
+        score_expression = "-((oob_prediction - dep)^2)".format(**locals())
     else:
         score_expression = """
                 CASE WHEN dep = oob_prediction::integer
@@ -1276,19 +1089,53 @@ def _create_oob_summary(oob_prediction_table, is_classification, oob_summary_tab
                     ELSE 0.
                 END""".format(**locals())
 
-    sql_create_oob_summary = """
-            CREATE TABLE {oob_summary_table} AS
+    sample_score_view = unique_string()
+    sql_create_sample_score_view = """
+            CREATE VIEW {sample_score_view} AS
             SELECT
                 sample_id,
                 gid,
                 count(*) as size,
-                sum({score_expression}) as score
+                sum({score_expression}) as score,
+                {schema_madlib}.sum(cat_imp_score::FLOAT8[]) AS cat_imp_score,
+                {schema_madlib}.sum(con_imp_score::FLOAT8[]) AS con_imp_score
             FROM
                 {oob_prediction_table}
             GROUP BY sample_id, gid
             """.format(**locals())
-    plpy.notice("sql_create_oob_summary:\n" + sql_create_oob_summary)
-    plpy.execute(sql_create_oob_summary)
+    plpy.notice("sql_create_sample_score_view:\n" + sql_create_sample_score_view)
+    plpy.execute(sql_create_sample_score_view)
+
+    sql_create_importance_table = """
+            INSERT INTO {importance_table}
+            SELECT
+                gid,
+                {schema_madlib}.array_avg(
+                    {schema_madlib}.array_scalar_mult(
+                        {schema_madlib}.array_scalar_add(
+                            cat_imp_score,
+                            -score::float8
+                        ),
+                        (-1. / size)::float8
+                    ),
+                    FALSE -- not use absolute values
+                ),
+                {schema_madlib}.array_avg(
+                    {schema_madlib}.array_scalar_mult(
+                        {schema_madlib}.array_scalar_add(
+                            con_imp_score,
+                            -score::float8
+                        ),
+                        (-1. / size)::float8
+                    ),
+                    FALSE -- not use absolute values
+                )
+            FROM
+                {sample_score_view}
+            GROUP BY gid
+            """.format(**locals())
+    plpy.notice("sql_create_importance_table:\n" + sql_create_importance_table)
+    plpy.execute(sql_create_importance_table)
 # -------------------------------------------------------------------------
 
 
@@ -1417,25 +1264,8 @@ def _create_group_table(
             JOIN
                 {cat_features_info_table}
             USING (gid)
-            LEFT OUTER JOIN (
-                SELECT
-                    gid,
-                    array_agg(variable_importance ORDER BY feature_index)
-                        AS cat_var_importance
-                FROM {importance_table}
-                WHERE is_categorical = TRUE
-                GROUP BY gid
-            ) cat_var_imp_agg_table
-            USING (gid)
-            LEFT OUTER JOIN (
-                SELECT
-                    gid,
-                    array_agg(variable_importance ORDER BY feature_index)
-                        AS con_var_importance
-                FROM {importance_table}
-                WHERE is_categorical = FALSE
-                GROUP BY gid
-            ) con_var_imp_agg_table
+            LEFT OUTER JOIN
+                {importance_table}
             USING (gid)
             """.format(**locals())
     plpy.notice("sql_create_group_table:\n" + sql_create_group_table)
@@ -1511,7 +1341,7 @@ def _forest_validate_args(
     _assert(is_var_valid(training_table_name, dependent_variable),
             "Random forest error: Invalid dependent variable ({0}).".
             format(dependent_variable))
-    
+
     if grouping_cols is not None and grouping_cols.strip() != '':
         _assert(is_var_valid(training_table_name, grouping_cols),
                 "Random forest error: Invalid grouping column argument.")

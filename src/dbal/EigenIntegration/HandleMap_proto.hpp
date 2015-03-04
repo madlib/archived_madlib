@@ -34,10 +34,30 @@ public:
     inline HandleMap()
       : Base(NULL, 1, 1), mMemoryHandle(NULL) { }
 
+    /**
+     * @brief Initialize HandleMap backed by the given handle without dimension
+     * information
+     *
+     * We do not assume that Handle has member functions other than ptr(),
+     * e.g. TransparentHandle does not have size(). So we set dummy dimension
+     * information here.
+     */
     inline HandleMap(const Handle &inHandle)
       : Base(const_cast<Scalar*>(inHandle.ptr()), 1, 1),
         mMemoryHandle(inHandle) { }
 
+     /*
+     * FIXME These two functions do not work when Handle cannot be constructed
+     * by a single argument of type Scalar*, e.g. they work for
+     * Handle=TransparentHanle (MappedColumnVector, etc.),
+     * but not Handle=ArrayHandle (NativeMatrix, etc.).
+     */
+    /**
+     * @brief Initialize HandleMap using Eigen mapped expressions
+     *
+     * For example, this allows construction of MappedColumnVector from
+     * MappedMatrix::col(int) or NativeColumnVector, etc.
+     */ 
     template <class Derived>
     HandleMap(const Eigen::MapBase<Derived>& inMappedData,
         typename boost::enable_if_c<Derived::IsVectorAtCompileTime>::type* = 0)
