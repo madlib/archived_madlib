@@ -63,7 +63,8 @@ kmeanspp( rel_source,
           fn_dist,
           agg_centroid,
           max_num_iterations,
-          min_frac_reassigned
+          min_frac_reassigned,
+          seeding_sample_ratio
         )
 </pre>
 
@@ -134,7 +135,17 @@ The following aggregate functions can be used:<ul>
 <dd>INTEGER, default: 20. The maximum  number of iterations to perform.</dd>
 
 <dt>min_frac_reassigned (optional)</dt>
-<dd>DOUBLE PRECISION, default: 0.001. The minimum fraction of centroids reassigned to continue iterating. When fewer than this fraction of centroids are reassigned in an iteration, the calculation completes.
+<dd>DOUBLE PRECISION, default: 0.001. The minimum fraction of centroids reassigned to continue iterating.
+When fewer than this fraction of centroids are reassigned in an iteration, the calculation completes.
+
+<dt>seeding_sample_ratio (optional)</dt>
+<dd>DOUBLE PRECISION, default: 1.0. The proportion of subsample of original dataset
+to use for kmeans++ centroid seeding method. Kmeans++ scans through the data
+sequentially 'k' times and can be too slow for big datasets. When
+'seeding_sample_ratio' is greater than 0 (thresholded to be maximum value of 1.0),
+the seeding is run on an uniform random subsample of the data.
+Note: the final K-means algorithm is run on the complete dataset. This parameter
+only builds a subsample for the seeding and is only available for kmeans++.
 
 <dt>rel_initial_centroids</dt>
 <dd>TEXT. The set of initial centroids. The centroid relation is
@@ -254,7 +265,7 @@ num_iterations  | 2
 SELECT * FROM madlib.simple_silhouette( 'km_sample',
                                         'points',
                                         (SELECT centroids FROM
-                                            madlib.kmeanspp( 'km_sample',
+                                            madlib.kmeanspp('km_sample',
                                                             'points',
                                                             2,
                                                             'madlib.squared_dist_norm2',
@@ -488,7 +499,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__seeding_validate_args(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INTEGER,
-    initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
+    initial_centroids DOUBLE PRECISION[][], /*+ DEFAULT NULL */
+    seeding_sample_ratio DOUBLE PRECISION    /*+ DEFAULT 1.0 */
 ) RETURNS VOID AS $$
 DECLARE
   num_centroids INTEGER;
@@ -528,6 +540,10 @@ BEGIN
         Number of final clusters will equal number of supplied initial centroids.';
     END IF;
 
+    IF (seeding_sample_ratio <= 0.) THEN
+        RAISE EXCEPTION 'Kmeans Error: Sampling ratio should be greater than 0 to perform seeding.';
+    END IF;
+
     EXECUTE $sql$
         SELECT array_agg(length) FROM (
             SELECT (
@@ -554,6 +570,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__seeding_validate_args(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
+) RETURNS VOID AS $$
+DECLARE
+BEGIN
+    PERFORM MADLIB_SCHEMA.__seeding_validate_args($1, $2, $3, $4,
+                                                  1.0::DOUBLE PRECISION);
+END;
+$$ LANGUAGE plpgsql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
 /**
  * @brief Perform Lloyd's k-means local-search heuristic
  *
@@ -693,7 +724,8 @@ BEGIN
     -- Perform acutal computation.
     -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
     -- operators from regclass to varchar/text.
-    theIteration := MADLIB_SCHEMA.internal_compute_kmeans('_madlib_kmeans_args',
+    theIteration := MADLIB_SCHEMA.internal_compute_kmeans(
+            '_madlib_kmeans_args',
             '_madlib_kmeans_state',
             textin(regclassout(class_rel_source)), expr_point,
             textin(regprocout(proc_agg_centroid)));
@@ -810,12 +842,15 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     expr_point VARCHAR,
     k INTEGER,
     fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
-    initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */
+    initial_centroids DOUBLE PRECISION[][] /*+ DEFAULT NULL */,
+    seeding_sample_ratio DOUBLE PRECISION   /*+ DEFAULT 1.0 */
 ) RETURNS DOUBLE PRECISION[][] AS $$
 DECLARE
     theIteration INTEGER;
     theResult DOUBLE PRECISION[][];
     oldClientMinMessages VARCHAR;
+    sampled_rel_source VARCHAR;
+    sampled_col_name VARCHAR;
     class_rel_source REGCLASS;
     rel_filtered VARCHAR;
     proc_fn_dist REGPROCEDURE;
@@ -833,12 +868,36 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
     PERFORM MADLIB_SCHEMA.__seeding_validate_args(
-        rel_source, expr_point, k, initial_centroids);
+        rel_source, expr_point, k, initial_centroids, seeding_sample_ratio);
 
     proc_fn_dist := fn_dist || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
     IF (SELECT prorettype != 'DOUBLE PRECISION'::regtype OR proisagg = TRUE
         FROM pg_proc WHERE oid = proc_fn_dist) THEN
         RAISE EXCEPTION 'Kmeans error: Distance function has wrong signature or is not a simple function.';
+    END IF;
+
+    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
+    -- operators from regclass to varchar/text.
+    m4_ifdef(`__HAWQ__',
+    `class_rel_source := rel_source;',
+    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
+    class_rel_source := rel_filtered;')
+
+    sampled_rel_source = MADLIB_SCHEMA.__unique_string();
+    sampled_col_name = MADLIB_SCHEMA.__unique_string();
+    IF (seeding_sample_ratio < 1.0) THEN
+        EXECUTE 'DROP TABLE IF EXISTS '||sampled_rel_source;
+        EXECUTE 'CREATE TABLE '||sampled_rel_source||' AS
+            SELECT *
+            FROM
+            (
+                SELECT
+                    *,
+                    random() AS '||sampled_col_name||'
+                FROM '||textin(regclassout(class_rel_source))||'
+            ) subq
+            WHERE '||sampled_col_name||' < '||seeding_sample_ratio;
+        class_rel_source := sampled_rel_source;
     END IF;
 
     -- We first setup the argument table. Rationale: We want to avoid all data
@@ -859,18 +918,12 @@ BEGIN
             $1 AS k,
             $2 AS fn_dist,
             $3 AS initial_centroids,
-            $4 AS fn_dist_name;
+            $4 AS fn_dist_name
         $sql$,
         k, proc_fn_dist, initial_centroids, fn_dist);
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
 
     -- Perform acutal computation.
-    -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
-    -- operators from regclass to varchar/text.
-    m4_ifdef(`__HAWQ__',
-    `class_rel_source := rel_source;',
-    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
-    class_rel_source := rel_filtered;')
     theIteration := (
         SELECT MADLIB_SCHEMA.internal_compute_kmeanspp_seeding(
             '_madlib_kmeanspp_args', '_madlib_kmeanspp_state',
@@ -887,6 +940,11 @@ BEGIN
     m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `
         EXECUTE $sql$ SET optimizer=$sql$ || old_optimizer;', `')
     EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+
+    IF (seeding_sample_ratio < 1.0) THEN
+        EXECUTE 'DROP TABLE IF EXISTS '||sampled_rel_source;
+    END IF;
+
     RETURN theResult;
 END;
 $$ LANGUAGE plpgsql VOLATILE
@@ -896,10 +954,22 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
     rel_source VARCHAR,
     expr_point VARCHAR,
     k INTEGER,
+    fn_dist VARCHAR,
+    initial_centroids DOUBLE PRECISION[][]
+) RETURNS DOUBLE PRECISION[][]
+LANGUAGE sql AS $$
+    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, $5, 1.0::DOUBLE PRECISION)
+$$
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
     fn_dist VARCHAR
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
-    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, NULL)
+    SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, NULL, 1.0::DOUBLE PRECISION)
 $$
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -910,7 +980,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeanspp_seeding(
 ) RETURNS DOUBLE PRECISION[][]
 LANGUAGE sql AS $$
     SELECT MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3,
-        'MADLIB_SCHEMA.squared_dist_norm2', NULL)
+        'MADLIB_SCHEMA.squared_dist_norm2', NULL, 1.0::DOUBLE PRECISION)
 $$
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -940,7 +1010,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeanspp(
     fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
     agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
     max_num_iterations INTEGER /*+ DEFAULT 20 */,
-    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
+    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */,
+    seeding_sample_ratio DOUBLE PRECISION  /*+ DEFAULT 1.0 */
 ) RETURNS MADLIB_SCHEMA.kmeans_result
 VOLATILE
 LANGUAGE plpgsql
@@ -949,8 +1020,29 @@ DECLARE
     ret MADLIB_SCHEMA.kmeans_result;
 BEGIN
     ret = MADLIB_SCHEMA.kmeans(
-        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
+        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4, NULL, $8),
         $4, $5, $6, $7);
+    RETURN ret;
+END
+$$
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.kmeanspp(
+    rel_source VARCHAR,
+    expr_point VARCHAR,
+    k INTEGER,
+    fn_dist VARCHAR /*+ DEFAULT 'squared_dist_norm2' */,
+    agg_centroid VARCHAR /*+ DEFAULT 'avg' */,
+    max_num_iterations INTEGER /*+ DEFAULT 20 */,
+    min_frac_reassigned DOUBLE PRECISION /*+ DEFAULT 0.001 */
+) RETURNS MADLIB_SCHEMA.kmeans_result
+VOLATILE
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    ret MADLIB_SCHEMA.kmeans_result;
+BEGIN
+    ret = MADLIB_SCHEMA.kmeanspp($1, $2, $3, $4, $5, $6, $7, 1.0::DOUBLE PRECISION);
     RETURN ret;
 END
 $$
@@ -970,9 +1062,8 @@ AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_result;
 BEGIN
-    ret = MADLIB_SCHEMA.kmeans(
-        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
-        $4, $5, $6, 0.001);
+    ret = MADLIB_SCHEMA.kmeanspp($1, $2, $3, $4, $5, $6,
+                                 0.001::DOUBLE PRECISION, 1.0::DOUBLE PRECISION);
     RETURN ret;
 END
 $$
@@ -991,9 +1082,8 @@ AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_result;
 BEGIN
-    ret = MADLIB_SCHEMA.kmeans(
-        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
-        $4, $5, 20, 0.001);
+   ret = MADLIB_SCHEMA.kmeanspp($1, $2, $3, $4, $5, 20::INTEGER,
+                                 0.001::DOUBLE PRECISION, 1.0::DOUBLE PRECISION);
     RETURN ret;
 END
 $$
@@ -1011,9 +1101,9 @@ AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_result;
 BEGIN
-    ret = MADLIB_SCHEMA.kmeans(
-        $1, $2, MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3, $4),
-        $4, 'MADLIB_SCHEMA.avg', 20, 0.001);
+    ret = MADLIB_SCHEMA.kmeanspp($1, $2, $3, $4,
+                                 'MADLIB_SCHEMA.avg'::VARCHAR, 20::INTEGER,
+                                 0.001::DOUBLE PRECISION, 1.0::DOUBLE PRECISION);
     RETURN ret;
 END
 $$
@@ -1030,11 +1120,10 @@ AS $$
 DECLARE
     ret MADLIB_SCHEMA.kmeans_result;
 BEGIN
-    ret = MADLIB_SCHEMA.kmeans(
-        $1, $2,
-        MADLIB_SCHEMA.kmeanspp_seeding($1, $2, $3,
-            'MADLIB_SCHEMA.squared_dist_norm2'::VARCHAR),
-        'MADLIB_SCHEMA.squared_dist_norm2', 'MADLIB_SCHEMA.avg', 20, 0.001);
+    ret = MADLIB_SCHEMA.kmeanspp($1, $2, $3,
+                                 'MADLIB_SCHEMA.squared_dist_norm2'::VARCHAR,
+                                 'MADLIB_SCHEMA.avg'::VARCHAR, 20::INTEGER,
+                                 0.001::DOUBLE PRECISION, 1.0::DOUBLE PRECISION);
     RETURN ret;
 END
 $$
@@ -1309,12 +1398,13 @@ BEGIN
         rel_source_filtered := '_madlib_' || rel_source || '_filtered';
     END IF;
 
+    -- rel_source_filtered := (SELECT MADLIB_SCHEMA.__unique_string());
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
     EXECUTE 'SET client_min_messages TO warning';
     EXECUTE 'DROP VIEW IF EXISTS _madlib_'||rel_source_filtered||'_filtered';
     EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered;
-    EXECUTE 'CREATE VIEW '||rel_source_filtered||'
+    EXECUTE 'CREATE TEMPORARY VIEW '||rel_source_filtered||'
              AS SELECT * FROM '||rel_source||'
                     WHERE abs(
                               coalesce(

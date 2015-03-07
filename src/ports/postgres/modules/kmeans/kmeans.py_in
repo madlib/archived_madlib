@@ -51,7 +51,7 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
-    fn_dist_name = plpy.execute("select fn_dist_name from " + rel_args)[0]['fn_dist_name']
+    fn_dist_name = plpy.execute("SELECT fn_dist_name FROM " + rel_args)[0]['fn_dist_name']
     iterationCtrl = IterationController2D(
         rel_args=rel_args,
         fn_dist_name=fn_dist_name,
@@ -63,11 +63,16 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
         expr_point=expr_point)
     with iterationCtrl as it:
         fn_dist_str = m4_ifdef(<!__HAWQ__!>, <!"fn_dist_name"!>, <!"fn_dist"!>)
-        fn_dist_str = plpy.execute("select " + fn_dist_str + " from " + rel_args)[0][fn_dist_str]
-        state_str = (m4_ifdef(<!__HAWQ__!>, <!
-                     """(SELECT {schema_madlib}.array_to_2d($1))"""!>,
-                     <! """(SELECT _state FROM {rel_state}
-                           WHERE _iteration = {iteration})"""!>))
+        fn_dist_str = plpy.execute("SELECT " + fn_dist_str + " FROM " + rel_args)[0][fn_dist_str]
+        state_str = (m4_ifdef(<!__HAWQ__!>,
+                              <!"""(SELECT {schema_madlib}.array_to_2d($1))"""!>,
+                              <! """(SELECT _state FROM {rel_state}
+                                  WHERE _iteration = {iteration})"""!>)
+                     )
+        closest_column_str = (m4_ifdef(<!__HAWQ__!>,
+                                       <!"{schema_madlib}.closest_column"!>,
+                                       <!"{schema_madlib}._closest_column"!>)
+                              )
         if it.test("_args.initial_centroids IS NULL"):
             it.update("""
                 SELECT
@@ -79,26 +84,30 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                 SELECT _args.initial_centroids FROM {rel_args} AS _args
                 """)
         while it.test("array_upper(_state._state, 1) < _args.k"):
-            it.update("""
+            update_query = """
                 SELECT
-                    (%(state_str)s
-                    || {schema_madlib}.weighted_sample(
+                    (%(state_str)s ||
+                    {schema_madlib}.weighted_sample(
                             _src.{expr_point}::FLOAT8[],
                             1e-20 +
                                 (
-                                    m4_ifdef(<!__HAWQ__!>, <!{schema_madlib}.closest_column!>,
-                                        <!{schema_madlib}._closest_column!>)(
-                                    %(state_str)s
-                                    , _src.{expr_point}::FLOAT8[]
-                                    , '%(fn_dist)s'
-                                    m4_ifdef(<!__HAWQ__!>, <!!>, <!, '{fn_dist_name}'!>)
-                                )).distance)
-                        )
-                FROM {rel_source} AS _src
+                                    %(closest_column_str)s(
+                                        %(state_str)s
+                                        , _src.{expr_point}::FLOAT8[]
+                                        , '%(fn_dist)s'
+                                        m4_ifdef(<!__HAWQ__!>, <!!>,
+                                                 <!, '{fn_dist_name}'!>)
+                                    )
+                                ).distance)
+                    )
+                    FROM {rel_source} AS _src
                 """ % ({'state_str': state_str,
-                      'fn_dist': fn_dist_str}))
+                        'fn_dist': fn_dist_str,
+                        'closest_column_str': closest_column_str
+                        })
+            it.update(update_query)
     return iterationCtrl.iteration
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
@@ -164,7 +173,7 @@ def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
                                     m4_ifdef(<!__HAWQ__!>, <!$1!>,
                                              <!_state._state!>), 1), 0)""")
     return iterationCtrl.iteration
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
@@ -186,7 +195,11 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
-    fn_dist_name = plpy.execute("select fn_dist_name from " + rel_args)[0]['fn_dist_name']
+    fn_dist_name = plpy.execute("SELECT fn_dist_name FROM " +
+                                rel_args)[0]['fn_dist_name']
+    # note below that the 'comma' is included in the 2nd argument
+    fn_dist_name_str = m4_ifdef(<!__HAWQ__!>, <!""!>, <!", '{fn_dist_name}'"!>)
+
     iterationCtrl = IterationControllerComposite(
         rel_args=rel_args,
         rel_state=rel_state,
@@ -199,14 +212,18 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
         agg_centroid=agg_centroid)
     with iterationCtrl as it:
         # Create the initial inter-iteration state of type kmeans_state
-        centroid_str = (m4_ifdef(<!__HAWQ__!>, <!
-                        """SELECT ({{curr_state}}).centroids"""!>, <!
-                        """SELECT (_state).centroids
-                            FROM {rel_state}
-                            WHERE _iteration = {iteration}"""!>))
-        old_centroid_str = (m4_ifdef(<!__HAWQ__!>, <!
-                            """SELECT ({{curr_state}}).old_centroid_ids"""!>, <!
-                            """SELECT (_state).old_centroid_ids FROM {rel_state} WHERE _iteration = {iteration}"""!>))
+        centroid_str = (m4_ifdef(<!__HAWQ__!>,
+                                 <!"""SELECT ({{curr_state}}).centroids"""!>,
+                                 <!"""SELECT (_state).centroids
+                                      FROM {rel_state} as rel_state
+                                      WHERE _iteration = {iteration}"""!>)
+                        )
+        old_centroid_str = (m4_ifdef(<!__HAWQ__!>,
+                                     <!"""SELECT ({{curr_state}}).old_centroid_ids"""!>,
+                                     <!"""SELECT (_state).old_centroid_ids
+                                          FROM {rel_state} as rel_state
+                                          WHERE _iteration = {iteration}"""!>)
+                            )
 
         # subquery to get closest centroid to point from current iteration assignments
 
@@ -214,31 +231,37 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
         # original regproc
         fn_dist_str = m4_ifdef(<!__HAWQ__!>, <!"fn_dist_name"!>, <!"fn_dist"!>)
 
-        fn_dist_str = plpy.execute("select " + fn_dist_str + " from " + rel_args)[0][fn_dist_str]
+        fn_dist_str = plpy.execute("SELECT " + fn_dist_str +
+                                   " FROM " + rel_args)[0][fn_dist_str]
 
-        curr_assignment = """m4_ifdef(<!__HAWQ__!>, <!{schema_madlib}.closest_column!>,
-                                <!{schema_madlib}._closest_column!>)(
-                                (%s),
-                                 _src.{expr_point}::FLOAT8[],
-                                '%s'
-                                m4_ifdef(<!__HAWQ__!>, <!!>, <!, '{fn_dist_name}'!>)
+        closest_column_str = m4_ifdef(<!__HAWQ__!>,
+                                      <!"{schema_madlib}.closest_column"!>,
+                                      <!"{schema_madlib}._closest_column"!>)
+        curr_assignment = closest_column_str + """(
+                                (%s)
+                                , _src.{expr_point}::FLOAT8[]
+                                , '%s'
+                                %s
                                 )
-                           """ % (centroid_str, fn_dist_str)
+                           """ % (centroid_str, fn_dist_str, fn_dist_name_str)
 
-        prev_centroid_str = (m4_ifdef(<!__HAWQ__!>, <!
-                             """SELECT ({{old_state}}).centroids"""!>, <!
-                             """SELECT (_state).centroids
-                                FROM {rel_state}
-                                WHERE _iteration = {iteration} - 1"""!>))
+        prev_centroid_str = (m4_ifdef(<!__HAWQ__!>,
+                                      <!"""SELECT ({{old_state}}).centroids"""!>,
+                                      <! """SELECT (_state).centroids
+                                            FROM {rel_state} as rel_state
+                                            WHERE _iteration = {iteration} - 1
+                                         """!>))
 
         # subquery to get closest centroid to point from previous iteration assignments
-        prev_assignment_id = """(m4_ifdef(<!__HAWQ__!>, <!{schema_madlib}.closest_column!>,
-                                    <!{schema_madlib}._closest_column!>)(
-                                (%s),
-                                _src.{expr_point}::FLOAT8[],
-                                '%s'
-                                m4_ifdef(<!__HAWQ__!>, <!!>, <!, '{fn_dist_name}'!>)
-                            )).column_id""" % (prev_centroid_str, fn_dist_str)
+        prev_assignment_id = """(%s((%s)
+                                    , _src.{expr_point}::FLOAT8[]
+                                    , '%s'
+                                    %s
+                                    )
+                                ).column_id
+                            """ % (closest_column_str, prev_centroid_str,
+                                   fn_dist_str,
+                                   fn_dist_name_str)
 
         it.update("""
             SELECT
@@ -247,8 +270,10 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
             FROM {rel_args} AS _args
             """)
         while it.test("""{iteration} < _args.max_num_iterations AND
-                         (m4_ifdef(<!__HAWQ__!>, <!{curr_state}!>,
-                          <!_state._state!>)).frac_reassigned > _args.min_frac_reassigned
+                         (m4_ifdef(<!__HAWQ__!>,
+                                   <!{curr_state}!>,
+                                   <!_state._state!>)
+                          ).frac_reassigned > _args.min_frac_reassigned
                       """):
             it.update("""
                 SELECT
@@ -291,27 +316,28 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
                     GROUP BY (_new_centroid).column_id
                 ) AS _new_centroids
                 """ % ({'old_centroid': old_centroid_str,
-                      'curr': curr_assignment,
-                      'prev_id': prev_assignment_id}))
+                        'curr': curr_assignment,
+                        'prev_id': prev_assignment_id}))
 
             if it.test(
                     m4_ifdef(<!__HAWQ__!>,
                              <!"array_upper(({curr_state}).centroids, 1) < _args.k"!>,
-                             <! "array_upper((_state._state).centroids, 1) < _args.k"!>)
+                             <!"array_upper((_state._state).centroids, 1) < _args.k"!>)
                     ):
+
                 it.update("""
                     SELECT
                         CAST((
                             (%(centroid)s) ||
                             {schema_madlib}.kmeanspp_seeding(
-                                '{rel_source}',
-                                '{expr_point}',
-                                (   SELECT CAST(k - array_upper(
-                                            (%(centroid)s), 1)
-                                            AS INTEGER)
-                                    FROM {rel_args}
-                                ),
-                                (SELECT fn_dist_name FROM {rel_args})
+                                    '{rel_source}',
+                                    '{expr_point}',
+                                    (   SELECT CAST(k - array_upper(
+                                                (%(centroid)s), 1)
+                                                AS INTEGER)
+                                        FROM {rel_args}
+                                    ),
+                                    (SELECT fn_dist_name FROM {rel_args})
                                 ),
                             (%(old_centroid)s),
                             'Inf',
@@ -320,5 +346,6 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
                     """ % ({'centroid': centroid_str,
                             'old_centroid': old_centroid_str}))
     return iterationCtrl.iteration
+
 
 m4_changequote(<!`!>, <!'!>)

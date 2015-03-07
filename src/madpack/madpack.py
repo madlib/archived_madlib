@@ -436,7 +436,7 @@ def __plpy_check(py_min_ver):
         __error("PL/Python version too old: %s. You need %s or greater"
                 % (python, '.'.join(str(i) for i in py_min_ver)), False)
         raise Exception
-
+    __run_sql_query("DROP FUNCTION IF EXISTS plpy_version_for_madlib();", False)
     __info("> PL/Python environment OK (version: %s)" % python, True)
 #------------------------------------------------------------------------------
 
