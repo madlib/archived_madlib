@@ -509,7 +509,8 @@ SELECT * from test3_output;
 
 
 def multinom_predict(schema_madlib, model_table, predict_table,
-                     predicted_value_tab, predict_type, verbose, **kwargs):
+                     predicted_value_tab, predict_type, verbose,
+                     id_column, **kwargs):
     """
     Compute the predicted value for multinomial regresssion
 
@@ -520,6 +521,7 @@ def multinom_predict(schema_madlib, model_table, predict_table,
     @param predicted_value_tab Name of table to output the predict value
     @param predict_type Type of predict value: 'response' or 'probabilities'
     @param verbose whether the verbose is displayed
+    @param id_column Name of ID column in the input table
     @param kwargs We allow the caller to specify additional arguments (all of
            which will be ignored though). The purpose of this is to allow the
            caller to unpack a dictionary whose element set is a superset of
@@ -530,7 +532,6 @@ def multinom_predict(schema_madlib, model_table, predict_table,
     input_tbl_valid(model_table, 'multinom_predict')
     input_tbl_valid(predict_table, 'multinom_predict')
     output_tbl_valid(predicted_value_tab, 'multinom_predict')
-    cols_in_tbl_valid(predict_table, _string_to_array("id"), 'multinom_predict')
 
     if verbose:
         plpy.execute("SET client_min_messages TO info")
@@ -565,95 +566,126 @@ def multinom_predict(schema_madlib, model_table, predict_table,
         grp_clause = "WHERE " + grp_clause
 
     if predict_type == 'response':
-                plpy.execute("""
-                CREATE TABLE {predicted_value_tab} AS
-                SELECT subq2.id AS id, subq3.category as category
-                FROM
-                (SELECT GREATEST(0, max_score) as max_score, id
-                 FROM (SELECT max({schema_madlib}.array_dot(coef, {ind_var}::float8[])) AS max_score, id
-                       FROM {predict_table}, {model_table}
-                       {grp_clause}
-                       GROUP BY id) subq) subq2
-                LEFT JOIN
-                (SELECT {schema_madlib}.array_dot(coef, {ind_var}::float8[]) score, id, category::TEXT
-                 FROM {predict_table}, {model_table}
-                 {grp_clause}
-                 UNION
-                 SELECT 0 AS score, id, '{ref_category}' AS category
-                 FROM {predict_table}) subq3
-                ON (subq2.id = subq3.id AND subq2.max_score=subq3.score)
-                ORDER BY id;
-            """.format(**locals()))
-
-    elif predict_type == 'probability':
-
-                score_format = '\n'.join([
-                         "score_arr[{j}] as \"{c}\",".
-                         format(j=i+1, c=c)
-                         for i, c in enumerate(cate_list)])
-
-                score_map = '\n'.join([
-                         "WHEN category='{c}' THEN {j}".
-                         format(j=i+1, c=c)
-                         for i, c in enumerate(cate_list)])
-
-                plpy.execute("""
+        sql = """
                 CREATE TABLE {predicted_value_tab} AS
                 SELECT
-                   {score_format}
-                   id
+                    subq2.id,
+                    subq3.category AS category
                 FROM
+                (
+                    SELECT
+                        greatest(0, max_score) AS max_score,
+                        id
+                    FROM
                     (
+                        SELECT
+                            max(
+                                {schema_madlib}.array_dot(coef, {ind_var}::float8[])
+                            ) AS max_score,
+                            {id} AS id
+                        FROM
+                            {predict_table},
+                            {model_table}
+                       {grp_clause}
+                       GROUP BY {id}
+                    ) subq
+                ) subq2
+                LEFT JOIN
+                (
+                    SELECT
+                        {schema_madlib}.array_dot(coef, {ind_var}::float8[]) AS score,
+                        {id} AS id,
+                        category::TEXT
+                    FROM
+                        {predict_table},
+                        {model_table}
+                    {grp_clause}
+                    UNION
+                    SELECT
+                        0 AS score,
+                        {id} AS id,
+                        '{ref_category}' AS category
+                    FROM {predict_table}
+                ) subq3
+                ON (subq2.id = subq3.id AND subq2.max_score=subq3.score)
+                ORDER BY subq2.id;
+                """.format(id=id_column,**locals())
+        plpy.notice(sql)
+        plpy.execute(sql)
+    elif predict_type in ('probability', 'prob'):
+        score_format = '\n'.join([
+                 ",score_arr[{j}] as \"{c}\"".
+                 format(j=i+1, c=c)
+                 for i, c in enumerate(cate_list)])
+
+        score_map = '\n'.join([
+                 "WHEN category='{c}' THEN {j}".
+                 format(j=i+1, c=c)
+                 for i, c in enumerate(cate_list)])
+
+        sql = """
+                CREATE TABLE {predicted_value_tab} AS
+                SELECT
+                   id
+                   {score_format}
+                FROM
+                (
                     SELECT
                         {schema_madlib}.array_scalar_mult(
                             array_agg(score ORDER BY idx),
                             1. / {schema_madlib}.array_sum(
                                 array_agg(score)::float8[]
                             )
-                        ) as score_arr,
-                        array_agg(category ORDER BY idx) as cate_arr,
+                        ) AS score_arr,
+                        array_agg(category ORDER BY idx) AS cate_arr,
                         id
                     FROM
-                        (
-                        SELECT score, id, subq2.category, idx
+                    (
+                        SELECT
+                            score,
+                            id,
+                            subq2.category,
+                            idx
                         FROM
-                            (
+                        (
                             SELECT
                                 exp({schema_madlib}.array_dot(
                                         coef,
                                         {ind_var}::float8[]
                                     )
-                                ) as score,
+                                ) AS score,
                                 category,
-                                id
+                                {id} AS id
                             FROM
                                 {predict_table},
                                 {model_table}
                             {grp_clause}
                             UNION
-                                SELECT
-                                    1. AS score,
-                                    '{ref_category}' AS category,
-                                    id
-                                FROM {predict_table}
-                            ) subq2
+                            SELECT
+                                1. AS score,
+                                '{ref_category}' AS category,
+                                {id} AS id
+                            FROM {predict_table}
+                        ) subq2
                         LEFT JOIN
-                            (
+                        (
                             SELECT
                                 category,
                                 CASE {score_map} END as idx
                             FROM
-                                (
-                                SELECT unnest(ARRAY{cate_list}) as category
-                                ) subq
-                            ) subq3
+                            (
+                                SELECT unnest(ARRAY{cate_list}) AS category
+                            ) subq
+                        ) subq3
                         ON (subq2.category = subq3.category)
                         ORDER BY id, idx
-                        ) subq4
-                     GROUP BY id
-                     ) subq5
+                    ) subq4
+                    GROUP BY id
+                ) subq5
                 ORDER by id;
-            """.format(**locals()))
+                """.format(id=id_column,**locals())
+        plpy.notice(sql)
+        plpy.execute(sql)
     else:
         plpy.error("Invalid prediction type!\n")
 
@@ -697,7 +729,8 @@ SELECT {schema_madlib}.multinom_predict(
     predict_table_input,    -- Name of the table containing new data
     output_table,           -- Name of the table storing the result of predicted values
     predict_type,           -- Support two types: "reponse" or "probability"
-    verbose                 -- Whether verbose is diplayed, default is FALSE
+    verbose,                -- Whether verbose is diplayed, default is FALSE
+    id_column               -- Name of the id column in the input table
 );
 
 ------------------------------------------------------------------
@@ -711,7 +744,7 @@ is response and probability when predict_type is probability.
 -- run the training example first
 ALTER TABLE test3 ADD COLUMN id SERIAL;
 DROP TABLE IF EXISTS test3_predict;
-SELECT multinom_predict('test3_out', 'test3', 'test3_predict', 'response');
+SELECT multinom_predict('test3_out', 'test3', 'test3_predict', 'response', 'id');
 SELECT * FROM test3_predict;
         """
     else:

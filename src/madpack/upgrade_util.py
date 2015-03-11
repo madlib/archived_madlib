@@ -9,7 +9,7 @@ def run_sql(sql, portid, con_args):
     @brief Wrapper function for ____run_sql_query
     """
     from madpack import ____run_sql_query
-    return ____run_sql_query(sql, True, portid, con_args)
+    return ____run_sql_query(sql, True, con_args)
 
 
 def get_signature_for_compare(schema, proname, rettype, argument):
@@ -139,40 +139,43 @@ class ChangeHandler(UpgradeBase):
         """
         @brief Load the configuration file
         """
-        # _mad_dbrev >= 1.4.1 should return from __db_upgrade() before getting here
         # _mad_dbrev = 1.0
         if self._mad_dbrev.split('.') < '1.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.0_1.7.yaml')
+                                    'changelist_1.0_1.7.1.yaml')
         # _mad_dbrev = 1.1
         elif self._mad_dbrev.split('.') < '1.2'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.1_1.7.yaml')
+                                    'changelist_1.1_1.7.1.yaml')
         # _mad_dbrev = 1.2
         elif self._mad_dbrev.split('.') < '1.3'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.2_1.7.yaml')
+                                    'changelist_1.2_1.7.1.yaml')
         # _mad_dbrev = 1.3
         elif self._mad_dbrev.split('.') < '1.4'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.3_1.7.yaml')
+                                    'changelist_1.3_1.7.1.yaml')
         # _mad_dbrev = 1.4
         elif self._mad_dbrev.split('.') < '1.4.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.4_1.7.yaml')
+                                    'changelist_1.4_1.7.1.yaml')
         # _mad_dbrev = 1.4.1
         elif self._mad_dbrev.split('.') < '1.5'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.4.1_1.7.yaml')
+                                    'changelist_1.4.1_1.7.1.yaml')
         # _mad_dbrev = 1.5
         elif self._mad_dbrev.split('.') < '1.6'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.5_1.7.yaml')
+                                    'changelist_1.5_1.7.1.yaml')
         # _mad_dbrev = 1.6
         elif self._mad_dbrev.split('.') < '1.6.0S'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.6_1.7.yaml')
+                                    'changelist_1.6_1.7.1.yaml')
         # _mad_dbrev = 1.6.0S
+        elif self._mad_dbrev.split('.') < '1.7'.split('.'):
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.6_1.7.1.yaml')
+        # _mad_dbrev = 1.7
         else:
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist.yaml')
@@ -519,34 +522,35 @@ class ViewDependency(UpgradeBase):
     MADLib UDFs/UDAs
     """
     def _filter_recursive_view_dependency(self):
-        # Get recursive dependee list
-        dependeelist = []
-        checklist = self._view2proc
-        checklist2 = self._view2op
+        # Get initial list
+        import sys
+        sys.stderr.write("\nHAYING")
+        checklist = []
+        checklist.extend(self._view2proc.keys())
+        checklist.extend(self._view2op.keys())
 
-        dependeelist.extend(checklist2.keys())
         while True:
-            dependeelist.extend(checklist.keys())
-            new_checklist = defaultdict(bool)
-            for depender in self._view2view.keys():
-                for dependee in self._view2view[depender]:
-                    if dependee in checklist or dependee in checklist2:
-                        new_checklist[depender] = True
+            sys.stderr.write("\nchecklist: " + str(checklist))
+            new_checklist = []
+            for depender, dependeelist in self._view2view.iteritems():
+                for dependee in dependeelist:
+                    if dependee in checklist and depender not in checklist:
+                        new_checklist.append(depender)
                         break
+            sys.stderr.write("\nnew_checklist: " + str(new_checklist))
             if len(new_checklist) == 0:
                 break
             else:
-                checklist = new_checklist
+                checklist.extend(new_checklist)
 
         # Filter recursive dependencies not related with MADLib UDF/UDAs
-        fil_view2view = defaultdict(list)
-        for depender in self._view2view:
-            dependee = self._view2view[depender]
-            dependee = [r for r in dependee if r in dependeelist]
-            if len(dependee) > 0:
-                fil_view2view[depender] = dependee
+        filtered_view2view = defaultdict(list)
+        for depender, dependeelist in self._view2view.iteritems():
+            filtered_dependeelist = [r for r in dependeelist if r in checklist]
+            if len(filtered_dependeelist) > 0:
+                filtered_view2view[depender] = filtered_dependeelist
 
-        self._view2view = fil_view2view
+        self._view2view = filtered_view2view
 
     """
     @brief  Build the dependency graph (depender-to-dependee adjacency list)
