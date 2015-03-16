@@ -131,6 +131,7 @@ execute_process(
 # Save git revision
 execute_process(
     COMMAND git describe
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     OUTPUT_VARIABLE MADLIB_GIT_REVISION
     ERROR_QUIET
     RESULT_VARIABLE _RESULT
@@ -141,12 +142,12 @@ endif(NOT _RESULT EQUAL 0)
 if(CMAKE_COMPILER_IS_GNUCC)
     set(MADLIB_C_COMPILER "gcc ${GNUCC_VERSION}")
 else(CMAKE_COMPILER_IS_GNUCC)
-    set(MADLIB_C_COMPILER "unknown")
+    set(MADLIB_C_COMPILER ${CMAKE_C_COMPILER_ID})
 endif(CMAKE_COMPILER_IS_GNUCC)
 if(CMAKE_COMPILER_IS_GNUCXX)
-    set(MADLIB_CXX_COMPILER "gcc ${GNUCC_VERSION}")
+    set(MADLIB_CXX_COMPILER "g++ ${GNUCC_VERSION}")
 else(CMAKE_COMPILER_IS_GNUCXX)
-    set(MADLIB_CXX_COMPILER "unknown")
+    set(MADLIB_CXX_COMPILER ${CMAKE_CXX_COMPILER_ID})
 endif(CMAKE_COMPILER_IS_GNUCXX)
 
 # -- Third-party dependencies: Find m4 -----------------------------------------
