@@ -28,7 +28,7 @@ MADlib incorporates material from the following third-party components:
   http://root.cern.ch/
 - doxypy 0.4.2 "is an input filter for Doxygen"
   http://code.foosel.org/doxypy
-- Eigen 3.0.3 "is a C++ template library for linear algebra"
+- Eigen 3.2.2 "is a C++ template library for linear algebra"
   http://eigen.tuxfamily.org/index.php?title=Main_Page
 - PyYAML 3.10 "is a YAML parser and emitter for Python"
   http://pyyaml.org/wiki/PyYAML

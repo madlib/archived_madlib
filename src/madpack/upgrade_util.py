@@ -524,20 +524,17 @@ class ViewDependency(UpgradeBase):
     def _filter_recursive_view_dependency(self):
         # Get initial list
         import sys
-        sys.stderr.write("\nHAYING")
         checklist = []
         checklist.extend(self._view2proc.keys())
         checklist.extend(self._view2op.keys())
 
         while True:
-            sys.stderr.write("\nchecklist: " + str(checklist))
             new_checklist = []
             for depender, dependeelist in self._view2view.iteritems():
                 for dependee in dependeelist:
                     if dependee in checklist and depender not in checklist:
                         new_checklist.append(depender)
                         break
-            sys.stderr.write("\nnew_checklist: " + str(new_checklist))
             if len(new_checklist) == 0:
                 break
             else:

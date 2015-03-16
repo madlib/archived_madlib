@@ -35,8 +35,9 @@ Optional:
 
 - For generating a complete installation package (RPM, Package Maker, etc.; see
   below):
-  + PostgreSQL 8.4, 9.0, 9.1
-  + Greenplum 4.0, 4.1, 4.2
+  + PostgreSQL 9.2, 9.3, 9.4
+  + HAWQ 1.2, 1.3
+  + Greenplum 4.2, 4.3
   + All requirements for generating user-level documentation (see above)
 
 
@@ -88,9 +89,8 @@ To create a complete installation package (for all supported DBMSs, equivalent
 to what is offered on the MADlib web site), make sure that the build process is
 able to locate the DBMS installations. For complete control, run `./configure`
 with arguments `-D<DBMS>_PG_CONFIG=/path/to/pg_config` for all `<DBMS>` in
-`POSTGRESQL_8_4`, `POSTGRESQL_9_0`, `POSTGRESQL_9_1`, `GREENPLUM_4_0`,
-`GREENPLUM_4_1`, and `GREENPLUM_4_2`.
-
+`POSTGRESQL_9_2`, `POSTGRESQL_9_3`, `POSTGRESQL_9_4`, `HAWQ_1_2`,
+`HAWQ_1_3`, `GREENPLUM_4_2`, and `GREENPLUM_4_3`.
 
 Configuration Options:
 ----------------------
@@ -123,8 +123,8 @@ root directory) for more options, after having run `cmake` the first time.
     Prefix when installing MADlib with `make install`. All files will be
     installed within `${CMAKE_INSTALL_PREFIX}`.
 
-- `<DBMS>_PG_CONFIG` (for `<DBMS>` in `POSTGRESQL_8_4`, `POSTGRESQL_9_0`,
-  `POSTGRESQL_9_1`, `GREENPLUM_4_0`, `GREENPLUM_4_1`, and `GREENPLUM_4_2`,
+- `<DBMS>_PG_CONFIG` (for `<DBMS>` in `POSTGRESQL_9_2`, `POSTGRESQL_9_3`,
+  `POSTGRESQL_9_4`, `HAWQ_1_2`, `HAWQ_1_3`, `GREENPLUM_4_2`, and `GREENPLUM_4_3`
   default: *empty*)
 
     Path to `pg_config` of the respective DBMS. If none is set, the build
