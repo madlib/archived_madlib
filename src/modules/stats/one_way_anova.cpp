@@ -54,7 +54,7 @@ public:
      * space in the storage array. So we need to reallocate and copy memory only
      * whenever the number of groups hits a power of 2.
      */
-    uint32_t idxOfGroup(const Allocator& inAllocator, uint32_t inValue);
+    uint32_t idxOfGroup(const Allocator& inAllocator, int32_t inValue);
 
 private:
     static inline size_t arraySize(uint32_t inNumGroupsReserved) {
@@ -88,7 +88,7 @@ public:
 template <>
 uint32_t
 OWATransitionState<ArrayHandle<double> >::idxOfGroup(
-    const Allocator&, uint32_t inValue) {
+    const Allocator&, int32_t inValue) {
 
     std::ptrdiff_t pos = std::lower_bound(
         groupValues, groupValues + numGroups, inValue) - groupValues;
@@ -106,10 +106,8 @@ OWATransitionState<ArrayHandle<double> >::idxOfGroup(
 template <>
 uint32_t
 OWATransitionState<MutableArrayHandle<double> >::idxOfGroup(
-    const Allocator& inAllocator, uint32_t inValue) {
+    const Allocator& inAllocator, int32_t inValue) {
 
-    // FIXME: Think of using proper iterators. Add some safety. Overflow checks.
-    // http://jira.madlib.net/browse/MADLIB-499
     std::ptrdiff_t pos = std::lower_bound(
         groupValues, groupValues + numGroups, inValue) - groupValues;
 
@@ -165,8 +163,6 @@ OWATransitionState<MutableArrayHandle<double> >::idxOfGroup(
     return static_cast<uint32_t>(posToIndices[pos]);
 }
 
-// FIXME: Same function used for t_test. Factor out.
-// http://jira.madlib.net/browse/MADLIB-500
 /**
  * @brief Update the corrected sum of squares
  *
@@ -193,8 +189,6 @@ updateCorrectedSumOfSquares(double &ioLeftWeight, double &ioLeftSum,
     if (inRightWeight <= 0)
         return;
 
-    // FIXME: Use compensated sums for numerical stability
-    // http://jira.madlib.net/browse/MADLIB-500
     // See Ogita et al., "Accurate Sum and Dot Product", SIAM Journal on
     // Scientific Computing (SISC), 26(6):1955-1988, 2005.
     if (ioLeftWeight <= 0)
@@ -233,14 +227,17 @@ one_way_anova_transition::run(AnyType &args) {
  */
 AnyType
 one_way_anova_merge_states::run(AnyType &args) {
+    if (args[1].getAs<ArrayHandle<double> >().size() == 2) { return args[0]; }
+    else if (args[0].getAs<ArrayHandle<double> >().size() == 2) { return args[1]; }
+
     OWATransitionState<MutableArrayHandle<double> > stateLeft = args[0];
     OWATransitionState<ArrayHandle<double> > stateRight = args[1];
 
     // Merge states together and return
     for (uint64_t posRight = 0; posRight < stateRight.numGroups; posRight++) {
-        uint32_t value
-            = static_cast<uint32_t>(stateRight.groupValues[posRight]);
-        uint32_t idxRight = stateRight.idxOfGroup(*this, value);
+        int32_t value
+            = static_cast<int32_t>(stateRight.groupValues[posRight]);
+        uint32_t idxRight = stateRight.posToIndices[posRight];
         uint32_t idxLeft = stateLeft.idxOfGroup(*this, value);
         updateCorrectedSumOfSquares(
             stateLeft.num(idxLeft), stateLeft.sum(idxLeft),
