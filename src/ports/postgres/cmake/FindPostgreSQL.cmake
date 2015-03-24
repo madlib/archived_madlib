@@ -70,10 +70,11 @@ get_filename_component(_CURRENT_FILE_NAME "${_FIND_PACKAGE_FILE}" NAME)
 string(REGEX REPLACE "Find([^.]+)\\..*" "\\1" PACKAGE_FIND_NAME
     "${_CURRENT_FILE_NAME}")
 string(TOUPPER ${PACKAGE_FIND_NAME} PKG_NAME)
-if("${PACKAGE_FIND_NAME}" MATCHES "^.*([0-9]+)_([0-9]+)$")
-    string(REGEX REPLACE "^.*([0-9]+)_([0-9]+)$" "\\1.\\2" PACKAGE_FIND_VERSION
+if("${PACKAGE_FIND_NAME}" MATCHES "^Find[a-zA-Z]+_[_V0-9]+$")
+    string(REGEX REPLACE "^Find[a-zA-Z]+_([_V0-9]+)$" "\\1" PACKAGE_FIND_VERSION_UNDERSCORE
         "${PACKAGE_FIND_NAME}")
-endif("${PACKAGE_FIND_NAME}" MATCHES "^.*([0-9]+)_([0-9]+)$")
+    string(REPLACE "_" "." PACKAGE_FIND_VERSION "${PACKAGE_FIND_VERSION_UNDERSCORE}")
+endif()
 
 # If ${PKG_NAME}_PG_CONFIG is defined, then the search steps will be omitted.
 if(NOT DEFINED ${PKG_NAME}_PG_CONFIG)

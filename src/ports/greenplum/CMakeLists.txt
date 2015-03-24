@@ -134,8 +134,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
 # -- 4.1. Compile C/C++ files---------------------------------------------------
 
     message(">> Adding ${PORT} "
-        "${${DBMS_UC}_VERSION_MAJOR}."
-        "${${DBMS_UC}_VERSION_MINOR} "
+        "${IN_PORT_VERSION} "
         "(${${DBMS_UC}_ARCHITECTURE}) "
         "to target list...")
 

@@ -284,7 +284,7 @@ def __run_sql_file(schema, maddir_mod_py, module, sqlfile,
 #------------------------------------------------------------------------------
 
 
-def __get_madlib_dbver(schema):
+def __get_madlib_dbrev(schema):
     """
     Read MADlib version from database
         @param dbconn database conection object
@@ -315,6 +315,12 @@ def __get_dbver():
             match = re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         elif portid == 'greenplum':
             match = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)", versionStr)
+            # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
+            # MADlib treat 4.3.5+ as DB version 4.3V2 that is different from 4.3
+            if match and match.group(1) == '4.3':
+                match_details = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+.\d+)", versionStr)
+                if __get_rev_num(match_details.group(1)) >= __get_rev_num('4.3.5'):
+                    return '4.3V2'
         elif portid == 'hawq':
             match = re.search("HAWQ[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         return None if match is None else match.group(1)
@@ -1066,7 +1072,7 @@ def main(argv):
             __error("*** Installation is currently restricted to 'madlib' schema ***", True)
 
         # Get MADlib version in DB
-        dbrev = __get_madlib_dbver(schema)
+        dbrev = __get_madlib_dbrev(schema)
 
         # Get DB version
         dbver = __get_dbver()
@@ -1235,7 +1241,7 @@ def main(argv):
     ###
     if args.command[0] in ('upgrade', 'update'):
         __info("*** Upgrading MADlib ***", True)
-        dbrev = __get_madlib_dbver(schema)
+        dbrev = __get_madlib_dbrev(schema)
 
         # 1) Check DB version. If None, nothing to upgrade.
         if not dbrev:

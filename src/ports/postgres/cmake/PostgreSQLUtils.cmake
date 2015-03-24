@@ -54,7 +54,7 @@ endfunction(cpack_add_version_component)
 #
 function(determine_target_versions OUT_VERSIONS)
     get_subdirectories("${CMAKE_CURRENT_SOURCE_DIR}" SUPPORTED_VERSIONS)
-    get_filtered_list(SUPPORTED_VERSIONS "^[0-9]+.[0-9]+$" ${SUPPORTED_VERSIONS})
+    get_filtered_list(SUPPORTED_VERSIONS "^[0-9]+.[0-9]+(V[0-9]+)?$" ${SUPPORTED_VERSIONS})
 
     foreach(VERSION ${SUPPORTED_VERSIONS})
         string(REPLACE "." "_" VERSION_UNDERSCORE "${VERSION}")
@@ -66,7 +66,16 @@ function(determine_target_versions OUT_VERSIONS)
         find_package(${PORT})
 
         if(${PORT_UC}_FOUND)
-            set(VERSION "${${PORT_UC}_VERSION_MAJOR}.${${PORT_UC}_VERSION_MINOR}")
+            # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
+            # MADlib treat 4.3.5+ as DB version that is different from 4.3
+            if(${PORT_UC} STREQUAL "GREENPLUM" AND
+                    ${${PORT_UC}_VERSION_MAJOR} EQUAL 4 AND
+                    ${${PORT_UC}_VERSION_MINOR} EQUAL 3 AND
+                    ${${PORT_UC}_VERSION_PATCH} GREATER 4)
+                set(VERSION "4.3V2")
+            else()
+                set(VERSION "${${PORT_UC}_VERSION_MAJOR}.${${PORT_UC}_VERSION_MINOR}")
+            endif()
             list(FIND SUPPORTED_VERSIONS "${VERSION}" _POS)
             if(_POS EQUAL -1)
                 string(REPLACE ";" ", " _SUPPORTED_VERSIONS_STR "${SUPPORTED_VERSIONS}")
