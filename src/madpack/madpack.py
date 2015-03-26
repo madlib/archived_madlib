@@ -320,7 +320,7 @@ def __get_dbver():
             if match and match.group(1) == '4.3':
                 match_details = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+.\d+)", versionStr)
                 if __get_rev_num(match_details.group(1)) >= __get_rev_num('4.3.5'):
-                    return '4.3V2'
+                    return '4.3ORCA'
         elif portid == 'hawq':
             match = re.search("HAWQ[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         return None if match is None else match.group(1)

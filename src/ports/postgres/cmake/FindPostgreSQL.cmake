@@ -70,8 +70,8 @@ get_filename_component(_CURRENT_FILE_NAME "${_FIND_PACKAGE_FILE}" NAME)
 string(REGEX REPLACE "Find([^.]+)\\..*" "\\1" PACKAGE_FIND_NAME
     "${_CURRENT_FILE_NAME}")
 string(TOUPPER ${PACKAGE_FIND_NAME} PKG_NAME)
-if("${PACKAGE_FIND_NAME}" MATCHES "^Find[a-zA-Z]+_[_V0-9]+$")
-    string(REGEX REPLACE "^Find[a-zA-Z]+_([_V0-9]+)$" "\\1" PACKAGE_FIND_VERSION_UNDERSCORE
+if("${PACKAGE_FIND_NAME}" MATCHES "^Find[a-zA-Z]+_.+$")
+    string(REGEX REPLACE "^Find[a-zA-Z]+_(.+)$" "\\1" PACKAGE_FIND_VERSION_UNDERSCORE
         "${PACKAGE_FIND_NAME}")
     string(REPLACE "_" "." PACKAGE_FIND_VERSION "${PACKAGE_FIND_VERSION_UNDERSCORE}")
 endif()

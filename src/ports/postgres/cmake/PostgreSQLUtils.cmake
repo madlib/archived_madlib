@@ -54,7 +54,7 @@ endfunction(cpack_add_version_component)
 #
 function(determine_target_versions OUT_VERSIONS)
     get_subdirectories("${CMAKE_CURRENT_SOURCE_DIR}" SUPPORTED_VERSIONS)
-    get_filtered_list(SUPPORTED_VERSIONS "^[0-9]+.[0-9]+(V[0-9]+)?$" ${SUPPORTED_VERSIONS})
+    get_filtered_list(SUPPORTED_VERSIONS "^[0-9]+.[0-9]+.*$" ${SUPPORTED_VERSIONS})
 
     foreach(VERSION ${SUPPORTED_VERSIONS})
         string(REPLACE "." "_" VERSION_UNDERSCORE "${VERSION}")
@@ -72,7 +72,7 @@ function(determine_target_versions OUT_VERSIONS)
                     ${${PORT_UC}_VERSION_MAJOR} EQUAL 4 AND
                     ${${PORT_UC}_VERSION_MINOR} EQUAL 3 AND
                     ${${PORT_UC}_VERSION_PATCH} GREATER 4)
-                set(VERSION "4.3V2")
+                set(VERSION "4.3ORCA")
             else()
                 set(VERSION "${${PORT_UC}_VERSION_MAJOR}.${${PORT_UC}_VERSION_MINOR}")
             endif()
