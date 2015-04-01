@@ -470,7 +470,7 @@ AnyType coxph_predict_resp::run(AnyType &args) {
     MappedColumnVector coefs = args[0].getAs<MappedColumnVector>();
     MappedColumnVector indep = args[1].getAs<MappedColumnVector>();
     MappedColumnVector mean_indep = args[2].getAs<MappedColumnVector>();
-    std::string predtype    = args[3].getAs<std::string>();
+    std::string predtype = args[3].getAs<std::string>();
 
     if (coefs.size() != indep.size())
         throw std::runtime_error(
@@ -478,7 +478,7 @@ AnyType coxph_predict_resp::run(AnyType &args) {
     if (coefs.size() != mean_indep.size())
         throw std::runtime_error(
             "Coefficients and mean vector of independent variables are of incompatible length");
-    
+
     double dot = coefs.dot(indep);
     double meandot = coefs.dot(mean_indep);
     double diff = dot - meandot;
@@ -515,7 +515,7 @@ AnyType coxph_predict_terms::run(AnyType &args) {
             "Coefficients and mean vector of independent variables are of incompatible length");
 
     return ColumnVector(coefs.cwiseProduct(indep - mean_indep));
-    
+
 }
 } // namespace stats
 } // namespace modules
