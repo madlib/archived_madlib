@@ -1,5 +1,6 @@
 #include <postgres.h>
 
+
 #if PG_VERSION_NUM >= 90100
 #include "catalog/pg_collation.h"
 #endif
@@ -39,6 +40,7 @@ Datum generate_sparse_vector(PG_FUNCTION_ARGS)
 	int term_index_nelems = ARR_DIMS(term_index)[0];
 	int term_count_nelems = ARR_DIMS(term_count)[0];
 
+
 	/* If no. of elements in the arrays are not equal, throw an error */
 	if (term_index_nelems != term_count_nelems)
 		elog(ERROR, "No. of elements in the argument arrays are not equal.");
@@ -62,11 +64,17 @@ Datum generate_sparse_vector(PG_FUNCTION_ARGS)
                 DatumGetInt64(term_index_data[i]) >= dict_size)
 			elog(ERROR, "Term indexes must range from 0 to total number of elements in the dictonary - 1.");
 	}
+        
 
     float8 *histogram = (float8 *)palloc0(sizeof(float8) * dict_size);
+    for (int k = 0; k < dict_size; k++)
+    {
+        histogram[k] = 0;
+    }
     for (int i = 0; i < term_index_nelems; i++)
     {
-        uint8_t idx = term_index_data[i];
+        uint64_t idx = DatumGetInt64(term_index_data[i]);
+        //uint8_t idx = term_index_data[i];
         histogram[idx] += DatumGetFloat8(term_count_data[i]);
     }
 
