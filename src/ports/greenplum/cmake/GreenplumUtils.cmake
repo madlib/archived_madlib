@@ -13,7 +13,8 @@ function(define_greenplum_features IN_VERSION OUT_FEATURES)
     set(${OUT_FEATURES} "${${OUT_FEATURES}}" PARENT_SCOPE)
 endfunction(define_greenplum_features)
 
-function(add_gppkg GPDB_VERSION GPDB_VARIANT GPDB_VARIANT_SHORT UPGRADE_SUPPORT)
+function(add_gppkg GPDB_VERSION_UC GPDB_VARIANT GPDB_VARIANT_SHORT UPGRADE_SUPPORT)
+    string(TOLOWER ${GPDB_VERSION_UC} GPDB_VERSION)
     string(REPLACE "." "_" VERSION_ "${GPDB_VERSION}")
 
     file(WRITE "${CMAKE_BINARY_DIR}/deploy/gppkg/${GPDB_VARIANT}_${VERSION_}_gppkg.cmake" "
