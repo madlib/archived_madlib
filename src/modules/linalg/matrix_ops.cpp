@@ -1,6 +1,6 @@
 /* ----------------------------------------------------------------------- *//**
  *
- * @file matrix_op.cpp
+ * @file matrix_ops.cpp
  *
  * @date May 8, 2013
  *//* ----------------------------------------------------------------------- */
@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <functional>
 #include <numeric>
-#include "matrix_op.hpp"
+#include "matrix_ops.hpp"
 
 namespace madlib {
 namespace modules {
