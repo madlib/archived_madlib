@@ -74,7 +74,6 @@ Datum generate_sparse_vector(PG_FUNCTION_ARGS)
     for (int i = 0; i < term_index_nelems; i++)
     {
         uint64_t idx = DatumGetInt64(term_index_data[i]);
-        //uint8_t idx = term_index_data[i];
         histogram[idx] += DatumGetFloat8(term_count_data[i]);
     }
 
