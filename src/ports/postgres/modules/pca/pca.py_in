@@ -225,7 +225,7 @@ def pca_sparse(schema_madlib,
 
     """
     startTime = time.time()
-     # Reset the message level to avoid random messages
+    # Reset the message level to avoid random messages
     old_msg_level = plpy.execute("""
                                   SELECT setting
                                   FROM pg_settings
@@ -248,14 +248,14 @@ def pca_sparse(schema_madlib,
                    use_correlation,
                    result_summary_table)
 
-    #Step 2: Densify the matrix
-    # We densify the matrix because the recentering process will generate a
-    #dense matrix, so we just wrap around regular PCA.
-    #First we must copy the sparse matrix and add in the dimension information
+    # Step 2: Densify the matrix
+    #  We densify the matrix because the recentering process will generate a
+    # dense matrix, so we just wrap around regular PCA.
+    # First we must copy the sparse matrix and add in the dimension information
 
     sparse_temp = unique_string() + "_sparse"
 
-    #Add in the dimension information need by the densifying process
+    # Add in the dimension information need by the densifying process
     create_temp_sparse_matrix_table_with_dims(source_table, sparse_temp,
                                               row_id, col_id, val_id,
                                               row_dim, col_dim)
@@ -263,17 +263,17 @@ def pca_sparse(schema_madlib,
     x_dense = unique_string() + "_dense"
     plpy.execute("""
         SELECT {schema_madlib}.matrix_densify(
-            '{sparse_temp}', 'row_id', 'col_id', 'value',
-            '{x_dense}', False)
-        """.format(schema_madlib=schema_madlib, sparse_temp=sparse_temp,
-                   x_dense=x_dense))
+            '{sparse_temp}',
+            'row={row_id}, col={col_id}, val={val_id}',
+            '{x_dense}', 'row=row_id, val=row_vec')
+        """.format(**locals()))
 
-    #Step 3: Pass the densified matrix to regular PCA
+    # Step 3: Pass the densified matrix to regular PCA
     pca(schema_madlib, x_dense, pc_table, 'row_id',
         k, grouping_cols, lanczos_iter, use_correlation,
         result_summary_table)
 
-    #Step 4: Clean up
+    # Step 4: Clean up
     plpy.execute("""
         DROP TABLE IF EXISTS {x_dense};
         DROP TABLE IF EXISTS {sparse_temp};
@@ -358,7 +358,9 @@ def pca(schema_madlib, source_table, pc_table, row_id,
     if(need_new_column_names):
         source_table = source_table_copy
 
-    [row_dim, col_dim] = get_dims(source_table)
+    [row_dim, col_dim] = get_dims(source_table,
+                                  {'row': 'row_id', 'col': 'col_id',
+                                   'val': 'row_vec'})
 
     # If using the default number of lanczos iterations, set to the default
     if lanczos_iter == 0:
@@ -407,8 +409,9 @@ def pca(schema_madlib, source_table, pc_table, row_id,
         svd_v_transpose = unique_string() + "transpose"
         plpy.execute(
             """
-            SELECT  {schema_madlib}.matrix_trans('{svd_output_temp_table}_v',
-                    '{svd_v_transpose}', False);
+            SELECT  {schema_madlib}.matrix_trans(
+                    '{svd_output_temp_table}_v', 'val=row_vec',
+                    '{svd_v_transpose}', 'val=row_vec', False);
             """.format(svd_output_temp_table=svd_output_temp_table,
                        svd_v_transpose=svd_v_transpose,
                        schema_madlib=schema_madlib)

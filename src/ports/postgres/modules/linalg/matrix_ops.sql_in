@@ -15,24 +15,56 @@ m4_include(`SQLCommon.m4')
 
 <div class="toc"><b>Contents</b>
 <ul>
-<li><a href="#notes">Implementation Notes</a></li>
-<li><a href="#operations">Matrix Operations</a></li>
-<li><a href="#examples">Examples</a></li>
-<li><a href="#related">Related Topics</a></li>
+<li class="level1"><a href="#notes">Implementation Notes</a></li>
+<li class="level1"><a href="#operations">Matrix Operations</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
 </ul>
 </div>
 
 @brief Provides fast matrix operations supporting other MADlib modules.
 
 This module provides a set of basic matrix operations for matrices that are
-too big to fit in memory. Here a matrix is not just a 2-D array, rather a
-distributed collection of 1-D arrays. We also support a sparse representation
-of matrices in a relational table.
+too big to fit in memory. We provide two storage formats for a matrix:
+- Dense: The matrix is represented as a distributed collection of 1-D arrays.
+An example 3x10 matrix would be the below table:
+<pre>
+ row_id |         row_vec
+--------+-------------------------
+   0    | {9,6,5,8,5,6,6,3,10,8}
+   1    | {8,2,2,6,6,10,2,1,9,9}
+   2    | {3,9,9,9,8,6,3,9,5,6}
+</pre>
+
+- Sparse: The matrix is represented using the row and column indices for each
+non-zero entry of the matrix. This representation is useful for sparse matrices,
+containing multiple zero elements. Given below is an example of a sparse 4x7 matrix
+with just 6 out of 28 entries being non-zero. There should be exactly one tuple
+that has a NULL for the '<em>value</em>' column. This tuple gives the dimensionality
+of the sparse matrix (the dimensionality cannot be determined just by the entries
+since the last row/column could have all zeros).
+<pre>
+ row_id | col_id | value
+--------+--------+-------
+      0 |      0 |     9
+      0 |      5 |     6
+      0 |      6 |     6
+      1 |      0 |     8
+      2 |      0 |     3
+      2 |      1 |     9
+      4 |      7 |     NULL
+(6 rows)
+</pre>
+
+In all functions, the type of matrix (dense or sparse) is identified by the
+<em>value</em> column. If this column is an array (like '<em>row_vec</em>' in
+first table above), the matrix is identified as a dense matrix, else as a sparse
+matrix.
 
 @anchor notes
 @par Implementation Notes
 
-These functions support several numeric types (unless otherwise noted):
+The functions below support several numeric types (unless otherwise noted):
     - SMALLINT
     - INTEGER
     - BIGINT
@@ -44,7 +76,7 @@ These functions support several numeric types (unless otherwise noted):
 
 All functions described in this module work with matrices.
 
-\b Arguments
+\b Glossary
 
 The following arguments are commonly used in all matrix functions. The table below
 provides a glossary of the terms used.
@@ -54,211 +86,282 @@ provides a glossary of the terms used.
 <dd>TEXT. Name of the table containing the input matrix.
 - For functions accepting one matrix, <em>matrix_in</em> denotes the input matrix.
 - For functions accepting two matrices, <em>matrix_a</em> denotes the first matrix
-and <em>matrix_b</em> denotes the second matrix.
-</dd>
-
-<dt>in_row, a_row, b_row</dt>
-<dd>TEXT. Name of the column containing the row id for the input matrix.
-- <em>in_row</em> denotes row id for <em>matrix_in</em>.
-- <em>a_row</em> denotes row id for <em>matrix_a</em>.
-- <em>b_row</em> denotes row id for <em>matrix_b</em>.
-</dd>
-
-<dt>in_col, a_col, b_col</dt>
-<dd>TEXT. Name of the column containing the col id for the input matrix.
-- <em>in_col</em> denotes col id for <em>matrix_in</em>.
-- <em>a_col</em> denotes col id for <em>matrix_a</em>.
-- <em>b_col</em> denotes col id for <em>matrix_b</em>.
-</dd>
-
-<dt>in_val, a_val, b_val</dt>
-<dd>TEXT. Name of the column containing the value for the input matrix.
-- <em>in_val</em> denotes value in <em>matrix_in</em>.
-- <em>a_val</em> denotes value in <em>matrix_a</em>.
-- <em>b_val</em> denotes value in <em>matrix_b</em>.
-</dd>
-
-<dt>a_trans, b_trans</dt>
-<dd>BOOLEAN. Boolean to indicate if the matrix should be transposed before running an operation.
-Useful for multiplication where a matrix is regularly transposed before multiplying to
-another matrix.
+and <em>matrix_b</em> denotes the second matrix. These two matrices can
+idependently be in either dense or sparse format.
 </dd>
 
 <dt>matrix_out</dt>
 <dd>TEXT. Name of the table where to output the result matrix.
 </dd>
 
-<dt>use_temp_table</dt>
-<dd>BOOLEAN. Boolean to indicate if the output should be put in a temp table.
+<dt>in_args, a_args, b_args, out_args</dt>
+<dd>TEXT. A string containing multiple named arguments of the form "name=value".
+This argument is used as a container for multiple parameters related to a single
+matrix.
+
+The following parameters are supported for this string argument:
+    - row: (Default: 'row_id') Name of the column containing row id of the matrix.
+    - col: (Default: 'col_id') Name of the column containing column id of the matrix.
+    - val: (Default: 'val') Name of the column containing the entries of the matrix.
+    For a dense matrix, this should be of an ARRAY type.
+    - trans: (Default: False) Boolean flag to indicate if the matrix should be
+    transposed before the operation. This is currently functional only for <em>matrix_mult</em>.
+
+These string arguments can be <em>NULL</em> if the default values are to be used.
+
+The default value for <em>out_args</em> are set as follows:
+    - For functions with one input matrix, default value = <em>in_args</em>
+    - For functions with two input matrices, default value = <em>a_args</em>.
 </dd>
 </dl>
 
 \b Functions
 
-- Matrix multiplication
-<pre class="syntax">
--- Sparse representation
-matrix_mult( matrix_a, a_row, a_col, a_val, a_trans,
-             matrix_b, b_row, b_col, b_val, b_trans,
-             matrix_out )
-\nbsp
--- Dense representation
-matrix_mult( matrix_a, a_trans,
-             matrix_b, b_trans,
-             matrix_out )
-</pre>
-
-- Matrix addition
-<pre class="syntax">
--- Sparse representation
-matrix_add( matrix_a, a_row, a_col, a_val,
-            matrix_b, b_row, b_col, b_val,
-            matrix_out )
-\nbsp
--- Dense representation
-matrix_add( matrix_a, matrix_b, matrix_out )
-</pre>
-
-- Matrix transposition
-<pre class="syntax">
--- Sparse representation
-matrix_trans( matrix_in, in_row, in_col, in_val, matrix_out, use_temp_table )
-\nbsp
--- Dense representation
-matrix_trans( matrix_in, matrix_out, use_temp_table )
-</pre>
-
 - Convert to sparse representation
 <pre class="syntax">
-matrix_sparsify( matrix_in, matrix_out, use_temp_table )
+matrix_sparsify( matrix_in, in_args, matrix_out, out_args)
 </pre>
 
 - Convert to dense representation
 <pre class="syntax">
-matrix_densify( matrix_in, in_row, in_col, in_val,
-                matrix_out, use_temp_table )
+matrix_densify( matrix_in, in_args, matrix_out, out_args)
 </pre>
 
+- Matrix transposition
+<pre class="syntax">
+matrix_trans( matrix_in, in_args, matrix_out, out_args)
+</pre>
+
+- Matrix addition
+<pre class="syntax">
+matrix_add( matrix_a, a_args,
+            matrix_b, b_args,
+            matrix_out, out_args)
+</pre>
+
+- Matrix multiplication
+<pre class="syntax">
+matrix_mult( matrix_a, a_args,
+             matrix_b, b_args,
+             matrix_out, out_args)
+</pre>
+@note <em>matrix_mult</em> always returns a dense matrix (even when the product
+is computed between two sparse matrices).
 
 @anchor examples
 @examp
 
 - Create some random data tables in dense format.
-Note the hard-coded column names <em>row_id</em> and <em>row_vec</em>. This restriction
-does not exist in the sparse format.
 <pre class="syntax">
-DROP TABLE IF EXISTS "matrix_A";
-CREATE TABLE "matrix_A" (
+CREATE TABLE "mat_A" (
     row_id integer,
     row_vec integer[]
 );
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (0, '{9,6,5,8,5,6,6,3,10,8}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (1, '{8,2,2,6,6,10,2,1,9,9}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (2, '{3,9,9,9,8,6,3,9,5,6}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (3, '{6,4,2,2,2,7,8,8,0,7}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (4, '{6,8,9,9,4,6,9,5,7,7}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (5, '{4,10,7,3,9,5,9,2,3,4}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (6, '{8,10,7,10,1,9,7,9,8,7}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (7, '{7,4,5,6,2,8,1,1,4,8}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (8, '{8,8,8,5,2,6,9,1,8,3}');
-INSERT INTO "matrix_A" (row_id, row_vec) VALUES (9, '{4,6,3,2,6,4,1,2,3,8}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (0, '{9,6,5,8,5,6,6,3,10,8}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (1, '{8,2,2,6,6,10,2,1,9,9}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (2, '{3,9,9,9,8,6,3,9,5,6}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (3, '{6,4,2,2,2,7,8,8,0,7}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (4, '{6,8,9,9,4,6,9,5,7,7}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (5, '{4,10,7,3,9,5,9,2,3,4}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (6, '{8,10,7,10,1,9,7,9,8,7}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (7, '{7,4,5,6,2,8,1,1,4,8}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (8, '{8,8,8,5,2,6,9,1,8,3}');
+INSERT INTO "mat_A" (row_id, row_vec) VALUES (9, '{4,6,3,2,6,4,1,2,3,8}');
 \nbsp
-DROP TABLE IF EXISTS "matrix_B";
-CREATE TABLE "matrix_B" (
+CREATE TABLE "mat_B" (
     row_id integer,
-    row_vec integer[]
+    vector integer[]
 );
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (0, '{9,10,2,4,6,5,3,7,5,6}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (1, '{5,3,5,2,8,6,9,7,7,6}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (2, '{0,1,2,3,2,7,7,3,10,1}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (3, '{2,9,0,4,3,6,8,6,3,4}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (4, '{3,8,7,7,0,5,3,9,2,10}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (5, '{5,3,1,7,6,3,5,3,6,4}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (6, '{4,8,4,4,2,7,10,0,3,3}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (7, '{4,6,0,1,3,1,6,6,9,8}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (8, '{6,5,1,7,2,7,10,6,0,6}');
-INSERT INTO "matrix_B" (row_id, row_vec) VALUES (9, '{1,4,4,4,8,5,2,8,5,5}');
-</pre>
-
-- Add the two matrices
-<pre class="syntax">
-DROP TABLE IF EXISTS "matrix_R";
-SELECT madlib.matrix_add('"matrix_A"', '"matrix_B"', '"matrix_R"');
-SELECT * FROM "matrix_R" ORDER BY row_id;
-</pre>
-
-- Multiply the two matrices
-<pre class="syntax">
-DROP TABLE IF EXISTS "matrix_R";
-SELECT madlib.matrix_mult('"matrix_A"', FALSE, '"matrix_B"', FALSE, '"matrix_R"');
-SELECT * FROM "matrix_R" ORDER BY row_id;
+INSERT INTO "mat_B" (row_id, vector) VALUES (0, '{9,10,2,4,6,5,3,7,5,6}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (1, '{5,3,5,2,8,6,9,7,7,6}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (2, '{0,1,2,3,2,7,7,3,10,1}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (3, '{2,9,0,4,3,6,8,6,3,4}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (4, '{3,8,7,7,0,5,3,9,2,10}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (5, '{5,3,1,7,6,3,5,3,6,4}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (6, '{4,8,4,4,2,7,10,0,3,3}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (7, '{4,6,0,1,3,1,6,6,9,8}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (8, '{6,5,1,7,2,7,10,6,0,6}');
+INSERT INTO "mat_B" (row_id, vector) VALUES (9, '{1,4,4,4,8,5,2,8,5,5}');
 </pre>
 
 - Transpose a matrix
 <pre class="syntax">
-DROP TABLE IF EXISTS "matrix_R";
-SELECT madlib.matrix_trans('"matrix_A"', '"matrix_R"');
-SELECT * FROM "matrix_R" ORDER BY row_id;
+SELECT madlib.matrix_trans('"mat_B"', 'row=row_id, val=vector',
+                           'mat_r');
+SELECT * FROM mat_r ORDER BY row_id;
+</pre>
+<pre class="result">
+-- Note the result matrix has inherited 'vector' as the name of value column
+ row_id |         vector
+--------+-------------------------
+      0 | {9,5,0,2,3,5,4,4,6,1}
+      1 | {10,3,1,9,8,3,8,6,5,4}
+      2 | {2,5,2,0,7,1,4,0,1,4}
+      3 | {4,2,3,4,7,7,4,1,7,4}
+      4 | {6,8,2,3,0,6,2,3,2,8}
+      5 | {5,6,7,6,5,3,7,1,7,5}
+      6 | {3,9,7,8,3,5,10,6,10,2}
+      7 | {7,7,3,6,9,3,0,6,6,8}
+      8 | {5,7,10,3,2,6,3,9,0,5}
+      9 | {6,6,1,4,10,4,3,8,6,5}
+(10 rows)
+</pre>
+
+- Add the two matrices
+<pre class="syntax">
+SELECT madlib.matrix_add('"mat_A"', 'row=row_id, val=row_vec',
+                         '"mat_B"', 'val=vector',
+                         'mat_r', 'val=vector');
+SELECT * FROM mat_r ORDER BY row_id;
+</pre>
+<pre class="result">
+ row_id |            vector
+--------+-------------------------------
+      0 | {18,16,7,12,11,11,9,10,15,14}
+      1 | {13,5,7,8,14,16,11,8,16,15}
+      2 | {3,10,11,12,10,13,10,12,15,7}
+      3 | {8,13,2,6,5,13,16,14,3,11}
+      4 | {9,16,16,16,4,11,12,14,9,17}
+      5 | {9,13,8,10,15,8,14,5,9,8}
+      6 | {12,18,11,14,3,16,17,9,11,10}
+      7 | {11,10,5,7,5,9,7,7,13,16}
+      8 | {14,13,9,12,4,13,19,7,8,9}
+      9 | {5,10,7,6,14,9,3,10,8,13}
+(10 rows)
+</pre>
+
+- Multiply the two matrices
+<pre class="syntax">
+DROP TABLE IF EXISTS mat_r;
+SELECT madlib.matrix_mult('"mat_A"', 'val=row_vec',
+                          '"mat_B"', 'val=vector, trans=true',
+                          'mat_r');
+SELECT * FROM mat_r ORDER BY row_id;
+</pre>
+<pre class="result">
+ row_id |                  row_vec
+--------+-------------------------------------------
+      0 | {380,373,251,283,341,303,302,309,323,281}
+      1 | {318,318,222,221,269,259,236,249,264,248}
+      2 | {382,366,216,300,397,276,277,270,313,338}
+      3 | {275,284,154,244,279,183,226,215,295,204}
+      4 | {381,392,258,319,394,298,342,302,360,300}
+      5 | {321,333,189,276,278,232,300,236,281,250}
+      6 | {443,411,282,365,456,318,360,338,406,330}
+      7 | {267,240,150,186,270,194,210,184,233,193}
+      8 | {322,328,234,264,291,245,317,253,291,219}
+      9 | {246,221,109,173,222,164,167,185,181,189}
+(10 rows)
 </pre>
 
 - Compute sparse representation of a matrix
 <pre class="syntax">
-DROP TABLE IF EXIST matrix_r_sparse;
-SELECT madlib.matrix_sparsify('"matrix_R"', 'matrix_r_sparse');
-SELECT * FROM matrix_r_sparse;
+SELECT madlib.matrix_sparsify('"mat_B"', 'val=vector', '"mat_B_sparse"');
 </pre>
 
-- Create a matrix in sparse format. No restriction on the column names.
+- Create a matrix in sparse format.
 <pre class="syntax">
-DROP TABLE IF EXISTS matrix_r_sparse;
-CREATE TABLE matrix_r_sparse (
-    row_num integer,
-    col_number integer,
+CREATE TABLE "mat_A_sparse" (
+    "rowNum" integer,
+    col_num integer,
     entry integer
 );
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (0, 0, 9);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (0, 1, 6);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (0, 7, 3);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (0, 8, 10);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (0, 9, 8);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (1, 0, 8);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (1, 1, 2);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (1, 2, 2);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (1, 3, 6);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (2, 5, 6);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (2, 6, 3);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (7, 0, 7);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (8, 2, 8);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (8, 3, 5);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (8, 4, 2);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (8, 8, 8);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (8, 9, 3);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (9, 0, 4);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (9, 1, 6);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (9, 2, 3);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (9, 6, 1);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (9, 7, 2);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (9, 8, 3);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (9, 9, 8);
-INSERT INTO matrix_r_sparse (row_num, col_number, entry) VALUES (10, 10, NULL);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (0, 0, 9);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (0, 1, 6);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (0, 7, 3);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (0, 8, 10);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (0, 9, 8);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (1, 0, 8);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (1, 1, 2);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (1, 2, 2);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (1, 3, 6);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (2, 5, 6);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (2, 6, 3);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (7, 0, 7);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (8, 2, 8);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (8, 3, 5);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (9, 1, 6);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (9, 2, 3);
+INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (10, 10, NULL);
 </pre>
 
 - Transpose a matrix in sparse format
 <pre class="syntax">
-DROP TABLE IF EXISTS "matrix_R_trans";
-SELECT madlib.matrix_trans('matrix_r_sparse', 'row_num','col_number', 'entry', '"matrix_R_trans"');
-SELECT * FROM "matrix_R_trans" ORDER BY row_id;
+-- Note the double quotes for '"rowNum"' required per PostgreSQL rules
+SELECT madlib.matrix_trans('"mat_A_sparse"', 'row="rowNum", col=col_num, val=entry',
+                           'matrix_r_sparse');
+SELECT "rowNum", col_num, entry FROM matrix_r_sparse ORDER BY col_num;
+</pre>
+<pre class="result">
+ rowNum | col_num | entry
+--------+---------+--------
+      0 |       0 |      9
+      1 |       0 |      6
+      7 |       0 |      3
+      8 |       0 |     10
+      9 |       0 |      8
+      0 |       1 |      8
+      1 |       1 |      2
+      2 |       1 |      2
+      3 |       1 |      6
+      5 |       2 |      6
+      6 |       2 |      3
+      0 |       7 |      7
+      2 |       8 |      8
+      3 |       8 |      5
+      1 |       9 |      6
+      2 |       9 |      3
+     10 |      10 | [NULL]
+(17 rows)
 </pre>
 
 - Add two sparse matrices
 <pre class="syntax">
-DROP TABLE IF EXISTS "matrix_R_double";
-SELECT madlib.matrix_add('matrix_r_sparse', 'row_num','col_number', 'entry',
-                         'matrix_r_sparse', 'row_num','col_number', 'entry',
-                         '"matrix_R_double');
-SELECT * FROM "matrix_R_double" ORDER BY row_id;
+SELECT madlib.matrix_add('"mat_A_sparse"', 'row="rowNum", col=col_num, val=entry',
+                         '"mat_B_sparse"', 'val=vector, trans=true',
+                         'matrix_r_sparse', 'col=col_out');
+SELECT madlib.matrix_densify('matrix_r_sparse', 'row="rowNum", col=col_out, val=entry',
+                             'matrix_r');
+SELECT * FROM matrix_r ORDER BY "rowNum";
+</pre>
+<pre class="result">
+ rowNum |           entry
+--------+----------------------------
+      0 | {18,16,2,4,6,5,3,10,15,14}
+      1 | {13,5,7,8,8,6,9,7,7,6}
+      2 | {0,1,2,3,2,13,10,3,10,1}
+      3 | {2,9,0,4,3,6,8,6,3,4}
+      4 | {3,8,7,7,0,5,3,9,2,10}
+      5 | {5,3,1,7,6,3,5,3,6,4}
+      6 | {4,8,4,4,2,7,10,0,3,3}
+      7 | {11,6,0,1,3,1,6,6,9,8}
+      8 | {6,5,9,12,2,7,10,6,0,6}
+      9 | {1,10,7,4,8,5,2,8,5,5}
+(10 rows)
 </pre>
 
+- Multiply two sparse matrices
+<pre class="syntax">
+SELECT madlib.matrix_mult('"mat_A_sparse"', 'row="rowNum", col=col_num, val=entry',
+                          '"mat_B_sparse"', 'val=vector, trans=true',
+                          'matrix_r');
+SELECT * FROM matrix_r ORDER BY "rowNum";
+</pre>
+<pre class="result">
+ rowNum |                   entry
+--------+-------------------------------------------
+      0 | {260,202,123,152,202,164,138,244,150,147}
+      1 | {120,68,24,58,96,90,80,50,102,48}
+      2 | {39,63,63,60,39,33,72,24,72,36}
+      3 | {0,0,0,0,0,0,0,0,0,0}
+      4 | {0,0,0,0,0,0,0,0,0,0}
+      5 | {0,0,0,0,0,0,0,0,0,0}
+      6 | {0,0,0,0,0,0,0,0,0,0}
+      7 | {63,35,0,14,21,35,28,28,42,7}
+      8 | {36,50,31,20,91,43,52,5,43,52}
+      9 | {66,33,12,54,69,21,60,36,33,36}
+(10 rows)
+</pre>
 
 @anchor related
 @par Related Topics
@@ -267,9 +370,7 @@ File array_ops.sql_in documenting the array operations
 \ref grp_array
 
 File matrix_ops.sql_in for list of functions and usage.
-
 */
-
 -------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_info(
@@ -288,7 +389,6 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 -------------------------------------------------------------------------
-
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.matrix_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.matrix_result AS(
@@ -318,55 +418,35 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_mult
 (
     matrix_a    TEXT,
-    a_row       TEXT,
-    a_col       TEXT,
-    a_val       TEXT,
-    a_trans     BOOLEAN,
+    a_args      TEXT,
     matrix_b    TEXT,
-    b_row       TEXT,
-    b_col       TEXT,
-    b_val       TEXT,
-    b_trans     BOOLEAN,
-    matrix_out    TEXT
+    b_args      TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
     matrix_ops.matrix_mult(schema_madlib,
-        matrix_a, a_row, a_col, a_val, a_trans,
-        matrix_b, b_row, b_col, b_val, b_trans,
-        matrix_out)
+        matrix_a, a_args,
+        matrix_b, b_args,
+        matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-/**
- * @brief Multiplies two matrices. It requires that all the values are NON-NULL.
- * This is the dense representation of the matrix where the matrix elements
- * are indexed by the row id.
- *
- * @param matrix_a Name of the table containing the first matrix
- * @param a_trans Boolean to indicate if first matrix should be transposed before multiplication
- * @param matrix_b Name of the table containing the second matrix
- * @param b_trans Boolean to indicate if second matrix should be transposed before multiplication
- * @param matrix_out Name of the table where to output the result matrix
- * @returns Name of the table containing the result matrix
- *
- */
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_mult
 (
-    matrix_a    TEXT,
-    a_trans     BOOLEAN,
-    matrix_b    TEXT,
-    b_trans     BOOLEAN,
-    matrix_out  TEXT
+    matrix_a        TEXT,
+    a_args          TEXT,
+    matrix_b        TEXT,
+    b_args          TEXT,
+    matrix_out      TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     SELECT
         MADLIB_SCHEMA.matrix_mult(
-            $1, NULL, NULL, NULL, $2,
-            $3, NULL, NULL, NULL, $4,
-            $5);
+            $1, $2, $3, $4, $5, NULL);
 $$ LANGUAGE sql
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -376,7 +456,6 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_mult(
 PythonFunction(linalg, matrix_help_message, matrix_mult_help_message)
 $$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
-
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_mult()
 RETURNS TEXT AS $$
@@ -408,52 +487,36 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_add
 (
     matrix_a    TEXT,
-    a_row       TEXT,
-    a_col       TEXT,
-    a_val       TEXT,
+    a_args      TEXT,
     matrix_b    TEXT,
-    b_row       TEXT,
-    b_col       TEXT,
-    b_val       TEXT,
-    matrix_out    TEXT
+    b_args      TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
     matrix_ops.matrix_add(schema_madlib,
-        matrix_a, a_row, a_col, a_val,
-        matrix_b, b_row, b_col, b_val,
-        matrix_out)
+        matrix_a, a_args,
+        matrix_b, b_args,
+        matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-/**
- * @brief Adds two matrices. It requires that all the values are NON-NULL.
- * This is the dense representation of the matrix where the matrix elements
- * are indexed by the row id.
- *
- * @param matrix_a Name of the table containing the first matrix
- * @param matrix_b Name of the table containing the second matrix
- * @param matrix_out Name of the table where to output the result matrix
- * @returns Name of the table containing the result matrix
- *
- */
 
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_add
 (
     matrix_a    TEXT,
+    a_args      TEXT,
     matrix_b    TEXT,
-    matrix_out    TEXT
+    b_args      TEXT,
+    matrix_out  TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT
-        MADLIB_SCHEMA.matrix_add(
-            $1, NULL, NULL, NULL,
-            $2, NULL, NULL, NULL,
-            $3);
-$$ LANGUAGE sql
+    SELECT MADLIB_SCHEMA.matrix_add($1, $2, $3, $4, $5, ''::TEXT)
+$$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_add(
     message     TEXT
@@ -461,6 +524,22 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_add(
 PythonFunction(linalg, matrix_help_message, matrix_add_help_message)
 $$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_add
+(
+    matrix_a        TEXT,
+    a_args          TEXT,
+    matrix_b        TEXT,
+    b_args          TEXT,
+    matrix_out      TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT
+        MADLIB_SCHEMA.matrix_add(
+            $1, $2, $3, $4, $5, NULL);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_add()
@@ -486,78 +565,49 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
  * @returns Name of the table containing the result matrix
  *
  */
-
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_trans
 (
-    matrix_in       TEXT,
-    in_row          TEXT,
-    in_col          TEXT,
-    in_val          TEXT,
-    matrix_out      TEXT,
-    use_temp_table  BOOLEAN
+    matrix_in      TEXT,
+    in_args        TEXT,
+    matrix_out     TEXT,
+    out_args       TEXT,
+    use_temp_table BOOLEAN
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
     matrix_ops.matrix_trans(schema_madlib,
-        matrix_in, in_row, in_col, in_val, matrix_out, use_temp_table)
+        matrix_in, in_args, matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-/* Overloaded functions */
-
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_trans
 (
     matrix_in       TEXT,
-    in_row          TEXT,
-    in_col          TEXT,
-    in_val          TEXT,
-    matrix_out      TEXT
-)
-RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT MADLIB_SCHEMA.matrix_trans($1, $2, $3, $4, $5, FALSE)
-$$ LANGUAGE SQL
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-
-/**
- * @brief Transpose matrix. It requires that all the values are NON-NULL.
- * This is the dense representation of the matrix where the matrix elements
- * are indexed by the row id.
- *
- * @param matrix_in Name of the table containing the input matrix
- * @param matrix_out Name of the table where to output the result matrix
- * @param use_temp_table Specify if use temp table for result
- * @returns Name of the table containing the result matrix
- *
- */
-
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.matrix_trans
-(
-    matrix_in       TEXT,
+    in_args         TEXT,
     matrix_out      TEXT,
-    use_temp_table  BOOLEAN
+    out_args        TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     SELECT
         MADLIB_SCHEMA.matrix_trans(
-            $1, NULL, NULL, NULL, $2, $3);
+            $1, $2, $3, $4, FALSE);
 $$ LANGUAGE sql
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-/* Overloaded functions */
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_trans
 (
     matrix_in       TEXT,
+    in_args         TEXT,
     matrix_out      TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     SELECT
-        MADLIB_SCHEMA.matrix_trans($1, NULL, NULL, NULL, $2, FALSE);
+        MADLIB_SCHEMA.matrix_trans(
+            $1, $2, $3, NULL, FALSE);
 $$ LANGUAGE sql
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -567,7 +617,6 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_trans(
 PythonFunction(linalg, matrix_help_message, matrix_trans_help_message)
 $$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
-
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_trans()
 RETURNS TEXT AS $$
@@ -593,12 +642,15 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_sparsify
 (
     matrix_in       TEXT,
+    in_args         TEXT,
     matrix_out      TEXT,
+    out_args        TEXT,
     use_temp_table  BOOLEAN
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_sparsify(matrix_in, matrix_out, use_temp_table)
+    matrix_ops.matrix_sparsify(matrix_in, in_args, matrix_out,
+                               out_args, use_temp_table)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -608,10 +660,25 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_sparsify
 (
     matrix_in       TEXT,
+    in_args         TEXT,
+    matrix_out      TEXT,
+    out_args        TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT MADLIB_SCHEMA.matrix_sparsify($1, $2, $3, $4, FALSE);
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* Overloaded function */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_sparsify
+(
+    matrix_in       TEXT,
+    in_args         TEXT,
     matrix_out      TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT MADLIB_SCHEMA.matrix_sparsify($1, $2, FALSE);
+    SELECT MADLIB_SCHEMA.matrix_sparsify($1, $2, $3, '', FALSE);
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -650,16 +717,15 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_densify
 (
     matrix_in       TEXT,
-    in_row          TEXT,
-    in_col          TEXT,
-    in_val          TEXT,
+    in_args         TEXT,
     matrix_out      TEXT,
+    out_args        TEXT,
     use_temp_table  BOOLEAN
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
     matrix_ops.matrix_densify(schema_madlib,
-        matrix_in, in_row, in_col, in_val, matrix_out, use_temp_table)
+        matrix_in, in_args, matrix_out, out_args, use_temp_table)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -669,13 +735,24 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_densify
 (
     matrix_in       TEXT,
-    in_row          TEXT,
-    in_col          TEXT,
-    in_val          TEXT,
+    in_args         TEXT,
+    matrix_out      TEXT,
+    out_args        TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT MADLIB_SCHEMA.matrix_densify($1, $2, $3, $4, FALSE);
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_densify
+(
+    matrix_in       TEXT,
+    in_args         TEXT,
     matrix_out      TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT MADLIB_SCHEMA.matrix_densify($1, $2, $3, $4, $5, FALSE);
+    SELECT MADLIB_SCHEMA.matrix_densify($1, $2, $3, '', FALSE);
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -940,15 +1017,31 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_blockize
 (
     matrix_in   TEXT,
+    in_args     TEXT,
+    rsize       INT4,
+    csize       INT4,
+    matrix_out  TEXT,
+    out_args    TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_ops')
+    matrix_ops.matrix_blockize(schema_madlib, matrix_in, in_args, rsize, csize, matrix_out, out_args)
+    return [matrix_out]
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_blockize
+(
+    matrix_in   TEXT,
+    in_args     TEXT,
     rsize       INT4,
     csize       INT4,
     matrix_out  TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_blockize(schema_madlib, matrix_in, rsize, csize, matrix_out)
-    return [matrix_out]
-$$ LANGUAGE plpythonu
+    SELECT MADLIB_SCHEMA.matrix_blockize($1, $2, $3, $4, $5, ''::text)
+$$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
@@ -956,11 +1049,14 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_unblockize
 (
     matrix_in   TEXT,
-    matrix_out  TEXT
+    in_args     TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_unblockize(schema_madlib, matrix_in, matrix_out)
+    matrix_ops.matrix_unblockize(schema_madlib, matrix_in, in_args,
+                                 matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -998,9 +1094,12 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 CREATE OR REPLACE FUNCTION  MADLIB_SCHEMA.matrix_scale_and_add(
     matrix_a    TEXT,
+    a_args      TEXT,
     matrix_b    TEXT,
+    b_args      TEXT,
     scale       DOUBLE PRECISION,
-    matrix_out  TEXT
+    matrix_out  TEXT,
+    out_args    TEXT
 )
 RETURNS VOID AS $$
 PythonFunction(linalg, matrix_ops, matrix_scale_and_add)
@@ -1027,7 +1126,8 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  */
 
 CREATE OR REPLACE FUNCTION  MADLIB_SCHEMA.matrix_norm(
-    matrix_a    TEXT,
+    matrix_in   TEXT,
+    in_args     TEXT,
     norm_type   TEXT
 )
 RETURNS DOUBLE PRECISION AS $$
@@ -1052,10 +1152,11 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_norm(
-    matrix_a    TEXT
+    matrix_in    TEXT,
+    in_args      TEXT
 )
 RETURNS DOUBLE PRECISION AS $$
-    SELECT MADLIB_SCHEMA.matrix_norm($1, NULL)
+    SELECT MADLIB_SCHEMA.matrix_norm($1, $2, NULL)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 -------------------------------------------------------------------------
@@ -1065,13 +1166,16 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_block_mult
 (
     matrix_a    TEXT,
+    a_args      TEXT,
     matrix_b    TEXT,
-    matrix_out    TEXT
+    b_args      TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_block_mult(schema_madlib,
-        matrix_a, matrix_b, matrix_out)
+    matrix_ops.matrix_block_mult(schema_madlib, matrix_a, a_args,
+                                 matrix_b, b_args, matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -1081,11 +1185,14 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_block_square
 (
     matrix_in   TEXT,
-    matrix_out  TEXT
+    in_args     TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_block_square(schema_madlib, matrix_in, matrix_out)
+    matrix_ops.matrix_block_square(schema_madlib, matrix_in, in_args,
+                                   matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -1094,13 +1201,17 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_block_trans
 (
-    matrix_in   TEXT,
-    matrix_out  TEXT,
+    matrix_in       TEXT,
+    in_args         TEXT,
+    matrix_out      TEXT,
+    out_args        TEXT,
     use_temp_table  BOOLEAN
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_block_trans(schema_madlib, matrix_in, matrix_out, use_temp_table)
+    matrix_ops.matrix_block_trans(schema_madlib, matrix_in, in_args,
+                                  matrix_out, out_args,
+                                  use_temp_table=use_temp_table)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -1110,10 +1221,12 @@ CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_block_trans
 (
     matrix_in   TEXT,
-    matrix_out  TEXT
+    in_args     TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    select MADLIB_SCHEMA.matrix_block_trans($1, $2, FALSE)
+    select MADLIB_SCHEMA.matrix_block_trans($1, $2, $3, $4, FALSE)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -1127,17 +1240,32 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
  * @returns Name of the table containing the result matrix
  *
  */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_square
+(
+    matrix_in   TEXT,
+    in_args     TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_ops')
+    matrix_ops.matrix_square(schema_madlib, matrix_in, in_args,
+                             matrix_out, out_args)
+    return [matrix_out]
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
 
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_square
 (
     matrix_in   TEXT,
+    in_args     TEXT,
     matrix_out  TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_square(schema_madlib,
-        matrix_in, matrix_out)
-    return [matrix_out]
-$$ LANGUAGE plpythonu
+    SELECT MADLIB_SCHEMA.matrix_square($1, $2, $3, ''::TEXT);
+$$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------

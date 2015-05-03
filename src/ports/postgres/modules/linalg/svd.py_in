@@ -10,6 +10,7 @@ from utilities.utilities import unique_string
 from utilities.utilities import _assert
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
+from utilities.validate_args import get_cols
 from utilities.validate_args import rename_table
 from matrix_ops import get_dims
 from matrix_ops import create_temp_sparse_matrix_table_with_dims
@@ -109,17 +110,22 @@ def create_summary_table(**args):
     global actual_lanczos_iterations
     dt = (args['t1'] - args['t0']) * 1000.
 
+    plpy.info(get_cols(args['source_table']))
+
     plpy.execute(
         """
         SELECT {schema_madlib}.matrix_mult(
-            '{matrix_u}', NULL, NULL, NULL, False,
-            '{matrix_s}', 'row_id', 'col_id', 'value', False,
-            '{temp_prefix}_a');
+            '{matrix_u}', 'val=row_vec',
+            '{matrix_s}', 'val=value',
+            '{temp_prefix}_a',
+            'val=val');
         """.format(**args))
     plpy.execute(
         """
-        SELECT {schema_madlib}.matrix_mult('{temp_prefix}_a', False,
-                                           '{matrix_v}', True, '{temp_prefix}_b');
+        SELECT {schema_madlib}.matrix_mult('{temp_prefix}_a', 'val=val',
+                                           '{matrix_v}', 'val=row_vec, trans=True',
+                                           '{temp_prefix}_b',
+                                           'val=row_vec');
         """.format(**args))
     err = plpy.execute(
         """
@@ -182,7 +188,10 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
                    result_summary_table=result_summary_table,
                    is_block=True)
 
-    [row_dim, col_dim] = get_dims(source_table, is_block=True)
+    [row_dim, col_dim] = get_dims(source_table,
+                                  {'row': 'row_id', 'col': 'col_id',
+                                   'val': 'block'},
+                                  is_block=True)
     if k > min(row_dim, col_dim):
         plpy.error("SVD error: k cannot be larger than min(row_dim, col_dim) !")
 
@@ -195,7 +204,7 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
         x_trans = unique_string() + "_3"
         plpy.execute("""
             SELECT {schema_madlib}.matrix_block_trans(
-                '{source_table}', '{x_trans}', False)
+                '{source_table}', 'val=block', '{x_trans}', 'val=block', FALSE)
             """.format(schema_madlib=schema_madlib,
                        source_table=source_table, x_trans=x_trans))
         _svd(schema_madlib, x_trans, output_table_prefix, k, nIterations, True)
@@ -212,10 +221,13 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
         t1 = time.time()
         src_unblock = unique_string()
         plpy.execute("""
-                     select {schema_madlib}.matrix_unblockize('{source_table}',
-                                                             '{src_unblock}')
-                     """.format(source_table=source_table,
-                                src_unblock=src_unblock, schema_madlib=schema_madlib))
+            select {schema_madlib}.matrix_unblockize('{source_table}',
+                                                      'val=block',
+                                                     '{src_unblock}',
+                                                     NULL)
+            """.format(source_table=source_table,
+                       src_unblock=src_unblock,
+                       schema_madlib=schema_madlib))
         arguments = {'schema_madlib': schema_madlib,
                      'source_table': src_unblock,
                      'matrix_u': output_table_prefix + "_u",
@@ -271,11 +283,6 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
     # copy the input table to a temporary table since all matrix operation
     # modules require the dimensionality of the sparse matrix in the table
     # as a row: (row_dim, col_dim, NULL)
-    # Further, this function also hard codes the name of the (row, col, val)
-    # triple as ('row_id', 'col_id', 'value'). It is important to note this
-    # for further calls.
-    ## FIXME: Hardcoded names is a poor design requirement for matrix ops
-    ##         and should be changed
     converted_tbl = unique_string()
     create_temp_sparse_matrix_table_with_dims(source_table,
                                               converted_tbl,
@@ -286,14 +293,17 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
     x_dense = unique_string() + "_1"
     plpy.execute("""
         SELECT {schema_madlib}.matrix_densify(
-            '{source_table}', 'row_id', 'col_id', 'value',
-            '{x_dense}', False)
-        """.format(schema_madlib=schema_madlib, source_table=source_table,
-                   x_dense=x_dense))
+            '{source_table}', 'row={row_id}, col={col_id}, val={value}',
+            '{x_dense}', 'val=row_vec',
+            False)
+        """.format(schema_madlib=schema_madlib,
+                   source_table=source_table,
+                   x_dense=x_dense,
+                   row_id=row_id, col_id=col_id, value=value))
 
     # Call SVD for the dense matrix
     svd(schema_madlib, x_dense, output_table_prefix,
-        'row_id', k, nIterations, result_summary_table)
+        row_id, k, nIterations, result_summary_table)
 
     if result_summary_table:
         t1 = time.time()
@@ -315,13 +325,13 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
                 UPDATE {result_summary_table} SET \"exec_time (ms)\" = {dt:.2f};
                 ')
             """.format(tmp_result_summary_table=unique_string(),
-                    result_summary_table=result_summary_table, dt=dt))
+                       result_summary_table=result_summary_table, dt=dt))
 
     plpy.execute("DROP TABLE if exists {x_dense}".format(x_dense=x_dense))
     plpy.execute("DROP TABLE if exists {converted_tbl}"
                  .format(converted_tbl=converted_tbl))
     plpy.execute("set client_min_messages to " + old_msg_level)
- # ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
 
 
 def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
@@ -374,14 +384,13 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
                  """.format(converted_tbl=converted_tbl, row_dim=row_dim,
                             col_dim=col_dim))
     source_table = converted_tbl
-    ## NOTE: At this point source_table has hard-coded column names:
-    ##       'row_id' --- 'col_id' --- 'value'
+    # NOTE: At this point source_table has hard-coded column names:
+    #       'row_id' --- 'col_id' --- 'value'
 
     t0 = time.time()  # measure the starting time
     _svd(schema_madlib, source_table, output_table_prefix, k,
          nIterations, False, 'row_id', 'col_id', 'value')
 
-    # [row_dim, col_dim] = get_dims(source_table, row_id, col_id, val)
     if col_dim > row_dim:
         # Switch U and V
         _transpose_UV(schema_madlib,
@@ -393,7 +402,8 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
         src_dense = unique_string()
         plpy.execute("""
             select {schema_madlib}.matrix_densify(
-                '{source_table}', 'row_id', 'col_id', 'value', '{src_dense}', False)
+                '{source_table}', 'row=row_id, col=col_id, val=value',
+                '{src_dense}', 'val=row_vec')
             """.format(source_table=source_table, row_id=row_id, col_id=col_id,
                        val=val, src_dense=src_dense, schema_madlib=schema_madlib))
         arguments = {'schema_madlib': schema_madlib,
@@ -456,7 +466,8 @@ def svd(schema_madlib, source_table, output_table_prefix,
     if(need_new_column_names):
         source_table = source_table_copy
 
-    [row_dim, col_dim] = get_dims(source_table)
+    [row_dim, col_dim] = get_dims(source_table,
+                                  {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'})
     if k > min(row_dim, col_dim):
         plpy.error("SVD error: k cannot be larger than min(row_dim, col_dim) !")
 
@@ -466,7 +477,8 @@ def svd(schema_madlib, source_table, output_table_prefix,
     if col_dim > row_dim:
         x_trans = unique_string() + "_3"
         plpy.execute("""
-            SELECT {schema_madlib}.matrix_trans('{source_table}', '{x_trans}', False)
+            SELECT {schema_madlib}.matrix_trans('{source_table}', 'val=row_vec',
+                                                '{x_trans}', 'val=row_vec')
             """.format(schema_madlib=schema_madlib,
                        source_table=source_table, x_trans=x_trans))
         _svd(schema_madlib, x_trans, output_table_prefix, k, nIterations, is_block=False)
@@ -481,7 +493,8 @@ def svd(schema_madlib, source_table, output_table_prefix,
 
     if result_summary_table:
         t1 = time.time()
-        [row_dim, col_dim] = get_dims(source_table)
+        [row_dim, col_dim] = get_dims(source_table,
+                                      {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'})
         arguments = {'schema_madlib': schema_madlib,
                      'source_table': source_table,
                      'matrix_u': output_table_prefix + "_u",
@@ -794,7 +807,12 @@ def lanczos_bidiagonalize(schema_madlib, source_table, output_table_prefix,
     """
     global actual_lanczos_iterations
     # Get the dimensions of the matrix
-    [row_dim, col_dim] = get_dims(source_table, is_block=is_block)
+    val = 'block' if is_block else 'row_vec'
+    [row_dim, col_dim] = get_dims(source_table,
+                                  {'row': 'row_id',
+                                   'col': 'col_id',
+                                   'val': val},
+                                  is_block=is_block)
     if row_dim < col_dim:
         plpy.error("SVD error: row dimension ({0}) should be not less than"
                    "column dimension ({1})".format(row_dim, col_dim))
@@ -821,9 +839,12 @@ def lanczos_bidiagonalize(schema_madlib, source_table, output_table_prefix,
         matrix_trans_function = 'matrix_block_trans'
 
     plpy.execute("""
-        SELECT {schema_madlib}.{matrix_trans_function}('{matrix_in}', '{matrix_out}', False)
-        """.format(schema_madlib=schema_madlib, matrix_in=source_table,
-                   matrix_out=x_trans, matrix_trans_function=matrix_trans_function))
+        SELECT {schema_madlib}.{matrix_trans_function}('{source_table}',
+                                                       'val={val}',
+                                                       '{x_trans}',
+                                                       'val={val}',
+                                                       False)
+        """.format(**locals()))
 
     lanczos_sql = """
         {schema_madlib}.__svd_lanczos_agg(
@@ -903,7 +924,8 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
     """ Compute SVD of sparse matrix using Lanczos bidiagonalization algorithm """
 
     # Get the dimensions of the matrix
-    [row_dim, col_dim] = get_dims(source_table, row_id, col_id, val)
+    [row_dim, col_dim] = get_dims(source_table,
+                                  {'row': row_id, 'col': col_id, 'val': val})
     inplace_trans = False
     if row_dim < col_dim:
         tmp = row_dim
@@ -1117,7 +1139,7 @@ def svd_help_message(schema_madlib, message, **kwargs):
             SELECT {schema_madlib}.svd('mat', 'svd', 'row_id', 10);
             ----------------------------------------------------------------
             DROP TABLE if exists mat_sparse;
-            SELECT {schema_madlib}.matrix_sparsify('mat', 'mat_sparse', False);
+            SELECT {schema_madlib}.matrix_sparsify('mat', NULL, 'mat_sparse');
 
             DROP TABLE if exists svd_u;
             DROP TABLE if exists svd_v;
