@@ -56,11 +56,6 @@ public:
     AvgVectorState &operator+=(
         const AvgVectorState<OtherHandle> &inOtherState) {
 
-        if (mStorage.size() != inOtherState.mStorage.size() ||
-            numDimensions != inOtherState.numDimensions)
-            throw std::logic_error("Internal error: Incompatible transition "
-                "states");
-
         numRows += inOtherState.numRows;
         sumOfVectors += inOtherState.sumOfVectors;
         return *this;
@@ -136,6 +131,11 @@ avg_vector_merge::run(AnyType& args) {
         return stateRight;
     else if (stateRight.numRows == 0)
         return stateLeft;
+
+    if (stateLeft.numDimensions != stateRight.numDimensions) {
+        throw std::invalid_argument("Invalid arguments: Dimensions of points "
+            "not consistent.");
+    }
 
     stateLeft += stateRight;
     return stateLeft;
