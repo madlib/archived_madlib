@@ -74,11 +74,28 @@ get_row_from_2d_array::run(AnyType & args) {
     int index = args[1].getAs<int>() - 1; // database index starts from 1
     if (index < 0 or index >= input.cols()) {
         std::stringstream err_msg;
-        err_msg << "Out-of-bound index: " << index << " >= " << input.cols();
+        err_msg << "Out-of-bound index: " << index + 1 << " not in [1, "
+            << input.cols() + 1 << "]";
         throw std::runtime_error(err_msg.str());
     }
     MutableNativeColumnVector ret(this->allocateArray<double>(input.rows()));
     ret = input.col(static_cast<Index>(index));
+
+    return ret;
+}
+
+AnyType
+get_col_from_2d_array::run(AnyType & args) {
+    MappedMatrix input = args[0].getAs<MappedMatrix>();
+    int index = args[1].getAs<int>() - 1; // database index starts from 1
+    if (index < 0 or index >= input.rows()) {
+        std::stringstream err_msg;
+        err_msg << "Out-of-bound index: " << index + 1 << " not in [1, "
+            << input.rows() + 1 << "]";
+        throw std::runtime_error(err_msg.str());
+    }
+    MutableNativeColumnVector ret(this->allocateArray<double>(input.cols()));
+    ret = input.row(static_cast<Index>(index));
 
     return ret;
 }
