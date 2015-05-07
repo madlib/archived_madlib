@@ -18,6 +18,7 @@ from utilities.utilities import _string_to_array
 from utilities.validate_args import input_tbl_valid
 from utilities.validate_args import output_tbl_valid
 from utilities.validate_args import cols_in_tbl_valid
+from utilities.validate_args import columns_exist_in_table
 
 from glm import __glm_validate_args
 from glm import __extract_optim_params
@@ -565,24 +566,29 @@ def multinom_predict(schema_madlib, model_table, predict_table,
         grp_clause = " AND ".join(["{predict_table}.{c} = {model_table}.{c}".format(c=c, predict_table=predict_table, model_table=model_table) for c in group_var])
         grp_clause = "WHERE " + grp_clause
 
+    if columns_exist_in_table(predict_table, [id_column], schema_madlib):
+        multinom_predict_id = id_column
+    else:
+        multinom_predict_id = 'multinom_predict_id'
+
     if predict_type == 'response':
         sql = """
                 CREATE TABLE {predicted_value_tab} AS
                 SELECT
-                    subq2.id,
+                    subq2.{multinom_predict_id},
                     subq3.category AS category
                 FROM
                 (
                     SELECT
                         greatest(0, max_score) AS max_score,
-                        id
+                        {multinom_predict_id}
                     FROM
                     (
                         SELECT
                             max(
                                 {schema_madlib}.array_dot(coef, {ind_var}::float8[])
                             ) AS max_score,
-                            {id} AS id
+                            {id} AS {multinom_predict_id}
                         FROM
                             {predict_table},
                             {model_table}
@@ -594,7 +600,7 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                 (
                     SELECT
                         {schema_madlib}.array_dot(coef, {ind_var}::float8[]) AS score,
-                        {id} AS id,
+                        {id} AS {multinom_predict_id},
                         category::TEXT
                     FROM
                         {predict_table},
@@ -603,12 +609,17 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                     UNION
                     SELECT
                         0 AS score,
-                        {id} AS id,
+                        {id} AS {multinom_predict_id},
                         '{ref_category}' AS category
                     FROM {predict_table}
                 ) subq3
-                ON (subq2.id = subq3.id AND subq2.max_score=subq3.score)
-                ORDER BY subq2.id;
+                ON
+                (
+                    subq2.{multinom_predict_id} = subq3.{multinom_predict_id}
+                    AND
+                    subq2.max_score=subq3.score
+                )
+                ORDER BY subq2.{multinom_predict_id};
                 """.format(id=id_column,**locals())
         plpy.notice(sql)
         plpy.execute(sql)
@@ -626,7 +637,7 @@ def multinom_predict(schema_madlib, model_table, predict_table,
         sql = """
                 CREATE TABLE {predicted_value_tab} AS
                 SELECT
-                   id
+                   {multinom_predict_id}
                    {score_format}
                 FROM
                 (
@@ -638,12 +649,12 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                             )
                         ) AS score_arr,
                         array_agg(category ORDER BY idx) AS cate_arr,
-                        id
+                        {multinom_predict_id}
                     FROM
                     (
                         SELECT
                             score,
-                            id,
+                            {multinom_predict_id},
                             subq2.category,
                             idx
                         FROM
@@ -655,7 +666,7 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                                     )
                                 ) AS score,
                                 category,
-                                {id} AS id
+                                {id} AS {multinom_predict_id}
                             FROM
                                 {predict_table},
                                 {model_table}
@@ -664,7 +675,7 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                             SELECT
                                 1. AS score,
                                 '{ref_category}' AS category,
-                                {id} AS id
+                                {id} AS {multinom_predict_id}
                             FROM {predict_table}
                         ) subq2
                         LEFT JOIN
@@ -678,11 +689,11 @@ def multinom_predict(schema_madlib, model_table, predict_table,
                             ) subq
                         ) subq3
                         ON (subq2.category = subq3.category)
-                        ORDER BY id, idx
+                        ORDER BY {multinom_predict_id}, idx
                     ) subq4
-                    GROUP BY id
+                    GROUP BY {multinom_predict_id}
                 ) subq5
-                ORDER by id;
+                ORDER by {multinom_predict_id};
                 """.format(id=id_column,**locals())
         plpy.notice(sql)
         plpy.execute(sql)

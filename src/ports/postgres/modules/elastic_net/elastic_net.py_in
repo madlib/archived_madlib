@@ -531,9 +531,10 @@ def elastic_net_predict_all(schema_madlib, tbl_model, tbl_new_source,
 
     if col_id is None or col_id == '':
         plpy.error("Elastic Net error: invalid ID column provided!")
-    if not columns_exist_in_table(tbl_new_source, [col_id]):
-        plpy.error("Elastic Net error: ID column {0} does not exists!".format(
-            col_id))
+    if columns_exist_in_table(tbl_new_source, [col_id], schema_madlib):
+        elastic_net_predict_id = col_id
+    else:
+        elastic_net_predict_id = 'elastic_net_predict_id'
 
     dense_vars = mad_vec(plpy.execute(""" SELECT features AS fs
                                           FROM {tbl_model}
@@ -545,23 +546,17 @@ def elastic_net_predict_all(schema_madlib, tbl_model, tbl_new_source,
         DROP TABLE IF EXISTS {tbl_predict};
         CREATE TABLE {tbl_predict} AS
             SELECT
-                id,
+                {elastic_net_predict_id},
                 {schema_madlib}.{predict_func}(coef_all, intercept, ind_var)
                      AS prediction
             FROM
                 {tbl_model} as tbl1,
                 (SELECT
-                    {col_id} as id,
+                    {col_id} as {elastic_net_predict_id},
                     {dense_vars_str} as ind_var
                 FROM
                     {tbl_new_source}) tbl2
-        """.format(tbl_model=tbl_model,
-                   predict_func=predict_func,
-                   tbl_predict=tbl_predict,
-                   col_id=col_id,
-                   dense_vars_str=dense_vars_str,
-                   schema_madlib=schema_madlib,
-                   tbl_new_source=tbl_new_source))
+        """.format(**locals()))
 
     set_client_min_messages(old_msg_level)
     return None
