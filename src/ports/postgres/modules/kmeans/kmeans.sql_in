@@ -1392,33 +1392,30 @@ DECLARE
     oldClientMinMessages VARCHAR;
     rel_source_filtered VARCHAR;
 BEGIN
-    IF (SELECT position('.' in rel_source)) > 0 THEN
-        rel_source_filtered := '_madlib_' || split_part(rel_source, '.', 2) || '_filtered';
-    ELSE
-        rel_source_filtered := '_madlib_' || rel_source || '_filtered';
-    END IF;
-
-    -- rel_source_filtered := (SELECT MADLIB_SCHEMA.__unique_string());
+    SELECT '_madlib_' || MADLIB_SCHEMA.__unique_string()  || '_filtered'
+    INTO rel_source_filtered;
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
     EXECUTE 'SET client_min_messages TO warning';
     EXECUTE 'DROP VIEW IF EXISTS _madlib_'||rel_source_filtered||'_filtered';
     EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered;
-    EXECUTE 'CREATE TEMPORARY VIEW '||rel_source_filtered||'
-             AS SELECT * FROM '||rel_source||'
-                    WHERE abs(
-                              coalesce(
-                                 MADLIB_SCHEMA.svec_elsum('||expr_point||'),
-                                 ''Infinity''::FLOAT8
-                              )
-                             ) < ''Infinity''::FLOAT8';
-    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
-    RETURN rel_source_filtered;
+    BEGIN
+        EXECUTE 'CREATE TEMPORARY VIEW '||rel_source_filtered||'
+                 AS SELECT * FROM '||rel_source||'
+                        WHERE abs(
+                                  coalesce(
+                                     MADLIB_SCHEMA.svec_elsum('||expr_point||'),
+                                     ''Infinity''::FLOAT8
+                                  )
+                                 ) < ''Infinity''::FLOAT8';
     EXCEPTION
         WHEN undefined_function THEN
-        RAISE EXCEPTION 'Kmeans error: Invalid type for point coordinates.
+        RAISE EXCEPTION '(%) Kmeans error: Invalid type for point coordinates.
                         Point coordinates (%) are not a valid type
-                        (SVEC, FLOAT[], or INTEGER[]).', expr_point;
+                        (SVEC, FLOAT[], or INTEGER[]).', rel_source, expr_point;
+    END;
+    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+    RETURN rel_source_filtered;
 END
 $$
 VOLATILE
