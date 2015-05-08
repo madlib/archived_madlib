@@ -110,22 +110,21 @@ def create_summary_table(**args):
     global actual_lanczos_iterations
     dt = (args['t1'] - args['t0']) * 1000.
 
-    plpy.info(get_cols(args['source_table']))
-
     plpy.execute(
         """
         SELECT {schema_madlib}.matrix_mult(
-            '{matrix_u}', 'val=row_vec',
-            '{matrix_s}', 'val=value',
-            '{temp_prefix}_a',
-            'val=val');
+            '{matrix_u}', 'row=row_id, col=col_id, val=row_vec',
+            '{matrix_s}', 'row=row_id, col=col_id, val=value',
+            '{temp_prefix}_a', 'row=row_id, col=col_id, val=row_vec'
+            );
         """.format(**args))
     plpy.execute(
         """
-        SELECT {schema_madlib}.matrix_mult('{temp_prefix}_a', 'val=val',
-                                           '{matrix_v}', 'val=row_vec, trans=True',
-                                           '{temp_prefix}_b',
-                                           'val=row_vec');
+        SELECT {schema_madlib}.matrix_mult(
+            '{temp_prefix}_a', 'row=row_id, col=col_id, val=row_vec, trans=false',
+            '{matrix_v}', 'row=row_id, col=col_id, val=row_vec, trans=True',
+            '{temp_prefix}_b', 'row=row_id, col=col_id, val=row_vec'
+            );
         """.format(**args))
     err = plpy.execute(
         """
@@ -204,7 +203,8 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
         x_trans = unique_string() + "_3"
         plpy.execute("""
             SELECT {schema_madlib}.matrix_block_trans(
-                '{source_table}', 'val=block', '{x_trans}', 'val=block', FALSE)
+                '{source_table}', 'row=row_id, col=col_id, val=block',
+                '{x_trans}', 'row=row_id, col=col_id, val=block')
             """.format(schema_madlib=schema_madlib,
                        source_table=source_table, x_trans=x_trans))
         _svd(schema_madlib, x_trans, output_table_prefix, k, nIterations, True)
@@ -221,10 +221,9 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
         t1 = time.time()
         src_unblock = unique_string()
         plpy.execute("""
-            select {schema_madlib}.matrix_unblockize('{source_table}',
-                                                      'val=block',
-                                                     '{src_unblock}',
-                                                     NULL)
+            select {schema_madlib}.matrix_unblockize(
+                '{source_table}', 'row=row_id, col=col_id, val=block',
+                '{src_unblock}', 'row=row_id, col=col_id, val=row_vec')
             """.format(source_table=source_table,
                        src_unblock=src_unblock,
                        schema_madlib=schema_madlib))
@@ -477,8 +476,9 @@ def svd(schema_madlib, source_table, output_table_prefix,
     if col_dim > row_dim:
         x_trans = unique_string() + "_3"
         plpy.execute("""
-            SELECT {schema_madlib}.matrix_trans('{source_table}', 'val=row_vec',
-                                                '{x_trans}', 'val=row_vec')
+            SELECT {schema_madlib}.matrix_trans(
+                '{source_table}', 'row=row_id, val=row_vec',
+                '{x_trans}', 'row=row_id, val=row_vec')
             """.format(schema_madlib=schema_madlib,
                        source_table=source_table, x_trans=x_trans))
         _svd(schema_madlib, x_trans, output_table_prefix, k, nIterations, is_block=False)
@@ -839,11 +839,9 @@ def lanczos_bidiagonalize(schema_madlib, source_table, output_table_prefix,
         matrix_trans_function = 'matrix_block_trans'
 
     plpy.execute("""
-        SELECT {schema_madlib}.{matrix_trans_function}('{source_table}',
-                                                       'val={val}',
-                                                       '{x_trans}',
-                                                       'val={val}',
-                                                       False)
+        SELECT {schema_madlib}.{matrix_trans_function}(
+            '{source_table}', 'row=row_id, col=col_id, val={val}',
+            '{x_trans}', 'row=row_id, col=col_id, val={val}')
         """.format(**locals()))
 
     lanczos_sql = """

@@ -74,8 +74,6 @@ The functions below support several numeric types (unless otherwise noted):
 @anchor operations
 @par  Matrix Operations
 
-All functions described in this module work with matrices.
-
 \b Glossary
 
 The following arguments are commonly used in all matrix functions. The table below
@@ -87,7 +85,7 @@ provides a glossary of the terms used.
 - For functions accepting one matrix, <em>matrix_in</em> denotes the input matrix.
 - For functions accepting two matrices, <em>matrix_a</em> denotes the first matrix
 and <em>matrix_b</em> denotes the second matrix. These two matrices can
-idependently be in either dense or sparse format.
+independently be in either dense or sparse format.
 </dd>
 
 <dt>matrix_out</dt>
@@ -100,16 +98,22 @@ This argument is used as a container for multiple parameters related to a single
 matrix.
 
 The following parameters are supported for this string argument:
-    - row: (Default: 'row_id') Name of the column containing row id of the matrix.
-    - col: (Default: 'col_id') Name of the column containing column id of the matrix.
+    - row: (Default: 'row_num') Name of the column containing row index of the matrix.
+    - col: (Default: 'col_num') Name of the column containing column index of the matrix.
     - val: (Default: 'val') Name of the column containing the entries of the matrix.
-    For a dense matrix, this should be of an ARRAY type.
     - trans: (Default: False) Boolean flag to indicate if the matrix should be
     transposed before the operation. This is currently functional only for <em>matrix_mult</em>.
 
 These string arguments can be <em>NULL</em> if the default values are to be used.
 
-The default value for <em>out_args</em> are set as follows:
+@note Restrictions on input arguments (<em>in_args</em>, <em>a_args</em>, <em>b_args</em>):
+  - For dense matrices, the <em>row</em> column should be a contiguous series of
+integers from 0 to <em>N</em> - 1 with no duplicates, where <em>N</em> is the row dimensionality
+and the <em>val</em> argument should be an array.
+  - For sparse matrices, the <em>row</em>, <em>col</em> columns together should not
+contain a duplicate entry and the <em>val</em> column should be scalar (non-array) type.
+
+@note Defaults for output argument (<em>out_args</em>) are set as follows:
     - For functions with one input matrix, default value = <em>in_args</em>
     - For functions with two input matrices, default value = <em>a_args</em>.
 </dd>
@@ -149,7 +153,7 @@ matrix_mult( matrix_a, a_args,
 is computed between two sparse matrices).
 
 @anchor examples
-@examp
+@par Examples
 
 - Create some random data tables in dense format.
 <pre class="syntax">
@@ -210,7 +214,7 @@ SELECT * FROM mat_r ORDER BY row_id;
 - Add the two matrices
 <pre class="syntax">
 SELECT madlib.matrix_add('"mat_A"', 'row=row_id, val=row_vec',
-                         '"mat_B"', 'val=vector',
+                         '"mat_B"', 'row=row_id, val=vector',
                          'mat_r', 'val=vector');
 SELECT * FROM mat_r ORDER BY row_id;
 </pre>
@@ -233,8 +237,8 @@ SELECT * FROM mat_r ORDER BY row_id;
 - Multiply the two matrices
 <pre class="syntax">
 DROP TABLE IF EXISTS mat_r;
-SELECT madlib.matrix_mult('"mat_A"', 'val=row_vec',
-                          '"mat_B"', 'val=vector, trans=true',
+SELECT madlib.matrix_mult('"mat_A"', 'row=row_id, val=row_vec',
+                          '"mat_B"', 'row=row_id, val=vector, trans=true',
                           'mat_r');
 SELECT * FROM mat_r ORDER BY row_id;
 </pre>
@@ -256,7 +260,8 @@ SELECT * FROM mat_r ORDER BY row_id;
 
 - Compute sparse representation of a matrix
 <pre class="syntax">
-SELECT madlib.matrix_sparsify('"mat_B"', 'val=vector', '"mat_B_sparse"');
+SELECT madlib.matrix_sparsify('"mat_B"', 'row=row_id, val=vector',
+                              '"mat_B_sparse"', 'col=col_id, val=val');
 </pre>
 
 - Create a matrix in sparse format.
@@ -288,7 +293,7 @@ INSERT INTO "mat_A_sparse" ("rowNum", col_num, entry) VALUES (10, 10, NULL);
 - Transpose a matrix in sparse format
 <pre class="syntax">
 -- Note the double quotes for '"rowNum"' required per PostgreSQL rules
-SELECT madlib.matrix_trans('"mat_A_sparse"', 'row="rowNum", col=col_num, val=entry',
+SELECT madlib.matrix_trans('"mat_A_sparse"', 'row="rowNum", val=entry',
                            'matrix_r_sparse');
 SELECT "rowNum", col_num, entry FROM matrix_r_sparse ORDER BY col_num;
 </pre>
@@ -317,8 +322,8 @@ SELECT "rowNum", col_num, entry FROM matrix_r_sparse ORDER BY col_num;
 
 - Add two sparse matrices
 <pre class="syntax">
-SELECT madlib.matrix_add('"mat_A_sparse"', 'row="rowNum", col=col_num, val=entry',
-                         '"mat_B_sparse"', 'val=vector, trans=true',
+SELECT madlib.matrix_add('"mat_A_sparse"', 'row="rowNum", val=entry',
+                         '"mat_B_sparse"', 'row=row_id, col=col_id, val=vector, trans=true',
                          'matrix_r_sparse', 'col=col_out');
 SELECT madlib.matrix_densify('matrix_r_sparse', 'row="rowNum", col=col_out, val=entry',
                              'matrix_r');
@@ -343,7 +348,7 @@ SELECT * FROM matrix_r ORDER BY "rowNum";
 - Multiply two sparse matrices
 <pre class="syntax">
 SELECT madlib.matrix_mult('"mat_A_sparse"', 'row="rowNum", col=col_num, val=entry',
-                          '"mat_B_sparse"', 'val=vector, trans=true',
+                          '"mat_B_sparse"', 'row=row_id, col=col_id, val=vector, trans=true',
                           'matrix_r');
 SELECT * FROM matrix_r ORDER BY "rowNum";
 </pre>
@@ -398,16 +403,16 @@ CREATE TYPE MADLIB_SCHEMA.matrix_result AS(
 /**
  * @brief Multiplies two matrices. It requires that all the values are NON-NULL.
  * This is the sparse representation of the matrix where the matrix elements
- * are indexed by the row and column id.
+ * are indexed by the row and column index.
  *
  * @param matrix_a Name of the table containing the first matrix
- * @param a_row Name of the column containing the row id for the first matrix
- * @param a_col Name of the column containing the column id for the first matrix
+ * @param a_row Name of the column containing the row index for the first matrix
+ * @param a_col Name of the column containing the column index for the first matrix
  * @param a_val Name of the column containing the matrix values for the first matrix
  * @param a_trans Boolean to indicate if first matrix should be transposed before multiplication
  * @param matrix_b Name of the table containing the second matrix
- * @param b_row Name of the column containing the row id for the second matrix
- * @param b_col Name of the column containing the column id for the second matrix
+ * @param b_row Name of the column containing the row index for the second matrix
+ * @param b_col Name of the column containing the column index for the second matrix
  * @param b_val Name of the column containing the matrix values for the second matrix
  * @param b_trans Boolean to indicate if second matrix should be transposed before multiplication
  * @param matrix_out Name of the table where to output the result matrix
@@ -469,15 +474,15 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 /**
  * @brief Adds two matrices. It requires that all the values are NON-NULL.
  * This is the sparse representation of the matrix where the matrix elements
- * are indexed by the row and column id.
+ * are indexed by the row and column index.
  *
  * @param matrix_a Name of the table containing the first matrix
- * @param a_row Name of the column containing the row id for the first matrix
- * @param a_col Name of the column containing the column id for the first matrix
+ * @param a_row Name of the column containing the row index for the first matrix
+ * @param a_col Name of the column containing the column index for the first matrix
  * @param a_val Name of the column containing the matrix values for the first matrix
  * @param matrix_b Name of the table containing the second matrix
- * @param b_row Name of the column containing the row id for the second matrix
- * @param b_col Name of the column containing the column id for the second matrix
+ * @param b_row Name of the column containing the row index for the second matrix
+ * @param b_col Name of the column containing the column index for the second matrix
  * @param b_val Name of the column containing the matrix values for the second matrix
  * @param matrix_out Name of the table where to output the result matrix
  * @returns Name of the table containing the result matrix
@@ -554,11 +559,11 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 /**
  * @brief Transpose matrix. It requires that all the values are NON-NULL.
  * This is the sparse representation of the matrix where the matrix elements
- * are indexed by the row and column id.
+ * are indexed by the row and column index.
  *
  * @param matrix_in Name of the table containing the input matrix
- * @param in_row Name of the column containing the row id for the input matrix
- * @param in_col Name of the column containing the column id for the input matrix
+ * @param in_row Name of the column containing the row index for the input matrix
+ * @param in_col Name of the column containing the column index for the input matrix
  * @param in_val Name of the column containing the matrix values for the input matrix
  * @param matrix_out Name of the table where to output the result matrix
  * @param use_temp_table Specify if use temp table for result
@@ -629,7 +634,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 /**
  * @brief Converts matrix to sparse representation. It requires that all the values are NON-NULL.
  * This is the dense representation of the matrix where the matrix elements
- * are indexed by the row and column id.
+ * are indexed by the row and column index.
  *
  * @param matrix_in Name of the table containing the input matrix
  * @param matrix_out Name of the table where to output the result matrix
@@ -701,11 +706,11 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 /**
  * @brief Converts matrix to dense representation. It requires that all the values are NON-NULL.
  * This is the sparse representation of the matrix where the matrix elements
- * are indexed by the row id.
+ * are indexed by the row index.
  *
  * @param matrix_in Name of the table containing the input matrix
- * @param in_row Name of the column containing the row id for the input matrix
- * @param in_col Name of the column containing the column id for the input matrix
+ * @param in_row Name of the column containing the row index for the input matrix
+ * @param in_col Name of the column containing the column index for the input matrix
  * @param in_val Name of the column containing the matrix values for the input matrix
  * @param matrix_out Name of the table where to output the result matrix
  * @param use_temp_table Specify if use temp table for result
@@ -1233,7 +1238,7 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 /**
  * @brief Calculate square of matrix. It requires that all the values are NON-NULL.
  * This is the dense representation of the matrix where the matrix elements
- * are indexed by the row id.
+ * are indexed by the row index.
  *
  * @param matrix_in Name of the table containing the input matrix
  * @param matrix_out Name of the table where to output the result matrix

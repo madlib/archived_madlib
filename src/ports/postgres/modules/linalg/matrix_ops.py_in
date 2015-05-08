@@ -25,8 +25,8 @@ def _is_sparse(matrix_in, val):
 
 def _matrix_default_args():
     return {
-        'row': 'row_id',
-        'col': 'col_id',
+        'row': 'row_num',
+        'col': 'col_num',
         'val': 'val',
         'trans': False
         }
@@ -59,10 +59,10 @@ def parse_matrix_args(matrix_args, in_default_args=None):
     if not isinstance(matrix_args, str):
         raise ValueError("Matrix error: invalid input for matrix args")
     params_types = {'row': str, 'col': str, 'val': str, 'trans': bool}
-    pruning_params = extract_keyvalue_params(matrix_args,
-                                             params_types,
-                                             default_args)
-    return pruning_params
+    matrix_params = extract_keyvalue_params(matrix_args,
+                                            params_types,
+                                            default_args)
+    return matrix_params
 
 
 def cast_dense_input_table_to_correct_columns(schema_madlib, matrix_in,
@@ -125,15 +125,28 @@ def _validate_sparse(matrix, matrix_args, checkCol=True):
                 "Matrix error: invalid column ({0}) should not be an array "
                 "datatype".format(matrix_args['val']))
 
-    # verify that the matrix row_id, col_id elements are unique
-    n_non_unique = plpy.execute(
-        """ SELECT 1 as c FROM {matrix}
+    # verify that the matrix row_id, col_id elements are unique and not missing
+    c = unique_string()
+    non_unique_rows = plpy.execute("""
+            SELECT {matrix_args[row]} as r, {matrix_args[col]} as c
+            FROM {matrix}
             GROUP BY {matrix_args[row]}, {matrix_args[col]}
-            HAVING ( COUNT(*) > 1 )
-        """.format(**locals()))
-    _assert(len(n_non_unique) == 0,
-            "Matrix error: Sparse matrix ({0}) contains "
-            "multiple rows with the same row_id and col_id.".format(matrix))
+            HAVING  count(*) > 1
+            ORDER BY r, c
+           """.format(**locals()))
+    if non_unique_rows:
+        bad_rows = [str(i['r']) + "  |  " + str(i['c']) for i in non_unique_rows[:100]]
+        plpy.error(
+            """Matrix error: Following entries are duplicated in sparse matrix ({m}) .
+
+(Displaying a maximum of 100 entries)
+{row}  | {col}
+-----------------------------------
+{all_rows}
+            """.format(m=matrix,
+                       row=matrix_args['row'],
+                       col=matrix_args['col'],
+                       all_rows="\n".join(bad_rows)))
 
     # Sparse representation requires passing the dimension of the input matrix
     # as one of the elements. This element will have a NULL for it's value column.
@@ -145,7 +158,7 @@ def _validate_sparse(matrix, matrix_args, checkCol=True):
                           "value found in the {0} column".format(matrix_args['val']))
 
 
-def _validate_dense(matrix, matrix_args, checkCol=True):
+def _validate_dense(matrix, matrix_args, checkCol=True, row_dim=None):
     _assert(table_exists(matrix), "Matrix error: Could not find table {0}".format(matrix))
     if checkCol:
         cols = [matrix_args[i] for i in ('row', 'val')]
@@ -157,15 +170,41 @@ def _validate_dense(matrix, matrix_args, checkCol=True):
                 "Matrix error: invalid column ({0}) should be an array "
                 "datatype".format(matrix_args['val']))
 
-    # verify that the matrix row_id elements are unique
-    n_non_unique = plpy.execute(
-        """ SELECT 1 as c FROM {matrix}
+    # verify that the matrix row_id, col_id elements are unique and not missing
+    if row_dim is None:
+        row_dim = plpy.execute("SELECT max({0}) + 1 as max_row_dim FROM {1}".
+                               format(matrix_args['row'], matrix))[0]['max_row_dim']
+    c = unique_string()
+    non_unique_rows = plpy.execute("""
+            SELECT {matrix_args[row]} as r
+            FROM {matrix}
             GROUP BY {matrix_args[row]}
-            HAVING ( COUNT(*) > 1 )
-        """.format(**locals()))
-    _assert(len(n_non_unique) == 0,
-            "Matrix error: Dense matrix ({0}) contains "
-            "multiple rows with the same id.".format(matrix))
+            HAVING (count(*) > 1)
+
+            UNION
+
+            SELECT {c} as r
+            FROM (
+                SELECT {matrix_args[row]}, {c}
+                FROM {matrix} RIGHT OUTER JOIN
+                        generate_series(0, {row_dim} - 1) as {c}
+                ON ({matrix_args[row]} = {c})
+            ) q
+            WHERE {matrix_args[row]} is NULL
+            ORDER BY r;
+           """.format(**locals()))
+    if non_unique_rows:
+        bad_rows = [str(i['r']) for i in non_unique_rows[:100]]
+        plpy.error(
+            """Matrix error: Following {row} values are either missing or duplicated in dense matrix ({m}).
+
+(Displaying a maximum of 100 entries)
+{row}
+------------
+{all_rows}
+            """.format(m=matrix,
+                       row=matrix_args['row'],
+                       all_rows="\n".join(bad_rows)))
 
 
 def _validate_block(matrix, matrix_args):
@@ -178,7 +217,7 @@ def _validate_block(matrix, matrix_args):
             " don't exist in the table ({1}) representing a block matrix".
             format(','.join([matrix_args['row'], matrix_args['col'],
                              matrix_args['val']]),
-                    matrix))
+                   matrix))
     _assert(is_col_array(matrix, matrix_args['val']),
             "Matrix error: Invalid block column - array expected")
     _assert(not table_is_empty(matrix),
@@ -233,14 +272,14 @@ def get_dims(matrix, matrix_args, is_block=False):
         col_dim = rv[0]['col_dim']
     else:
         rv = plpy.execute("""
-            SELECT count(*) AS row_dim
+            SELECT max({matrix_args[row]}) + 1 AS row_dim
             FROM {matrix}
-            """.format(matrix=matrix))
+            """.format(matrix=matrix, matrix_args=matrix_args))
         row_dim = rv[0]['row_dim']
         rv = plpy.execute("""
             SELECT
                 (array_upper({matrix_args[val]}, 1) -
-                 array_lower({matrix_args[val]}, 1) + 1)
+                     array_lower({matrix_args[val]}, 1) + 1)
                 AS col_dim
             FROM
                 {matrix}
@@ -253,16 +292,17 @@ def get_dims(matrix, matrix_args, is_block=False):
 def matrix_sparsify(matrix_in, in_args,
                     matrix_out, out_args, use_temp_table=False):
 
+    _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
     in_args = parse_matrix_args(in_args)
-    _validate_dense(matrix_in, in_args)
+    (row_dim, col_dim) = get_dims(matrix_in, in_args)
+    _validate_dense(matrix_in, in_args, row_dim=row_dim)
 
     out_args = parse_matrix_args(out_args,
                                  in_default_args={'row': in_args['row'],
                                                   'val': in_args['val']})
-    _validate_output_table(matrix_out)
     temp = 'TEMP' if use_temp_table else ''
 
-    (row_dim, col_dim) = get_dims(matrix_in, in_args)
     plpy.execute('DROP TABLE IF EXISTS %s' % matrix_out)
     temp_col_id, temp_val = unique_string(), unique_string()
     plpy.execute("""
@@ -295,12 +335,13 @@ def matrix_sparsify(matrix_in, in_args,
 def matrix_densify(schema_madlib, matrix_in, in_args,
                    matrix_out, out_args, use_temp_table=False):
 
+    _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
     in_args = parse_matrix_args(in_args)
     _validate_sparse(matrix_in, in_args)
     out_args = parse_matrix_args(out_args,
                                  in_default_args={'row': in_args['row'],
                                                   'val': in_args['val']})
-    _validate_output_table(matrix_out)
     temp = '' if not use_temp_table else 'TEMP'
 
     (row_dim, col_dim) = get_dims(matrix_in, in_args)
@@ -368,13 +409,13 @@ def matrix_trans(schema_madlib, matrix_in, in_args,
     Side effect:
         Creates an output table containing the transpose of matrix_in
     """
+    _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
     in_args = parse_matrix_args(in_args)
     out_args = parse_matrix_args(out_args,
                                  in_default_args={'row': in_args['row'],
                                                   'col': in_args['col'],
                                                   'val': in_args['val']})
-    _validate_output_table(matrix_out)
-    _validate_input_table(matrix_in)
 
     if _is_sparse(matrix_in, in_args['val']):
         _validate_sparse(matrix_in, in_args)
@@ -444,9 +485,9 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
                 matrix_b, b_args, matrix_out, out_args=None,
                 use_temp_table=False):
 
-    _validate_output_table(matrix_out)
     _validate_input_table(matrix_a)
     _validate_input_table(matrix_b)
+    _validate_output_table(matrix_out)
 
     a_args = parse_matrix_args(a_args)
     b_args = parse_matrix_args(b_args)
@@ -478,8 +519,8 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
     # both matrix_a and matrix_b are dense
     if (not _is_sparse(matrix_a, a_args['val']) and
             not _is_sparse(matrix_b, b_args['val'])):
-        _validate_dense(matrix_a, a_args)
-        _validate_dense(matrix_b, b_args)
+        _validate_dense(matrix_a, a_args, row_dim=a_dim[0])
+        _validate_dense(matrix_b, b_args, row_dim=b_dim[0])
         _matrix_mult_dense(schema_madlib, matrix_a, a_args,
                            matrix_b, b_args, matrix_out, out_args,
                            use_temp_table=use_temp_table)
@@ -616,8 +657,8 @@ def _matrix_mult_dense(schema_madlib, matrix_a, a_args,
 
 def matrix_square(schema_madlib, matrix_in, in_args,
                   matrix_out, out_args):
-    _validate_output_table(matrix_out)
     _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
 
     in_args = parse_matrix_args(in_args)
     out_args = parse_matrix_args(out_args,
@@ -634,7 +675,7 @@ def matrix_square(schema_madlib, matrix_in, in_args,
                             matrix_in, in_args,
                             matrix_out, out_args)
     else:
-        _validate_dense(matrix_in, in_args)
+        _validate_dense(matrix_in, in_args, row_dim=dim[0])
         _matrix_mult_dense(schema_madlib, matrix_in, in_args,
                            matrix_in, in_args, matrix_out, out_args)
 # ------------------------------------------------------------------------------
@@ -656,9 +697,7 @@ def matrix_norm(schema_madlib, matrix_in, in_args, norm_type, **kwargs):
 
     """
 
-    # Check for null values
-    if matrix_in is None:
-        plpy.error("Matrix Norm Error: NULL input table is not valid")
+    _validate_input_table(matrix_in)
     if norm_type is None:
         norm_type = 'fro'
 
@@ -713,9 +752,9 @@ def matrix_scale_and_add(schema_madlib,
 
     """
     # TODO: this function only works with dense matrices. Need to add sparse support
-    _validate_output_table(matrix_out)
     _validate_input_table(matrix_a)
     _validate_input_table(matrix_b)
+    _validate_output_table(matrix_out)
 
     a_args = parse_matrix_args(a_args)
     b_args = parse_matrix_args(b_args)
@@ -723,15 +762,15 @@ def matrix_scale_and_add(schema_madlib,
                                  in_default_args={'row': a_args['row'],
                                                   'col': a_args['col'],
                                                   'val': a_args['val']})
-    _validate_dense(matrix_a, a_args)
-    _validate_dense(matrix_b, b_args)
-
     a_dim = get_dims(matrix_a, a_args)
     b_dim = get_dims(matrix_b, b_args)
     _assert(min(a_dim) > 0 and min(b_dim) > 0,
             "Matrix error: Invalid dimensions for input matrices")
     _assert(a_dim[0] == b_dim[0] and a_dim[1] == b_dim[1],
             "Matrix error: The dimensions of the two matrices don't match")
+
+    _validate_dense(matrix_a, a_args, row_dim=a_dim[0])
+    _validate_dense(matrix_b, b_args, row_dim=b_dim[0])
 
     if scale is None:
         plpy.error("Matrix error : Scale cannot be NULL")
@@ -755,9 +794,9 @@ def matrix_scale_and_add(schema_madlib,
 def matrix_add(schema_madlib, matrix_a, a_args,
                matrix_b, b_args, matrix_out, out_args,
                use_temp_table=False):
-    _validate_output_table(matrix_out)
     _validate_input_table(matrix_a)
     _validate_input_table(matrix_b)
+    _validate_output_table(matrix_out)
 
     a_args = parse_matrix_args(a_args)
     b_args = parse_matrix_args(b_args)
@@ -789,7 +828,7 @@ def matrix_add(schema_madlib, matrix_a, a_args,
                        matrix_out1, _matrix_default_args(), False)
         matrix_a = matrix_out1
         a_args = _matrix_default_args()
-    _validate_dense(matrix_a, a_args)
+    _validate_dense(matrix_a, a_args, a_dim[0])
 
     # densify matrix_b if sparse
     matrix_out2 = unique_string() + "_a2"
@@ -798,7 +837,7 @@ def matrix_add(schema_madlib, matrix_a, a_args,
                        matrix_out2, _matrix_default_args(), False)
         matrix_b = matrix_out2
         b_args = _matrix_default_args()
-    _validate_dense(matrix_b, b_args)
+    _validate_dense(matrix_b, b_args, b_dim[0])
 
     _matrix_add_dense(schema_madlib, matrix_a, a_args,
                       matrix_b, b_args, matrix_out, out_args,
@@ -811,8 +850,6 @@ def matrix_add(schema_madlib, matrix_a, a_args,
 def _matrix_add_sparse(schema_madlib, matrix_a, a_args,
                        matrix_b, b_args, matrix_out, out_args,
                        use_temp_table=False):
-    _validate_sparse(matrix_a, a_args)
-    _validate_sparse(matrix_b, b_args)
     temp = '' if not use_temp_table else 'TEMP'
     plpy.execute("""
         CREATE {temp} TABLE {matrix_out}
@@ -846,8 +883,6 @@ def _matrix_add_sparse(schema_madlib, matrix_a, a_args,
 def _matrix_add_dense(schema_madlib, matrix_a, a_args,
                       matrix_b, b_args, matrix_out, out_args,
                       use_temp_table=False):
-    _validate_dense(matrix_a, a_args)
-    _validate_dense(matrix_b, b_args)
     temp = '' if not use_temp_table else 'TEMP'
     plpy.execute("""
         CREATE {temp} TABLE {matrix_out}
@@ -873,9 +908,9 @@ def matrix_block_mult(schema_madlib, matrix_a, a_args,
                       matrix_b, b_args,
                       matrix_out, out_args):
 
-    _validate_output_table(matrix_out)
     _validate_input_table(matrix_a)
     _validate_input_table(matrix_b)
+    _validate_output_table(matrix_out)
 
     a_args = parse_matrix_args(a_args)
     b_args = parse_matrix_args(b_args)
@@ -925,9 +960,9 @@ def matrix_block_trans(schema_madlib, matrix_in, in_args,
                                  in_default_args={'row': in_args['row'],
                                                   'col': in_args['col'],
                                                   'val': in_args['val']})
-    _validate_output_table(matrix_out)
     _validate_input_table(matrix_in)
     _validate_block(matrix_in, in_args)
+    _validate_output_table(matrix_out)
 
     temp = 'TEMP' if use_temp_table else ''
     plpy.execute("""
@@ -1002,13 +1037,14 @@ def _matrix_column_to_array_format(source_table, row_id, target_table, istemp=Fa
 def matrix_blockize(schema_madlib, matrix_in, in_args,
                     row_dim, col_dim, matrix_out, out_args):
     _assert(row_dim > 0 and col_dim > 0, 'Matrix error: invalid block dimension')
+    _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
 
     in_args = parse_matrix_args(in_args)
-    _validate_dense(matrix_in, in_args, checkCol=False)
+    _validate_dense(matrix_in, in_args)
     out_args = parse_matrix_args(out_args,
                                  in_default_args={'row': in_args['row'],
                                                   'val': in_args['val']})
-    _validate_output_table(matrix_out)
 
     rv = plpy.execute('SELECT count(*) AS total_row FROM ' + matrix_in)
     total_row = rv[0]['total_row']
@@ -1050,6 +1086,7 @@ def matrix_unblockize(schema_madlib, matrix_in, in_args, matrix_out, out_args):
 
     in_args = parse_matrix_args(in_args)
     _validate_block(matrix_in, in_args)
+    _validate_input_table(matrix_in)
     _validate_output_table(matrix_out)
 
     out_args = parse_matrix_args(out_args,
