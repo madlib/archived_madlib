@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <cmath>
 #include <boost/algorithm/string.hpp>
 
 #include "metric.hpp"
@@ -131,6 +132,27 @@ closestColumnsAndDistancesUDF(
         }
     }
     std::sort_heap(ioFirst, ioLast, comparator);
+}
+
+double
+distPNorm(const MappedColumnVector& inX, const MappedColumnVector& inY, double p) {
+    if (inX.size() != inY.size()) {
+        throw std::runtime_error("Found input arrays of "
+                "different lengths unexpectedly.");
+    }
+    if (p <= 0 || std::isnan(p)) {
+        throw std::runtime_error("Expect input p to be positive.");
+    }
+
+    if (!std::isfinite(p)) {
+        return (inX - inY).lpNorm<Eigen::Infinity>();
+    } else {
+        double res = 0.0;
+        for (int i = 0; i < inX.size(); i++) {
+            res += std::pow(std::abs(inX(i) - inY(i)), p);
+        }
+        return std::pow(res, 1./p);
+    }
 }
 
 double
@@ -414,6 +436,24 @@ norm1::run(AnyType& args) {
 AnyType
 norm2::run(AnyType& args) {
     return static_cast<double>(args[0].getAs<MappedColumnVector>().norm());
+}
+
+AnyType
+dist_inf_norm::run(AnyType& args) {
+    return distPNorm(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>(),
+        std::numeric_limits<double>::infinity()
+    );
+}
+
+AnyType
+dist_pnorm::run(AnyType& args) {
+    return distPNorm(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>(),
+        args[2].getAs<double>()
+    );
 }
 
 AnyType

@@ -20,6 +20,7 @@ DECLARE_UDF(linalg, closest_columns)
 DECLARE_UDF(linalg, closest_column_hawq)
 DECLARE_UDF(linalg, closest_columns_hawq)
 
+
 /**
  * @brief Compute the 1-norm
  */
@@ -29,6 +30,16 @@ DECLARE_UDF(linalg, norm1)
  * @brief Compute the 2-norm
  */
 DECLARE_UDF(linalg, norm2)
+
+/**
+ * @brief compute the infinity-norm distance between two dense vectors
+ */
+DECLARE_UDF(linalg, dist_inf_norm)
+
+/**
+ * @brief compute the p-norm distance between two dense vectors
+ */
+DECLARE_UDF(linalg, dist_pnorm)
 
 /**
  * @brief Compute the squared Manhattan distance between two dense vectors
