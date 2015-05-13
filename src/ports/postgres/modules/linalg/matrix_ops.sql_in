@@ -143,6 +143,13 @@ matrix_add( matrix_a, a_args,
             matrix_out, out_args)
 </pre>
 
+- Matrix subtraction
+<pre class="syntax">
+matrix_sub( matrix_a, a_args,
+            matrix_b, b_args,
+            matrix_out, out_args)
+</pre>
+
 - Matrix multiplication
 <pre class="syntax">
 matrix_mult( matrix_a, a_args,
@@ -232,6 +239,51 @@ SELECT * FROM mat_r ORDER BY row_id;
       8 | {14,13,9,12,4,13,19,7,8,9}
       9 | {5,10,7,6,14,9,3,10,8,13}
 (10 rows)
+</pre>
+
+- Sub the two matrices
+<pre class="syntax">
+SELECT madlib.matrix_sub('"mat_A"', 'row=row_id, val=row_vec',
+                         '"mat_B"', 'val=vector',
+                         'mat_r', 'val=vector');
+SELECT * FROM mat_r ORDER BY row_id;
+</pre>
+<pre class="result">
+ row_id |            vector
+--------+------------------------------
+      0 | {0,-4,3,4,-1,1,3,-4,5,2}
+      1 | {3,-1,-3,4,-2,4,-7,-6,2,3}
+      2 | {3,8,7,6,6,-1,-4,6,-5,5}
+      3 | {4,-5,2,-2,-1,1,0,2,-3,3}
+      4 | {3,0,2,2,4,1,6,-4,5,-3}
+      5 | {-1,7,6,-4,3,2,4,-1,-3,0}
+      6 | {4,2,3,6,-1,2,-3,9,5,4}
+      7 | {3,-2,5,5,-1,7,-5,-5,-5,0}
+      8 | {2,3,7,-2,0,-1,-1,-5,8,-3}
+      9 | {3,2,-1,-2,-2,-1,-1,-6,-2,3}
+(10 rows)
+</pre>
+
+- Multiply the two matrices by element
+<pre class="syntax">
+SELECT madlib.matrix_elem_mult('"mat_A"', 'row=row_id, val=row_vec',
+                               '"mat_B"', 'val=vector',
+                               'mat_r', 'val=vector');
+SELECT * FROM mat_r ORDER BY row_id;
+</pre>
+<pre class="result">
+ row_id |             vector
+--------+---------------------------------
+      0 | {81,60,10,32,30,30,18,21,50,48}
+      1 | {40,6,10,12,48,60,18,7,63,54}
+      2 | {0,9,18,27,16,42,21,27,50,6}
+      3 | {12,36,0,8,6,42,64,48,0,28}
+      4 | {18,64,63,63,0,30,27,45,14,70}
+      5 | {20,30,7,21,54,15,45,6,18,16}
+      6 | {32,80,28,40,2,63,70,0,24,21}
+      7 | {28,24,0,6,6,8,6,6,36,64}
+      8 | {48,40,8,35,4,42,90,6,0,18}
+      9 | {4,24,12,8,48,20,2,16,15,40}
 </pre>
 
 - Multiply the two matrices
@@ -469,6 +521,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
 -------------------------------------------------------------------------
 
 /**
@@ -554,6 +607,179 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------
+
+/**
+ * @brief Subs two matrices. It requires that all the values are NON-NULL.
+ * This is the sparse representation of the matrix where the matrix elements
+ * are indexed by the row and column id.
+ *
+ * @param matrix_a Name of the table containing the first matrix
+ * @param a_row Name of the column containing the row id for the first matrix
+ * @param a_col Name of the column containing the column id for the first matrix
+ * @param a_val Name of the column containing the matrix values for the first matrix
+ * @param matrix_b Name of the table containing the second matrix
+ * @param b_row Name of the column containing the row id for the second matrix
+ * @param b_col Name of the column containing the column id for the second matrix
+ * @param b_val Name of the column containing the matrix values for the second matrix
+ * @param matrix_out Name of the table where to output the result matrix
+ * @returns Name of the table containing the result matrix
+ *
+ */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_sub
+(
+    matrix_a    TEXT,
+    a_args      TEXT,
+    matrix_b    TEXT,
+    b_args      TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_ops')
+    matrix_ops.matrix_sub(schema_madlib,
+        matrix_a, a_args,
+        matrix_b, b_args,
+        matrix_out, out_args)
+    return [matrix_out]
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_sub
+(
+    matrix_a    TEXT,
+    a_args      TEXT,
+    matrix_b    TEXT,
+    b_args      TEXT,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT MADLIB_SCHEMA.matrix_sub($1, $2, $3, $4, $5, ''::TEXT)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_sub(
+    message     TEXT
+) RETURNS TEXT AS $$
+PythonFunction(linalg, matrix_help_message, matrix_sub_help_message)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_sub
+(
+    matrix_a        TEXT,
+    a_args          TEXT,
+    matrix_b        TEXT,
+    b_args          TEXT,
+    matrix_out      TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT
+        MADLIB_SCHEMA.matrix_sub(
+            $1, $2, $3, $4, $5, NULL);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_sub()
+RETURNS TEXT AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.matrix_sub('');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------
+
+/**
+ * @brief Multiplies two matrices by element. It requires that all the values are NON-NULL.
+ * This is the sparse representation of the matrix where the matrix elements
+ * are indexed by the row and column id.
+ *
+ * @param matrix_a Name of the table containing the first matrix
+ * @param a_row Name of the column containing the row id for the first matrix
+ * @param a_col Name of the column containing the column id for the first matrix
+ * @param a_val Name of the column containing the matrix values for the first matrix
+ * @param matrix_b Name of the table containing the second matrix
+ * @param b_row Name of the column containing the row id for the second matrix
+ * @param b_col Name of the column containing the column id for the second matrix
+ * @param b_val Name of the column containing the matrix values for the second matrix
+ * @param matrix_out Name of the table where to output the result matrix
+ * @returns Name of the table containing the result matrix
+ *
+ */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_elem_mult
+(
+    matrix_a    TEXT,
+    a_args      TEXT,
+    matrix_b    TEXT,
+    b_args      TEXT,
+    matrix_out  TEXT,
+    out_args    TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_ops')
+    matrix_ops.matrix_elem_mult(schema_madlib,
+        matrix_a, a_args,
+        matrix_b, b_args,
+        matrix_out, out_args)
+    return [matrix_out]
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_elem_mult
+(
+    matrix_a    TEXT,
+    a_args      TEXT,
+    matrix_b    TEXT,
+    b_args      TEXT,
+    matrix_out  TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT MADLIB_SCHEMA.matrix_elem_mult($1, $2, $3, $4, $5, ''::TEXT)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_elem_mult(
+    message     TEXT
+) RETURNS TEXT AS $$
+PythonFunction(linalg, matrix_help_message, matrix_elem_mult_help_message)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_elem_mult
+(
+    matrix_a        TEXT,
+    a_args          TEXT,
+    matrix_b        TEXT,
+    b_args          TEXT,
+    matrix_out      TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT
+        MADLIB_SCHEMA.matrix_elem_mult(
+            $1, $2, $3, $4, $5, NULL);
+$$ LANGUAGE sql
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.matrix_elem_mult()
+RETURNS TEXT AS $$
+BEGIN
+    RETURN MADLIB_SCHEMA.matrix_elem_mult('');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
 -------------------------------------------------------------------------
 
 /**

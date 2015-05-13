@@ -791,9 +791,33 @@ def matrix_scale_and_add(schema_madlib,
 # ------------------------------------------------------------------------------
 
 
-def matrix_add(schema_madlib, matrix_a, a_args,
-               matrix_b, b_args, matrix_out, out_args,
-               use_temp_table=False):
+def matrix_elem_op(schema_madlib, matrix_a, a_args,
+                   matrix_b, b_args, matrix_out, out_args,
+                   elem_ops, use_temp_table=False):
+    """ Perform element-wise operation on two matrices.
+
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib functions
+        @param matrix_a: str, Name of the table containing 1st (left) matrix
+        @param a_args: str, Name-value pair string containing options for matrix_a
+        @param matrix_b: str, Name of the table containing 2nd (right) matrix
+        @param b_args: str, Name-value pair string containing options for matrix_b
+        @param matrix_out: str, Name of the table to store result matrix
+        @param out_args: str, Name-value pair string containing options for matrix_out
+        @param elem_ops: dict, Dictionary containing the operation to perform.
+                            Requires two parameters:
+                                scalar_op: The operation between each pair of
+                                            elements (Used for sparse matrices)
+                                vector_op: The operation between each pair of
+                                            rows (Used for dense matrices)
+        @param use_temp_table: bool, Flag to control if result is stored in a
+                                        temp table
+
+    Returns:
+        None
+    Side effect:
+        Creates an output table containing the result matrix
+    """
     _validate_input_table(matrix_a)
     _validate_input_table(matrix_b)
     _validate_output_table(matrix_out)
@@ -816,9 +840,9 @@ def matrix_add(schema_madlib, matrix_a, a_args,
         # both matrix_a and matrix_b are sparse
         _validate_sparse(matrix_a, a_args)
         _validate_sparse(matrix_b, b_args)
-        _matrix_add_sparse(schema_madlib, matrix_a, a_args,
-                           matrix_b, b_args, matrix_out, out_args,
-                           False)
+        _matrix_elem_op_sparse(schema_madlib, matrix_a, a_args,
+                               matrix_b, b_args, matrix_out, out_args,
+                               elem_ops, False)
         return
 
     # densify matrix_a if sparse
@@ -839,36 +863,43 @@ def matrix_add(schema_madlib, matrix_a, a_args,
         b_args = _matrix_default_args()
     _validate_dense(matrix_b, b_args, b_dim[0])
 
-    _matrix_add_dense(schema_madlib, matrix_a, a_args,
-                      matrix_b, b_args, matrix_out, out_args,
-                      False)
+    _matrix_elem_op_dense(schema_madlib, matrix_a, a_args,
+                          matrix_b, b_args, matrix_out, out_args,
+                          elem_ops, False)
 
     plpy.execute("DROP TABLE IF EXISTS " + matrix_out1)
     plpy.execute("DROP TABLE IF EXISTS " + matrix_out2)
 
 
-def _matrix_add_sparse(schema_madlib, matrix_a, a_args,
-                       matrix_b, b_args, matrix_out, out_args,
-                       use_temp_table=False):
+def _matrix_elem_op_sparse(schema_madlib, matrix_a, a_args,
+                           matrix_b, b_args, matrix_out, out_args,
+                           elem_ops, use_temp_table=False):
     temp = '' if not use_temp_table else 'TEMP'
     plpy.execute("""
         CREATE {temp} TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
-            coalesce(a.{a_args[row]}, b.{b_args[row]}) AS {out_args[row]},
-            coalesce(a.{a_args[col]}, b.{b_args[col]}) AS {out_args[col]},
-            coalesce(a.{a_args[val]}, 0) +
-                coalesce(b.{b_args[val]}, 0) AS {out_args[val]}
+            {out_args[row]},
+            {out_args[col]},
+            {out_args[val]}
         FROM
-                (SELECT * FROM {matrix_a}
-                 WHERE {a_args[val]} IS NOT NULL) AS a
-            FULL OUTER JOIN
-                (SELECT * FROM {matrix_b}
-                 WHERE {b_args[val]} IS NOT NULL) AS b
-            ON
-                a.{a_args[row]} = b.{b_args[row]} AND
-                a.{a_args[col]} = b.{b_args[col]}
+           (SELECT
+                coalesce(a.{a_args[row]}, b.{b_args[row]}) AS {out_args[row]},
+                coalesce(a.{a_args[col]}, b.{b_args[col]}) AS {out_args[col]},
+                coalesce(a.{a_args[val]}, 0) {elem_ops[scalar_op]}
+                    coalesce(b.{b_args[val]}, 0) AS {out_args[val]}
+            FROM
+                    (SELECT * FROM {matrix_a}
+                     WHERE {a_args[val]} IS NOT NULL) AS a
+                FULL OUTER JOIN
+                    (SELECT * FROM {matrix_b}
+                     WHERE {b_args[val]} IS NOT NULL) AS b
+                ON
+                    a.{a_args[row]} = b.{b_args[row]} AND
+                    a.{a_args[col]} = b.{b_args[col]}) t
+        WHERE
+            t.{out_args[val]} != 0
         m4_ifdef(`__POSTGRESQL__', `',
             `DISTRIBUTED BY ({out_args[row]})')
         """.format(**locals()))
@@ -880,9 +911,9 @@ def _matrix_add_sparse(schema_madlib, matrix_a, a_args,
                    col_count=a_dim[1]))
 
 
-def _matrix_add_dense(schema_madlib, matrix_a, a_args,
-                      matrix_b, b_args, matrix_out, out_args,
-                      use_temp_table=False):
+def _matrix_elem_op_dense(schema_madlib, matrix_a, a_args,
+                          matrix_b, b_args, matrix_out, out_args,
+                          elem_ops, use_temp_table=False):
     temp = '' if not use_temp_table else 'TEMP'
     plpy.execute("""
         CREATE {temp} TABLE {matrix_out}
@@ -890,7 +921,7 @@ def _matrix_add_dense(schema_madlib, matrix_a, a_args,
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
             a.{a_args[row]} AS {out_args[row]},
-            {schema_madlib}.array_add(
+            {schema_madlib}.{elem_ops[vector_op]}(
                 a.{a_args[val]}::float8[],
                 b.{b_args[val]}::float8[]) AS {out_args[val]}
         FROM
@@ -901,6 +932,36 @@ def _matrix_add_dense(schema_madlib, matrix_a, a_args,
         m4_ifdef(`__POSTGRESQL__', `',
             `DISTRIBUTED BY ({out_args[row]})')
         """.format(**locals()))
+# ------------------------------------------------------------------------------
+
+
+def matrix_add(schema_madlib, matrix_a, a_args,
+               matrix_b, b_args, matrix_out, out_args,
+               use_temp_table=False):
+    elem_ops = {'scalar_op': '+', 'vector_op': 'array_add'}
+    matrix_elem_op(schema_madlib, matrix_a, a_args,
+                   matrix_b, b_args, matrix_out, out_args,
+                   elem_ops, use_temp_table)
+# ------------------------------------------------------------------------------
+
+
+def matrix_sub(schema_madlib, matrix_a, a_args,
+               matrix_b, b_args, matrix_out, out_args,
+               use_temp_table=False):
+    elem_ops = {'scalar_op': '-', 'vector_op': 'array_sub'}
+    matrix_elem_op(schema_madlib, matrix_a, a_args,
+                   matrix_b, b_args, matrix_out, out_args,
+                   elem_ops, use_temp_table)
+# ------------------------------------------------------------------------------
+
+
+def matrix_elem_mult(schema_madlib, matrix_a, a_args,
+                     matrix_b, b_args, matrix_out, out_args,
+                     use_temp_table=False):
+    elem_ops = {'scalar_op': '*', 'vector_op': 'array_mult'}
+    matrix_elem_op(schema_madlib, matrix_a, a_args,
+                   matrix_b, b_args, matrix_out, out_args,
+                   elem_ops, use_temp_table)
 # ------------------------------------------------------------------------------
 
 
