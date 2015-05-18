@@ -10,6 +10,8 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include <set>
+#include <algorithm>
 #include <sstream>
 #include <cmath>
 #include <boost/algorithm/string.hpp>
@@ -220,6 +222,43 @@ distTanimoto(const MappedColumnVector& inX, const MappedColumnVector& inY) {
     return (tanimoto - 2 * dotProduct) / (tanimoto - dotProduct);
 }
 
+double
+distJaccard(const ArrayHandle<text*>& inX, const ArrayHandle<text*>& inY) {
+    if (inX.size() == 0 && inY.size() == 0)
+        return 0.0;  // both empty are treated as zero distance
+    if (inX.size() == 0 || inY.size() == 0)
+        return 1.0;   // one of the sets being empty is treated as max distance
+
+    std::set<string> x_set;
+    for (size_t i = 0; i < inX.size(); i++){
+        x_set.insert(std::string(VARDATA_ANY(inX[i]),
+                                 VARSIZE_ANY(inX[i]) - VARHDRSZ));
+    }
+
+    size_t n_intersection = 0;
+    size_t n_union = x_set.size();
+    std::set<string> y_set;
+    for (size_t i = 0; i < inY.size(); i++){
+        string y_elem = std::string(VARDATA_ANY(inY[i]),
+                                    VARSIZE_ANY(inY[i]) - VARHDRSZ);
+        if (y_set.count(y_elem) == 0){
+            // for sets, count returns 1 if an element with that value
+            // exists in the container, and zero otherwise.
+
+            if (x_set.count(y_elem) == 1){
+                // element present in both sets (already counted for union)
+                n_intersection++;
+            }
+            else{
+                // element only in inY, not yet counted for union
+                n_union++;
+            }
+        }
+        y_set.insert(y_elem);
+    }
+    return 1.0 - static_cast<double>(n_intersection) / static_cast<double>(n_union);
+}
+
 /**
  * @brief Compute the k columns of a matrix that are closest to a vector
  *
@@ -360,9 +399,9 @@ closest_columns::run(AnyType& args) {
     FunctionHandle dist = args[3].getAs<FunctionHandle>()
         .unsetFunctionCallOptions(FunctionHandle::GarbageCollectionAfterCall);
     string dist_fname = args[4].getAs<char *>();
-    
+
     std::string fname = dist_fn_name(dist_fname);
-    
+
     std::vector<std::tuple<Index, double> > result(num);
     closestColumnsAndDistancesShortcut(M, x, dist, fname, result.begin(),
         result.end());
@@ -496,6 +535,14 @@ dist_tanimoto::run(AnyType& args) {
     return distTanimoto(
         args[0].getAs<MappedColumnVector>(),
         args[1].getAs<MappedColumnVector>()
+    );
+}
+
+AnyType
+dist_jaccard::run(AnyType& args) {
+    return distJaccard(
+        args[0].getAs<ArrayHandle<text*> >(),
+        args[1].getAs<ArrayHandle<text*> >()
     );
 }
 

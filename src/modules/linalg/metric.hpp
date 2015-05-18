@@ -66,6 +66,8 @@ DECLARE_UDF(linalg, dist_angle)
  */
 DECLARE_UDF(linalg, dist_tanimoto)
 
+DECLARE_UDF(linalg, dist_jaccard)
+
 
 #ifndef MADLIB_MODULES_LINALG_LINALG_HPP
 #define MADLIB_MODULES_LINALG_LINALG_HPP
