@@ -1,0 +1,287 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file text_utilities.sql_in
+ *
+ * @brief SQL functions for carrying out routine text operations
+ *
+ * @sa For a brief overview of utility functions, see the
+ *     module description \ref grp_utilities.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_text_utilities
+
+<div class="toc"><b>Contents</b>
+  <ul>
+    <li><a href="#term_frequency">Term Frequency</a></li>
+    <li><a href="#examples">Examples</a></li>
+    <li><a href="#rel;ated">Related Topics</a></li>
+  </ul>
+</div>
+
+@brief Provides a collection of user-defined functions for performing common
+tasks related to text.
+
+\warning <em> This MADlib method is still in early stage development. There may be some
+issues that will be addressed in a future version. Interface and implementation
+is subject to change. </em>
+
+@anchor term_frequency
+@par Term frequency
+    Term frequency \c tf(t,d) is to the raw frequency of a word/term in a document,
+    i.e. the number of times that word/term \c t occurs in document \c d. For
+    this function, 'word' and 'term' are used interchangeably.
+    <b>Note:</b> the term frequency is not normalized by the document length.
+<pre class="syntax">
+    term_frequency(input_table,
+                   doc_id_col,
+                   word_col,
+                   output_table,
+                   compute_vocab)
+</pre>
+
+\b Arguments:
+<dl class="arglist">
+    <dt>input_table</dt>
+    <dd>TEXT.
+    The name of the table storing the documents.
+    Each row is in the form &lt;doc_id, word_vector&gt; where \c doc_id is an id,
+    unique to each document, and  \c word_vector is a text array containing the
+    words in the document. The \c word_vector should contain multiple entries of
+    a word if the document contains multiple occurrence of that word.
+    </dd>
+
+    <dt>id_col</dt>
+    <dd>TEXT.
+    The name of the column containing the document id. </dd>
+
+    <dt>word_col</dt>
+    <dd>TEXT.
+    The name of the column containing the vector of words/terms in the
+    document. This column should of type that can be cast to TEXT[].</dd>
+
+    <dt>output_table</dt>
+    <dd>TEXT.
+    The name of the table to store the term frequency output.
+    The output table contains the following columns:
+        - \c id_col: This the document id column (same as the one provided as input).
+        - \c word: A word/term present in a document. This is either the original
+        word present in \c word_col or an id representing the word (depending on the value of compute_vocab below).
+        - \c count: The number of times this word is found in the document.
+    </dd>
+
+    <dt>compute_vocab</dt>
+    <dd>BOOLEAN. (Optional, Default=FALSE)
+    Flag to indicate if a vocabulary is to be created. If TRUE, an additional
+    output table is created containing the vocabulary of all words, with an id
+    assigned to each word. The table is called <em>output_table</em>_vocabulary
+    (suffix added to the <em>output_table</em> name) and contains the
+    following columns:
+        - \c wordid: An id assignment for each word
+        - \c word: The word/term
+    </dd>
+</dl>
+
+@anchor examples
+@par Examples
+
+-# Prepare datasets with some example documents
+<pre class="example">
+DROP TABLE IF EXISTS documents;
+CREATE TABLE documents(docid INTEGER, doc_contents TEXT);
+INSERT INTO documents VALUES
+(1, 'I like to eat broccoli and banana. I ate a banana and spinach smoothie for breakfast.'),
+(2, 'Chinchillas and kittens are cute.'),
+(3, 'My sister adopted two kittens yesterday'),
+(4, 'Look at this cute hamster munching on a piece of broccoli');
+</pre>
+
+-# Add a new column containing the words (lower-cased) in a text array
+<pre class="example">
+ALTER TABLE documents DROP COLUMN words;
+ALTER TABLE documents ADD COLUMN words TEXT[];
+UPDATE documents SET words = regexp_split_to_array(lower(doc_contents), E'[\\s+\\.]');
+</pre>
+
+-# Compute the frequency of each word in each document
+<pre class="example">
+DROP TABLE IF EXISTS documents_tf;
+SELECT madlib.term_frequency('documents', 'docid', 'words', 'documents_tf');
+SELECT * FROM documents_tf order by docid;
+</pre>
+<pre class="result">
+ docid |    word    | count
+-------+------------+-------
+     1 | ate        |     1
+     1 | like       |     1
+     1 | breakfast  |     1
+     1 | to         |     1
+     1 | broccoli   |     1
+     1 | spinach    |     1
+     1 | i          |     2
+     1 | and        |     2
+     1 | a          |     1
+     1 |            |     2
+     1 | smoothie   |     1
+     1 | eat        |     1
+     1 | banana     |     2
+     1 | for        |     1
+     2 | cute       |     1
+     2 | are        |     1
+     2 | kitten     |     1
+     2 | and        |     1
+     2 | chinchilla |     1
+     3 | kitten     |     1
+     3 | my         |     1
+     3 | a          |     1
+     3 | sister     |     1
+     3 | adopted    |     1
+     3 | yesterday  |     1
+     4 | at         |     1
+     4 | of         |     1
+     4 | piece      |     1
+     4 | this       |     1
+     4 | a          |     1
+     4 | broccoli   |     1
+     4 | hamster    |     1
+     4 | munching   |     1
+     4 | cute       |     1
+     4 | look       |     1
+(35 rows)
+</pre>
+
+-# We also can create a vocabulary of the words and store a wordid in the output
+table instead of the actual word.
+<pre class="example">
+DROP TABLE IF EXISTS documents_tf;
+DROP TABLE IF EXISTS documents_tf_vocabulary;
+SELECT madlib.term_frequency('documents', 'docid', 'words', 'documents_tf', TRUE);
+-- Output with wordid instead of the actual words
+SELECT * FROM documents_tf order by docid;
+</pre>
+\nbsp
+<pre class="result">
+ docid | wordid | count
+-------+--------+-------
+     1 |      0 |     2
+     1 |      1 |     1
+     1 |      3 |     2
+     1 |      6 |     1
+     1 |      7 |     2
+     1 |      8 |     1
+     1 |      9 |     1
+     1 |     12 |     1
+     1 |     13 |     1
+     1 |     15 |     2
+     1 |     17 |     1
+     1 |     24 |     1
+     1 |     25 |     1
+     1 |     27 |     1
+     2 |     16 |     1
+     2 |      3 |     1
+     2 |      4 |     1
+     2 |     10 |     1
+     2 |     11 |     1
+     3 |      1 |     1
+     3 |     16 |     1
+     3 |     28 |     1
+     3 |     23 |     1
+     3 |      2 |     1
+     3 |     20 |     1
+     4 |      9 |     1
+     4 |     11 |     1
+     4 |     22 |     1
+     4 |     14 |     1
+     4 |     26 |     1
+     4 |      1 |     1
+     4 |      5 |     1
+     4 |     18 |     1
+     4 |     19 |     1
+     4 |     21 |     1
+(35 rows)
+</pre>
+\nbsp
+<pre class="example">
+-- Vocabulary
+SELECT * FROM documents_tf_vocabulary order by wordid;
+</pre>
+<pre class="result">
+ wordid |    word
+--------+------------
+      0 |
+      1 | a
+      2 | adopted
+      3 | and
+      4 | are
+      5 | at
+      6 | ate
+      7 | banana
+      8 | breakfast
+      9 | broccoli
+     10 | chinchilla
+     11 | cute
+     12 | eat
+     13 | for
+     14 | hamster
+     15 | i
+     16 | kitten
+     17 | like
+     18 | look
+     19 | munching
+     20 | my
+     21 | of
+     22 | piece
+     23 | sister
+     24 | smoothie
+     25 | spinach
+     26 | this
+     27 | to
+     28 | yesterday
+(29 rows)
+</pre>
+
+@anchor related
+@par Related Topics
+
+File text_utilities.sql_in documenting the SQL functions.
+File utilities.sql_in documenting the utility functions for DB administration.
+
+*/
+
+/**
+ * @brief Compute the term frequency for each term in a collection of documents
+ *
+ * @returns Names of tables created
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.term_frequency(
+    input_table         TEXT,
+    doc_id_col          TEXT,
+    word_vec_col        TEXT,
+    output_table        TEXT,
+    compute_vocab  BOOLEAN)
+RETURNS TEXT
+AS $$
+    PythonFunctionBodyOnly(`utilities', `text_utilities')
+    return text_utilities.term_frequency(input_table, doc_id_col, word_vec_col,
+                                         output_table, compute_vocab=compute_vocab)
+$$
+LANGUAGE plpythonu
+VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.term_frequency(
+    input_table         TEXT,
+    doc_id_col          TEXT,
+    word_vec_col        TEXT,
+    output_table        TEXT)
+RETURNS TEXT
+AS $$
+    SELECT MADLIB_SCHEMA.term_frequency($1, $2, $3, $4, FALSE);
+$$
+LANGUAGE SQL
+VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
