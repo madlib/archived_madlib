@@ -17,6 +17,7 @@ import time
 from utilities.utilities import __mad_version
 from utilities.validate_args import output_tbl_valid
 from utilities.control import EnableOptimizer
+from utilities.control import EnableHashagg
 
 version_wrapper = __mad_version()
 string_to_array = version_wrapper.select_vecfunc()
@@ -919,23 +920,25 @@ def __convert_data_table(schema_madlib, data_table):
         DISTRIBUTED BY (docid)')
         """.format(convt_table=convt_table))
 
-    plpy.execute("""
-        INSERT INTO {convt_table}
-        SELECT
-            docid,
-            sum(count) wordcount,
-            {schema_madlib}.array_agg(wordid) words,
-            {schema_madlib}.array_agg(count) counts
-        FROM
-            {data_table}
-        WHERE
-            (docid IS NOT NULL) AND
-            (wordid IS NOT NULL) AND
-            (count IS NOT NULL)
-        GROUP BY docid
-        """.format(convt_table=convt_table,
-            schema_madlib=schema_madlib,
-            data_table=data_table))
+    with EnableOptimizer(False):
+        with EnableHashagg(False):
+            plpy.execute("""
+                INSERT INTO {convt_table}
+                SELECT
+                    docid,
+                    sum(count) wordcount,
+                    {schema_madlib}.array_agg(wordid) words,
+                    {schema_madlib}.array_agg(count) counts
+                FROM
+                    {data_table}
+                WHERE
+                    (docid IS NOT NULL) AND
+                    (wordid IS NOT NULL) AND
+                    (count IS NOT NULL)
+                GROUP BY docid
+                """.format(convt_table=convt_table,
+                    schema_madlib=schema_madlib,
+                    data_table=data_table))
 
     return convt_table
 
