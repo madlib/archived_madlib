@@ -30,6 +30,7 @@ from utilities.validate_args import _unquote_name
 from utilities.utilities import _assert
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import unique_string
+from utilities.utilities import add_postfix 
 from utilities.utilities import split_quoted_delimited_str
 from utilities.utilities import _array_to_string
 from utilities.utilities import py_list_to_sql_string
@@ -58,7 +59,7 @@ def _tree_validate_args(
 
     _assert(not table_exists(output_table_name, only_first_schema=True),
             "Decision tree error: Output table already exists.")
-    _assert(not table_exists(output_table_name + "_summary", only_first_schema=True),
+    _assert(not table_exists(add_postfix(output_table_name, "_summary"), only_first_schema=True),
             "Decision tree error: Output summary table already exists.")
 
     _assert(columns_exist_in_table(training_table_name, [id_col_name]),
@@ -559,6 +560,7 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
     min_split = min_bucket * 3 if min_split is None else min_split
     n_bins = 100 if n_bins is None else n_bins
     split_criterion = 'gini' if not split_criterion else split_criterion
+    plpy.notice("split_criterion:"+split_criterion)
     pruning_param_dict = _extract_pruning_params(pruning_params)
     cp = pruning_param_dict['cp']
     n_folds = pruning_param_dict['n_folds']
@@ -1525,9 +1527,9 @@ def _create_summary_table(
     fold = ", " + str(k) + " as k" if running_cv else ""
     if use_existing_tables:
         # plpy.execute("truncate " + output_table_name + "_summary")
-        header = "insert into " + output_table_name + "_summary "
+        header = "insert into " + add_postfix(output_table_name, "_summary") + " "
     else:
-        header = "create table " + output_table_name + "_summary as "
+        header = "create table " + add_postfix(output_table_name, "_summary") + " as "
 
     sql = header + """
             SELECT
@@ -1601,7 +1603,7 @@ def _validate_predict(schema_madlib, model, source, output, use_existing_tables)
             "Decision tree error: Model table ({0}) does not exist".format(model))
     _assert(not table_is_empty(model),
             "Decision tree error: Model table ({0}) is empty".format(model))
-    model_summary = model + "_summary"
+    model_summary = add_postfix(model, "_summary")
     _assert(table_exists(model_summary),
             "Decision tree error: Model summary table ({0}) does not exist".format(model_summary))
     _assert(not table_is_empty(model_summary),
@@ -1652,7 +1654,7 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response',
         None
     """
     _validate_predict(schema_madlib, model, source, output, use_existing_tables)
-    model_summary = model + "_summary"
+    model_summary = add_postfix(model, "_summary")
     # obtain the cat_features and con_features from model table
     summary_elements = plpy.execute("SELECT * FROM {0}".format(model_summary))[0]
 
@@ -1793,8 +1795,9 @@ def tree_display(schema_madlib, model_table, dot_format=True,
     if dot_format:
         disp_surr = False  # surrogates cannot be displayed in dot format
     bytea8 = schema_madlib + '.bytea8'
-    summary = plpy.execute("SELECT * FROM {model_table}_summary".
-                           format(model_table=model_table))[0]
+    summary_table = add_postfix(model_table, "_summary") 
+    summary = plpy.execute("SELECT * FROM {summary_table}".
+                           format(summary_table=summary_table))[0]
     dep_levels = summary["dependent_var_levels"]
     dep_levels = [''] if not dep_levels else split_quoted_delimited_str(dep_levels)
     table_name = summary["source_table"]

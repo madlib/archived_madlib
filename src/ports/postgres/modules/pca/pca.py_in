@@ -14,6 +14,7 @@ from utilities.utilities import _array_to_string
 from linalg.matrix_ops import get_dims
 from linalg.matrix_ops import create_temp_sparse_matrix_table_with_dims
 from linalg.matrix_ops import cast_dense_input_table_to_correct_columns
+from utilities.utilities import add_postfix
 
 import time
 import plpy
@@ -407,13 +408,16 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                        result_summary_table_string=result_summary_table_string))
         # Step 5: Transpose SVD output matrix
         svd_v_transpose = unique_string() + "transpose"
+        svd_output_temp_table_s = add_postfix(svd_output_temp_table, "_s")
+        svd_output_temp_table_v = add_postfix(svd_output_temp_table, "_v")
+        svd_output_temp_table_u = add_postfix(svd_output_temp_table, "_u")
         plpy.execute(
             """
             SELECT  {schema_madlib}.matrix_trans(
-                    '{svd_output_temp_table}_v',
+                    '{svd_output_temp_table_v}',
                     'row=row_id, col=col_id, val=row_vec',
                     '{svd_v_transpose}', 'row=row_id, col=col_id, val=row_vec');
-            """.format(svd_output_temp_table=svd_output_temp_table,
+            """.format(svd_output_temp_table_v=svd_output_temp_table_v,
                        svd_v_transpose=svd_v_transpose,
                        schema_madlib=schema_madlib)
         )
@@ -425,21 +429,22 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             SELECT  {svd_v_transpose}.row_id,
                     row_vec AS principal_components,
                     value / sqrt({row_dim} - 1) AS eigen_values
-            FROM {svd_v_transpose}, {svd_output_temp_table}_s
-            WHERE ({svd_v_transpose}.row_id = {svd_output_temp_table}_s.row_id)
+            FROM {svd_v_transpose}, {svd_output_temp_table_s}
+            WHERE ({svd_v_transpose}.row_id = {svd_output_temp_table_s}.row_id)
                   AND ({svd_v_transpose}.row_id < {k})
-            """.format(svd_output_temp_table=svd_output_temp_table,
+            """.format(svd_output_temp_table_s=svd_output_temp_table_s,
                        k=k,
                        svd_v_transpose=svd_v_transpose,
                        pc_table=pc_table,
                        row_dim=row_dim))
         # Output the column mean
+        pc_table_mean = add_postfix(pc_table, "_mean")
         plpy.execute(
             """
-            DROP TABLE IF EXISTS {pc_table}_mean;
-            CREATE TABLE {pc_table}_mean AS
+            DROP TABLE IF EXISTS {pc_table_mean};
+            CREATE TABLE {pc_table_mean} AS
             SELECT '{column_mean_str}'::FLOAT8[] AS column_mean
-            """.format(pc_table=pc_table, column_mean_str=column_mean_str))
+            """.format(pc_table_mean=pc_table_mean,column_mean_str=column_mean_str))
 
         # Step 7: Append to the SVD summary table to get the PCA summary table
         if result_summary_table:
@@ -475,11 +480,14 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             DROP TABLE IF EXISTS {svd_v_transpose};
             DROP TABLE IF EXISTS {source_table_copy};
             DROP TABLE IF EXISTS {svd_output_temp_table};
-            DROP TABLE IF EXISTS {svd_output_temp_table}_s;
-            DROP TABLE IF EXISTS {svd_output_temp_table}_u;
-            DROP TABLE IF EXISTS {svd_output_temp_table}_v;
+            DROP TABLE IF EXISTS {svd_output_temp_table_s};
+            DROP TABLE IF EXISTS {svd_output_temp_table_u};
+            DROP TABLE IF EXISTS {svd_output_temp_table_v};
             DROP TABLE IF EXISTS {scaled_source_table};
             """.format(svd_output_temp_table=svd_output_temp_table,
+                       svd_output_temp_table_s=svd_output_temp_table_s,
+                       svd_output_temp_table_u=svd_output_temp_table_u,
+                       svd_output_temp_table_v=svd_output_temp_table_v,
                        scaled_source_table=scaled_source_table,
                        svd_v_transpose=svd_v_transpose,
                        source_table_copy=source_table_copy))
