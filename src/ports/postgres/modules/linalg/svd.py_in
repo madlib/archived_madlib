@@ -70,7 +70,8 @@ def _validate_args(schema_madlib, source_table, output_table_prefix, k,
 
     # output tables are created from the prefix by appending _u, _s, and _v as suffixes
     if output_table_prefix:
-        output_table_names = [output_table_prefix + i for i in ('_u', '_s', '_v')]
+        output_table_names = [add_postfix(output_table_prefix, i)
+                              for i in ('_u', '_s', '_v')]
         for each_table in output_table_names:
             _assert(not table_exists(each_table, only_first_schema=True),
                     "SVD error: Output table {0}"
@@ -609,9 +610,10 @@ def _svd(schema_madlib, source_table, output_table_prefix,
         k = non_zero_svals
 
     # Compute the singular values and output to sparse table
+    matrix_s = add_postfix(output_table_prefix, "_s")
     plpy.execute(
         """
-        CREATE TABLE {output_table_prefix}_s AS
+        CREATE TABLE {matrix_s} AS
             SELECT * FROM (
                 SELECT
                     generate_series(0,
@@ -621,16 +623,14 @@ def _svd(schema_madlib, source_table, output_table_prefix,
                     unnest((svd_output).singular_values) as value
                 FROM {svd_bidiagonal}) s
             ORDER BY row_id limit {k}
-        """.format(output_table_prefix=output_table_prefix,
-                   svd_bidiagonal=svd_bidiagonal, k=k))
+        """.format(**locals()))
 
     plpy.execute("""
-        INSERT INTO {output_table_prefix}_s
+        INSERT INTO {matrix_s}
         SELECT {k}, {k}, NULL
         FROM {svd_bidiagonal}
         LIMIT 1
-        """.format(output_table_prefix=output_table_prefix,
-                   svd_bidiagonal=svd_bidiagonal, k=k))
+        """.format(**locals()))
 
     # Compute the left singular matrix and output to table
     plpy.execute("""
@@ -640,10 +640,10 @@ def _svd(schema_madlib, source_table, output_table_prefix,
                 '{svd_bidiagonal}',
                 {k},
                 true,
-                '{output_table_prefix}_u'
+                '{matrix_u}'
             )
         """.format(schema_madlib=schema_madlib,
-                   output_table_prefix=output_table_prefix,
+                   matrix_u=add_postfix(output_table_prefix, "_u"),
                    bidiagonal_prefix=bidiagonal_prefix,
                    svd_bidiagonal=svd_bidiagonal,
                    k=k))
@@ -656,10 +656,10 @@ def _svd(schema_madlib, source_table, output_table_prefix,
                 '{svd_bidiagonal}',
                 {k},
                 false,
-                '{output_table_prefix}_v'
+                '{matrix_v}'
             )
         """.format(schema_madlib=schema_madlib,
-                   output_table_prefix=output_table_prefix,
+                   matrix_v=add_postfix(output_table_prefix, "_v"),
                    bidiagonal_prefix=bidiagonal_prefix,
                    svd_bidiagonal=svd_bidiagonal,
                    k=k))
