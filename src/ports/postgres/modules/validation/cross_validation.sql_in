@@ -399,7 +399,38 @@ BEGIN
     EXECUTE '
         CREATE TABLE '|| tbl_error ||' AS
         SELECT
-            avg(('|| tbl_prediction ||'.prediction - '|| tbl_actual ||'.'|| values_actual ||')^2) as mean_squared_error
+            avg(('|| tbl_prediction ||'.prediction - ('|| values_actual ||'))^2) as mean_squared_error
+        FROM
+            '|| tbl_prediction ||',
+            '|| tbl_actual ||'
+        WHERE
+            '|| tbl_prediction ||'.'|| id_actual ||' = '|| tbl_actual ||'.'|| id_actual;
+
+    EXECUTE 'SET client_min_messages TO ' || old_messages;
+END;
+$$ LANGUAGE plpgsql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-- compare the prediction and actual values
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.misclassification_avg(
+    tbl_prediction  VARCHAR,    -- predicted values
+    tbl_actual      VARCHAR,
+    id_actual       VARCHAR,
+    values_actual   VARCHAR,
+    tbl_error       VARCHAR
+) RETURNS VOID AS $$
+DECLARE
+    error           DOUBLE PRECISION;
+    old_messages    VARCHAR;
+BEGIN
+    old_messages := (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+
+    EXECUTE '
+        CREATE TABLE '|| tbl_error ||' AS
+        SELECT
+            avg(CASE WHEN '|| tbl_prediction ||'.prediction = ('|| values_actual ||')
+                THEN 0. ELSE 1. END) as error_rate
         FROM
             '|| tbl_prediction ||',
             '|| tbl_actual ||'
