@@ -52,9 +52,9 @@ AnyType matrix_densify_sfunc::run(AnyType & args)
             "invalid argument - col_dim should be positive");
     }
 
-    if(col >= col_dim){
+    if(col > col_dim){
         throw std::invalid_argument(
-            "invalid argument - col should be in the range of [0, col_dim)");
+            "invalid argument - col should be in the range of [1, col_dim]");
     }
 
     MutableArrayHandle<double> state(NULL);
@@ -66,7 +66,9 @@ AnyType matrix_densify_sfunc::run(AnyType & args)
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
 
-    *(state.ptr() + col) = val;
+    // we use col - 1 since
+    // database expects col in [1, col_dim]; c++ expects col in [0, col_dim - 1]
+    *(state.ptr() + col - 1) = val;
 
     return state;
 }
@@ -110,8 +112,9 @@ AnyType matrix_blockize_sfunc::run(AnyType & args)
 
     int32_t row_id = args[1].getAs<int32_t>();
     ArrayHandle<double> row_vec  = args[2].getAs<ArrayHandle<double> >();
-    int32_t csize = static_cast<int32_t>(row_vec.sizeOfDim(0));
     int32_t rsize = args[3].getAs<int32_t>();
+    int32_t csize = static_cast<int32_t>(row_vec.sizeOfDim(0));
+
     if(rsize < 1){
         throw std::invalid_argument(
             "invalid argument - block size should be positive");
@@ -128,9 +131,10 @@ AnyType matrix_blockize_sfunc::run(AnyType & args)
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
 
-    memcpy(
-        state.ptr() + (row_id % rsize) * csize, row_vec.ptr(),
-            csize * sizeof(double));
+    // database represents row_id in [1, row_dim]
+    memcpy(state.ptr() + ((row_id - 1) % rsize) * csize,
+           row_vec.ptr(),
+           csize * sizeof(double));
 
     return state;
 }
@@ -255,9 +259,12 @@ typedef struct __sr_ctx1{
     int32_t curcall;
 } sr_ctx1;
 
+// @brief: split a vector into multiple vectors
 void * row_split::SRF_init(AnyType &args)
 {
+    // vector to be split
     ArrayHandle<double> inarray = args[0].getAs<ArrayHandle<double> >();
+    // size of each split
     int32_t size = args[1].getAs<int32_t>();
 
     if (size < 1) {
@@ -267,17 +274,20 @@ void * row_split::SRF_init(AnyType &args)
 
     sr_ctx1 * ctx = new sr_ctx1;
     ctx->inarray = inarray.ptr();
+    // length of inarray
     ctx->dim = static_cast<int32_t>(inarray.sizeOfDim(0));
     ctx->size = size;
+    // max number of splits to be formed
     ctx->maxcall = static_cast<int32_t>(
         ceil(static_cast<double>(ctx->dim) / size));
+    // current split index
     ctx->curcall = 0;
 
     return ctx;
 }
 
 /**
- * @brief The function is used to return the next row by the SRF..
+ * @brief The function is used to return the next row by the SRF.
  **/
 AnyType row_split::SRF_next(void *user_fctx, bool *is_last_call)
 {
@@ -289,6 +299,8 @@ AnyType row_split::SRF_next(void *user_fctx, bool *is_last_call)
 
     int32_t size = ctx->size;
     if (ctx->maxcall == 1 && ctx->dim % ctx->size != 0) {
+        // for last split we might not have enough elements to fill the whole split
+        // in this case we update size to the number of residual elements in last split
         size = ctx->dim % ctx->size;
     }
 
@@ -296,9 +308,8 @@ AnyType row_split::SRF_next(void *user_fctx, bool *is_last_call)
         madlib_construct_array(
             NULL, size, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
                 FLOAT8TI.align));
-    memcpy(
-        outarray.ptr(), ctx->inarray + ctx->curcall * ctx->size,
-            size * sizeof(double));
+    memcpy(outarray.ptr(), ctx->inarray + ctx->curcall * ctx->size,
+           size * sizeof(double));
 
     ctx->curcall++;
     ctx->maxcall--;
@@ -322,14 +333,14 @@ AnyType matrix_unblockize_sfunc::run(AnyType & args)
             "invalid argument - total_col_dim should be positive");
     }
 
-    if(col_id < 0){
+    if(col_id <= 0){
         throw std::invalid_argument(
-            "invalid argument - col_id should be zero or positive");
+            "invalid argument - col_id should be positive");
     }
 
-    if(col_id >= total_col_dim){
+    if(col_id > total_col_dim){
         throw std::invalid_argument(
-            "invalid argument - col_id should be in the range of [0, total_col_dim)");
+            "invalid argument - col_id should be in the range of [1, total_col_dim]");
     }
 
     MutableArrayHandle<double> state(NULL);
@@ -341,7 +352,7 @@ AnyType matrix_unblockize_sfunc::run(AnyType & args)
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
 
-    memcpy(state.ptr() + col_id, row_vec.ptr(), col_dim * sizeof(double));
+    memcpy(state.ptr() + col_id - 1, row_vec.ptr(), col_dim * sizeof(double));
 
     return state;
 }

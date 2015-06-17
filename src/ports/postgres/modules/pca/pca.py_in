@@ -89,7 +89,7 @@ def _validate_args(schema_madlib,
         plpy.error("PCA error: lanczos_iter can't be negative! (Use zero for \
         default value)  The provided value is {0}".format(str(lanczos_iter)))
 
-    #If using sparse matrices, check that the parameters are reasonable
+    # If using sparse matrices, check that the parameters are reasonable
     if col_id or val_id:
         if not col_id:
             plpy.error("PCA error: Column ID should be provided if \
@@ -130,12 +130,8 @@ def _validate_args(schema_madlib,
 ## ========================================================================
 
 
-def _recenter_data(schema_madlib,
-                   source_table,
-                   output_table,
-                   row_id,
-                   col_name,
-                   dimension):
+def _recenter_data(schema_madlib, source_table, output_table, row_id,
+                   col_name, dimension):
     """
     Rescales the data table by column means.
 
@@ -235,19 +231,9 @@ def pca_sparse(schema_madlib,
     plpy.execute('SET client_min_messages TO warning')
 
     # Step 1: Validate the input arguments
-    _validate_args(schema_madlib,
-                   source_table,
-                   pc_table,
-                   k,
-                   row_id,
-                   col_id,
-                   val_id,
-                   row_dim,
-                   col_dim,
-                   grouping_cols,
-                   lanczos_iter,
-                   use_correlation,
-                   result_summary_table)
+    _validate_args(schema_madlib, source_table, pc_table, k, row_id, col_id,
+                   val_id, row_dim, col_dim, grouping_cols, lanczos_iter,
+                   use_correlation, result_summary_table)
 
     # Step 2: Densify the matrix
     #  We densify the matrix because the recentering process will generate a
@@ -351,12 +337,13 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                    grouping_cols, lanczos_iter, use_correlation,
                    result_summary_table)
 
+
     # Make sure that the table has row_id and row_vec
     source_table_copy = unique_string() + "_reformated_names"
-    need_new_column_names = cast_dense_input_table_to_correct_columns(
+    created_new_table = cast_dense_input_table_to_correct_columns(
         schema_madlib, source_table, source_table_copy, row_id)
 
-    if(need_new_column_names):
+    if(created_new_table):
         source_table = source_table_copy
 
     [row_dim, col_dim] = get_dims(source_table,
@@ -382,10 +369,8 @@ def pca(schema_madlib, source_table, pc_table, row_id,
 
         # Step 3: Create temporary output & result summary table
         svd_output_temp_table = unique_string() + "_svd_output_table"
-        plpy.execute("""
-            DROP TABLE IF EXISTS {svd_output_temp_table}
-            """.format(svd_output_temp_table=svd_output_temp_table)
-                     )
+        plpy.execute("DROP TABLE IF EXISTS {0}".format(svd_output_temp_table))
+
         if result_summary_table is None:
             result_summary_table_string = ''
         else:
@@ -429,9 +414,11 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             SELECT  {svd_v_transpose}.row_id,
                     row_vec AS principal_components,
                     value / sqrt({row_dim} - 1) AS eigen_values
-            FROM {svd_v_transpose}, {svd_output_temp_table_s}
+            FROM {svd_v_transpose},
+                 {svd_output_temp_table_s}
             WHERE ({svd_v_transpose}.row_id = {svd_output_temp_table_s}.row_id)
-                  AND ({svd_v_transpose}.row_id < {k})
+                  AND ({svd_v_transpose}.row_id <= {k})
+                  AND value is not NULL
             """.format(svd_output_temp_table_s=svd_output_temp_table_s,
                        k=k,
                        svd_v_transpose=svd_v_transpose,
@@ -444,7 +431,8 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             DROP TABLE IF EXISTS {pc_table_mean};
             CREATE TABLE {pc_table_mean} AS
             SELECT '{column_mean_str}'::FLOAT8[] AS column_mean
-            """.format(pc_table_mean=pc_table_mean,column_mean_str=column_mean_str))
+            """.format(pc_table_mean=pc_table_mean,
+                       column_mean_str=column_mean_str))
 
         # Step 7: Append to the SVD summary table to get the PCA summary table
         if result_summary_table:

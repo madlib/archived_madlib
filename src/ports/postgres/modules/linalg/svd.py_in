@@ -11,7 +11,6 @@ from utilities.utilities import _assert
 from utilities.utilities import add_postfix
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
-from utilities.validate_args import get_cols
 from utilities.validate_args import rename_table
 from matrix_ops import get_dims
 from matrix_ops import create_temp_sparse_matrix_table_with_dims
@@ -120,6 +119,7 @@ def create_summary_table(**args):
             '{temp_prefix}_a', 'row=row_id, col=col_id, val=row_vec'
             );
         """.format(**args))
+
     plpy.execute(
         """
         SELECT {schema_madlib}.matrix_mult(
@@ -128,6 +128,7 @@ def create_summary_table(**args):
             '{temp_prefix}_b', 'row=row_id, col=col_id, val=row_vec'
             );
         """.format(**args))
+
     err = plpy.execute(
         """
         SELECT avg(s) / ({col_dim}::double precision) as p
@@ -543,7 +544,7 @@ def _svd(schema_madlib, source_table, output_table_prefix,
     bidiagonal_prefix = unique_string() + 'bidiag'
     if row_id or col_id or val:
         if not (row_id and col_id and val):
-            plpy.error("SVD Internal error: All column names for sparse matrices"
+            plpy.error("SVD error: All column names for sparse matrices"
                        " should be provided")
         is_sparse = True
     else:
@@ -573,8 +574,8 @@ def _svd(schema_madlib, source_table, output_table_prefix,
     svd_bidiagonal = unique_string() + 'svd_output'
     rv = plpy.execute("""
         SELECT
-            {schema_madlib}.array_max(row_id) + 1 as row_dim,
-            {schema_madlib}.array_max(col_id) + 1 as col_dim
+            {schema_madlib}.array_max(row_id) as row_dim,
+            {schema_madlib}.array_max(col_id) as col_dim
         FROM
             {bidiagonal_prefix}_b
         """.format(schema_madlib=schema_madlib,
@@ -616,13 +617,14 @@ def _svd(schema_madlib, source_table, output_table_prefix,
         CREATE TABLE {matrix_s} AS
             SELECT * FROM (
                 SELECT
-                    generate_series(0,
-                        array_upper((svd_output).singular_values, 2) - 1) as row_id,
-                    generate_series(0,
-                        array_upper((svd_output).singular_values, 2) - 1) as col_id,
+                    generate_series(1,
+                        array_upper((svd_output).singular_values, 2)) as row_id,
+                    generate_series(1,
+                        array_upper((svd_output).singular_values, 2)) as col_id,
                     unnest((svd_output).singular_values) as value
                 FROM {svd_bidiagonal}) s
-            ORDER BY row_id limit {k}
+            ORDER BY row_id
+            LIMIT {k}
         """.format(**locals()))
 
     plpy.execute("""
@@ -671,6 +673,7 @@ def _svd(schema_madlib, source_table, output_table_prefix,
                  DROP TABLE if exists {bidiagonal_prefix}_q;
                  DROP TABLE if exists {bidiagonal_prefix}_b;
                  """.format(bidiagonal_prefix=bidiagonal_prefix))
+
     return None
 # ------------------------------------------------------------------------
 
@@ -738,23 +741,22 @@ def _lanczos_bidiagonalize_output_results(schema_madlib, output_table_prefix,
 
     plpy.execute("""
         INSERT INTO {output_table_prefix}_p
-        SELECT id - 1, pvec
+        SELECT id, pvec
         FROM {pq_table_prefix}_p
         WHERE id > 0
         """.format(output_table_prefix=output_table_prefix,
                    pq_table_prefix=pq_table_prefix))
 
     # Output Q vectors
-
     plpy.execute("""
         CREATE TABLE {output_table_prefix}_q (row_id INT, row_vec FLOAT8[])
         """.format(output_table_prefix=output_table_prefix))
 
     plpy.execute("""
         INSERT INTO {output_table_prefix}_q
-        SELECT id - 1, qvec
+        SELECT id, qvec
         FROM {pq_table_prefix}_q
-        WHERE id < {k} + 1
+        WHERE id <= {k}
         """.format(output_table_prefix=output_table_prefix,
                    pq_table_prefix=pq_table_prefix, k=k))
 
@@ -770,20 +772,22 @@ def _lanczos_bidiagonalize_output_results(schema_madlib, output_table_prefix,
             array_agg(col_id) AS col_id,
             array_agg(val) AS value
         FROM (
-            SELECT id - 1 AS row_id,
-                   id - 1 AS col_id,
+            SELECT id AS row_id,
+                   id AS col_id,
                    alpha AS val
             FROM {pq_table_prefix}_p
             WHERE id > 0
             UNION
-            SELECT id - 2 AS row_id,
-                   id - 1 AS col_id,
+            SELECT id - 1 AS row_id,
+                   id AS col_id,
                    beta AS val
             FROM {pq_table_prefix}_q
-            WHERE id > 1 AND id < {k} + 1
+            WHERE id > 1 AND id <= {k}
         ) t
         """.format(output_table_prefix=output_table_prefix,
                    pq_table_prefix=pq_table_prefix, k=k))
+
+
 # ------------------------------------------------------------------------
 
 
@@ -845,39 +849,48 @@ def lanczos_bidiagonalize(schema_madlib, source_table, output_table_prefix,
             '{x_trans}', 'row=row_id, col=col_id, val={val}')
         """.format(**locals()))
 
-    lanczos_sql = """
-        {schema_madlib}.__svd_lanczos_agg(
-            row_id, row_vec, Q.qvec, {row_dim}) AS x_qvec
-        """.format(schema_madlib=schema_madlib, row_dim=row_dim)
     if is_block:
         lanczos_sql = """
             {schema_madlib}.__svd_block_lanczos_agg(
                 row_id, col_id, block, Q.qvec, {row_dim}) AS x_qvec
             """.format(schema_madlib=schema_madlib, row_dim=row_dim)
-    lanczos_sql_trans = """
-        {schema_madlib}.__svd_lanczos_agg(
-            row_id, row_vec, P.pvec, {col_dim}) AS x_trans_pvec
-        """.format(schema_madlib=schema_madlib, col_dim=col_dim)
+    else:
+        lanczos_sql = """
+            {schema_madlib}.__svd_lanczos_agg(
+                row_id, row_vec, Q.qvec, {row_dim}) AS x_qvec
+            """.format(schema_madlib=schema_madlib, row_dim=row_dim)
+
     if is_block:
         lanczos_sql_trans = """
             {schema_madlib}.__svd_block_lanczos_agg(
                 row_id, col_id, block, P.pvec, {col_dim}) AS x_trans_pvec
+            """.format(schema_madlib=schema_madlib, col_dim=col_dim)
+    else:
+        lanczos_sql_trans = """
+            {schema_madlib}.__svd_lanczos_agg(
+                row_id, row_vec, P.pvec, {col_dim}) AS x_trans_pvec
             """.format(schema_madlib=schema_madlib, col_dim=col_dim)
 
     # Perform Lanczos iteration
     for i in range(1, nIterations + 1):
         plpy.execute("""
             INSERT INTO {pq_table_prefix}_p
-            select id, (f).* from (
-            SELECT
-                {i} as id, {schema_madlib}.__svd_lanczos_pvec(x_qvec, P.pvec, Q.beta) as f
-            FROM
-            (   SELECT {lanczos_sql}
-                FROM {source_table}, {pq_table_prefix}_q AS Q
-                WHERE Q.id = {i}
-            ) t1, {pq_table_prefix}_p AS P, {pq_table_prefix}_q AS Q
-            WHERE
-                P.id = {i} - 1 AND Q.id = {i}) s
+            SELECT id, (f).*
+            FROM (
+                SELECT
+                    {i} as id,
+                    {schema_madlib}.__svd_lanczos_pvec(x_qvec, P.pvec, Q.beta) as f
+                FROM
+                    (   SELECT {lanczos_sql}
+                        FROM {source_table},
+                             {pq_table_prefix}_q AS Q
+                        WHERE Q.id = {i}
+                    ) t1,
+                    {pq_table_prefix}_p AS P,
+                    {pq_table_prefix}_q AS Q
+                WHERE
+                    P.id = {i} - 1 AND Q.id = {i}
+            ) s
             """.format(lanczos_sql=lanczos_sql, schema_madlib=schema_madlib,
                        source_table=source_table, pq_table_prefix=pq_table_prefix,
                        row_dim=row_dim, i=i))
@@ -885,23 +898,25 @@ def lanczos_bidiagonalize(schema_madlib, source_table, output_table_prefix,
         # Orthogonalize the current set of Q vectors
         plpy.execute("""
             INSERT INTO {pq_table_prefix}_q
-            select id, (f).* from (
-            SELECT
-                {i} + 1 as id,
-                {schema_madlib}.__svd_gram_schmidt_orthogonalize_agg(
-                    qvec_new, Q.qvec) as f
-            FROM
-            (   SELECT {schema_madlib}.__svd_lanczos_qvec(
-                        x_trans_pvec, Q.qvec, P.alpha) AS qvec_new
-                FROM (
-                    SELECT {lanczos_sql_trans}
-                    FROM {x_trans}, {pq_table_prefix}_p AS P
-                    WHERE P.id = {i}
-                ) t1,
-                    {pq_table_prefix}_p AS P,
-                    {pq_table_prefix}_q AS Q
-                WHERE P.id = {i} AND Q.id = {i}
-            ) t1, {pq_table_prefix}_q AS Q) s
+            SELECT id, (f).*
+            FROM (
+                SELECT
+                    {i} + 1 as id,
+                    {schema_madlib}.__svd_gram_schmidt_orthogonalize_agg(
+                        qvec_new, Q.qvec) as f
+                FROM
+                (   SELECT {schema_madlib}.__svd_lanczos_qvec(
+                            x_trans_pvec, Q.qvec, P.alpha) AS qvec_new
+                    FROM (
+                        SELECT {lanczos_sql_trans}
+                        FROM {x_trans}, {pq_table_prefix}_p AS P
+                        WHERE P.id = {i}
+                    ) t1,
+                        {pq_table_prefix}_p AS P,
+                        {pq_table_prefix}_q AS Q
+                    WHERE P.id = {i} AND Q.id = {i}
+                ) t1, {pq_table_prefix}_q AS Q
+            ) s
             """.format(lanczos_sql_trans=lanczos_sql_trans,
                        schema_madlib=schema_madlib, x_trans=x_trans,
                        pq_table_prefix=pq_table_prefix, col_dim=col_dim, i=i))
@@ -922,6 +937,7 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
                                  output_table_prefix, nIterations, k):
     """ Compute SVD of sparse matrix using Lanczos bidiagonalization algorithm """
 
+    global actual_lanczos_iterations
     # Get the dimensions of the matrix
     [row_dim, col_dim] = get_dims(source_table,
                                   {'row': row_id, 'col': col_id, 'val': val})
@@ -934,7 +950,6 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
 
     # Limit the size of matrix B (which will be kept in memory)
     # See note at top about MAX_LANCZOS_STEPS
-    global actual_lanczos_iterations
     if nIterations is None:
         nIterations = min(col_dim, MAX_LANCZOS_STEPS)
     elif nIterations < k or nIterations > col_dim:
@@ -978,10 +993,14 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
                     {schema_madlib}.__svd_lanczos_pvec(x_qvec, P.pvec, Q.beta) as f
                 FROM (
                     SELECT {lanczos_sql}
-                    FROM {source_table}, {pq_table_prefix}_q AS Q
+                    FROM {source_table},
+                         {pq_table_prefix}_q AS Q
                     WHERE Q.id = {i} AND {val} IS NOT NULL
-            ) t1, {pq_table_prefix}_p AS P, {pq_table_prefix}_q AS Q
-            WHERE P.id = {i} - 1 AND Q.id = {i}) s
+                ) t1,
+                {pq_table_prefix}_p AS P,
+                {pq_table_prefix}_q AS Q
+                WHERE P.id = {i} - 1 AND Q.id = {i}
+            ) s
             """.format(lanczos_sql=lanczos_sql, schema_madlib=schema_madlib,
                        source_table=source_table, row_dim=row_dim, i=i, val=val,
                        pq_table_prefix=pq_table_prefix))
@@ -1002,9 +1021,13 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
                         SELECT {lanczos_sql_trans}
                         FROM {source_table}, {pq_table_prefix}_p AS P
                         WHERE P.id = {i} AND {val} IS NOT NULL
-                    ) t1, {pq_table_prefix}_p AS P, {pq_table_prefix}_q AS Q
+                    ) t1,
+                    {pq_table_prefix}_p AS P,
+                    {pq_table_prefix}_q AS Q
                     WHERE P.id = {i} AND Q.id = {i}
-            ) t1, {pq_table_prefix}_q AS Q) s
+                ) t1,
+                {pq_table_prefix}_q AS Q
+            ) s
             """.format(lanczos_sql_trans=lanczos_sql_trans, val=val,
                        schema_madlib=schema_madlib, source_table=source_table,
                        pq_table_prefix=pq_table_prefix, col_dim=col_dim, i=i))
@@ -1166,27 +1189,27 @@ def svd_vec_trans_mult_matrix(schema_madlib, vec_table, mat_table,
                               k, res_table, is_left):
     """ Compute the product of multiple vectors with a matrix stored in a table """
     matrix = ('right_matrix', 'left_matrix')[is_left]
+
+    array_sum = m4_ifdef(`__POSTGRESQL__', `schema_madlib + ".__array_sum"', `"sum"')
     plpy.execute("""
         CREATE TABLE {res_table} AS
         SELECT
             row_id,
-            m4_ifdef(`__POSTGRESQL__', `{schema_madlib}.__array_')sum(row_vec) AS row_vec
+            {array_sum}(row_vec) AS row_vec
         FROM (
-            SELECT (f).row_id AS row_id, (f).row_vec AS row_vec
+            SELECT (f).row_id + 1 as row_id, (f).row_vec AS row_vec
             FROM (
-                SELECT row_id,
-                       {schema_madlib}.__svd_vec_trans_mult_matrix_internal(
+                SELECT {schema_madlib}.__svd_vec_trans_mult_matrix_internal(
                            row_vec,
                            (SELECT (svd_output).{matrix} FROM {mat_table}),
-                           row_id, {k}
+                           row_id,
+                           {k}
                        ) AS f
                 FROM {vec_table}
             ) t1
         ) t2
         GROUP BY row_id
-        """.format(res_table=res_table, schema_madlib=schema_madlib,
-                   mat_table=mat_table, vec_table=vec_table, k=k,
-                   matrix=matrix))
+        """.format(**locals()))
 # -------------------------------------------------------------------------
 
 
@@ -1204,8 +1227,8 @@ def _transpose_UV(schema_madlib, u_table_name, v_table_name):
     """
     tmp_name = unique_string()
     tmp_name = rename_table(schema_madlib, u_table_name, tmp_name)
-    ## we reset the tmp_name since it's possible that u_table_name was schema_qualified,
-    ## in which case tmp_name will be set to that schema.
+    # we reset the tmp_name since it's possible that u_table_name was schema_qualified,
+    # in which case tmp_name will be set to that schema.
     rename_table(schema_madlib, v_table_name, u_table_name)
     rename_table(schema_madlib, tmp_name, v_table_name)
     return None

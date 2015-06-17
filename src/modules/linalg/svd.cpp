@@ -118,9 +118,9 @@ AnyType svd_lanczos_sfunc::run(AnyType & args){
             "invalid argument - Positive integer expected for dimension");
     }
 
-    if(row_id < 0 || row_id >= dim){
+    if(row_id <= 0 || row_id > dim){
         throw std::invalid_argument(
-            "invalid argument: row_id is out of range [0, dim - 1]");
+            "invalid argument: row_id is out of range [1, dim]");
     }
 
     if(row_array.size() != vec.size()){
@@ -134,12 +134,13 @@ AnyType svd_lanczos_sfunc::run(AnyType & args){
             madlib_construct_array(
                 NULL, dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
                 FLOAT8TI.align));
-        for (int i = 0; i < dim; i++) state[i] = 0;
+        for (int i = 0; i < dim; i++)
+            state[i] = 0;
     }else{
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
 
-    state[row_id] = row_array.dot(vec);
+    state[row_id - 1] = row_array.dot(vec);
 
     return state;
 }
@@ -328,15 +329,15 @@ AnyType svd_decompose_bidiagonal_sfunc::run(AnyType & args){
     }
     if(k > (int)MAX_LANCZOS_STEPS){
         throw std::invalid_argument(
-            "SVD error: k is too large, try with a value in the range of [1,6000]");
+            "SVD error: k is too large, try with a value in the range of [1, 6000]");
     }
-    if(row_id < 0 || row_id >= k){
+    if(row_id <= 0 || row_id > k){
         throw std::invalid_argument(
-            "SVD error: row_id should be in the range of [0, k)");
+            "SVD error: row_id should be in the range of [1, k]");
     }
-    if(col_id < 0 || col_id >= k){
+    if(col_id <= 0 || col_id > k){
         throw std::invalid_argument(
-            "invalid parameter: col_id should be in the range of [0, k)");
+            "invalid parameter: col_id should be in the range of [1, k]");
     }
 
     MutableArrayHandle<double> state(NULL);
@@ -348,7 +349,7 @@ AnyType svd_decompose_bidiagonal_sfunc::run(AnyType & args){
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
 
-    state[row_id * k + col_id] = value;
+    state[(row_id - 1) * k + col_id - 1] = value;
     return state;
 }
 
@@ -400,18 +401,22 @@ AnyType svd_decompose_bidiagonal_ffunc::run(AnyType & args){
 }
 
 AnyType svd_decompose_bidiag::run(AnyType & args){
+
+    // <row_id, col_id, value> triple indicate the values of a bidiagonal matrix
     ArrayHandle<int32_t> row_id = args[0].getAs<ArrayHandle<int32_t> >();
     ArrayHandle<int32_t> col_id = args[1].getAs<ArrayHandle<int32_t> >();
     MappedColumnVector value = args[2].getAs<MappedColumnVector>();
 
-    int32_t row_dim = *std::max_element(
-        row_id.ptr(), row_id.ptr() + row_id.size()) + 1;
-    int32_t col_dim = *std::max_element(
-        col_id.ptr(), col_id.ptr() + col_id.size()) + 1;
+    // since row_id, col_id start indexing from 1, the max element indicates the
+    // dimension of of the bidiagonal matrix
+    int32_t row_dim = *std::max_element(row_id.ptr(), row_id.ptr() + row_id.size());
+    int32_t col_dim = *std::max_element(col_id.ptr(), col_id.ptr() + col_id.size());
 
     Matrix b = Matrix::Zero(row_dim, col_dim);
-    for(size_t i = 0; i < row_id.size(); i++)
-        b(row_id[i], col_id[i]) = value[i];
+    for(size_t i = 0; i < row_id.size(); i++){
+        // we use -1 since row_id and col_id start from 1
+        b(row_id[i] - 1, col_id[i] - 1) = value[i];
+    }
 
     Eigen::JacobiSVD<Matrix> svd(b, Eigen::ComputeThinU | Eigen::ComputeThinV);
 
@@ -442,6 +447,15 @@ AnyType svd_block_lanczos_sfunc::run(AnyType & args){
     MappedColumnVector vec = args[4].getAs<MappedColumnVector >();
     int32_t dim = args[5].getAs<int32_t>();
 
+    if(row_id <= 0){
+        throw std::invalid_argument(
+            "SVD error: row_id should be in the range of [1, dim]");
+    }
+    if(col_id <= 0){
+        throw std::invalid_argument(
+            "invalid parameter: col_id should be in the range of [1, dim]");
+    }
+
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
         state = MutableArrayHandle<double>(
@@ -452,14 +466,13 @@ AnyType svd_block_lanczos_sfunc::run(AnyType & args){
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
 
-    // Note that m is constructed in the column-first order
-    Matrix m = block;
+    // Note that block is constructed in the column-major order
     size_t row_size = block.cols();
     size_t col_size = block.rows();
 
-    Matrix v = block.transpose() * vec.segment(col_id * col_size, col_size);
-    for(int32_t i = 0; i < v.size(); i++)
-        state[row_id * row_size + i] += v.col(0)[i];
+    Matrix v = block.transpose() * vec.segment((col_id - 1) * col_size, col_size);
+    for(int32_t i = 0; i < v.rows(); i++)
+        state[(row_id - 1) * row_size + i] += v.col(0)[i];
 
     return state;
 }
@@ -491,12 +504,12 @@ AnyType svd_sparse_lanczos_sfunc::run(AnyType & args){
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
 
-    state[row_id] += value * vec[col_id];
+    state[row_id - 1] += value * vec[col_id - 1];
     return state;
 }
 
 /*
- *  @brief In-meory multiplication of a vector with a matrix
+ *  @brief In-memory multiplication of a vector with a matrix
  *  @param vec  a 1 x r vector
  *  @param mat  a r x n matrix
  *  @param k    a positive number < n
@@ -530,7 +543,7 @@ typedef struct __sr_ctx{
     Matrix mat;
     int32_t max_call;
     int32_t cur_call;
-    int32_t col_id;
+    int32_t row_id;
     int32_t k;
 } sr_ctx;
 
@@ -544,17 +557,17 @@ void * svd_vec_trans_mult_matrix::SRF_init(AnyType &args){
     sr_ctx * ctx = new sr_ctx;
     ctx->vec = args[0].getAs<MappedColumnVector>();
     ctx->mat = args[1].getAs<MappedMatrix>().transpose();
-    ctx->col_id = args[2].getAs<int32_t>();
+    ctx->row_id = args[2].getAs<int32_t>();
     ctx->k = args[3].getAs<int32_t>();
 
-    if(ctx->col_id < 0 || ctx->col_id >= ctx->mat.rows()){
+    if(ctx->row_id <= 0 || ctx->row_id > ctx->mat.rows()){
         elog(ERROR,
-            "invalid parameter - col_id should be in the range of [0, mat.rows())");
+            "invalid parameter - row_id should be in the range of [1, mat.rows()]");
     }
 
     if(ctx->k > ctx->mat.cols()){
         elog(ERROR,
-            "invalid parameter - k should be in the range of (0, mat.cols()]");
+            "invalid parameter - k should be in the range of [0, mat.cols()]");
     }
 
     ctx->max_call = static_cast<int32_t>(ctx->vec.size());
@@ -571,7 +584,7 @@ AnyType svd_vec_trans_mult_matrix::SRF_next(void *user_fctx, bool *is_last_call)
     }
 
     ColumnVector res = ctx->vec[ctx->cur_call] *
-        ctx->mat.row(ctx->col_id).segment(0, ctx->k);
+                            ctx->mat.row(ctx->row_id - 1).segment(0, ctx->k);
     AnyType tuple;
     tuple << ctx->cur_call << res;
 
