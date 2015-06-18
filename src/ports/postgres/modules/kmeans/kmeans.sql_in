@@ -509,10 +509,7 @@ DECLARE
   rel_source_regclass REGCLASS;
   rel_filtered VARCHAR;
 BEGIN
-    m4_ifdef(`__HAWQ__',
-    `rel_source_regclass := rel_source;',
-    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
-    rel_source_regclass := rel_filtered;')
+    rel_source_regclass := rel_source;
 
     IF (initial_centroids IS NOT NULL) THEN
        num_centroids := array_upper(initial_centroids,1);
@@ -529,7 +526,8 @@ BEGIN
         reasonable amount of time).';
     END IF;
     EXECUTE $sql$ SELECT count(*)
-                  FROM $sql$ || textin(regclassout(rel_source_regclass))
+                  FROM $sql$ || textin(regclassout(rel_source_regclass)) || $sql$
+                  WHERE abs(coalesce(MADLIB_SCHEMA.svec_elsum($sql$ || expr_point || $sql$), 'Infinity'::FLOAT8)) < 'Infinity'::FLOAT8 $sql$
             INTO num_points ;
     IF (num_points < k OR num_points < num_centroids) THEN
         RAISE EXCEPTION 'Number of centroids is greater than number of points.';
@@ -552,6 +550,7 @@ BEGIN
             ) AS length,
             array_lower( $sql$ || expr_point || $sql$::float8[], 1) AS lower
             FROM $sql$ || textin(regclassout(rel_source_regclass)) || $sql$
+            WHERE abs(coalesce(MADLIB_SCHEMA.svec_elsum($sql$ || expr_point || $sql$), 'Infinity'::FLOAT8)) < 'Infinity'::FLOAT8
             GROUP BY length, lower) t $sql$
     INTO array_dim;
     IF (array_upper(array_dim, 1) > 1) THEN
@@ -662,10 +661,7 @@ BEGIN
     --     RAISE EXCEPTION 'The initial centroids should have the same dimension as the data point!';
     -- END IF;
 
-    m4_ifdef(`__HAWQ__',
-    `class_rel_source := rel_source;',
-    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
-    class_rel_source := rel_filtered;')
+    class_rel_source := rel_source;
 
     proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
@@ -693,7 +689,10 @@ BEGIN
     IF (k > 32767) THEN
         RAISE EXCEPTION 'Kmeans error: Number of clusters k must be <= 32767 (for results to be returned in a reasonable amount of time).';
     END IF;
-    EXECUTE $sql$ SELECT count(*) FROM $sql$ || textin(regclassout(class_rel_source)) INTO num_points ;
+    EXECUTE $sql$ SELECT count(*)
+                  FROM $sql$ || textin(regclassout(class_rel_source)) || $sql$
+                  WHERE abs(coalesce(MADLIB_SCHEMA.svec_elsum($sql$ || expr_point || $sql$), 'Infinity'::FLOAT8)) < 'Infinity'::FLOAT8 $sql$
+            INTO num_points ;
     IF (num_points < k) THEN
         RAISE EXCEPTION 'Kmeans error: Number of centroids is greater than number of points.';
     END IF;
@@ -878,10 +877,7 @@ BEGIN
 
     -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
     -- operators from regclass to varchar/text.
-    m4_ifdef(`__HAWQ__',
-    `class_rel_source := rel_source;',
-    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
-    class_rel_source := rel_filtered;')
+    class_rel_source := rel_source;
 
     sampled_rel_source = MADLIB_SCHEMA.__unique_string();
     sampled_col_name = MADLIB_SCHEMA.__unique_string();
@@ -895,6 +891,12 @@ BEGIN
                     *,
                     random() AS '||sampled_col_name||'
                 FROM '||textin(regclassout(class_rel_source))||'
+                WHERE abs(
+                          coalesce(
+                             MADLIB_SCHEMA.svec_elsum('||expr_point||'),
+                             ''Infinity''::FLOAT8
+                          )
+                         ) < ''Infinity''::FLOAT8
             ) subq
             WHERE '||sampled_col_name||' < '||seeding_sample_ratio;
         class_rel_source := sampled_rel_source;
@@ -1205,10 +1207,7 @@ BEGIN
     -- Perform acutal computation.
     -- Unfortunately, Greenplum and PostgreSQL <= 8.2 do not have conversion
     -- operators from regclass to varchar/text.
-    m4_ifdef(`__HAWQ__',
-    `class_rel_source := rel_source;',
-    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
-    class_rel_source := rel_filtered;')
+    class_rel_source := rel_source;
     theIteration := (
         SELECT MADLIB_SCHEMA.internal_compute_kmeans_random_seeding(
             '_madlib_kmeans_random_args', '_madlib_kmeans_random_state',
@@ -1379,41 +1378,6 @@ CALLED ON NULL INPUT
 LANGUAGE c
 AS 'MODULE_PATHNAME', 'exec_sql_using'
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
-
-/**
- * @internal
- * @brief Filter out the invalid data points in the original input relation
- */
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__filter_input_relation(
-    rel_source VARCHAR, expr_point VARCHAR)
-RETURNS VARCHAR
-AS $$
-DECLARE
-    oldClientMinMessages VARCHAR;
-    rel_source_filtered VARCHAR;
-BEGIN
-    SELECT '_madlib_' || MADLIB_SCHEMA.__unique_string()  || '_filtered'
-    INTO rel_source_filtered;
-    oldClientMinMessages :=
-        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
-    EXECUTE 'SET client_min_messages TO warning';
-    EXECUTE 'DROP VIEW IF EXISTS _madlib_'||rel_source_filtered||'_filtered';
-    EXECUTE 'DROP VIEW IF EXISTS '||rel_source_filtered;
-    EXECUTE 'CREATE TEMPORARY VIEW '||rel_source_filtered||'
-             AS SELECT * FROM '||rel_source||'
-                    WHERE abs(
-                              coalesce(
-                                 MADLIB_SCHEMA.svec_elsum('||expr_point||'),
-                                 ''Infinity''::FLOAT8
-                              )
-                             ) < ''Infinity''::FLOAT8';
-    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
-    RETURN rel_source_filtered;
-END
-$$
-VOLATILE
-LANGUAGE PLPGSQL
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 /**
  * @brief Perform Lloyd's k-means local-search heuristic, but with initial
@@ -1600,10 +1564,7 @@ BEGIN
 
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
 
-    m4_ifdef(`__HAWQ__',
-    `class_rel_source := rel_source;',
-    `rel_filtered = MADLIB_SCHEMA.__filter_input_relation(rel_source, expr_point);
-    class_rel_source := rel_filtered;')
+    class_rel_source := rel_source;
 
     proc_fn_dist := fn_dist
         || '(DOUBLE PRECISION[], DOUBLE PRECISION[])';
@@ -1629,6 +1590,7 @@ BEGIN
                 )).distances
             FROM
                 $sql$ || textin(regclassout(class_rel_source)) || $sql$
+                WHERE abs(coalesce(MADLIB_SCHEMA.svec_elsum($sql$ || expr_point || $sql$), 'Infinity'::FLOAT8)) < 'Infinity'::FLOAT8
         ) AS two_shortest_distances
         $sql$,
         centroids, proc_fn_dist, fn_dist);
