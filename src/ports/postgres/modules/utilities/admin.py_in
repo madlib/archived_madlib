@@ -1,0 +1,67 @@
+import plpy
+import pipes
+from control import MinWarning
+
+def __get_madlib_temp_tables(target_schema):
+    sql_get_tables_to_drop = """
+            SELECT quote_ident(tablename) AS tablename
+            FROM pg_tables
+            WHERE tablename LIKE '%madlib\_temp%'
+            AND quote_ident(schemaname) = '{target_schema}'
+            """.format(**locals())
+    return plpy.execute(sql_get_tables_to_drop)
+
+# ------------------------------------------------------------------------------
+def cleanup_madlib_temp_tables(schema_madlib, target_schema, **kwargs):
+    """ Drop all tables matching '%madlib_temp%' in the given schema
+
+    Args:
+        @param target_schema
+
+    Returns:
+        None
+    """
+    to_drop_list = __get_madlib_temp_tables(target_schema)
+    if len(to_drop_list) == 0:
+        plpy.info("No madlib temp tables found in schema {target_schema}.".format(**locals()))
+        return None
+    sql_drop_all = 'DROP TABLE '
+    sql_drop_all += ",".join(["{target_schema}.{tablename}".format(
+            tablename=row['tablename'], **locals()) for row in to_drop_list])
+    sql_drop_all += ";"
+    plpy.notice("Dropping {0} tables ...".format(len(to_drop_list)))
+    try:
+        with MinWarning():
+            plpy.execute(sql_drop_all)
+    except plpy.spiexceptions.OutOfMemory:
+        escaped_sql = pipes.quote(
+            'SELECT {schema_madlib}.cleanup_madlib_temp_tables_script(\'{target_schema}\')'
+            .format(**locals()))
+        plpy.error(
+                "You have too many tables and cannot be dropped all at once.\n"
+                "Use the following bash commands instead:\n"
+                "    $ psql -A -t -c {escaped_sql} > /tmp/drop_all_madlib_temp.sql\n"
+                "    $ psql -f /tmp/drop_all_madlib_temp.sql"
+                .format(**locals()))
+    plpy.notice("Finished dropping {0} tables.".format(len(to_drop_list)))
+
+# ------------------------------------------------------------------------------
+def cleanup_madlib_temp_tables_script(schema_madlib, target_schema, **kwargs):
+    """ Create a sql script to drop all tables matching '%madlib_temp%' in the given schema
+
+    Args:
+        @param target_schema
+
+    Returns:
+        None
+    """
+    to_drop_list = __get_madlib_temp_tables(target_schema)
+    if len(to_drop_list) == 0:
+        plpy.info("No madlib temp tables found in schema {target_schema}.")
+        return None
+    sql_content = ''
+    for row in to_drop_list:
+        tablename = row['tablename']
+        sql_drop = "DROP TABLE {target_schema}.{tablename};".format(**locals())
+        sql_content += sql_drop + "\n"
+    return sql_content
