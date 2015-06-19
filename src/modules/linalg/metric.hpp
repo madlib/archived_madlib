@@ -68,6 +68,10 @@ DECLARE_UDF(linalg, dist_tanimoto)
 
 DECLARE_UDF(linalg, dist_jaccard)
 
+/**
+ * @brief Compute the cosine similarity score between two dense vectors
+ */
+DECLARE_UDF(linalg, cosine_similarity)
 
 #ifndef MADLIB_MODULES_LINALG_LINALG_HPP
 #define MADLIB_MODULES_LINALG_LINALG_HPP

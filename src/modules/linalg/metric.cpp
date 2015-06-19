@@ -178,6 +178,22 @@ distNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
 }
 
 double
+cosineSimilarity(const MappedColumnVector& inX, const MappedColumnVector& inY) {
+    if (inX.size() != inY.size()) {
+        throw std::runtime_error("Found input arrays of "
+                "different lengths unexpectedly.");
+    }
+
+	double xnorm = inX.norm(), ynorm = inY.norm();
+	if (xnorm < std::numeric_limits<double>::denorm_min()
+		|| ynorm < std::numeric_limits<double>::denorm_min()) {
+        return -1;
+    }
+
+    return inX.dot(inY) / (xnorm * ynorm);
+}
+
+double
 squaredDistNorm2(const MappedColumnVector& inX, const MappedColumnVector& inY) {
     if (inX.size() != inY.size()) {
         throw std::runtime_error("Found input arrays of "
@@ -509,6 +525,14 @@ dist_norm2::run(AnyType& args) {
     // works for dense and sparse vectors), and the C++ AL takes care of the
     // rest...
     return distNorm2(
+        args[0].getAs<MappedColumnVector>(),
+        args[1].getAs<MappedColumnVector>()
+    );
+}
+
+AnyType
+cosine_similarity::run(AnyType& args) {
+    return cosineSimilarity(
         args[0].getAs<MappedColumnVector>(),
         args[1].getAs<MappedColumnVector>()
     );
