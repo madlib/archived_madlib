@@ -48,13 +48,17 @@ AnyType matrix_densify_sfunc::run(AnyType & args)
     double val = args[3].getAs<double>();
 
     if(col_dim < 1){
-        throw std::invalid_argument(
-            "invalid argument - col_dim should be positive");
+        std::stringstream errorMsg;
+        errorMsg << "invalid argument - col (" << col <<
+                    ") should be positive";
+        throw std::invalid_argument(errorMsg.str());
     }
 
     if(col > col_dim){
-        throw std::invalid_argument(
-            "invalid argument - col should be in the range of [1, col_dim]");
+        std::stringstream errorMsg;
+        errorMsg << "invalid argument - col (" << col <<
+                    ") should be in the range of [1, " << col_dim << "]";
+        throw std::invalid_argument(errorMsg.str());
     }
 
     MutableArrayHandle<double> state(NULL);
@@ -122,7 +126,7 @@ AnyType matrix_blockize_sfunc::run(AnyType & args)
 
     MutableArrayHandle<double> state(NULL);
     if (args[0].isNull()){
-        int dims[2] = {rsize, csize};
+        int32_t dims[2] = {rsize, csize};
         int lbs[2] = {1, 1};
         state = madlib_construct_md_array(
                 NULL, NULL, 2, dims, lbs, FLOAT8TI.oid,
@@ -179,13 +183,6 @@ AnyType matrix_mem_mult::run(AnyType & args)
     }
     return r;
 }
-
-// AnyType matrix_vec_mem_mult::run(AnyType &args){
-//     // MappedMatrix left_matrix = args[0].getAs<MappedMatrix>();
-//     MappedColumnVector right_vec = args[1].getAs<MappedColumnVector>();
-//     MappedColumnVector left_vec = args[0].getAs<MappedColumnVector>();
-//     return left_vec * right_vec;
-// }
 
 AnyType matrix_mem_trans::run(AnyType & args)
 {

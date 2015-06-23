@@ -131,22 +131,26 @@ def create_summary_table(**args):
 
     err = plpy.execute(
         """
-        SELECT avg(s) / ({col_dim}::double precision) as p
+        SELECT avg(s) / ({col_dim}::float8) as p
         FROM (
-            SELECT {schema_madlib}.array_dot(arr, arr) as s
+            SELECT {schema_madlib}.array_dot(arr::float8[], arr::float8[]) as s
             FROM (
-                SELECT {schema_madlib}.array_sub(a.row_vec, b.row_vec) as arr
+                SELECT {schema_madlib}.array_sub(a.row_vec::float8[],
+                                                 b.row_vec::float8[]) as arr
                 FROM
-                    {source_table} a join {temp_prefix}_b b using (row_id)
+                    {source_table} a
+                        join
+                    {temp_prefix}_b b
+                        on (a.row_id::int4 = b.row_id::int4)
                 ) Q1
             ) Q2
         """.format(**args))[0]['p']
     norm = plpy.execute(
         """
-        SELECT avg(s) / ({col_dim}::double precision) as p
+        SELECT avg(s) / ({col_dim}::float8) as p
         FROM (
             SELECT
-                {schema_madlib}.array_dot(row_vec, row_vec) as s
+                {schema_madlib}.array_dot(row_vec::float8[], row_vec::float8[]) as s
             FROM
                 {source_table}
         ) Q1
@@ -373,18 +377,14 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
     plpy.execute("""
                  CREATE TABLE {converted_tbl} as
                      SELECT
-                         {row_id} as row_id,
-                         {col_id} as col_id,
-                         {value} as value
+                         {row_id}::int4 as row_id,
+                         {col_id}::int4 as col_id,
+                         {value}::float8 as value
                      FROM {source_table}
                      WHERE {value} is not NULL
                  """.format(row_id=row_id, col_id=col_id, value=val,
                             source_table=source_table,
                             converted_tbl=converted_tbl))
-    plpy.execute("""INSERT INTO {converted_tbl} VALUES
-                    ({row_dim}, {col_dim}, NULL)
-                 """.format(converted_tbl=converted_tbl, row_dim=row_dim,
-                            col_dim=col_dim))
     source_table = converted_tbl
     # NOTE: At this point source_table has hard-coded column names:
     #       'row_id' --- 'col_id' --- 'value'
@@ -574,8 +574,8 @@ def _svd(schema_madlib, source_table, output_table_prefix,
     svd_bidiagonal = unique_string() + 'svd_output'
     rv = plpy.execute("""
         SELECT
-            {schema_madlib}.array_max(row_id) as row_dim,
-            {schema_madlib}.array_max(col_id) as col_dim
+            {schema_madlib}.array_max(row_id::INTEGER[]) as row_dim,
+            {schema_madlib}.array_max(col_id::INTEGER[]) as col_dim
         FROM
             {bidiagonal_prefix}_b
         """.format(schema_madlib=schema_madlib,
@@ -589,7 +589,7 @@ def _svd(schema_madlib, source_table, output_table_prefix,
         DROP TABLE IF EXISTS {svd_bidiagonal};
         CREATE TABLE {svd_bidiagonal} as
             SELECT {schema_madlib}.__svd_decompose_bidiag(
-                row_id, col_id, value) AS svd_output
+                row_id::INTEGER[], col_id::INTEGER[], value::FLOAT8[]) AS svd_output
             FROM {bidiagonal_prefix}_b;
         """.format(schema_madlib=schema_madlib,
                    svd_bidiagonal=svd_bidiagonal,
@@ -772,8 +772,8 @@ def _lanczos_bidiagonalize_output_results(schema_madlib, output_table_prefix,
             array_agg(col_id) AS col_id,
             array_agg(val) AS value
         FROM (
-            SELECT id AS row_id,
-                   id AS col_id,
+            SELECT id::int4 AS row_id,
+                   id::int4 AS col_id,
                    alpha AS val
             FROM {pq_table_prefix}_p
             WHERE id > 0
@@ -852,23 +852,23 @@ def lanczos_bidiagonalize(schema_madlib, source_table, output_table_prefix,
     if is_block:
         lanczos_sql = """
             {schema_madlib}.__svd_block_lanczos_agg(
-                row_id, col_id, block, Q.qvec, {row_dim}) AS x_qvec
+                row_id::int4, col_id::int4, block, Q.qvec, {row_dim}) AS x_qvec
             """.format(schema_madlib=schema_madlib, row_dim=row_dim)
     else:
         lanczos_sql = """
             {schema_madlib}.__svd_lanczos_agg(
-                row_id, row_vec, Q.qvec, {row_dim}) AS x_qvec
+                row_id::int4, row_vec, Q.qvec, {row_dim}) AS x_qvec
             """.format(schema_madlib=schema_madlib, row_dim=row_dim)
 
     if is_block:
         lanczos_sql_trans = """
             {schema_madlib}.__svd_block_lanczos_agg(
-                row_id, col_id, block, P.pvec, {col_dim}) AS x_trans_pvec
+                row_id::int4, col_id::int4, block, P.pvec, {col_dim}) AS x_trans_pvec
             """.format(schema_madlib=schema_madlib, col_dim=col_dim)
     else:
         lanczos_sql_trans = """
             {schema_madlib}.__svd_lanczos_agg(
-                row_id, row_vec, P.pvec, {col_dim}) AS x_trans_pvec
+                row_id::int4, row_vec, P.pvec, {col_dim}) AS x_trans_pvec
             """.format(schema_madlib=schema_madlib, col_dim=col_dim)
 
     # Perform Lanczos iteration
@@ -966,7 +966,7 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
 
     lanczos_sql = """
         {schema_madlib}.__svd_sparse_lanczos_agg(
-           {row_id}, {col_id}, {val}, Q.qvec, {row_dim}) AS x_qvec
+           {row_id}::int4, {col_id}::int4, {val}::float8, Q.qvec, {row_dim}) AS x_qvec
         """.format(schema_madlib=schema_madlib,
                    row_dim=row_dim,
                    row_id=col_id if inplace_trans else row_id,
@@ -975,7 +975,7 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
 
     lanczos_sql_trans = """
         {schema_madlib}.__svd_sparse_lanczos_agg(
-            {row_id}, {col_id}, {val}, P.pvec, {col_dim}) AS x_trans_pvec
+            {row_id}::int4, {col_id}::int4, {val}::float8, P.pvec, {col_dim}::int4) AS x_trans_pvec
         """.format(schema_madlib=schema_madlib,
                    col_dim=col_dim,
                    row_id=row_id if inplace_trans else col_id,
@@ -1194,15 +1194,15 @@ def svd_vec_trans_mult_matrix(schema_madlib, vec_table, mat_table,
     plpy.execute("""
         CREATE TABLE {res_table} AS
         SELECT
-            row_id,
+            row_id::INT4,
             {array_sum}(row_vec) AS row_vec
         FROM (
             SELECT (f).row_id + 1 as row_id, (f).row_vec AS row_vec
             FROM (
                 SELECT {schema_madlib}.__svd_vec_trans_mult_matrix_internal(
-                           row_vec,
+                           row_vec::FLOAT8[],
                            (SELECT (svd_output).{matrix} FROM {mat_table}),
-                           row_id,
+                           row_id::INT4,
                            {k}
                        ) AS f
                 FROM {vec_table}
