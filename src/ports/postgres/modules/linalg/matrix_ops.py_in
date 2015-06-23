@@ -31,7 +31,7 @@ def _matrix_default_args():
         'col': 'col_num',
         'val': 'val',
         'trans': False
-        }
+    }
 
 
 def parse_matrix_args(matrix_args, in_default_args=None):
@@ -162,9 +162,9 @@ def _validate_dense(matrix, matrix_args, checkCol=True, row_dim=None):
     if checkCol:
         cols = [matrix_args[i] for i in ('row', 'val')]
         _assert(columns_exist_in_table(
-                    matrix, cols),
-                "Matrix error: Missing columns (one of {0}) "
-                "from matrix {1}".format(','.join(cols), matrix))
+            matrix, cols),
+            "Matrix error: Missing columns (one of {0}) "
+            "from matrix {1}".format(','.join(cols), matrix))
         _assert(is_col_array(matrix, matrix_args['val']),
                 "Matrix error: invalid column ({0}) should be an array "
                 "datatype".format(matrix_args['val']))
@@ -1314,3 +1314,618 @@ def create_temp_sparse_matrix_table_with_dims(source_table,
         plpy.execute("""
             INSERT INTO {out_table} VALUES ({row_dim}, {col_dim}, 0)
         """.format(**locals()))
+# ------------------------------------------------------------------------------
+
+
+def matrix_extract(schema_madlib, matrix_in, in_args, extract_dim, index=0):
+    """ Extracts wanted row or column from matrix.
+
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib functions
+        @param matrix_in: str, Name of the table containing matrix
+        @param in_args: str, Name-value pair string containing options for matrix_in
+        @param extract_dim: int, If 1 extract row. If 2, extract col
+        @param index: int, The index to be extracted, starting from 0 and default is 0.
+
+    Returns:
+        Vector of elements of wanted column.
+    Side effect:
+        None
+    """
+    _validate_input_table(matrix_in)
+    in_args = parse_matrix_args(in_args)
+    in_dim = get_dims(matrix_in, in_args)
+
+    _assert(min(in_dim) > 0,
+            "Matrix error: Invalid dimensions for input matrix")
+    _assert(index >= 0, "Matrix error: The index ({0}) should be non-negative".format(index))
+    _assert(in_dim[extract_dim - 1] > index,
+            "Matrix error: The index ({0}) is invalid compared to "
+            "dimension size ({1})".format(index, in_dim[extract_dim - 1]))
+
+    if _is_sparse(matrix_in, in_args['val']):
+        _validate_sparse(matrix_in, in_args)
+        return _matrix_extract_sparse(schema_madlib, matrix_in, in_args,
+                                      extract_dim, in_dim, index)
+    else:
+        _validate_dense(matrix_in, in_args, in_dim[0])
+        if extract_dim == 1:
+            return _matrix_extract_row_dense(schema_madlib, matrix_in, in_args, index)
+        else:
+            return _matrix_extract_col_dense(schema_madlib, matrix_in, in_args, index)
+
+
+def _matrix_extract_sparse(schema_madlib, matrix_in, in_args,
+                           dim, dim_sizes, index=0):
+    # we define two variables:
+    #   e_dim - the dimension to be extracted.
+    #           If dim = 1, e_dim = row
+    #           If dim = 2, e_dim = col
+    #   o_dim - the orthogonal dimension to e_dim
+    e_dim = ('row', 'col')[dim - 1]
+    e_dim = in_args[e_dim]
+    o_dim = ('col', 'row')[dim - 1]
+    o_dim_size = dim_sizes[0 if o_dim == 'row' else 1]
+    o_dim = in_args[o_dim]
+    r = plpy.execute("""
+        SELECT
+            array_agg(val order by {o_dim}) as res
+        FROM (
+            SELECT
+                o_dim_values as {o_dim},
+                coalesce(a.val, 0) AS val
+            FROM (
+                SELECT {in_args[val]} as val,
+                       {o_dim} as {o_dim}
+                FROM
+                    {matrix_in} m
+                WHERE
+                    {in_args[val]} IS NOT NULL AND
+                    {e_dim} = {index}
+                ) AS a
+                FULL OUTER JOIN
+                    generate_series(0, {o_dim_size} - 1) o_dim_values
+                ON
+                    a.{o_dim} = o_dim_values
+            ) t
+        """.format(**locals()))
+
+    _assert(r and len(r) == 1,
+            "Matrix error: Invalid index: {0} for matrix extract".format(index))
+    return r[0]['res']
+
+
+def _matrix_extract_row_dense(schema_madlib, matrix_in, in_args, index=0):
+    r = plpy.execute("""
+        SELECT
+            m.{in_args[val]} AS res,
+            {schema_madlib}.assert(not {schema_madlib}.array_contains_null(m.{in_args[val]}),
+                                   'Element in dense matrix should not be NULL')
+        FROM
+            {matrix_in} AS m
+        WHERE
+            m.{in_args[row]} = {index}
+        """.format(**locals()))
+    _assert(len(r) == 1,
+            "Matrix error: Invalid row index:{0} for matrix".format(index))
+    return r[0]['res']
+
+
+def _matrix_extract_col_dense(schema_madlib, matrix_in, in_args, index=0):
+    r = plpy.execute("""
+        SELECT
+            array_agg(val order by row) as res
+        FROM
+            (SELECT
+                m.{in_args[row]} AS row,
+                m.{in_args[val]}[{index} + 1] AS val,
+                {schema_madlib}.assert(m.{in_args[val]}[{index} + 1] is not NULL,
+                                       'Element in dense matrix should not be NULL')
+            FROM
+                {matrix_in} m) t
+        """.format(**locals()))
+    _assert(len(r) == 1,
+            "Matrix error: Invalid row index:{0} for matrix".format(index))
+    return r[0]['res']
+# ------------------------------------------------------------------------------
+
+
+def matrix_extremum(schema_madlib, matrix_in, in_args, dim, matrix_out, op,
+                    fetch_index=False):
+    """ Extracts wanted extremum value(max/min) from matrix.
+
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib functions
+        @param matrix_in: str, Name of the table containing matrix
+        @param in_args: str, Name-value pair string containing options for matrix_in
+        @param dim: int, Along which dimension you want to get extremum value.
+                            dim = 1 implies compute extremum for each column
+                            dim = 2 implies compute extremum for each row
+        @param matrix_out: str, Result matrix table with a vector column storing extremum values.
+                                If fetch_index is True, contains another index column for
+                                first occurrence indices of the extremum value.
+        @param op: str, Can be either 'max' or 'min'
+        @param fetch_index: bool, If true, fetch first occurrence indices of extremum value.
+
+    Returns:
+        None
+    Side effect:
+        Creates an output table containing the result max/min values as well as
+        their first occurrence indices if wanted.
+
+    """
+    _validate_input_table(matrix_in)
+
+    in_args = parse_matrix_args(in_args)
+    in_dim = get_dims(matrix_in, in_args)
+
+    op = op.lower()
+    _assert(min(in_dim) > 0, "Matrix error: Invalid dimensions for input matrix")
+    _assert(dim == 1 or dim == 2,
+            "Matrix error: Invalid dimensionality: {0}. It should be either 1 or 2".format(dim))
+
+    if _is_sparse(matrix_in, in_args['val']):
+        # matrix_in is sparse
+        _validate_sparse(matrix_in, in_args)
+        _matrix_extremum_sparse(schema_madlib, matrix_in, in_args,
+                                matrix_out, fetch_index,
+                                dim, in_dim, op)
+    else:
+        _validate_dense(matrix_in, in_args, in_dim[0])
+        if dim == 2:
+            _matrix_row_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out,
+                                       fetch_index, op)
+        else:
+            _matrix_col_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out,
+                                       fetch_index, in_dim[1], op)
+
+
+def _matrix_extremum_sparse(schema_madlib, matrix_in, in_args, matrix_out,
+                            fetch_index, dim, dim_sizes, op):
+    """
+    Args:
+        @param dim: Dimension identifier - can only be 1 or 2
+                        1 = compute extremum for each column (i.e. aggregate over rows)
+                        2 = compute extremum for each row (i.e. aggregate over columns)
+        @param dim_sizes: The number of elements in each dimension (size must be 2)
+
+    Returns:
+    """
+
+    # we define two variables:
+    #   a_dim = aggregated dimension, this is the dimension across which we compute
+    #           the extremum. This dimension is aggregated and the number of elements
+    #           in the result along this dimension will be 1
+    #   o_dim = orthogonal dimension, the dimension orthogonal to a_dim
+    #
+    #   When dim = 1, we aggregate across rows (a_dim = row) to get an extremum value for each column
+    #   When dim = 2, we aggregate across cols (a_dim = col) to get an extremum value for each row
+    a_dim = ('row', 'col')[dim - 1]
+    a_dim = in_args[a_dim]
+    o_dim = ('col', 'row')[dim - 1]  # the other dimension
+    o_dim_size = dim_sizes[0 if o_dim == 'row' else 1]
+    a_dim_size = dim_sizes[1 if o_dim == 'row' else 0]
+    o_dim = in_args[o_dim]
+
+    agg_index = ''
+    if fetch_index:
+        agg_index = "array_agg({a_dim} order by {o_dim}) as index,".format(**locals())
+
+    if op == 'min':
+        extremum_name = 'min'
+        vector_func = 'array_min_index'
+    else:
+        extremum_name = 'max'
+        vector_func = 'array_max_index'
+    plpy.execute("""
+            CREATE TABLE {matrix_out}
+            m4_ifdef(`__POSTGRESQL__', `',
+                `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+            SELECT
+                {agg_index}
+                array_agg({in_args[val]} order by {o_dim}) as {extremum_name}
+            FROM (
+                SELECT
+                    {o_dim},
+                    coalesce({in_args[val]}[2] - 1, 0) as {a_dim},
+                    coalesce({in_args[val]}[1], 0) as {in_args[val]}
+                FROM (
+                    SELECT
+                        {o_dim},
+                        {schema_madlib}.{vector_func}({schema_madlib}.__matrix_densify_agg(
+                            {a_dim_size}, {a_dim}, {in_args[val]})) AS {in_args[val]}
+                    FROM
+                        {matrix_in}
+                    WHERE
+                        {in_args[val]} IS NOT NULL
+                    GROUP BY
+                        {o_dim}) i
+                        RIGHT OUTER JOIN
+                        generate_series(0, {o_dim_size} - 1) b
+                        ON
+                            i.{o_dim} = b) m
+            m4_ifdef(`__POSTGRESQL__', `',
+                `DISTRIBUTED BY ({extremum_name})')
+            """.format(**locals()))
+
+
+def _matrix_col_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out,
+                               fetch_index, col_count, op, use_temp_table=False):
+    agg_index = ''
+    if fetch_index:
+        agg_index = "array_agg(row order by col) as index,".format(**locals())
+
+    if op == 'min':
+        extremum_name = 'min'
+        sort_order = 'asc'
+    else:
+        extremum_name = 'max'
+        sort_order = 'desc'
+
+    temp = 'TEMP' if use_temp_table else ''
+    plpy.execute("""
+        CREATE {temp} TABLE {matrix_out}
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+        SELECT
+            {agg_index}
+            array_agg(val order by col) as {extremum_name}
+        FROM
+            (SELECT
+                row,
+                col,
+                val,
+                row_number() over (partition by col order by val {sort_order}, row) as rn
+            FROM
+                (SELECT
+                    unnest({in_args[val]}) as val,
+                    {in_args[row]} as row,
+                    generate_series(0, {col_count} - 1) as col
+                FROM
+                    {matrix_in}) m) t
+        WHERE
+            rn = 1
+        m4_ifdef(`__POSTGRESQL__', `',
+            `DISTRIBUTED BY ({extremum_name})')
+        """.format(**locals()))
+
+
+def _matrix_row_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out, fetch_index, op):
+    agg_index = ''
+    if fetch_index:
+        agg_index = 'array_agg(value_index[2] - 1 order by row) as index,'
+
+    extremum_name = 'max'
+    vector_func_name = 'array_argmax'
+    if op == 'min':
+        extremum_name = 'min'
+        vector_func_name = 'array_min_index'
+    else:
+        extremum_name = 'max'
+        vector_func_name = 'array_max_index'
+
+    plpy.execute("""
+        CREATE TABLE {matrix_out}
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+        SELECT
+            {agg_index}
+            array_agg(value_index[1] order by row) as {extremum_name}
+        FROM
+            (SELECT
+                {in_args[row]} as row,
+                {schema_madlib}.{vector_func_name}({in_args[val]}) as value_index
+            FROM
+                {matrix_in}) m
+        WHERE
+            value_index[2] <> 0
+        m4_ifdef(`__POSTGRESQL__', `',
+            `DISTRIBUTED BY ({extremum_name})')
+        """.format(**locals()))
+# ------------------------------------------------------------------------------
+
+
+def matrix_max(schema_madlib, matrix_in, in_args, dim, matrix_out,
+               fetch_index=False):
+    matrix_extremum(schema_madlib, matrix_in, in_args, dim,
+                    matrix_out, 'max', fetch_index)
+# ------------------------------------------------------------------------------
+
+
+def matrix_min(schema_madlib, matrix_in, in_args, dim, matrix_out,
+               fetch_index=False):
+    matrix_extremum(schema_madlib, matrix_in, in_args, dim,
+                    matrix_out, 'min', fetch_index)
+# ------------------------------------------------------------------------------
+
+
+def _matrix_collapse_op_sparse(schema_madlib, matrix_in, in_args, dim, in_dims, expr):
+    group_col = "{in_args[row]}".format(**locals())
+    number = in_dims[0]
+    div = in_dims[1]
+    if dim == 1:
+        group_col = "{in_args[col]}".format(**locals())
+        number = in_dims[1]
+        div = in_dims[0]
+
+    expr = expr.format(**locals())
+    r = plpy.execute("""
+        SELECT
+            array_agg(op_val order by {group_col}) as res
+        FROM
+            (SELECT
+                {group_col},
+                {expr} as op_val
+            FROM
+                (SELECT
+                    b as {group_col},
+                    coalesce(m.{in_args[val]}, 0) as value
+                FROM
+                    {matrix_in} m RIGHT OUTER JOIN
+                            generate_series(0, {number} - 1) b
+                    ON m.{group_col} = b) t
+            GROUP BY {group_col}) op_t
+        """.format(**locals()))
+    _assert(len(r) == 1,
+            "Matrix error: Bad matrix dimension, row:{row}, column:{col}".format(row = in_dims[0], col = in_dims[1]))
+    return r[0]['res']
+# ------------------------------------------------------------------------------
+
+
+def _matrix_row_collapse_op_dense(schema_madlib, matrix_in, in_args, vector_op):
+    r = plpy.execute("""
+        SELECT
+            array_agg({schema_madlib}.{vector_op}({in_args[val]}) order by {in_args[row]}) as res
+        FROM
+            {matrix_in} m
+        """.format(**locals()))
+
+    _assert(len(r) == 1,
+            "Matrix error: There is no value for dense matrix, value column: {in_args[val]}".format(**locals()))
+    return r[0]['res']
+# ------------------------------------------------------------------------------
+
+
+def _matrix_col_collapse_op_dense(schema_madlib, matrix_in, in_args, col_count, vector_op):
+    r = plpy.execute("""
+        SELECT
+            array_agg(val order by col) as res
+        FROM
+            (SELECT
+                col,
+                {vector_op}(val) as val
+            FROM
+                (SELECT
+                    unnest({in_args[val]}) as val,
+                    {in_args[row]} as row,
+                    generate_series(0, {col_count} - 1) as col
+                FROM
+                    {matrix_in}) m
+            GROUP BY
+                col) t
+        """.format(**locals()))
+    _assert(len(r) == 1,
+            "Matrix error: There is no value for dense matrix, value column: {in_args[val]}".format(**locals()))
+    return r[0]['res']
+# ------------------------------------------------------------------------------
+
+
+def matrix_collapse_op(schema_madlib, matrix_in, in_args, dim, vector_ops):
+    _validate_input_table(matrix_in)
+
+    in_args = parse_matrix_args(in_args)
+
+    in_dim = get_dims(matrix_in, in_args)
+    _assert(min(in_dim) > 0,
+            "Matrix error: Invalid dimensions for input matrix")
+    _assert(dim == 1 or dim == 2,
+            "Matrix error: The dimension should 1 for column and 2 for row, but %d" % (dim))
+
+    if _is_sparse(matrix_in, in_args['val']):
+        # matrix_in is sparse
+        _validate_sparse(matrix_in, in_args)
+        return _matrix_collapse_op_sparse(schema_madlib, matrix_in, in_args, dim, in_dim, vector_ops['sparse_agg_expr'])
+
+    _validate_dense(matrix_in, in_args, in_dim[0])
+
+    if dim == 1:
+        return _matrix_col_collapse_op_dense(schema_madlib, matrix_in, in_args, in_dim[1], vector_ops['dense_agg_op'])
+    return _matrix_row_collapse_op_dense(schema_madlib, matrix_in, in_args, vector_ops['dense_array_op'])
+# ------------------------------------------------------------------------------
+
+
+def matrix_sum(schema_madlib, matrix_in, in_args, dim):
+    """ Calculate sum along the dimension of matrix.
+
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib functions
+        @param matrix_in: str, Name of the table containing matrix
+        @param in_args: str, Name-value pair string containing options for matrix_in
+        @param dim: int, Dimension, 1 for column and 2 for row.
+
+    Returns:
+        Vector of orderred sum value along dimension.
+    Side effect:
+        None
+    """
+    vector_ops = {'sparse_agg_expr': 'sum(value)', 'dense_agg_op': 'sum', 'dense_array_op': 'array_sum_big'}
+    return matrix_collapse_op(schema_madlib, matrix_in, in_args, dim, vector_ops)
+# ------------------------------------------------------------------------------
+
+
+def matrix_mean(schema_madlib, matrix_in, in_args, dim):
+    """ Calculate mean along the dimension of matrix.
+
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib functions
+        @param matrix_in: str, Name of the table containing matrix
+        @param in_args: str, Name-value pair string containing options for matrix_in
+        @param dim: int, Dimension, 1 for column and 2 for row.
+
+    Returns:
+        Vector of orderred mean value along dimension.
+    Side effect:
+        None
+    """
+    vector_ops = {'sparse_agg_expr': 'sum(value)::float8/{div}', 'dense_agg_op': 'avg', 'dense_array_op': 'array_mean'}
+    return matrix_collapse_op(schema_madlib, matrix_in, in_args, dim, vector_ops)
+# ------------------------------------------------------------------------------
+
+
+def _matrix_scalar_mult_sparse(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args):
+    create_sql = """
+        CREATE TABLE {matrix_out} (like {matrix_in})
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)')
+        m4_ifdef(`__POSTGRESQL__', `',
+            `DISTRIBUTED BY ({in_args[row]})');
+        """
+    if in_args['row'] != out_args['row']:
+        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[row]} to {out_args[row]};"
+    if in_args['col'] != out_args['col']:
+        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[col]} to {out_args[col]};"
+    if in_args['val'] != out_args['val']:
+        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[val]} to {out_args[val]};"
+
+    plpy.execute(create_sql.format(**locals()))
+
+    plan = plpy.prepare("""
+        INSERT INTO {matrix_out}
+        SELECT
+            {out_args[row]},
+            {out_args[col]},
+            {out_args[val]}
+        FROM
+            (SELECT
+                {in_args[row]} as {out_args[row]},
+                {in_args[col]} as {out_args[col]},
+                {in_args[val]} * $1 as {out_args[val]}
+            FROM
+                {matrix_in}) l
+        WHERE
+            {out_args[val]} <> 0 OR {out_args[val]} IS NULL
+        """.format(**locals()), ["FLOAT8"])
+    plpy.execute(plan, [ scalar ])
+# ------------------------------------------------------------------------------
+
+
+def _matrix_scalar_mult_dense(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args):
+    create_sql = """
+        CREATE TABLE {matrix_out} (like {matrix_in})
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)')
+        m4_ifdef(`__POSTGRESQL__', `',
+            `DISTRIBUTED BY ({in_args[row]})');
+        """
+
+    if in_args['row'] != out_args['row']:
+        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[row]} to {out_args[row]};"
+    if in_args['val'] != out_args['val']:
+        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[val]} to {out_args[val]};"
+
+    plpy.execute(create_sql.format(**locals()))
+
+    plan = plpy.prepare("""
+        INSERT INTO {matrix_out}
+        SELECT
+            {in_args[row]} as {out_args[row]},
+            {schema_madlib}._array_scalar_mult({in_args[val]}, $1) as {out_args[val]}
+        FROM
+            {matrix_in}
+        """.format(**locals()), ["FLOAT8"])
+    plpy.execute(plan, [ scalar ])
+# ------------------------------------------------------------------------------
+
+
+def matrix_scalar_mult(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args):
+    """ Multiply matrix with a scalar.
+
+    Args:
+        @param schema_madlib: Str, Name of the schema containing madlib functions
+        @param matrix_in: Str, Name of the table containing matrix
+        @param in_args: Str, Name-value pair string containing options for matrix_in
+        @param scalar: Same as the type of elements in matrix_in
+        @param matrix_out: Str, Name of the matrix to contain transposed result
+        @param out_args: Str, Key-value string providing column names for
+                                matrix_out. Like in_args, this can also be dictionary.
+
+    Returns:
+        None
+    Side effect:
+        None
+    """
+    _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
+
+    in_args = parse_matrix_args(in_args)
+    out_args = parse_matrix_args(out_args,
+                                 in_default_args={'row': in_args['row'],
+                                                  'col': in_args['col'],
+                                                  'val': in_args['val']})
+
+    in_dim = get_dims(matrix_in, in_args)
+    _assert(min(in_dim) > 0,
+            "Matrix error: Invalid dimensions for input matrices")
+    if _is_sparse(matrix_in, in_args['val']):
+        _matrix_scalar_mult_sparse(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args)
+    else:
+        _matrix_scalar_mult_dense(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args)
+# ------------------------------------------------------------------------------
+
+
+def _matrix_vec_mult_dense(schema_madlib, matrix_in, in_args, vector):
+    plan = plpy.prepare("""
+    SELECT
+        array_agg(val order by row) as res
+    FROM
+        (SELECT
+            {in_args[row]} as row,
+            {schema_madlib}._array_dot({in_args[val]}, $1) as val
+        FROM
+            {matrix_in}) l
+    """.format(**locals()), [ "FLOAT8[]" ])
+    res = plpy.execute(plan, [ vector ])
+    _assert(len(res) == 1,
+            "Matrix error: There is no value for dense matrix, value column: {in_args[val]}".format(**locals()))
+    return res[0]['res']
+# ------------------------------------------------------------------------------
+
+
+def matrix_vec_mult(schema_madlib, matrix_in, in_args, vector):
+    """ Multiply matrix with vector.
+
+    Args:
+        @param schema_madlib: Str, Name of the schema containing madlib functions
+        @param matrix_in: Str, Name of the table containing matrix
+        @param in_args: Str, Name-value pair string containing options for matrix_in
+        @param vector: List, whose type is the same as type of elements in matrix_in
+        @return List, The result of matrix_in * vector
+
+    Returns:
+        None
+    Side effect:
+        None
+    """
+    _validate_input_table(matrix_in)
+
+    in_args = parse_matrix_args(in_args)
+
+    in_dim = get_dims(matrix_in, in_args)
+    _assert(min(in_dim) > 0,
+            "Matrix error: Invalid dimensions for input matrices")
+
+    matrix_temp = None
+
+    if _is_sparse(matrix_in, in_args['val']):
+        matrix_temp = unique_string() + "_a5"
+        matrix_densify(schema_madlib,
+                       matrix_in, in_args,
+                       matrix_temp, in_args)
+        matrix_in = matrix_temp
+
+    res = _matrix_vec_mult_dense(schema_madlib, matrix_in, in_args, vector)
+
+    if matrix_temp is not None:
+        plpy.execute("DROP TABLE IF EXISTS " + matrix_temp)
+    return res
+# ------------------------------------------------------------------------------

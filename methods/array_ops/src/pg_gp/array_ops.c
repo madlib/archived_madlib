@@ -28,6 +28,7 @@ function(array,array)->array (calls: General_2Array_to_Array)
 function(array,scalar)->array (calls: General_Array_to_Array)
 function(array,array)->scalar (calls: General_2Array_to_Element)
 function(array,scalar)->scalar (calls: General_Array_to_Element)
+function(array,scalar)->struct (calls: General_Array_to_Struct)
 
 Assuming that this input is flexible enough for some new function, implementer
 needs to provide 2 functions. First is the top level function that is being
@@ -51,10 +52,14 @@ static Datum General_2Array_to_Element(ArrayType *v1, ArrayType *v2,
 static Datum General_Array_to_Element(ArrayType *v, Datum exta_val, float8 init_val,
         Datum(*element_function)(Datum,Oid,Datum,Oid,Datum,Oid),
         Datum(*finalize_function)(Datum,int,Oid));
+static Datum General_Array_to_Struct(ArrayType *v, void *init_val,
+        void*(*element_function)(Datum,Oid,int,void*),
+        Datum(*finalize_function)(void*,int,Oid));
 
 static inline Datum noop_finalize(Datum elt,int size,Oid element_type);
 static inline Datum average_finalize(Datum elt,int size,Oid element_type);
 static inline Datum average_root_finalize(Datum elt,int size,Oid element_type);
+static inline Datum value_index_finalize(void *mid_result,int size,Oid element_type);
 
 static inline Datum element_add(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
@@ -78,6 +83,8 @@ static inline Datum element_max(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_min(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
+static inline void* element_argmax(Datum element, Oid elt_type, int elt_index, void *result);
+static inline void* element_argmin(Datum element, Oid elt_type, int elt_index, void *result);
 static inline Datum element_sum(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_diff(Datum element, Oid elt_type, Datum result,
@@ -471,6 +478,63 @@ array_max(PG_FUNCTION_ARGS){
     PG_FREE_IF_COPY(v, 0);
 
     return float8_datum_cast(DatumGetFloat8(res), element_type);
+}
+
+typedef struct
+{
+    float8 value;
+    int64  index;
+} value_index;
+
+/*
+ * This function returns maximum and corresponding index of the array elements.
+ */
+PG_FUNCTION_INFO_V1(array_max_index);
+Datum
+array_max_index(PG_FUNCTION_ARGS) {
+    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
+    ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
+
+    if (ARR_NDIM(v) != 1) {
+        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("Input array with multiple dimensions is not allowed!")));
+    }
+
+    value_index *result = (value_index *)palloc(sizeof(value_index));
+    result->value = -get_float8_infinity();
+    result->index = 0;
+
+    Datum res = General_Array_to_Struct(v, result, element_argmax, value_index_finalize);
+
+    pfree(result);
+    PG_FREE_IF_COPY(v, 0);
+    return res;
+}
+
+/*
+ * This function returns minimum and corresponding index of the array elements.
+ */
+PG_FUNCTION_INFO_V1(array_min_index);
+Datum
+array_min_index(PG_FUNCTION_ARGS) {
+    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
+    ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
+
+    if (ARR_NDIM(v) != 1) {
+        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("Input array with multiple dimensions is not allowed!")));
+    }
+
+    value_index *result = (value_index *)palloc(sizeof(value_index));
+    result->value = get_float8_infinity();
+    result->index = 0;
+
+    Datum res = General_Array_to_Struct(v, result, element_argmin, value_index_finalize);
+
+    PG_FREE_IF_COPY(v, 0);
+
+    pfree(result);
+    return res;
 }
 
 /*
@@ -875,6 +939,36 @@ average_finalize(Datum elt,int size,Oid element_type){
 static
 inline
 Datum
+value_index_finalize(void *mid_result,int size,Oid element_type) {
+    Assert(mid_result);
+	(void) element_type;
+
+    value_index *vi = (value_index *)mid_result;
+    TypeCacheEntry *typentry = lookup_type_cache(FLOAT8OID, TYPECACHE_CMP_PROC_FINFO);
+    int type_size = typentry->typlen;
+    bool typbyval = typentry->typbyval;
+    char typalign = typentry->typalign;
+
+    Datum result[2];
+
+   // We just use float8 as returned value to avoid overflow.
+        result[0] = Float8GetDatum(vi->value);
+        result[1] = Float8GetDatum((float8)(vi->index));
+
+    // construct return result
+    ArrayType *pgarray = construct_array(result,
+                                 2,
+                                 FLOAT8OID,
+                                 type_size,
+                                 typbyval,
+                                 typalign);
+
+    PG_RETURN_ARRAYTYPE_P(pgarray);
+}
+
+static
+inline
+Datum
 average_root_finalize(Datum elt,int size,Oid element_type){
     float8 value = datum_float8_cast(elt, element_type);
     if (size == 0) {
@@ -1053,6 +1147,42 @@ Datum
 element_min(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_min);
+}
+
+/*
+ * Return max(element, index).
+ */
+static
+inline
+void*
+element_argmax(Datum element, Oid elt_type, int elt_index, void *result) {
+    Assert(result);
+    value_index *vi = (value_index *)result;
+    float8 elt = datum_float8_cast(element, elt_type);
+    if (elt > vi->value) {
+        vi->value = elt;
+        vi->index = elt_index;
+    }
+
+    return vi;
+}
+
+/*
+ * Return min(element, index).
+ */
+static
+inline
+void*
+element_argmin(Datum element, Oid elt_type, int elt_index, void *result) {
+    Assert(result);
+    value_index *vi = (value_index *)result;
+    float8 elt = datum_float8_cast(element, elt_type);
+    if (elt < vi->value) {
+        vi->value = elt;
+        vi->index = elt_index;
+    }
+
+    return vi;
 }
 
 /*
@@ -1272,6 +1402,97 @@ General_Array_to_Element(
     }
 
     return finalize_function(result,(nitems-null_count), FLOAT8OID);
+}
+
+// ------------------------------------------------------------------------
+// general helper functions
+// ------------------------------------------------------------------------
+/*
+ * @brief Aggregates an array to a composite struct.
+ *
+ * @param v Array.
+ * @param init_val An initial value for element_function.
+ * @param element_function Transition function.
+ * @param finalize_function Final function.
+ * @returns Whatever finalize_function returns.
+ */
+static Datum General_Array_to_Struct(ArrayType *v, void *init_val,
+        void*(*element_function)(Datum,Oid,int,void*),
+        Datum(*finalize_function)(void*,int,Oid)) {
+
+    // dimensions
+    int ndims = ARR_NDIM(v);
+    if (ndims == 0) {
+        elog(WARNING, "input are empty arrays.");
+        return Float8GetDatum(0);
+    }
+    int *dims = ARR_DIMS(v);
+    int nitems = ArrayGetNItems(ndims, dims);
+
+    // type
+    Oid element_type = ARR_ELEMTYPE(v);
+    TypeCacheEntry *typentry = lookup_type_cache(element_type,TYPECACHE_CMP_PROC_FINFO);
+    int type_size = typentry->typlen;
+    bool typbyval = typentry->typbyval;
+    char typalign = typentry->typalign;
+
+    // iterate
+    void* result = init_val;
+    char *dat = ARR_DATA_PTR(v);
+    int i = 0;
+    int null_count = 0;
+    int *lbs = ARR_LBOUND(v);
+    if(ARR_HASNULL(v)){
+        bits8 *bitmap = ARR_NULLBITMAP(v);
+        int bitmask = 1;
+        for (i = 0; i < nitems; i++) {
+            /* Get elements, checking for NULL */
+            if (!(bitmap && (*bitmap & bitmask) == 0)) {
+                Datum elt = fetch_att(dat, typbyval, type_size);
+                dat = att_addlength_pointer(dat, type_size, dat);
+                dat = (char *) att_align_nominal(dat, typalign);
+
+                // treating NaN as NULL
+                if (!isnan(datum_float8_cast(elt,element_type))) {
+                    result = element_function(elt,
+                                              element_type,
+                                              lbs[0] + i,
+                                              result);
+                } else {
+                    null_count++;
+                }
+            }else{
+                null_count++;
+            }
+
+            /* advance bitmap pointers if any */
+            if (bitmap) {
+                bitmask <<= 1;
+                if (bitmask == 0x100) {
+                    bitmap++;
+                    bitmask = 1;
+                }
+            }
+        }
+    } else {
+        for (i = 0; i < nitems; i++) {
+            Datum elt = fetch_att(dat, typbyval, type_size);
+            dat = att_addlength_pointer(dat, type_size, dat);
+            dat = (char *) att_align_nominal(dat, typalign);
+
+            // treating NaN as NULL
+            if (!isnan(datum_float8_cast(elt,element_type))) {
+                result = element_function(elt,
+                                          element_type,
+                                          lbs[0] + i,
+                                          result);
+            } else {
+                null_count++;
+            }
+        }
+    }
+
+    return finalize_function(result,(nitems-null_count), element_type);
 }
 
 /*
