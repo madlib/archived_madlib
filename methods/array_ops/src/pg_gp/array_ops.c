@@ -942,6 +942,7 @@ Datum
 value_index_finalize(void *mid_result,int size,Oid element_type) {
     Assert(mid_result);
 	(void) element_type;
+    (void) size;
 
     value_index *vi = (value_index *)mid_result;
     TypeCacheEntry *typentry = lookup_type_cache(FLOAT8OID, TYPECACHE_CMP_PROC_FINFO);
