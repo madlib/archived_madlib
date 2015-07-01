@@ -142,40 +142,44 @@ class ChangeHandler(UpgradeBase):
         # _mad_dbrev = 1.0
         if self._mad_dbrev.split('.') < '1.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.0_1.7.1.yaml')
+                                    'changelist_1.0_1.8.yaml')
         # _mad_dbrev = 1.1
         elif self._mad_dbrev.split('.') < '1.2'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.1_1.7.1.yaml')
+                                    'changelist_1.1_1.8.yaml')
         # _mad_dbrev = 1.2
         elif self._mad_dbrev.split('.') < '1.3'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.2_1.7.1.yaml')
+                                    'changelist_1.2_1.8.yaml')
         # _mad_dbrev = 1.3
         elif self._mad_dbrev.split('.') < '1.4'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.3_1.7.1.yaml')
+                                    'changelist_1.3_1.8.yaml')
         # _mad_dbrev = 1.4
         elif self._mad_dbrev.split('.') < '1.4.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.4_1.7.1.yaml')
+                                    'changelist_1.4_1.8.yaml')
         # _mad_dbrev = 1.4.1
         elif self._mad_dbrev.split('.') < '1.5'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.4.1_1.7.1.yaml')
+                                    'changelist_1.4.1_1.8.yaml')
         # _mad_dbrev = 1.5
         elif self._mad_dbrev.split('.') < '1.6'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.5_1.7.1.yaml')
+                                    'changelist_1.5_1.8.yaml')
         # _mad_dbrev = 1.6
         elif self._mad_dbrev.split('.') < '1.6.0S'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.6_1.7.1.yaml')
+                                    'changelist_1.6_1.8.yaml')
         # _mad_dbrev = 1.6.0S
         elif self._mad_dbrev.split('.') < '1.7'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.6_1.7.1.yaml')
+                                    'changelist_1.6_1.8.yaml')
         # _mad_dbrev = 1.7
+        elif self._mad_dbrev.split('.') < '1.7.1'.split('.'):
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.7_1.8.yaml')
+        # _mad_dbrev = 1.7.1
         else:
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist.yaml')
