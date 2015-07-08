@@ -207,7 +207,8 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
     # If the input matrix is a wide dense matrix(i.e. row_dim < col_dim),
     # We need to transpose it into a narrow one
     if col_dim > row_dim:
-        x_trans = unique_string() + "_3"
+        x_trans = "pg_temp." + unique_string() + "_3"
+        # in the future, matrix_block_trans() may remove the arg 'use_temp_table'
         plpy.execute("""
             SELECT {schema_madlib}.matrix_block_trans(
                 '{source_table}', 'row=row_id, col=col_id, val=block',
@@ -226,7 +227,7 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
 
     if result_summary_table:
         t1 = time.time()
-        src_unblock = unique_string()
+        src_unblock = "pg_temp." + unique_string()
         plpy.execute("""
             select {schema_madlib}.matrix_unblockize(
                 '{source_table}', 'row=row_id, col=col_id, val=block',
@@ -242,7 +243,7 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
                      'row_dim': row_dim,
                      'col_dim': col_dim,
                      'result_summary_table': result_summary_table,
-                     'temp_prefix': unique_string(),
+                     'temp_prefix': "pg_temp." + unique_string(),
                      't0': t0, 't1': t1}
         create_summary_table(**arguments)
     plpy.execute("set client_min_messages to " + old_msg_level)
@@ -289,14 +290,14 @@ def svd_sparse(schema_madlib, source_table, output_table_prefix,
     # copy the input table to a temporary table since all matrix operation
     # modules require the dimensionality of the sparse matrix in the table
     # as a row: (row_dim, col_dim, NULL)
-    converted_tbl = unique_string()
+    converted_tbl = "pg_temp." + unique_string()
     create_temp_sparse_matrix_table_with_dims(source_table,
                                               converted_tbl,
                                               row_id, col_id, value,
                                               row_dim, col_dim)
     source_table = converted_tbl
 
-    x_dense = unique_string() + "_1"
+    x_dense = "pg_temp." + unique_string() + "_1"
     plpy.execute("""
         SELECT {schema_madlib}.matrix_densify(
             '{source_table}', 'row={row_id}, col={col_id}, val={value}',
@@ -373,7 +374,7 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
                    k, row_id, nIterations, col_id, val,
                    result_summary_table, False)
 
-    converted_tbl = unique_string()
+    converted_tbl = "pg_temp." + unique_string()
     plpy.execute("""
                  CREATE TABLE {converted_tbl} as
                      SELECT
@@ -401,7 +402,7 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
 
     if result_summary_table:
         t1 = time.time()
-        src_dense = unique_string()
+        src_dense = "pg_temp." + unique_string()
         plpy.execute("""
             select {schema_madlib}.matrix_densify(
                 '{source_table}', 'row=row_id, col=col_id, val=value',
@@ -416,7 +417,7 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
                      'row_dim': row_dim,
                      'col_dim': col_dim,
                      'result_summary_table': result_summary_table,
-                     'temp_prefix': unique_string(),
+                     'temp_prefix': "pg_temp." + unique_string(),
                      't0': t0,
                      't1': t1}
         create_summary_table(**arguments)
@@ -461,7 +462,7 @@ def svd(schema_madlib, source_table, output_table_prefix,
 
     # Make sure that the input table has row_id and row_vec
     # if not then make a copy of the source table and change column names
-    source_table_copy = unique_string() + "_2"
+    source_table_copy = "pg_temp." + unique_string() + "_2"
     need_new_column_names = cast_dense_input_table_to_correct_columns(
         schema_madlib, source_table, source_table_copy, row_id)
 
@@ -477,7 +478,8 @@ def svd(schema_madlib, source_table, output_table_prefix,
     # If the input matrix is a wide dense matrix(i.e. row_dim < col_dim),
     # We need to transpose it into a narrow one
     if col_dim > row_dim:
-        x_trans = unique_string() + "_3"
+        x_trans = "pg_temp." + unique_string() + "_3"
+        # in the future, matrix_block_trans() may remove the arg 'use_temp_table'
         plpy.execute("""
             SELECT {schema_madlib}.matrix_trans(
                 '{source_table}', 'row=row_id, val=row_vec',
@@ -506,7 +508,7 @@ def svd(schema_madlib, source_table, output_table_prefix,
                      'row_dim': row_dim,
                      'col_dim': col_dim,
                      'result_summary_table': result_summary_table,
-                     'temp_prefix': unique_string(),
+                     'temp_prefix': "pg_temp." + unique_string(),
                      't0': t0, 't1': t1}
         create_summary_table(**arguments)
 
@@ -541,7 +543,7 @@ def _svd(schema_madlib, source_table, output_table_prefix,
     """
     nIterations_arg = (nIterations, "NULL")[nIterations is None]
     # Bidiagonalize the input matrix using the Lanczos algorithm
-    bidiagonal_prefix = unique_string() + 'bidiag'
+    bidiagonal_prefix = "pg_temp." + unique_string() + 'bidiag'
     if row_id or col_id or val:
         if not (row_id and col_id and val):
             plpy.error("SVD error: All column names for sparse matrices"
@@ -571,7 +573,7 @@ def _svd(schema_madlib, source_table, output_table_prefix,
                        k=k, bidiagonal_prefix=bidiagonal_prefix,
                        nIterations=nIterations_arg, is_block=is_block))
     # Compute SVD decomposition of the bidiagonal matrix
-    svd_bidiagonal = unique_string() + 'svd_output'
+    svd_bidiagonal = "pg_temp." + unique_string() + 'svd_output'
     rv = plpy.execute("""
         SELECT
             {schema_madlib}.array_max(row_id::INTEGER[]) as row_dim,
@@ -691,9 +693,6 @@ def _lanczos_bidiagonalize_create_pq_table(schema_madlib, pq_table_prefix, col_d
     """
     # Create and initialize the P table
     plpy.execute("""
-        DROP TABLE IF EXISTS {pq_table_prefix}_p
-        """.format(pq_table_prefix=pq_table_prefix))
-    plpy.execute("""
         CREATE TABLE {pq_table_prefix}_p (
             id      INT,
             alpha   FLOAT8,
@@ -705,9 +704,6 @@ def _lanczos_bidiagonalize_create_pq_table(schema_madlib, pq_table_prefix, col_d
         """.format(pq_table_prefix=pq_table_prefix))
 
     # Create and initialize the Q table
-    plpy.execute("""
-        DROP TABLE IF EXISTS {pq_table_prefix}_q;
-        """.format(pq_table_prefix=pq_table_prefix))
     plpy.execute("""
         CREATE TABLE {pq_table_prefix}_q (
             id      INT,
@@ -834,11 +830,12 @@ def lanczos_bidiagonalize(schema_madlib, source_table, output_table_prefix,
                    " should be less than {0}".format(MAX_LANCZOS_STEPS))
     actual_lanczos_iterations = nIterations
 
-    pq_table_prefix = unique_string() + "_8"
+    pq_table_prefix = "pg_temp." + unique_string() + "_8"
     _lanczos_bidiagonalize_create_pq_table(schema_madlib, pq_table_prefix, col_dim)
 
     # Transform the matrix
-    x_trans = unique_string() + "_9"
+    x_trans = "pg_temp." + unique_string() + "_9"
+    # in the future, matrix_block_trans() may remove the arg 'use_temp_table'
     matrix_trans_function = 'matrix_trans'
     if is_block:
         matrix_trans_function = 'matrix_block_trans'
@@ -961,7 +958,7 @@ def lanczos_bidiagonalize_sparse(schema_madlib, source_table,
 
     actual_lanczos_iterations = nIterations
 
-    pq_table_prefix = unique_string() + "_8"
+    pq_table_prefix = "pg_temp." + unique_string() + "_8"
     _lanczos_bidiagonalize_create_pq_table(schema_madlib, pq_table_prefix, col_dim)
 
     lanczos_sql = """

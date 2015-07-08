@@ -106,18 +106,19 @@ def table_exists(tbl, only_first_schema=False):
     """
     schema_str, table = _get_table_schema_names(tbl, only_first_schema)
     if schema_str and table:
+        schema_expr = "LIKE 'pg_temp%'" if schema_str == "('pg_temp')" \
+                else 'IN {0}'.format(schema_str)
         does_table_exist = plpy.execute(
             """
             SELECT EXISTS(
                 SELECT 1
                 FROM pg_class, pg_namespace
                 WHERE relnamespace = pg_namespace.oid
-                  AND nspname IN {schema_str}
+                  AND nspname {schema_expr}
                   AND relname = '{table}'
                   AND relkind IN ('r', 'v', 'm', 't', 'f')
             ) AS table_exists
-            """.format(table=table,
-                       schema_str=schema_str))[0]['table_exists']
+            """.format(**locals()))[0]['table_exists']
         return bool(does_table_exist)
     else:
         return False
@@ -294,13 +295,12 @@ def get_cols(tbl, schema_madlib="madlib"):
         schema = _unquote_name(names[0])
         table = _unquote_name(names[1])
         sql_string = "SELECT " + array_agg_string + \
-                     """(quote_ident(column_name)::varchar) AS cols
-                         FROM information_schema.columns
-                         WHERE table_name = '{table_name}'
-                         AND table_schema = '{schema_name}'"""
-        existing_cols = plpy.execute(sql_string.format(table_name=table,
-                                                       schema_name=schema)
-                                     )[0]["cols"]
+                     """(quote_ident(attname)::varchar) AS cols
+                        FROM pg_attribute
+                        WHERE attrelid = '{tbl}'::regclass
+                          AND NOT attisdropped
+                          AND attnum > 0"""
+        existing_cols = plpy.execute(sql_string.format(**locals()))[0]["cols"]
     else:
         plpy.error("Input error: Invalid table name - {0}!".format(tbl))
     return existing_cols
@@ -425,20 +425,21 @@ def is_col_array(tbl, col):
         plpy.error("Input error: Invalid table {0}".format(tbl))
     if not col:
         plpy.error("Input error: Invalid column name {0}".format(col))
-    schema_str, table = _get_table_schema_names(tbl)
     col = _unquote_name(col)
 
     data_type_list = plpy.execute(
         """
-        SELECT data_type FROM information_schema.columns
-        WHERE table_schema IN {schema_str}
-        AND table_name = '{table}'
-        AND column_name = '{col}'
-        """.format(table=table, col=col, schema_str=schema_str))
+        SELECT format_type(atttypid, atttypmod) AS data_type
+        FROM pg_attribute
+        WHERE attrelid = '{tbl}'::regclass
+          AND NOT attisdropped
+          AND attnum > 0
+          AND attname = '{col}'
+        """.format(**locals()))
 
     if data_type_list:
         for data_type in data_type_list:
-            if data_type["data_type"].lower() == "array":
+            if '[]' in data_type["data_type"]:
                 return True
         return False
     else:

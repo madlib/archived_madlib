@@ -184,7 +184,7 @@ def cast_dense_input_table_to_correct_columns(schema_madlib, matrix_in,
         if cols[0] != "row_vec" or row_id != "row_id":
             plpy.execute(
                 """
-                CREATE TEMP TABLE {matrix_out} as
+                CREATE TABLE {matrix_out} as
                     SELECT {row_id} as row_id, {vec} as row_vec
                     FROM {matrix_in}
                 """.format(matrix_out=matrix_out,
@@ -562,7 +562,6 @@ def matrix_trans(schema_madlib, matrix_in, in_args,
 def _matrix_trans_sparse(schema_madlib, matrix_in, in_args,
                          matrix_out, out_args, use_temp_table):
     temp = 'TEMP' if use_temp_table else ''
-    plpy.execute('DROP TABLE IF EXISTS %s' % matrix_out)
     plpy.execute("""
         CREATE {temp} TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
@@ -672,8 +671,9 @@ def matrix_elem_op(schema_madlib, matrix_a, a_args,
                               elem_ops, False)
     else:
         # sparsify matrix_a if dense
-        matrix_out1 = unique_string() + "_a1"
+        matrix_out1 = "pg_temp." + unique_string() + "_a1"
         if not _is_sparse(matrix_a, a_args['val']):
+            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
             matrix_sparsify(matrix_a, a_args,
                             matrix_out1, _matrix_default_args(), False)
             matrix_a = matrix_out1
@@ -681,8 +681,9 @@ def matrix_elem_op(schema_madlib, matrix_a, a_args,
         _validate_sparse(matrix_a, a_args, a_dim[0])
 
         # densify matrix_b if sparse
-        matrix_out2 = unique_string() + "_a2"
+        matrix_out2 = "pg_temp." + unique_string() + "_a2"
         if not _is_sparse(matrix_b, b_args['val']):
+            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
             matrix_sparsify(matrix_b, b_args,
                             matrix_out2, _matrix_default_args(), False)
             matrix_b = matrix_out2
@@ -692,9 +693,6 @@ def matrix_elem_op(schema_madlib, matrix_a, a_args,
         _matrix_elem_op_sparse(schema_madlib, matrix_a, a_args,
                                matrix_b, b_args, matrix_out, out_args,
                                elem_ops, False)
-
-        plpy.execute("DROP TABLE IF EXISTS " + matrix_out1)
-        plpy.execute("DROP TABLE IF EXISTS " + matrix_out2)
 
 
 def _matrix_elem_op_sparse(schema_madlib, matrix_a, a_args,
@@ -1519,8 +1517,9 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
                                                   'col': a_args['col'],
                                                   'val': a_args['val']})
 
-    matrix_out1 = unique_string() + "_a1"
+    matrix_out1 = "pg_temp." + unique_string() + "_a1"
     if a_args['trans']:
+        # in the future, matrix_trans() may remove the arg `use_temp_table`
         matrix_trans(schema_madlib, matrix_a, a_args, matrix_out1, None)
         matrix_a = matrix_out1
 
@@ -1546,8 +1545,9 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
                            is_b_transposed=b_args['trans'])
     else:
         # sparsify matrix_a if not sparse
-        matrix_out3 = unique_string() + "_a3"
+        matrix_out3 = "pg_temp." + unique_string() + "_a3"
         if not _is_sparse(matrix_a, a_args['val']):
+            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
             matrix_sparsify(matrix_a, a_args,
                             matrix_out3, _matrix_default_args())
             matrix_a = matrix_out3
@@ -1555,8 +1555,9 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
         _validate_sparse(matrix_a, a_args)
 
         # sparsify matrix_b if not sparse
-        matrix_out4 = unique_string() + "_a4"
+        matrix_out4 = "pg_temp." + unique_string() + "_a4"
         if not _is_sparse(matrix_b, b_args['val']):
+            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
             matrix_sparsify(matrix_b, b_args, matrix_out4, None)
             matrix_b = matrix_out4
             if 'col' not in b_args:
@@ -1564,12 +1565,14 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
         _validate_sparse(matrix_b, b_args)
 
         # use transpose of 'b' if specified by user
-        matrix_out2 = unique_string() + "_a2"
+        matrix_out2 = "pg_temp." + unique_string() + "_a2"
         if b_args['trans']:
+            # in the future, matrix_trans() may remove the arg `use_temp_table`
             matrix_trans(schema_madlib, matrix_b, b_args, matrix_out2, None)
             matrix_b = matrix_out2
 
-        matrix_out5 = unique_string() + "_a5"
+        matrix_out5 = unique_string() + "_a5" if use_temp_table \
+                else "pg_temp." + unique_string() + "_a5"
         _matrix_mult_sparse(schema_madlib, matrix_a, a_args,
                             matrix_b, b_args,
                             matrix_out5, _matrix_default_args(),
@@ -1590,7 +1593,7 @@ def _matrix_mult_sparse(schema_madlib, matrix_a, a_args,
     b_dim = get_dims(matrix_b, b_args)
     temp_row, temp_col, temp_val = (unique_string() for i in range(3))
     temp = "TEMP" if use_temp_table else ''
-    plpy.execute("""
+    sql ="""
         CREATE {temp} TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
@@ -1615,8 +1618,9 @@ def _matrix_mult_sparse(schema_madlib, matrix_a, a_args,
         GROUP BY
             {temp_row}, {temp_col}
         m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY ({out_args[row]})')
-        """.format(**locals()))
+        """.format(**locals())
 
+    plpy.execute(sql)
     # if the last row or column is all zeros then we need to add a redundant
     # entry to ensure the matrix dimensions can be interpreted
     res_row_dim, res_col_dim = get_dims(matrix_out, out_args)
@@ -1642,7 +1646,8 @@ def _matrix_mult_dense(schema_madlib, matrix_a, a_args,
         matrix_b_trans = matrix_b
         b_trans_args = b_args
     else:
-        matrix_b_trans = unique_string() + "_a6"
+        # in the future, _matrix_trans_dense() may remove the arg `use_temp_table`
+        matrix_b_trans = "pg_temp." + unique_string() + "_a6"
         b_trans_args = _matrix_default_args()
         _matrix_trans_dense(schema_madlib,
                             matrix_b, b_args,
