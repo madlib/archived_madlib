@@ -23,6 +23,7 @@ from utilities.utilities import unique_string
 from utilities.utilities import preprocess_keyvalue_params
 from utilities.utilities import _assert
 from utilities.utilities import get_seg_number
+from utilities.utilities import add_postfix
 from utilities.validate_args import columns_exist_in_table
 from utilities.utilities import __mad_version
 from utilities.control import IterationController2S
@@ -272,9 +273,10 @@ def coxph(
                 """.format(output_table=output_table))
 
     # the summary table
+    output_table_summary = add_postfix(output_table, "_summary")
     plpy.execute(
         """
-            create table {output_table}_summary as
+            create table {output_table_summary} as
                 select
                     'coxph'::varchar  as method,
                     '{source_table}'::varchar as source_table,
@@ -287,6 +289,7 @@ def coxph(
                     {n_skipped}::integer as num_missing_rows_skipped;
             """.format(
             source_table=source_table,
+            output_table_summary=output_table_summary,
             output_table=output_table,
             dependent_varname=dependent_varname,
             independent_varname=independent_varname,
@@ -744,9 +747,10 @@ def _validate_params(schema_madlib, source_table, output_table,
             "Cox error: Output table {0}"
             " already exists!".format(str(output_table)))
 
-    _assert(not table_exists(output_table + "_summary", only_first_schema=True),
-            "Cox error: Output table {0}_summary"
-            " already exists!".format(str(output_table)))
+    output_table_summary = add_postfix(output_table, "_summary")
+    _assert(not table_exists(output_table_summary, only_first_schema=True),
+            "Cox error: Output table {0}"
+            " already exists!".format(str(output_table_summary)))
 
     if strata is not None:
         strata_cols = [a.strip() for a in strata.split(",")]
@@ -1022,6 +1026,7 @@ def zph(schema_madlib, cox_output_table, output_table):
         None
     """
     _validate_zph_params(schema_madlib, cox_output_table, output_table)
+    cox_output_table_summary = add_postfix(cox_output_table, "_summary")
     rv = plpy.execute("""
         SELECT
             source_table,
@@ -1029,8 +1034,8 @@ def zph(schema_madlib, cox_output_table, output_table):
             independent_varname,
             right_censoring_status,
             strata
-        FROM {cox_output_table}_summary
-        """.format(cox_output_table=cox_output_table))
+        FROM {cox_output_table_summary}
+        """.format(cox_output_table_summary=cox_output_table_summary))
     source_table = rv[0]['source_table']
     dependent_variable = rv[0]['dependent_varname']
     independent_variable = rv[0]['independent_varname']
@@ -1054,15 +1059,20 @@ def _validate_zph_params(schema_madlib, cox_model_table, output_table):
     Throws:
         Error on any invalid parameter
     """
-    _assert(cox_model_table is not None and table_exists(cox_model_table)
-            and table_exists(cox_model_table + "_summary"),
-            "Cox error: Model table {0} or summary table {0}_summary "
-            "does not exist!".format(cox_model_table))
+    if cox_model_table is None or cox_model_table.strip() == '':
+        plpy.error("Cox error: NULL/Empty model table is given!")
 
+    cox_model_table_summary = add_postfix(cox_model_table, "_summary")
+    _assert(cox_model_table is not None and table_exists(cox_model_table)
+            and table_exists(cox_model_table_summary),
+            "Cox error: Model table {0} or summary table {1} "
+            "does not exist!".format(cox_model_table, cox_model_table_summary))
+
+    output_table_residual= add_postfix(output_table, "_residual")
     _assert((not table_exists(output_table, only_first_schema=True)) and
-            (not table_exists(output_table + "_residual", only_first_schema=True)),
-            "Cox error: Output table {0} or residual table {0}_residual "
-            "already exists!".format(output_table))
+            (not table_exists(output_table_residual, only_first_schema=True)),
+            "Cox error: Output table {0} or residual table {1} "
+            "already exists!".format(output_table, output_table_residual))
 
     summary_columns = ["source_table", "dependent_varname",
                        "independent_varname", "right_censoring_status",
@@ -1156,8 +1166,9 @@ def _compute_residual(schema_madlib, source_table, output_table,
     format_args['m'] = n_uncensored
 
     # plpy.info("--------- Computing scaled residuals ---------")
+    output_residual = add_postfix(output_table, "_residual")
     plpy.execute("""
-        CREATE TABLE {output}_residual AS
+        CREATE TABLE {output_residual} AS
         SELECT
             {dep_column},
             residual as residual,
@@ -1169,7 +1180,7 @@ def _compute_residual(schema_madlib, source_table, output_table,
         FROM
             {residual_table}
         m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!DISTRIBUTED BY ({dep_column})!>)
-        """.format(**format_args))
+        """.format(output_residual=output_residual, **format_args))
 
     # plpy.info("--------- Computing metrics ---------")
     mean = plpy.execute("""
@@ -1193,10 +1204,10 @@ def _compute_residual(schema_madlib, source_table, output_table,
                                 {m}::INTEGER)
                     AS f
             FROM
-                {output}_residual
+                {output_residual}
         ) AS q1
         m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!DISTRIBUTED RANDOMLY!>)
-        """.format(mean=mean, **format_args))
+        """.format(mean=mean,output_residual=output_residual,**format_args))
     # Cleanup
     plpy.execute('DROP TABLE IF EXISTS ' + residual_table)
 

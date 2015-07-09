@@ -15,6 +15,8 @@ from utilities.in_mem_group_control import GroupIterationController
 from utilities.utilities import unique_string
 from utilities.validate_args import __explicit_bool_to_text
 from utilities.utilities import _string_to_array
+from utilities.utilities import _string_to_array_with_quotes
+from utilities.utilities import add_postfix
 from utilities.validate_args import input_tbl_valid
 from utilities.validate_args import output_tbl_valid
 from utilities.validate_args import cols_in_tbl_valid
@@ -192,7 +194,7 @@ def __ordinal_compute(
     # each dict has two elements: iteration number, and grouping value array
     if grouping_col:
         grouping_list = __explicit_bool_to_text(
-            tbl_source, _string_to_array(grouping_col), schema_madlib)
+            tbl_source, _string_to_array_with_quotes(grouping_col), schema_madlib)
         for i in range(len(grouping_list)):
             grouping_list[i] += "::text"
         grouping_str = ','.join(grouping_list)
@@ -304,8 +306,9 @@ def __ordinal_compute(
     args.update(all_groups)
     args.update(total_rows)
 
+    tbl_output_summary = add_postfix(tbl_output, "_summary")
     plpy.execute("""
-        CREATE TABLE {tbl_output}_summary AS
+        CREATE TABLE {tbl_output_summary} AS
         SELECT
             'ordinal'::varchar                  AS method,
             '{rel_source}'::varchar             AS source_table,
@@ -323,6 +326,7 @@ def __ordinal_compute(
             {total_rows_processed}::bigint      AS total_rows_processed,
             {total_rows_skipped}::bigint        AS total_rows_skipped
         """.format(g_str="'" + grouping_col + "'" if grouping_col else "NULL",
+                   tbl_output_summary=tbl_output_summary,
                    **args))
 
     # clean up
@@ -535,21 +539,22 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
     if predict_type is None:
         predict_type = 'probability'
 
+    model_table_summary = add_postfix(model_table, "_summary")
     ind_var = plpy.execute("""
-                SELECT independent_varname FROM {model_table}_summary
-                """.format(model_table=model_table))[0]['independent_varname']
+                SELECT independent_varname FROM {model_table_summary}
+                """.format(model_table_summary=model_table_summary))[0]['independent_varname']
     cate_list = plpy.execute("""
-                SELECT category_list FROM {model_table}_summary
-                """.format(model_table=model_table))[0]['category_list']
+                SELECT category_list FROM {model_table_summary}
+                """.format(model_table_summary=model_table_summary))[0]['category_list']
     cate_list = cate_list.split(',')
     cate_list_len = len(cate_list)
     cate_list_len_minus_one = cate_list_len - 1
 
     group_var = plpy.execute("""
-                SELECT grouping_col FROM {model_table}_summary
-            """.format(model_table=model_table))[0]['grouping_col']
+                SELECT grouping_col FROM {model_table_summary}
+            """.format(model_table_summary=model_table_summary))[0]['grouping_col']
     if group_var is not None:
-        cols_in_tbl_valid(predict_table, _string_to_array(group_var), 'ordinal_predict')
+        cols_in_tbl_valid(predict_table, _string_to_array_with_quotes(group_var), 'ordinal_predict')
         group_var = group_var.split(',')
 
     if group_var is None:
@@ -565,8 +570,8 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
         grp_clause3 = "WHERE " + grp_clause3
 
     link_func = plpy.execute("""
-                SELECT link_func FROM {model_table}_summary
-            """.format(model_table=model_table))[0]['link_func']
+                SELECT link_func FROM {model_table_summary}
+            """.format(model_table_summary=model_table_summary))[0]['link_func']
     if link_func == "logit":
         link_clause = "exp(gamma)/(1+exp(gamma))"
     elif link_func == "probit":
@@ -629,7 +634,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                                     {grp_clause2}
                                 FROM
                                     {model_table},
-                                    {model_table}_summary,
+                                    {model_table_summary},
                                     (
                                         SELECT
                                             generate_series(1,{cate_list_len_minus_one}) as i
@@ -638,7 +643,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                             {grp_clause3}
                         )subq4
                     )subq5
-                    GROUP by id)subq6, {model_table}_summary
+                    GROUP by id)subq6, {model_table_summary}
             )subq7
         """.format(**locals()))
     elif predict_type == 'response':
@@ -704,7 +709,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                                                         {grp_clause2}
                                                     FROM
                                                         {model_table},
-                                                        {model_table}_summary,
+                                                        {model_table_summary},
                                                         (
                                                             SELECT generate_series(1,{cate_list_len_minus_one}) as i
                                                         )subq1
@@ -714,7 +719,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                                         )subq5
                                     GROUP by id
                                 )subq6,
-                                {model_table}_summary
+                                {model_table_summary}
                             )subq7
                         )subq8
                         GROUP BY id
@@ -770,7 +775,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                                                 {grp_clause2}
                                             FROM
                                                 {model_table},
-                                                {model_table}_summary,
+                                                {model_table_summary},
                                                 (
                                                     SELECT generate_series(1,{cate_list_len_minus_one}) as i
                                                 )subq1
@@ -779,7 +784,7 @@ def ordinal_predict(schema_madlib, model_table, predict_table,
                                     )subq4
                                 )subq5
                                 GROUP by id
-                        )subq6, {model_table}_summary
+                        )subq6, {model_table_summary}
                     )subq7
                 )subq8
                 WHERE subq9.id = subq8.id and subq9.max_prob = subq8.prob
