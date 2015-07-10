@@ -5,18 +5,21 @@
 """
 
 import plpy
+import time
+
+from linalg.matrix_ops import cast_dense_input_table_to_correct_columns
+from linalg.matrix_ops import create_temp_sparse_matrix_table_with_dims
+from linalg.matrix_ops import get_dims
+from linalg.matrix_ops import validate_dense
+from linalg.matrix_ops import validate_sparse
 from utilities.utilities import __mad_version
 from utilities.utilities import unique_string
 from utilities.utilities import _assert
 from utilities.utilities import _array_to_string
-from linalg.matrix_ops import create_temp_sparse_matrix_table_with_dims
-from linalg.matrix_ops import get_dims
-from linalg.matrix_ops import cast_dense_input_table_to_correct_columns
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
 from utilities.utilities import add_postfix
 
-import time
 
 version_wrapper = __mad_version()
 string_to_array = version_wrapper.select_vecfunc()
@@ -246,8 +249,12 @@ def _validate_args(schema_madlib,
         _assert(row_dim > 0 and col_dim > 0,
                 "PCA error: row_dim/col_dim should be positive integer")
 
-
+        validate_sparse(source_table,
+                        {'row': row_id, 'col': col_id, 'val': val_id},
+                        checkCol=False)
 # ------------------------------------------------------------------------
+
+
 def pca_sparse_project(schema_madlib,
                        source_table,
                        pc_table,
@@ -398,21 +405,11 @@ def pca_project(schema_madlib,
     [row_dim, col_dim] = get_dims(source_table,
                                   {'row': 'row_id', 'col': 'col_id',
                                    'val': 'row_vec'})
+    validate_dense(source_table,
+                   {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'},
+                   checkCol=False, row_dim=row_dim)
 
-    # Step 2: Copy the PC table (because the column with the array is called
-    # 'principal_components' while that in matrix_mult is called 'row_vec'
-    pc_table_copy = "pg_temp." + unique_string()
-    plpy.execute("""
-                 CREATE TABLE {pc_table_copy} as
-                     SELECT
-                         row_id as row_id,
-                         principal_components as row_vec
-                     FROM {pc_table}
-                 """.format(schema_madlib=schema_madlib,
-                            pc_table=pc_table,
-                            pc_table_copy=pc_table_copy))
-
-    # Step 3: Compute the PCA Projection matrix
+    # Step 2: Compute the PCA Projection matrix
     # The R code to perform this step is
     #  p <- princomp(mat)
     #  low_rank_representation <- mat %*% p$loadings[,1:k]
@@ -443,16 +440,16 @@ def pca_project(schema_madlib,
         """
         SELECT {schema_madlib}.matrix_mult('{scaled_source_table}',
                                             'trans=false,row=row_id, col=col_id, val=row_vec',
-                                           '{pc_table_copy}',
-                                            'trans=TRUE, row=row_id, col=col_id,val=row_vec',
+                                           '{pc_table}',
+                                            'trans=TRUE, row=row_id, col=col_id, val=principal_components',
                                             '{out_table}',
                                             'row=row_id, col=col_id,val=row_vec');
         """.format(schema_madlib=schema_madlib,
                    scaled_source_table=scaled_source_table,
-                   pc_table_copy=pc_table_copy,
+                   pc_table=pc_table,
                    out_table=out_table))
 
-    # Step 4: Compute the Residual table (if required)
+    # Step 3: Compute the Residual table (if required)
     # Residual table: res = mat - proj
     if residual_table or result_summary_table:
         create_temp_residual_table = False
@@ -464,14 +461,14 @@ def pca_project(schema_madlib,
         plpy.execute(
             """
             SELECT {schema_madlib}.matrix_mult('{out_table}',
-                                                'row=row_id, col=col_id,val=row_vec',
-                                               '{pc_table_copy}',
-                                                'row=row_id, col=col_id,val=row_vec',
+                                                'row=row_id, col=col_id, val=row_vec',
+                                               '{pc_table}',
+                                                'row=row_id, col=col_id, val=principal_components',
                                                 '{approx_table}',
-                                                'row=row_id, col=col_id,val=row_vec');
+                                                'row=row_id, col=col_id, val=row_vec');
             """.format(schema_madlib=schema_madlib,
                        out_table=out_table,
-                       pc_table_copy=pc_table_copy,
+                       pc_table=pc_table,
                        approx_table=approx_table))
 
         # Compute the difference between the reconstruction and real data
@@ -480,25 +477,25 @@ def pca_project(schema_madlib,
             """
             SELECT {schema_madlib}.matrix_scale_and_add(
                                         '{scaled_source_table}',
-                                        'row=row_id, col=col_id,val=row_vec',
+                                        'row=row_id, col=col_id, val=row_vec',
                                         '{approx_table}',
-                                        'row=row_id, col=col_id,val=row_vec',
+                                        'row=row_id, col=col_id, val=row_vec',
                                         -1,
                                         '{residual_table}',
-                                        'row=row_id, col=col_id,val=row_vec');
+                                        'row=row_id, col=col_id, val=row_vec');
             """.format(schema_madlib=schema_madlib,
                        scaled_source_table=scaled_source_table,
                        approx_table=approx_table,
                        residual_table=residual_table))
 
-        # Step 5: Compute the results summary table (if required)
+        # Step 4: Compute the results summary table (if required)
         # If the residual table is not asked by the user, but he does ask for
         # result summary table, then we need to compute the residuals
         if result_summary_table:
             source_table_norm = plpy.execute(
                 """
                 SELECT {schema_madlib}.matrix_norm('{source_table}',
-                                                   'row=row_id, col=col_id,val=row_vec') as r
+                                                   'row=row_id, col=col_id, val=row_vec') as r
                 """.format(schema_madlib=schema_madlib,
                            source_table=source_table,
                            row_id=row_id))[0]['r']
@@ -507,7 +504,7 @@ def pca_project(schema_madlib,
             residual_norm = plpy.execute(
                 """
                 SELECT {schema_madlib}.matrix_norm('{residual_table_name}',
-                                                   'row=row_id, col=col_id,val=row_vec') as r
+                                                   'row=row_id, col=col_id, val=row_vec') as r
                 """.format(schema_madlib=schema_madlib,
                            residual_table_name=residual_table,
                            row_id=row_id))[0]['r']
@@ -546,10 +543,5 @@ def pca_project(schema_madlib,
                      DROP TABLE IF EXISTS {residual_table};
                      """.format(residual_table=residual_table))
 
-    plpy.execute("""
-                 DROP TABLE IF EXISTS {scaled_source_table};
-                 DROP TABLE IF EXISTS {pc_table_copy};
-                """.format(scaled_source_table=scaled_source_table,
-                           pc_table_copy=pc_table_copy))
-
+    plpy.execute("DROP TABLE IF EXISTS {0}".format(scaled_source_table))
     plpy.execute("SET client_min_messages TO %s" % old_msg_level)

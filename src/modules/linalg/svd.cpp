@@ -125,7 +125,8 @@ AnyType svd_lanczos_sfunc::run(AnyType & args){
 
     if(row_array.size() != vec.size()){
         throw std::invalid_argument(
-            "dimensions mismatch: row_array.size() != vec.size()");
+            "dimensions mismatch: row_array.size() != vec.size(). "
+            "Data contains different sized arrays");
     }
 
     MutableArrayHandle<double> state(NULL);

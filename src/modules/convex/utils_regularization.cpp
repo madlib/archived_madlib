@@ -80,7 +80,6 @@ AnyType utils_var_scales_transition::run (AnyType& args)
 {
     ScalesState<MutableArrayHandle<double> > state = args[0];
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    
 
     if (state.numRows == 0)
     {
@@ -98,7 +97,7 @@ AnyType utils_var_scales_transition::run (AnyType& args)
         state.mean(i) += x(i);
         state.std(i) += x(i) * x(i);
     }
-    
+
     state.numRows++;
 
     return state;
