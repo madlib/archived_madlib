@@ -304,7 +304,26 @@ def validate_sparse(matrix, matrix_args, checkCol=True):
                 "Matrix error: invalid column ({0}) should not be an array "
                 "datatype".format(matrix_args['val']))
 
-    # verify that the matrix row_id, col_id elements are unique and not missing
+    # verify that row and col entries are in the right range
+    row_dim, col_dim = get_dims(matrix, matrix_args)
+    invalid_rows = plpy.execute("""
+            -- Check if only row indices in [1, row_dim] and
+            -- col_indices in [1, col_dim] are present
+            SELECT {matrix_args[row]} as r, {matrix_args[col]} as c
+            FROM
+                {matrix}
+            WHERE
+                {matrix_args[row]} < 1 OR
+                {matrix_args[col]} < 1 OR
+                {matrix_args[row]} > {row_dim} OR
+                {matrix_args[col]} > {col_dim}
+            ORDER BY r, c;
+            """.format(**locals()))
+    if invalid_rows:
+        plpy.error("Matrix error: Invalid index in matrix ({0}). "
+                   "All row and column indices must be in the range [1, DIM]".format(matrix))
+
+    # verify that the matrix row_id, col_id elements are unique
     c = unique_string()
     non_unique_rows = plpy.execute("""
             SELECT {matrix_args[row]} as r, {matrix_args[col]} as c
@@ -321,7 +340,7 @@ def validate_sparse(matrix, matrix_args, checkCol=True):
             """Matrix error: Following entries are duplicated in sparse matrix ({m}).
 (Displaying a maximum of {M_R} entries)
 {row}  | {col}
------------------------------------
+-------+---------------------------
 {all_rows}
 
 Error: The above entries (only {M_R} shown) were duplicated in sparse matrix ({m})

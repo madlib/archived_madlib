@@ -1,6 +1,6 @@
 ![](https://github.com/madlib/madlib/blob/master/doc/imgs/magnetic-icon.png) ![](https://github.com/madlib/madlib/blob/master/doc/imgs/agile-icon.png) ![](https://github.com/madlib/madlib/blob/master/doc/imgs/deep-icon.png)
 =================================================
-**MADlib** is an open-source library for scalable in-database analytics.
+**MADlib<sup>&reg;</sup>** is an open-source library for scalable in-database analytics.
 It provides data-parallel implementations of mathematical, statistical and
 machine learning methods for structured and unstructured data.
 

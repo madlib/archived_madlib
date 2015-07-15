@@ -54,7 +54,7 @@ AnyType matrix_densify_sfunc::run(AnyType & args)
         throw std::invalid_argument(errorMsg.str());
     }
 
-    if(col > col_dim){
+    if(col < 1 || col > col_dim){
         std::stringstream errorMsg;
         errorMsg << "invalid argument - col (" << col <<
                     ") should be in the range of [1, " << col_dim << "]";
