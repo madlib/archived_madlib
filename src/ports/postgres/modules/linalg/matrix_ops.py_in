@@ -161,10 +161,15 @@ def parse_matrix_args(matrix_args, in_default_args=None):
         return matrix_args
     if not isinstance(matrix_args, str):
         raise ValueError("Matrix error: invalid input for matrix args")
-    params_types = {'row': str, 'col': str, 'val': str, 'trans': bool}
+    params_types = {'row': str, 'col': str, 'val': str, 'trans': bool, 'fmt': str}
     matrix_params = extract_keyvalue_params(matrix_args,
                                             params_types,
                                             default_args)
+    if 'fmt' in matrix_params and matrix_params['fmt']:
+        matrix_params['fmt'] = matrix_params['fmt'].lower()
+        _assert(matrix_params['fmt'] in ('sparse', 'dense'),
+                "Matrix error: invalid input for matrix args 'fmt', it should be 'dense'"
+                " or 'sparse' but provided input is '{0}'".format(matrix_params['fmt']))
     return matrix_params
 
 
@@ -263,11 +268,10 @@ def get_dims(matrix, matrix_args, is_block=False):
         rv = plpy.execute("""
             SELECT
                 (array_upper({matrix_args[val]}::float8[], 1) -
-                     array_lower({matrix_args[val]}::float8[], 1) + 1)
+                 array_lower({matrix_args[val]}::float8[], 1) + 1)
                 AS col_dim
             FROM
                 {matrix}
-            LIMIT 1
             """.format(matrix=matrix, matrix_args=matrix_args))
         col_dim = rv[0]['col_dim']
     return (row_dim, col_dim)
@@ -432,9 +436,9 @@ def _validate_block(matrix, matrix_args):
 # ------------------------------------------------------------------------------
 
 
-def matrix_sparsify(matrix_in, in_args,
-                    matrix_out, out_args, use_temp_table=False):
+def matrix_sparsify(schema_madlib, matrix_in, in_args, matrix_out, out_args):
 
+    _ = schema_madlib  # unused parameter - retained for consistent API
     _validate_input_table(matrix_in)
     _validate_output_table(matrix_out)
     in_args = parse_matrix_args(in_args)
@@ -445,11 +449,9 @@ def matrix_sparsify(matrix_in, in_args,
     if 'col' in in_args:
         default_args['col'] = in_args['col']
     out_args = parse_matrix_args(out_args, in_default_args=default_args)
-    temp = 'TEMP' if use_temp_table else ''
-
     temp_col_id, temp_val = unique_string(), unique_string()
     plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -477,8 +479,7 @@ def matrix_sparsify(matrix_in, in_args,
         """.format(matrix_out=matrix_out, row_dim=row_dim, col_dim=col_dim))
 
 
-def matrix_densify(schema_madlib, matrix_in, in_args,
-                   matrix_out, out_args, use_temp_table=False):
+def matrix_densify(schema_madlib, matrix_in, in_args, matrix_out, out_args):
 
     _validate_input_table(matrix_in)
     _validate_output_table(matrix_out)
@@ -487,15 +488,13 @@ def matrix_densify(schema_madlib, matrix_in, in_args,
     out_args = parse_matrix_args(out_args,
                                  in_default_args={'row': in_args['row'],
                                                   'val': in_args['val']})
-    temp = '' if not use_temp_table else 'TEMP'
-
     (row_dim, col_dim) = get_dims(matrix_in, in_args)
     _assert(col_dim < sys.maxint,
             "Matrix error: Matrix {0} has too many rows. This cannot be "
             "transposed in a dense format due to "
             "restrictions on maximum array size.".format(matrix_in))
     plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -534,104 +533,8 @@ def matrix_densify(schema_madlib, matrix_in, in_args,
             FROM generate_series(1, {col_dim}) AS val
         ) t2
         """.format(**locals()))
-
-
-def matrix_trans(schema_madlib, matrix_in, in_args,
-                 matrix_out, out_args, use_temp_table=False):
-    """ Main function for transpose of matrix
-
-    Args:
-        @param schema_madlib: Name of the MADlib schema
-        @param matrix_in: Str, Name of the matrix to be transposed
-        @param in_args: Str, Key-value string providing column names for matrix_in
-                        The string is of the format "key1=value1, key2=value2 ..."
-                        This is parsed to obtain a dictionary.
-                        Alternatively this argument can also be a dictionary
-                        containing the key-value information (in which case no
-                                                              parsing is performed)
-        @param matrix_out: Str, Name of the matrix to contain transposed result
-        @param out_args: Str, Key-value string providing column names for
-                                matrix_out. Like in_args, this can also be dictionary.
-        @param use_temp_table: Bool, If True, output is added to a temp table
-    Returns:
-        None
-    Side effect:
-        Creates an output table containing the transpose of matrix_in
-    """
-    _validate_input_table(matrix_in)
-    _validate_output_table(matrix_out)
-    in_args = parse_matrix_args(in_args)
-    out_args = parse_matrix_args(out_args,
-                                 in_default_args={'row': in_args['row'],
-                                                  'col': in_args['col'],
-                                                  'val': in_args['val']})
-
-    if _is_sparse(matrix_in, in_args['val']):
-        validate_sparse(matrix_in, in_args)
-        return _matrix_trans_sparse(
-            schema_madlib, matrix_in, in_args,
-            matrix_out, out_args, use_temp_table)
-    else:
-        validate_dense(matrix_in, in_args)
-        return _matrix_trans_dense(
-            schema_madlib, matrix_in, in_args,
-            matrix_out, out_args, use_temp_table)
-
-
-def _matrix_trans_sparse(schema_madlib, matrix_in, in_args,
-                         matrix_out, out_args, use_temp_table):
-    temp = 'TEMP' if use_temp_table else ''
-    plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
-        m4_ifdef(`__POSTGRESQL__', `',
-            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
-        SELECT
-            {in_args[row]} AS {out_args[col]},
-            {in_args[col]} AS {out_args[row]},
-            {in_args[val]} AS {out_args[val]}
-        FROM
-            {matrix_in}
-        m4_ifdef(`__POSTGRESQL__', `',
-            `DISTRIBUTED BY ({out_args[col]})')
-        """.format(matrix_in=matrix_in,
-                   in_args=in_args,
-                   matrix_out=matrix_out,
-                   out_args=out_args,
-                   temp=temp))
-
-
-def _matrix_trans_dense(schema_madlib, matrix_in, in_args,
-                        matrix_out, out_args, use_temp_table=False):
-    temp = 'TEMP' if use_temp_table else ''
-    (row_dim, col_dim) = get_dims(matrix_in, in_args)
-    _assert(row_dim < sys.maxint,
-            "Matrix error: Matrix {0} has too many rows. "
-            "This cannot be transposed in a dense format due to "
-            "restrictions on maximum array size.".format(matrix_in))
-    temp_row, temp_col, temp_val = (unique_string() for i in range(3))
-    plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
-        m4_ifdef(`__POSTGRESQL__', `',
-            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
-        SELECT
-            {temp_col} AS {out_args[row]},
-            {schema_madlib}.__matrix_densify_agg(
-                {row_dim}::integer,
-                {temp_row}::integer,
-                {temp_val}) AS {out_args[val]}
-        FROM
-        (   SELECT {in_args[row]} as {temp_row},
-                   unnest({in_args[val]}) AS {temp_val},
-                   generate_series(1, {col_dim}) AS {temp_col}
-            FROM
-                {matrix_in}
-        ) t1
-        GROUP BY
-           {temp_col}
-        m4_ifdef(`__POSTGRESQL__', `',
-            `DISTRIBUTED BY ({out_args[row]})')
-        """.format(**locals()))
 # ------------------------------------------------------------------------------
+
 
 # ------------------------------------------------------------------------------
 # -- Element-wise operations ---------------------------------------------------
@@ -640,7 +543,7 @@ def _matrix_trans_dense(schema_madlib, matrix_in, in_args,
 
 def matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
-                   elem_ops, use_temp_table=False):
+                   elem_ops):
     """ Perform element-wise operation on two matrices.
 
     Args:
@@ -657,8 +560,6 @@ def matrix_elem_op(schema_madlib, matrix_a, a_args,
                                             elements (Used for sparse matrices)
                                 vector_op: The operation between each pair of
                                             rows (Used for dense matrices)
-        @param use_temp_table: bool, Flag to control if result is stored in a
-                                        temp table
 
     Returns:
         None
@@ -675,51 +576,67 @@ def matrix_elem_op(schema_madlib, matrix_a, a_args,
                                  in_default_args={'row': a_args['row'],
                                                   'col': a_args['col'],
                                                   'val': a_args['val']})
-
     a_dim = get_dims(matrix_a, a_args)
     b_dim = get_dims(matrix_b, b_args)
     _assert(a_dim[0] == b_dim[0] and a_dim[1] == b_dim[1],
             "Matrix error: The dimensions of the two matrices don't match")
+    fmt = out_args['fmt'] if 'fmt' in out_args else None
+    is_a_sparse = _is_sparse(matrix_a, a_args['val'])
+    is_b_sparse = _is_sparse(matrix_b, b_args['val'])
 
-    if not _is_sparse(matrix_a, a_args['val']) and not _is_sparse(matrix_b, b_args['val']):
-        # both matrix_a and matrix_b are dense
-        validate_dense(matrix_a, a_args)
-        validate_dense(matrix_b, b_args)
-        _matrix_elem_op_dense(schema_madlib, matrix_a, a_args,
-                              matrix_b, b_args, matrix_out, out_args,
-                              elem_ops, False)
+    transform_a_func, transform_b_func = None, None
+    if is_a_sparse == is_b_sparse:
+        # if both input formats are same, then directly apply operation ...
+        elem_op_func = _matrix_elem_op_sparse if is_a_sparse else _matrix_elem_op_dense
+        # ... and transform result if fmt is provided and not same format as input
+        to_transform_rst = fmt and ((fmt == "sparse") != is_a_sparse)
+        # transform_rst_func matters only if to_transform_rst == True
+        transform_rst_func = matrix_densify if is_a_sparse else matrix_sparsify
     else:
-        # sparsify matrix_a if dense
-        matrix_out1 = "pg_temp." + unique_string() + "_a1"
-        if not _is_sparse(matrix_a, a_args['val']):
-            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
-            matrix_sparsify(matrix_a, a_args,
-                            matrix_out1, _matrix_default_args(), False)
-            matrix_a = matrix_out1
-            a_args = _matrix_default_args()
-        validate_sparse(matrix_a, a_args, a_dim[0])
+        # Different format inputs - change the format for one of the matrices.
+        #   if output is sparse (default), change dense input to sparse
+        #   if output is dense, change sparse input to dense
+        # In this case we don't need to transform output since it is directly
+        # produced in necessary format
+        to_transform_rst = False
+        is_output_sparse = not fmt or fmt == "sparse"
+        elem_op_func = _matrix_elem_op_sparse if is_output_sparse else _matrix_elem_op_dense
+        if is_output_sparse != is_a_sparse:
+            # output and matrix_a are opposite formats ...
+            transform_a_func = matrix_densify if is_a_sparse else matrix_sparsify
+        else:
+            # ... or if a is in the right format, then b is in the wrong format
+            transform_b_func = matrix_densify if is_b_sparse else matrix_sparsify
 
-        # densify matrix_b if sparse
-        matrix_out2 = "pg_temp." + unique_string() + "_a2"
-        if not _is_sparse(matrix_b, b_args['val']):
-            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
-            matrix_sparsify(matrix_b, b_args,
-                            matrix_out2, _matrix_default_args(), False)
-            matrix_b = matrix_out2
-            b_args = _matrix_default_args()
-        validate_sparse(matrix_b, b_args, b_dim[0])
+    matrix_out1 = "pg_temp." + unique_string() + "_a"
+    if not transform_a_func and not transform_b_func:
+        validate_a_func = validate_sparse if is_a_sparse else validate_dense
+        validate_a_func(matrix_a, a_args)
+        validate_b_func = validate_sparse if is_b_sparse else validate_dense
+        validate_b_func(matrix_b, b_args)
+    elif transform_a_func:
+        # transform function internally validates
+        transform_a_func(schema_madlib, matrix_a, a_args, matrix_out1, a_args)
+        matrix_a = matrix_out1
+    else:
+        transform_b_func(schema_madlib, matrix_b, b_args, matrix_out1, b_args)
+        matrix_b = matrix_out1
 
-        _matrix_elem_op_sparse(schema_madlib, matrix_a, a_args,
-                               matrix_b, b_args, matrix_out, out_args,
-                               elem_ops, False)
+    matrix_out2 = "pg_temp." + unique_string() + "_r"
+    matrix_out_tmp = matrix_out2 if to_transform_rst else matrix_out
+    elem_op_func(schema_madlib, matrix_a, a_args,
+                 matrix_b, b_args, matrix_out_tmp, out_args, elem_ops)
+    if to_transform_rst:
+        transform_rst_func(schema_madlib, matrix_out_tmp, out_args,
+                           matrix_out, out_args)
+        plpy.execute("DROP TABLE IF EXISTS " + matrix_out_tmp)
 
 
 def _matrix_elem_op_sparse(schema_madlib, matrix_a, a_args,
                            matrix_b, b_args, matrix_out, out_args,
-                           elem_ops, use_temp_table=False):
-    temp = '' if not use_temp_table else 'TEMP'
+                           elem_ops):
     plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -758,10 +675,9 @@ def _matrix_elem_op_sparse(schema_madlib, matrix_a, a_args,
 
 def _matrix_elem_op_dense(schema_madlib, matrix_a, a_args,
                           matrix_b, b_args, matrix_out, out_args,
-                          elem_ops, use_temp_table=False):
-    temp = '' if not use_temp_table else 'TEMP'
+                          elem_ops):
     plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -781,32 +697,29 @@ def _matrix_elem_op_dense(schema_madlib, matrix_a, a_args,
 
 
 def matrix_add(schema_madlib, matrix_a, a_args,
-               matrix_b, b_args, matrix_out, out_args,
-               use_temp_table=False):
+               matrix_b, b_args, matrix_out, out_args):
     elem_ops = {'scalar_op': '+', 'vector_op': 'array_add'}
     matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
-                   elem_ops, use_temp_table)
+                   elem_ops)
 # ------------------------------------------------------------------------------
 
 
 def matrix_sub(schema_madlib, matrix_a, a_args,
-               matrix_b, b_args, matrix_out, out_args,
-               use_temp_table=False):
+               matrix_b, b_args, matrix_out, out_args):
     elem_ops = {'scalar_op': '-', 'vector_op': 'array_sub'}
     matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
-                   elem_ops, use_temp_table)
+                   elem_ops)
 # ------------------------------------------------------------------------------
 
 
 def matrix_elem_mult(schema_madlib, matrix_a, a_args,
-                     matrix_b, b_args, matrix_out, out_args,
-                     use_temp_table=False):
+                     matrix_b, b_args, matrix_out, out_args):
     elem_ops = {'scalar_op': '*', 'vector_op': 'array_mult'}
     matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
-                   elem_ops, use_temp_table)
+                   elem_ops)
 # ------------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------------
@@ -861,9 +774,7 @@ def matrix_block_square(schema_madlib, matrix_in, in_args,
                       matrix_out, out_args)
 
 
-def matrix_block_trans(schema_madlib, matrix_in, in_args,
-                       matrix_out, out_args,
-                       use_temp_table=False):
+def matrix_block_trans(schema_madlib, matrix_in, in_args, matrix_out, out_args):
     in_args = parse_matrix_args(in_args)
     out_args = parse_matrix_args(out_args,
                                  in_default_args={'row': in_args['row'],
@@ -873,9 +784,8 @@ def matrix_block_trans(schema_madlib, matrix_in, in_args,
     _validate_block(matrix_in, in_args)
     _validate_output_table(matrix_out)
 
-    temp = 'TEMP' if use_temp_table else ''
     plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -1237,16 +1147,16 @@ def _matrix_extremum_sparse(schema_madlib, matrix_in, in_args, matrix_out,
             FROM (
                 SELECT
                     {o_dim},
-                    coalesce({in_args[val]}[2], 0) as {a_dim},
+                    coalesce({in_args[val]}[2]::BIGINT, 0) as {a_dim},
                     coalesce({in_args[val]}[1], 0) as {in_args[val]}
                 FROM (
                     SELECT
-                        {o_dim},
+                        {o_dim}::BIGINT as {o_dim},
                         {schema_madlib}.{vector_func}(
                                 {schema_madlib}.__matrix_densify_agg(
-                                    {a_dim_size}::integer,
-                                    {a_dim}::integer,
-                                    {in_args[val]}::float8))
+                                    {a_dim_size}::INTEGER,
+                                    {a_dim}::INTEGER,
+                                    {in_args[val]}::FLOAT8))
                             AS {in_args[val]}
                     FROM
                         {matrix_in}
@@ -1264,7 +1174,7 @@ def _matrix_extremum_sparse(schema_madlib, matrix_in, in_args, matrix_out,
 
 
 def _matrix_col_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out,
-                               fetch_index, col_count, op, use_temp_table=False):
+                               fetch_index, col_count, op):
     agg_index = ''
     if fetch_index:
         agg_index = "array_agg(row order by col) as index,".format(**locals())
@@ -1276,9 +1186,8 @@ def _matrix_col_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out,
         extremum_name = 'max'
         sort_order = 'desc'
 
-    temp = 'TEMP' if use_temp_table else ''
     plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -1293,7 +1202,7 @@ def _matrix_col_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out,
             FROM
                 (SELECT
                     unnest({in_args[val]}) as val,
-                    {in_args[row]} as row,
+                    {in_args[row]}::BIGINT as row,
                     generate_series(1, {col_count}) as col
                 FROM
                     {matrix_in}) m) t
@@ -1327,7 +1236,7 @@ def _matrix_row_extremum_dense(schema_madlib, matrix_in, in_args, matrix_out, fe
             array_agg(value_index[1] order by row) as {extremum_name}
         FROM
             (SELECT
-                {in_args[row]} as row,
+                {in_args[row]}::BIGINT as row,
                 {schema_madlib}.{vector_func_name}({in_args[val]}) as value_index
             FROM
                 {matrix_in}) m
@@ -1390,7 +1299,7 @@ def _matrix_reduction_op_sparse(schema_madlib, matrix_in, in_args,
             FROM
                 (SELECT
                     b as {a_dim},
-                    coalesce(m.{in_args[val]}::float8, 0::float8) as value
+                    coalesce(m.{in_args[val]}::FLOAT8, 0::FLOAT8) as value
                 FROM
                     {matrix_in} m
                         RIGHT OUTER JOIN
@@ -1432,7 +1341,7 @@ def _matrix_col_reduction_op_dense(schema_madlib, matrix_in, in_args,
             FROM
                 (SELECT
                     unnest({in_args[val]}) as val,
-                    {in_args[row]} as row,
+                    {in_args[row]}::BIGINT as row,
                     generate_series(1, {col_count}) as col
                 FROM
                     {matrix_in}) m
@@ -1521,9 +1430,105 @@ def matrix_mean(schema_madlib, matrix_in, in_args, dim):
 # ------------------------------------------------------------------------------
 
 
+def matrix_trans(schema_madlib, matrix_in, in_args,
+                 matrix_out, out_args):
+    """ Main function for transpose of matrix
+
+    Args:
+        @param schema_madlib: Name of the MADlib schema
+        @param matrix_in: Str, Name of the matrix to be transposed
+        @param in_args: Str, Key-value string providing column names for matrix_in
+                        The string is of the format "key1=value1, key2=value2 ..."
+                        This is parsed to obtain a dictionary.
+                        Alternatively this argument can also be a dictionary
+                        containing the key-value information (in which case no
+                                                              parsing is performed)
+        @param matrix_out: Str, Name of the matrix to contain transposed result
+        @param out_args: Str, Key-value string providing column names for
+                                matrix_out. Like in_args, this can also be dictionary.
+    Returns:
+        None
+    Side effect:
+        Creates an output table containing the transpose of matrix_in
+    """
+    _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
+    in_args = parse_matrix_args(in_args)
+    out_args = parse_matrix_args(out_args,
+                                 in_default_args={'row': in_args['row'],
+                                                  'col': in_args['col'],
+                                                  'val': in_args['val']})
+    fmt = out_args['fmt'] if 'fmt' in out_args else None
+
+    is_input_sparse = _is_sparse(matrix_in, in_args['val'])
+    validate_func = validate_sparse if is_input_sparse else validate_dense
+    trans_func = _matrix_trans_sparse if is_input_sparse else _matrix_trans_dense
+    change_func = matrix_densify if is_input_sparse else matrix_sparsify
+    change_fmt = fmt and fmt == ('sparse', 'dense')[is_input_sparse]
+
+    validate_func(matrix_in, in_args)
+    matrix_r = "pg_temp." + unique_string() + "_out1" if change_fmt else matrix_out
+    trans_func(schema_madlib, matrix_in, in_args, matrix_r, out_args)
+    if change_fmt:
+        change_func(schema_madlib, matrix_r, out_args, matrix_out, out_args)
+        plpy.execute('DROP TABLE IF EXISTS %s' % matrix_r)
+
+
+def _matrix_trans_sparse(schema_madlib, matrix_in, in_args,
+                         matrix_out, out_args):
+    plpy.execute("""
+        CREATE TABLE {matrix_out}
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+        SELECT
+            {in_args[row]} AS {out_args[col]},
+            {in_args[col]} AS {out_args[row]},
+            {in_args[val]} AS {out_args[val]}
+        FROM
+            {matrix_in}
+        m4_ifdef(`__POSTGRESQL__', `',
+            `DISTRIBUTED BY ({out_args[col]})')
+        """.format(matrix_in=matrix_in,
+                   in_args=in_args,
+                   matrix_out=matrix_out,
+                   out_args=out_args))
+
+
+def _matrix_trans_dense(schema_madlib, matrix_in, in_args,
+                        matrix_out, out_args):
+    (row_dim, col_dim) = get_dims(matrix_in, in_args)
+    _assert(row_dim < sys.maxint,
+            "Matrix error: Matrix {0} has too many rows. "
+            "This cannot be transposed in a dense format due to "
+            "restrictions on maximum array size.".format(matrix_in))
+    temp_row, temp_col, temp_val = (unique_string() for i in range(3))
+    plpy.execute("""
+        CREATE TABLE {matrix_out}
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+        SELECT
+            {temp_col} AS {out_args[row]},
+            {schema_madlib}.__matrix_densify_agg(
+                {row_dim}::integer,
+                {temp_row}::integer,
+                {temp_val}) AS {out_args[val]}
+        FROM
+        (   SELECT {in_args[row]} as {temp_row},
+                   unnest({in_args[val]}) AS {temp_val},
+                   generate_series(1, {col_dim}) AS {temp_col}
+            FROM
+                {matrix_in}
+        ) t1
+        GROUP BY
+           {temp_col}
+        m4_ifdef(`__POSTGRESQL__', `',
+            `DISTRIBUTED BY ({out_args[row]})')
+        """.format(**locals()))
+# ------------------------------------------------------------------------------
+
+
 def matrix_mult(schema_madlib, matrix_a, a_args,
-                matrix_b, b_args, matrix_out, out_args=None,
-                use_temp_table=False):
+                matrix_b, b_args, matrix_out, out_args=None):
 
     _validate_input_table(matrix_a)
     _validate_input_table(matrix_b)
@@ -1535,12 +1540,15 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
                                  in_default_args={'row': a_args['row'],
                                                   'col': a_args['col'],
                                                   'val': a_args['val']})
+    to_drop = []
 
-    matrix_out1 = "pg_temp." + unique_string() + "_a1"
     if a_args['trans']:
-        # in the future, matrix_trans() may remove the arg `use_temp_table`
-        matrix_trans(schema_madlib, matrix_a, a_args, matrix_out1, None)
-        matrix_a = matrix_out1
+        matrix_trans_a = "pg_temp." + unique_string() + "_trans_a"
+        matrix_trans(schema_madlib, matrix_a, a_args, matrix_trans_a, None)
+        matrix_a = matrix_trans_a
+        to_drop.append(matrix_trans_a)
+    # we defer the transpose operation for matrix_b since dense multiplication will
+    # require to transpose B. We should avoid double transpose.
 
     a_dim = get_dims(matrix_a, a_args)
     b_dim = get_dims(matrix_b, b_args)
@@ -1553,67 +1561,76 @@ def matrix_mult(schema_madlib, matrix_a, a_args,
             "Left matrix, col dimension = {0}, "
             "Right matrix, row dimension = {1}".format(left_dim, right_dim))
 
+    fmt = out_args['fmt'] if 'fmt' in out_args else None
     # both matrix_a and matrix_b are dense
     if (not _is_sparse(matrix_a, a_args['val']) and
             not _is_sparse(matrix_b, b_args['val'])):
         validate_dense(matrix_a, a_args, row_dim=a_dim[0])
         validate_dense(matrix_b, b_args, row_dim=b_dim[0])
-        _matrix_mult_dense(schema_madlib, matrix_a, a_args,
-                           matrix_b, b_args, matrix_out, out_args,
-                           use_temp_table=use_temp_table,
-                           is_b_transposed=b_args['trans'])
+        if (fmt is None or fmt == 'dense'):
+            _matrix_mult_dense(schema_madlib, matrix_a, a_args,
+                               matrix_b, b_args, matrix_out, out_args,
+                               is_b_transposed=b_args['trans'])
+        else:
+            matrix_temp = "pg_temp." + unique_string() + "_temp"
+            _matrix_mult_dense(schema_madlib, matrix_a, a_args,
+                               matrix_b, b_args, matrix_temp, _matrix_default_args(),
+                               is_b_transposed=b_args['trans'])
+            matrix_sparsify(schema_madlib, matrix_temp, _matrix_default_args(), matrix_out, out_args)
+            to_drop.append(matrix_temp)
     else:
         # sparsify matrix_a if not sparse
-        matrix_out3 = "pg_temp." + unique_string() + "_a3"
         if not _is_sparse(matrix_a, a_args['val']):
-            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
-            matrix_sparsify(matrix_a, a_args,
-                            matrix_out3, _matrix_default_args())
-            matrix_a = matrix_out3
+            matrix_temp_a = "pg_temp." + unique_string() + "_temp_a"
+            matrix_sparsify(schema_madlib, matrix_a, a_args,
+                            matrix_temp_a, _matrix_default_args())
+            matrix_a = matrix_temp_a
             a_args = _matrix_default_args()
-        validate_sparse(matrix_a, a_args)
+            to_drop.append(matrix_a)
+        else:
+            validate_sparse(matrix_a, a_args)
 
         # sparsify matrix_b if not sparse
-        matrix_out4 = "pg_temp." + unique_string() + "_a4"
         if not _is_sparse(matrix_b, b_args['val']):
-            # in the future, matrix_sparsify() may remove the arg `use_temp_table`
-            matrix_sparsify(matrix_b, b_args, matrix_out4, None)
-            matrix_b = matrix_out4
+            matrix_temp_b = "pg_temp." + unique_string() + "_temp_b"
+            matrix_sparsify(schema_madlib, matrix_b, b_args, matrix_temp_b, None)
+            matrix_b = matrix_temp_b
+            to_drop.append(matrix_b)
             if 'col' not in b_args:
                 b_args['col'] = _matrix_default_args()['col']
-        validate_sparse(matrix_b, b_args)
+        else:
+            validate_sparse(matrix_b, b_args)
 
         # use transpose of 'b' if specified by user
-        matrix_out2 = "pg_temp." + unique_string() + "_a2"
         if b_args['trans']:
-            # in the future, matrix_trans() may remove the arg `use_temp_table`
-            matrix_trans(schema_madlib, matrix_b, b_args, matrix_out2, None)
-            matrix_b = matrix_out2
+            matrix_trans_b = "pg_temp." + unique_string() + "_trans_b"
+            matrix_trans(schema_madlib, matrix_b, b_args, matrix_trans_b, None)
+            matrix_b = matrix_trans_b
+            to_drop.append(matrix_trans_b)
 
-        matrix_out5 = unique_string() + "_a5" if use_temp_table \
-                else "pg_temp." + unique_string() + "_a5"
+        is_output_sparse = fmt and fmt == 'sparse'
+        matrix_result = matrix_out if is_output_sparse else "pg_temp." + unique_string() + "_r"
         _matrix_mult_sparse(schema_madlib, matrix_a, a_args,
                             matrix_b, b_args,
-                            matrix_out5, _matrix_default_args(),
-                            use_temp_table=use_temp_table)
-        matrix_densify(schema_madlib,
-                       matrix_out5, _matrix_default_args(),
-                       matrix_out, out_args)
+                            matrix_result, _matrix_default_args())
+        if not is_output_sparse:
+            matrix_densify(schema_madlib,
+                           matrix_result, _matrix_default_args(),
+                           matrix_out, out_args)
+            to_drop.append(matrix_result)
 
-    for table in ("matrix_out%d" % (i) for i in range(1, 6)):
-        plpy.execute("DROP TABLE IF EXISTS {0}".format(table))
+    for each_table in to_drop:
+        plpy.execute('DROP TABLE IF EXISTS %s' % each_table)
 
 
 def _matrix_mult_sparse(schema_madlib, matrix_a, a_args,
-                        matrix_b, b_args, matrix_out, out_args,
-                        use_temp_table=False):
+                        matrix_b, b_args, matrix_out, out_args):
 
     a_dim = get_dims(matrix_a, a_args)
     b_dim = get_dims(matrix_b, b_args)
     temp_row, temp_col, temp_val = (unique_string() for i in range(3))
-    temp = "TEMP" if use_temp_table else ''
-    sql ="""
-        CREATE {temp} TABLE {matrix_out}
+    plpy.execute("""
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -1637,9 +1654,8 @@ def _matrix_mult_sparse(schema_madlib, matrix_a, a_args,
         GROUP BY
             {temp_row}, {temp_col}
         m4_ifdef(`__POSTGRESQL__', `', `DISTRIBUTED BY ({out_args[row]})')
-        """.format(**locals())
+        """.format(**locals()))
 
-    plpy.execute(sql)
     # if the last row or column is all zeros then we need to add a redundant
     # entry to ensure the matrix dimensions can be interpreted
     res_row_dim, res_col_dim = get_dims(matrix_out, out_args)
@@ -1653,10 +1669,9 @@ def _matrix_mult_sparse(schema_madlib, matrix_a, a_args,
 
 def _matrix_mult_dense(schema_madlib, matrix_a, a_args,
                        matrix_b, b_args, matrix_out, out_args,
-                       use_temp_table=False, is_b_transposed=False):
+                       is_b_transposed=False):
 
     temp_row, temp_col, temp_val = (unique_string() for i in range(3))
-    temp = "TEMP" if use_temp_table else ''
 
     # compute trans of matrix_b to compute dot product between
     # rows of matrix_a and cols of matrix_b (this is necessary only if )
@@ -1665,16 +1680,13 @@ def _matrix_mult_dense(schema_madlib, matrix_a, a_args,
         matrix_b_trans = matrix_b
         b_trans_args = b_args
     else:
-        # in the future, _matrix_trans_dense() may remove the arg `use_temp_table`
         matrix_b_trans = "pg_temp." + unique_string() + "_a6"
         b_trans_args = _matrix_default_args()
         _matrix_trans_dense(schema_madlib,
                             matrix_b, b_args,
-                            matrix_b_trans, b_trans_args,
-                            use_temp_table=False)
+                            matrix_b_trans, b_trans_args)
 
     b_trans_dim = get_dims(matrix_b_trans, b_trans_args)
-
     if b_trans_dim[0] >= (1024 * 1024 * 1024 / 8):
         # we are restricted by allocation limit of 1GB. Since array is of type
         # 8-byte float, we have a limitation on how big the array can be.
@@ -1682,10 +1694,10 @@ def _matrix_mult_dense(schema_madlib, matrix_a, a_args,
                    "This cannot be used in multiplication due to "
                    "restrictions on maximum array size.".format(matrix_b))
     # compute dot products in sparse format
-    matrix_r_sparse = unique_string() + "_a7"
+    matrix_r_sparse = "pg_temp." + unique_string() + "_a7"
     r_s_args = _matrix_default_args()
     plpy.execute("""
-        CREATE TEMP TABLE {matrix_r_sparse}
+        CREATE TABLE {matrix_r_sparse}
         m4_ifdef(`__POSTGRESQL__', `',
                  `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -1702,7 +1714,7 @@ def _matrix_mult_dense(schema_madlib, matrix_a, a_args,
 
     # densify result since it'll always be dense
     plpy.execute("""
-        CREATE {temp} TABLE {matrix_out}
+        CREATE TABLE {matrix_out}
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
         SELECT
@@ -1738,82 +1750,131 @@ def matrix_square(schema_madlib, matrix_in, in_args,
     dim = get_dims(matrix_in, in_args)
     _assert(dim[1] == dim[0],
             "Matrix error: Square operation is only defined for square matrices")
-    if _is_sparse(matrix_in, in_args['val']):
-        validate_sparse(matrix_in, in_args)
-        _matrix_mult_sparse(schema_madlib, matrix_in, in_args,
-                            matrix_in, in_args,
-                            matrix_out, out_args)
-    else:
-        validate_dense(matrix_in, in_args, row_dim=dim[0])
-        _matrix_mult_dense(schema_madlib, matrix_in, in_args,
-                           matrix_in, in_args, matrix_out, out_args)
+
+    fmt = None if 'fmt' not in out_args else out_args['fmt']
+    is_input_sparse = _is_sparse(matrix_in, in_args['val'])
+    validate_func = validate_sparse if is_input_sparse else validate_dense
+    mult_func = _matrix_mult_sparse if is_input_sparse else _matrix_mult_dense
+    change_func = matrix_sparsify if is_input_sparse else matrix_densify
+    change_fmt = fmt and fmt == ('sparse', 'dense')[is_input_sparse]
+
+    validate_func(matrix_in, in_args)
+    matrix_r = "pg_temp." + unique_string() if change_fmt else matrix_out
+    mult_func(schema_madlib, matrix_in, in_args,
+              matrix_in, in_args, matrix_r, out_args)
+    if change_fmt:
+        change_func(schema_madlib, matrix_r, out_args, matrix_out, out_args)
+        plpy.execute('DROP TABLE IF EXISTS %s' % matrix_r)
 # ------------------------------------------------------------------------------
 
 
-def _matrix_scalar_mult_sparse(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args):
+def _create_zero_matrix(schema_madlib, matrix_out, out_args, in_dim, fmt):
+    row_dim = in_dim[0]
+    col_dim = in_dim[1]
+    if fmt is None or fmt == 'sparse':
+        # just add a single row with the dimensionality
+        plpy.execute("""
+            CREATE TABLE {matrix_out}
+            m4_ifdef(`__POSTGRESQL__', `',
+                `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+            SELECT  {row_dim} AS {out_args[row]},
+                    {col_dim} AS {out_args[col]},
+                    0::FLOAT8 AS {out_args[val]}
+            m4_ifdef(`__POSTGRESQL__', `',
+                `DISTRIBUTED BY ({out_args[row]})');
+        """.format(**locals()))
+    else:
+        # add multiple rows of all zero vectors
+        plpy.execute("""
+            CREATE TABLE {matrix_out}
+            m4_ifdef(`__POSTGRESQL__', `',
+                `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+            SELECT  {out_args[row]},
+                    {schema_madlib}.array_of_float({col_dim})::FLOAT8[] as {out_args[val]}
+            FROM    generate_series(1, {row_dim}) AS {out_args[row]}
+            m4_ifdef(`__POSTGRESQL__', `',
+                `DISTRIBUTED BY ({out_args[row]})');
+        """.format(**locals()))
+
+
+def _matrix_scalar_mult_sparse_to_dense(schema_madlib, matrix_in, in_args,
+                                        scalar, matrix_out, out_args, in_dim):
     create_sql = """
-        CREATE TABLE {matrix_out} (like {matrix_in})
+        CREATE TABLE {matrix_out}
+        ({out_args[row]} BIGINT, {out_args[val]} FLOAT8[])
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)')
         m4_ifdef(`__POSTGRESQL__', `',
             `DISTRIBUTED BY ({in_args[row]})');
         """
-    if in_args['row'] != out_args['row']:
-        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[row]} to {out_args[row]};"
-    if in_args['col'] != out_args['col']:
-        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[col]} to {out_args[col]};"
-    if in_args['val'] != out_args['val']:
-        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[val]} to {out_args[val]};"
-
+    row_dim = in_dim[0]
+    col_dim = in_dim[1]
     plpy.execute(create_sql.format(**locals()))
-    if scalar != 0:
-        plan = plpy.prepare("""
-            INSERT INTO {matrix_out}
-            SELECT
-                {in_args[row]},
-                {in_args[col]},
-                {in_args[val]} * $1
-            FROM
-                {matrix_in}
-            WHERE
-                {in_args[val]} <> 0 OR
-                {in_args[val]} IS NOT NULL
-            """.format(**locals()), ["FLOAT8"])
-        plpy.execute(plan, [scalar])
-    else:
-        in_dim = get_dims(matrix_in, in_args)
-        plpy.execute("INSERT INTO {0} VALUES ({1}, {2}, 0)".
-                     format(matrix_out, in_dim[0], in_dim[1]))
-# ------------------------------------------------------------------------------
+    plan = plpy.execute("""
+        INSERT INTO {matrix_out}
+        SELECT
+            b AS {in_args[row]},
+            {schema_madlib}.__matrix_densify_agg(
+                {col_dim},
+                CASE WHEN {in_args[val]} IS NULL THEN 1 ELSE {in_args[col]}::INTEGER END,
+                coalesce({in_args[val]} * {scalar}, 0)) AS {out_args[val]}
+        FROM
+            {matrix_in} m
+                RIGHT OUTER JOIN
+            generate_series(1, {row_dim}) b
+                ON m.{in_args[row]} = b
+        GROUP BY b
+        """.format(**locals()))
 
 
-def _matrix_scalar_mult_dense(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args):
+def _matrix_scalar_mult_sparse_to_sparse(matrix_in, in_args, scalar, matrix_out, out_args):
     create_sql = """
-        CREATE TABLE {matrix_out} (like {matrix_in})
+        CREATE TABLE {matrix_out}
+        ({out_args[row]} BIGINT, {out_args[col]} BIGINT, {out_args[val]} FLOAT8)
         m4_ifdef(`__POSTGRESQL__', `',
             `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)')
         m4_ifdef(`__POSTGRESQL__', `',
             `DISTRIBUTED BY ({in_args[row]})');
         """
-
-    if in_args['row'] != out_args['row']:
-        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[row]} to {out_args[row]};"
-    if in_args['val'] != out_args['val']:
-        create_sql += "ALTER TABLE {matrix_out} RENAME COLUMN {in_args[val]} to {out_args[val]};"
-
     plpy.execute(create_sql.format(**locals()))
-
     plan = plpy.prepare("""
         INSERT INTO {matrix_out}
         SELECT
-            {in_args[row]},
-            {schema_madlib}.array_scalar_mult({in_args[val]}::float8[],
-                                              $1::float8)
+            {in_args[row]}::BIGINT,
+            {in_args[col]}::BIGINT,
+            {in_args[val]} * $1
         FROM
             {matrix_in}
+        WHERE
+            {in_args[val]} <> 0
         """.format(**locals()), ["FLOAT8"])
     plpy.execute(plan, [scalar])
-# ------------------------------------------------------------------------------
+
+
+def _matrix_scalar_mult_dense(schema_madlib, matrix_in, in_args,
+                              scalar, matrix_out, out_args, fmt, in_dim):
+    is_output_sparse = fmt and fmt == "sparse"
+    array_mult_arg = ("{schema_madlib}.array_scalar_mult("
+                      " {in_args[val]}::float8[],"
+                      " {scalar}::float8)".format(**locals()))
+    if not is_output_sparse:
+        col_arg = ''
+        unnest_arg = array_mult_arg
+    else:
+        # for sparse output, unnest the multiplied array and add a col_id
+        col_dim = in_dim[1]
+        col_arg = "generate_series(1, {0})::BIGINT AS {1},".format(col_dim, out_args['col'])
+        unnest_arg = "unnest(" + array_mult_arg + ")"
+
+    plpy.execute("""
+        CREATE TABLE {matrix_out} AS
+        SELECT
+            {in_args[row]}::BIGINT AS {out_args[row]},
+            {col_arg}
+            {unnest_arg} AS {out_args[val]}
+        FROM
+            {matrix_in}
+        """.format(**locals()))
 
 
 def matrix_scalar_mult(schema_madlib, matrix_in, in_args, scalar, matrix_out, out_args):
@@ -1845,14 +1906,25 @@ def matrix_scalar_mult(schema_madlib, matrix_in, in_args, scalar, matrix_out, ou
     in_dim = get_dims(matrix_in, in_args)
     _assert(min(in_dim) > 0,
             "Matrix error: Invalid dimensions for input matrices")
-    if _is_sparse(matrix_in, in_args['val']):
-        validate_sparse(matrix_in, in_args)
-        _matrix_scalar_mult_sparse(schema_madlib, matrix_in, in_args,
-                                   scalar, matrix_out, out_args)
-    else:
-        validate_dense(matrix_in, in_args)
-        _matrix_scalar_mult_dense(schema_madlib, matrix_in, in_args,
-                                  scalar, matrix_out, out_args)
+    fmt = out_args['fmt'] if 'fmt' in out_args else None
+
+    with plpy.subtransaction():
+        in_dim = get_dims(matrix_in, in_args)
+        if scalar == 0:
+            _create_zero_matrix(schema_madlib, matrix_out, out_args, in_dim, fmt)
+        elif _is_sparse(matrix_in, in_args['val']):
+            validate_sparse(matrix_in, in_args)
+            if fmt is None or fmt == 'sparse':
+                _matrix_scalar_mult_sparse_to_sparse(matrix_in, in_args,
+                                                     scalar, matrix_out, out_args)
+            else:
+                _matrix_scalar_mult_sparse_to_dense(schema_madlib, matrix_in,
+                                                    in_args, scalar,
+                                                    matrix_out, out_args, in_dim)
+        else:
+            validate_dense(matrix_in, in_args)
+            _matrix_scalar_mult_dense(schema_madlib, matrix_in, in_args,
+                                      scalar, matrix_out, out_args, fmt, in_dim)
 # ------------------------------------------------------------------------------
 
 
@@ -1904,7 +1976,7 @@ def matrix_vec_mult(schema_madlib, matrix_in, in_args, vector):
     matrix_temp = None
     if _is_sparse(matrix_in, in_args['val']):
         validate_sparse(matrix_in, in_args)
-        matrix_temp = unique_string() + "_a5"
+        matrix_temp = "pg_temp." + unique_string() + "_a5"
         matrix_densify(schema_madlib,
                        matrix_in, in_args,
                        matrix_temp, in_args)

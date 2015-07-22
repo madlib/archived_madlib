@@ -220,6 +220,11 @@ The following parameters are supported for this string argument:
     <th>val</th>
     <td> Name of the column containing the entries of the matrix.</td>
 </tr>
+<tr>
+    <th>fmt</th>
+    <td>Format of the output matrix. It could be either 'dense' or 'sparse'.
+    When 'fmt' is not provided, the output fmt is inferred from the input matrices.</td>
+</tr>
 </table>
 
 <dt>index</dt>
@@ -307,7 +312,7 @@ SELECT * FROM mat_r ORDER BY row_id;
 <pre class="syntax">
 SELECT madlib.matrix_add('"mat_A"', 'row=row_id, val=row_vec',
                          '"mat_B"', 'row=row_id, val=vector',
-                         'mat_r', 'val=vector');
+                         'mat_r', 'val=vector, fmt=dense');
 SELECT * FROM mat_r ORDER BY row_id;
 </pre>
 <pre class="result">
@@ -373,20 +378,20 @@ SELECT * from mat_min_r;
 </pre>
 <pre class="result">
          index         |            max
-\-----------------------+---------------------------
- {8,5,1,6,2,1,1,5,6,9} | {10,10,9,8,9,10,10,8,9,8}
+-----------------------+---------------------------
+ {9,6,2,7,3,2,2,6,7,10} | {10,10,9,8,9,10,10,8,9,8}
 (1 rows)
 &nbsp;
          index         |          min
-\-----------------------+-----------------------
- {7,7,0,8,4,7,4,6,7,6} | {3,1,3,0,4,2,1,1,1,1}
+-----------------------+-----------------------
+ {8,8,1,9,5,8,5,7,8,7} | {3,1,3,0,4,2,1,1,1,1}
 (1 rows)
 </pre>
 
 - Element-wise multiplication between two matrices
 <pre class="syntax">
 SELECT madlib.matrix_elem_mult('"mat_A"', 'row=row_id, val=row_vec',
-                               '"mat_B"', 'val=vector',
+                               '"mat_B"', 'row=row_id, val=vector',
                                'mat_r', 'val=vector');
 SELECT * FROM mat_r ORDER BY row_id;
 </pre>
@@ -424,17 +429,17 @@ SELECT * FROM mat_r ORDER BY row_id;
 </pre>
 <pre class="result">
  row_id |             row_vec
-\--------+---------------------------------
-      0 | {27,18,15,24,15,18,18,9,30,24}
-      1 | {24,6,6,18,18,30,6,3,27,27}
-      2 | {9,27,27,27,24,18,9,27,15,18}
-      3 | {18,12,6,6,6,21,24,24,0,21}
-      4 | {18,24,27,27,12,18,27,15,21,21}
-      5 | {12,30,21,9,27,15,27,6,9,12}
-      6 | {24,30,21,30,3,27,21,27,24,21}
-      7 | {21,12,15,18,6,24,3,3,12,24}
-      8 | {24,24,24,15,6,18,27,3,24,9}
-      9 | {12,18,9,6,18,12,3,6,9,24}
+--------+---------------------------------
+      1 | {27,18,15,24,15,18,18,9,30,24}
+      2 | {24,6,6,18,18,30,6,3,27,27}
+      3 | {9,27,27,27,24,18,9,27,15,18}
+      4 | {18,12,6,6,6,21,24,24,0,21}
+      5 | {18,24,27,27,12,18,27,15,21,21}
+      6 | {12,30,21,9,27,15,27,6,9,12}
+      7 | {24,30,21,30,3,27,21,27,24,21}
+      8 | {21,12,15,18,6,24,3,3,12,24}
+      9 | {24,24,24,15,6,18,27,3,24,9}
+     10 | {12,18,9,6,18,12,3,6,9,24}
 (10 rows)
 </pre>
 
@@ -1291,7 +1296,6 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
  * @param in_col Name of the column containing the column index for the input matrix
  * @param in_val Name of the column containing the matrix values for the input matrix
  * @param matrix_out Name of the table where to output the result matrix
- * @param use_temp_table Specify if use temp table for result
  * @returns Name of the table containing the result matrix
  *
  */
@@ -1301,8 +1305,7 @@ MADLIB_SCHEMA.matrix_trans
     matrix_in      TEXT,
     in_args        TEXT,
     matrix_out     TEXT,
-    out_args       TEXT,
-    use_temp_table BOOLEAN
+    out_args       TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
@@ -1317,27 +1320,12 @@ MADLIB_SCHEMA.matrix_trans
 (
     matrix_in       TEXT,
     in_args         TEXT,
-    matrix_out      TEXT,
-    out_args        TEXT
-)
-RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT
-        MADLIB_SCHEMA.matrix_trans(
-            $1, $2, $3, $4, FALSE);
-$$ LANGUAGE sql
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.matrix_trans
-(
-    matrix_in       TEXT,
-    in_args         TEXT,
     matrix_out      TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     SELECT
         MADLIB_SCHEMA.matrix_trans(
-            $1, $2, $3, NULL, FALSE);
+            $1, $2, $3, NULL);
 $$ LANGUAGE sql
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -1363,7 +1351,6 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
  *
  * @param matrix_in Name of the table containing the input matrix
  * @param matrix_out Name of the table where to output the result matrix
- * @param use_temp_table Specify if use temp table for result
  * @returns Name of the table containing the result matrix
  *
  */
@@ -1374,29 +1361,14 @@ MADLIB_SCHEMA.matrix_sparsify
     matrix_in       TEXT,
     in_args         TEXT,
     matrix_out      TEXT,
-    out_args        TEXT,
-    use_temp_table  BOOLEAN
-)
-RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    PythonFunctionBodyOnly(`linalg', `matrix_ops')
-    matrix_ops.matrix_sparsify(matrix_in, in_args, matrix_out,
-                               out_args, use_temp_table)
-    return [matrix_out]
-$$ LANGUAGE plpythonu
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-/* Overloaded function */
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.matrix_sparsify
-(
-    matrix_in       TEXT,
-    in_args         TEXT,
-    matrix_out      TEXT,
     out_args        TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT MADLIB_SCHEMA.matrix_sparsify($1, $2, $3, $4, FALSE);
-$$ LANGUAGE SQL
+    PythonFunctionBodyOnly(`linalg', `matrix_ops')
+    matrix_ops.matrix_sparsify(schema_madlib, matrix_in, in_args, matrix_out,
+                               out_args)
+    return [matrix_out]
+$$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 /* Overloaded function */
@@ -1408,7 +1380,7 @@ MADLIB_SCHEMA.matrix_sparsify
     matrix_out      TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT MADLIB_SCHEMA.matrix_sparsify($1, $2, $3, '', FALSE);
+    SELECT MADLIB_SCHEMA.matrix_sparsify($1, $2, $3, '');
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -1438,7 +1410,6 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
  * @param in_col Name of the column containing the column index for the input matrix
  * @param in_val Name of the column containing the matrix values for the input matrix
  * @param matrix_out Name of the table where to output the result matrix
- * @param use_temp_table Specify if use temp table for result
  * @returns Name of the table containing the result matrix
  *
  */
@@ -1449,30 +1420,16 @@ MADLIB_SCHEMA.matrix_densify
     matrix_in       TEXT,
     in_args         TEXT,
     matrix_out      TEXT,
-    out_args        TEXT,
-    use_temp_table  BOOLEAN
+    out_args        TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
     matrix_ops.matrix_densify(schema_madlib,
-        matrix_in, in_args, matrix_out, out_args, use_temp_table)
+                              matrix_in, in_args, matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-/* Overloaded function*/
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.matrix_densify
-(
-    matrix_in       TEXT,
-    in_args         TEXT,
-    matrix_out      TEXT,
-    out_args        TEXT
-)
-RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT MADLIB_SCHEMA.matrix_densify($1, $2, $3, $4, FALSE);
-$$ LANGUAGE SQL
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.matrix_densify
@@ -1482,7 +1439,7 @@ MADLIB_SCHEMA.matrix_densify
     matrix_out      TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    SELECT MADLIB_SCHEMA.matrix_densify($1, $2, $3, '', FALSE);
+    SELECT MADLIB_SCHEMA.matrix_densify($1, $2, $3, '');
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -1635,31 +1592,16 @@ MADLIB_SCHEMA.matrix_block_trans
     matrix_in       TEXT,
     in_args         TEXT,
     matrix_out      TEXT,
-    out_args        TEXT,
-    use_temp_table  BOOLEAN
+    out_args        TEXT
 )
 RETURNS MADLIB_SCHEMA.matrix_result AS $$
     PythonFunctionBodyOnly(`linalg', `matrix_ops')
     matrix_ops.matrix_block_trans(schema_madlib, matrix_in, in_args,
-                                  matrix_out, out_args,
-                                  use_temp_table=use_temp_table)
+                                  matrix_out, out_args)
     return [matrix_out]
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
-
-CREATE OR REPLACE FUNCTION
-MADLIB_SCHEMA.matrix_block_trans
-(
-    matrix_in   TEXT,
-    in_args     TEXT,
-    matrix_out  TEXT,
-    out_args    TEXT
-)
-RETURNS MADLIB_SCHEMA.matrix_result AS $$
-    select MADLIB_SCHEMA.matrix_block_trans($1, $2, $3, $4, FALSE)
-$$ LANGUAGE SQL
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 /**
  * @brief Calculate square of matrix. It requires that all the values are NON-NULL.
