@@ -241,11 +241,12 @@ public:
     inline void reset() {
         algo.numRows = 0;
         algo.loss = 0.;
+        algo.gradient.setZero();
         algo.incrModel = task.model;
     }
 
     static inline uint32_t arraySize(const uint32_t inDimension) {
-        return 4 + 2 * inDimension;
+        return 4 + 3 * inDimension;
     }
 
 protected:
@@ -260,7 +261,8 @@ protected:
      *
      * Intra-iteration components (updated in transition step):
      * - 2 + dimension: numRows (number of rows processed in this iteration)
-     * - 3 + dimension: loss (sum of loss for each rows)
+     * - 3 + dimension: loss (sum of loss for each row)
+     * - 4 + dimension: gradient (sum of gradient for each row)
      * - 4 + dimension: incrModel (volatile model for incrementally update)
      */
     void rebind() {
@@ -270,7 +272,8 @@ protected:
 
         algo.numRows.rebind(&mStorage[2 + task.dimension]);
         algo.loss.rebind(&mStorage[3 + task.dimension]);
-        algo.incrModel.rebind(&mStorage[4 + task.dimension], task.dimension);
+        algo.gradient.rebind(&mStorage[4 + task.dimension], task.dimension);
+        algo.incrModel.rebind(&mStorage[4 + task.dimension * 2], task.dimension);
     }
 
     Handle mStorage;
@@ -285,6 +288,8 @@ public:
     struct AlgoState {
         typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
         typename HandleTraits<Handle>::ReferenceToDouble loss;
+        typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap
+            gradient;
         typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap
             incrModel;
     } algo;

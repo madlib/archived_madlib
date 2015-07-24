@@ -38,10 +38,14 @@ def __lsvm_train(schema_madlib, rel_args, rel_state, rel_source,
         rel_source=rel_source,
         col_ind_var=col_ind_var,
         col_dep_var=col_dep_var,
-        agg=agg)
+        agg=agg,
+        dimension=kwargs['ind_dim'],
+        stepsize=kwargs['eta'],
+        **kwargs)
     with iterationCtrl as it:
         it.iteration = 0
         while True:
+            it.kwargs['stepsize'] = it.kwargs['stepsize'] * kwargs['decay_factor']
             it.update("""
                 SELECT
                     {schema_madlib}.{agg}(
@@ -54,19 +58,19 @@ def __lsvm_train(schema_madlib, rel_args, rel_state, rel_source,
                         (SELECT _state FROM {rel_state}
                             WHERE _iteration = {iteration})
                         '),
-                        (_args.dimension)::INT4,
-                        (_args.stepsize)::FLOAT8,
-                        (_args.reg)::FLOAT8)
-                FROM {rel_source} AS _src, {rel_args} AS _args
+                        {dimension}::INT4,
+                        {stepsize}::FLOAT8, -- it.kwargs['stepsize']
+                        {reg}::FLOAT8)
+                FROM {rel_source} AS _src
                 """)
             if it.test("""
-                {iteration} > _args.num_iterations OR
+                {iteration} > {max_iter} OR
                 {schema_madlib}.internal_linear_svm_igd_distance(
                     m4_ifdef(`__HAWQ__', `
                     (SELECT _state FROM {rel_state}
                         WHERE _iteration = {iteration} - 1),
                     (SELECT _state FROM {rel_state}
-                        WHERE _iteration = {iteration})',`_state_previous, _state_current')) < _args.tolerance
+                        WHERE _iteration = {iteration})',`_state_previous, _state_current')) < 0
                 """):
                 break
     return iterationCtrl.iteration
@@ -75,7 +79,7 @@ def __lsvm_train(schema_madlib, rel_args, rel_state, rel_source,
 # Function to run the linear classification algorithm
 # ---------------------------------------------------
 def lsvm_classification(schema_madlib, input_table, model_table, parallel,
-        verbose, eta, reg, max_iter, **kwargs):
+        verbose, eta, reg, max_iter, decay_factor, **kwargs):
     """
     Executes the linear support vector classification algorithm.
 
@@ -93,6 +97,8 @@ def lsvm_classification(schema_madlib, input_table, model_table, parallel,
     output_tbl_valid(model_table, 'SVM')
     if eta <= 0 or eta > 1:
         plpy.error("SVM error: eta should be in (0, 1]!")
+    if decay_factor <= 0 or decay_factor > 1:
+        plpy.error("SVM error: decay factor should be in (0, 1]!")
     if max_iter <= 0:
         plpy.error("SVM error: max_iter should be greater than 0!")
 
@@ -102,6 +108,7 @@ def lsvm_classification(schema_madlib, input_table, model_table, parallel,
     eta = .1 if eta is None else eta
     reg = .001 if reg is None else reg
     max_iter = 100 if max_iter is None else max_iter
+    decay_factor = 1 if decay_factor is None else decay_factor
 
     # verbosing
     old_msg_level = plpy.execute("select setting from pg_settings where \
@@ -113,7 +120,8 @@ def lsvm_classification(schema_madlib, input_table, model_table, parallel,
         plpy.info(" * parallel = " + str(parallel));
         plpy.info(" * eta = " + str(eta));
         plpy.info(" * reg = " + str(reg));
-        plpy.execute("set client_min_messages to warning")
+        plpy.info(" * decay_factor = " + str(decay_factor));
+        plpy.execute("set client_min_messages to info")
     else:
         plpy.execute("set client_min_messages to error")
 
@@ -149,12 +157,13 @@ def lsvm_classification(schema_madlib, input_table, model_table, parallel,
     plpy.execute("""
             CREATE TABLE {model_table} AS
             SELECT
-                1                       AS id, -- for compatibility
-                (result).coefficients   AS weights,
-                1.                      AS wdiv, -- for compatibility
-                0.                      AS wbias, -- for compatibility
-                (result).loss           AS loss,
-                {iteration_run}         AS iter_run
+                1                           AS id, -- for compatibility
+                (result).coefficients       AS weights,
+                1.                          AS wdiv, -- for compatibility
+                0.                          AS wbias, -- for compatibility
+                (result).loss               AS loss,
+                (result).norm_of_gradient   AS norm_of_gradient,
+                {iteration_run}             AS iter_run
             FROM (
                 SELECT {schema_madlib}.internal_linear_svm_igd_result(
                     _state) AS result

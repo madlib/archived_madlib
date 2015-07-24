@@ -12,8 +12,9 @@ m4_include(`SQLCommon.m4')
 
 DROP TYPE IF EXISTS MADLIB_SCHEMA.linear_svm_result CASCADE;
 CREATE TYPE MADLIB_SCHEMA.linear_svm_result AS (
-        coefficients    double precision[],
-        loss            double precision
+        coefficients        double precision[],
+        loss                double precision,
+        norm_of_gradient    double precision
 );
 
 --------------------------------------------------------------------------
@@ -157,10 +158,37 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lsvm_classification(
     verbose bool,
     eta float8,
     reg float8,
-    max_iter int)
+    max_iter int,
+    decay_factor float8)
 RETURNS SETOF MADLIB_SCHEMA.lsvm_sgd_result AS $$
 PythonFunction(kernel_machines, lsvm, lsvm_classification)
 $$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+/**
+ * @brief This is the linear support vector classification function
+ *
+ * @param input_table The name of the table/view with the training data
+ * @param model_table The name of the table under which we want to store the learned model
+ * @param parallel A flag indicating whether the system should learn multiple models in parallel (Defult: False)
+ * @param verbose Verbosity of reporting (Default: False)
+ * @param eta Initial learning rate in (0,1] (Default: 0.1)
+ * @param reg Regularization parameter, often chosen by cross-validation (Default: 0.001)
+ *
+ * @return A summary of the learning process
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.lsvm_classification(
+    input_table text,
+    model_table text,
+    parallel bool,
+    verbose bool,
+    eta float8,
+    reg float8,
+    max_iter int)
+RETURNS SETOF MADLIB_SCHEMA.lsvm_sgd_result AS $$
+    SELECT MADLIB_SCHEMA.lsvm_classification($1, $2, $3, $4, $5, $6, $7, 1.);
+$$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
 
 

@@ -13,6 +13,7 @@
 #include "task/linear_svm.hpp"
 #include "algo/igd.hpp"
 #include "algo/loss.hpp"
+#include "algo/gradient.hpp"
 
 #include "type/tuple.hpp"
 #include "type/model.hpp"
@@ -30,6 +31,11 @@ typedef IGD<GLMIGDState<MutableArrayHandle<double> >, GLMIGDState<ArrayHandle<do
 
 typedef Loss<GLMIGDState<MutableArrayHandle<double> >, GLMIGDState<ArrayHandle<double> >,
         LinearSVM<GLMModel, GLMTuple > > LinearSVMLossAlgorithm;
+
+typedef Gradient<GLMIGDState<MutableArrayHandle<double> >, GLMIGDState<ArrayHandle<double> >,
+        LinearSVM<GLMModel, GLMTuple > > LinearSVMGradientAlgorithm;
+
+
 
 /**
  * @brief Perform the linear support vector machine transition step
@@ -90,6 +96,8 @@ linear_svm_igd_transition::run(AnyType &args) {
         }
     }
     LinearSVMLossAlgorithm::transition(state, tuple);
+    LinearSVMGradientAlgorithm::transition(state, tuple);
+
     state.algo.numRows ++;
 
     return state;
@@ -111,6 +119,8 @@ linear_svm_igd_merge::run(AnyType &args) {
     // Merge states together
     LinearSVMIGDAlgorithm::merge(stateLeft, stateRight);
     LinearSVMLossAlgorithm::merge(stateLeft, stateRight);
+    LinearSVMGradientAlgorithm::merge(stateLeft, stateRight);
+
     // The following numRows update, cannot be put above, because the model
     // averaging depends on their original values
     stateLeft.algo.numRows += stateRight.algo.numRows;
@@ -157,7 +167,8 @@ internal_linear_svm_igd_result::run(AnyType &args) {
 
     AnyType tuple;
     tuple << state.task.model
-        << static_cast<double>(state.algo.loss);
+        << static_cast<double>(state.algo.loss)
+        << state.algo.gradient.norm();
 
     return tuple;
 }

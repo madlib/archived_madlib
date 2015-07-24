@@ -57,8 +57,8 @@ LinearSVM<Model, Tuple>::gradient(
     double wx = dot(model, x);
     if (1 - wx * y > 0) {
         double c = -y; // minus for "-loglik"
-        gradient = c * x;
-    } else { gradient = 0. * x; }
+        gradient += c * x;
+    } else { gradient += 0. * x; }
 }
 
 template <class Model, class Tuple>
