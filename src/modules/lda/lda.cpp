@@ -11,6 +11,7 @@
 #include <dbconnector/dbconnector.hpp>
 #include <math.h>
 #include <iostream>
+#include <sstream>
 #include <algorithm>
 #include <functional>
 #include <numeric>
@@ -183,6 +184,7 @@ AnyType lda_gibbs_sample::run(AnyType & args)
     int32_t voc_size = args[6].getAs<int32_t>();
     int32_t topic_num = args[7].getAs<int32_t>();
     int32_t iter_num = args[8].getAs<int32_t>();
+    size_t model64_size = static_cast<size_t>(voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t);
 
     if(alpha <= 0)
         throw std::invalid_argument("invalid argument - alpha");
@@ -221,13 +223,14 @@ AnyType lda_gibbs_sample::run(AnyType & args)
 
     if (!args.getUserFuncContext()) {
         ArrayHandle<int64_t> model64 = args[3].getAs<ArrayHandle<int64_t> >();
-        if (model64.size() * sizeof(int64_t) / sizeof(int32_t)
-                != (size_t)(voc_size * (topic_num + 2))) {
-            throw std::invalid_argument(
-                "invalid dimension - model.size() != voc_size * (topic_num + 2)");
+        if (model64.size() != model64_size) {
+            std::stringstream ss;
+            ss << "invalid dimension: model64.size() = " << model64.size();
+            throw std::invalid_argument(ss.str());
         }
-        if(__min(model64) < 0)
+        if (__min(model64) < 0) {
             throw std::invalid_argument("invalid topic counts in model");
+        }
 
         int32_t *context =
             static_cast<int32_t *>(
@@ -239,10 +242,10 @@ AnyType lda_gibbs_sample::run(AnyType & args)
         int32_t *model = context;
 
         int64_t *running_topic_counts = reinterpret_cast<int64_t *>(
-                context + model64.size() * sizeof(int64_t) / sizeof(int32_t));
+                context + model64_size * sizeof(int64_t) / sizeof(int32_t));
         for (int i = 0; i < voc_size; i ++) {
             for (int j = 0; j < topic_num; j ++) {
-                running_topic_counts[j] += model[i * (topic_num + 2) + j];
+                running_topic_counts[j] += model[i * (topic_num + 1) + j];
             }
         }
 
@@ -250,12 +253,12 @@ AnyType lda_gibbs_sample::run(AnyType & args)
     }
 
     int32_t *context = static_cast<int32_t *>(args.getUserFuncContext());
-    if(context == NULL) {
+    if (context == NULL) {
         throw std::runtime_error("args.mSysInfo->user_fctx is null");
     }
     int32_t *model = context;
     int64_t *running_topic_counts = reinterpret_cast<int64_t *>(
-            context + voc_size * (topic_num + 2));
+            context + model64_size * sizeof(int64_t) / sizeof(int32_t));
 
     int32_t unique_word_count = static_cast<int32_t>(words.size());
     for(int32_t it = 0; it < iter_num; it++){
@@ -266,20 +269,20 @@ AnyType lda_gibbs_sample::run(AnyType & args)
                 int32_t topic = doc_topic[word_index];
                 int32_t retopic = __lda_gibbs_sample(
                     topic_num, topic, doc_topic.ptr(),
-                    model + wordid * (topic_num + 2),
+                    model + wordid * (topic_num + 1),
                     running_topic_counts, alpha, beta);
                 doc_topic[word_index] = retopic;
                 doc_topic[topic]--;
                 doc_topic[retopic]++;
 
                 if(iter_num == 1) {
-                    if (model[wordid * (topic_num + 2) + retopic] <= 2e9) {
+                    if (model[wordid * (topic_num + 1) + retopic] <= 2e9) {
                         running_topic_counts[topic] --;
                         running_topic_counts[retopic] ++;
-                        model[wordid * (topic_num + 2) + topic]--;
-                        model[wordid * (topic_num + 2) + retopic]++;
+                        model[wordid * (topic_num + 1) + topic]--;
+                        model[wordid * (topic_num + 1) + retopic]++;
                     } else {
-                        model[wordid * (topic_num + 2) + topic_num] = 1;
+                        model[wordid * (topic_num + 1) + topic_num] = 1;
                     }
                 }
                 word_index++;
@@ -371,12 +374,19 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
 
     MutableArrayHandle<int64_t> state(NULL);
     int32_t *model;
-    if(args[0].isNull()){
-        int dims[1] = {voc_size * (topic_num + 2) * sizeof(int32_t) / sizeof(int64_t)};
+    if(args[0].isNull()) {
+        // to store a voc_size x (topic_num+1) integer matrix in
+        // bigint[] (the +1 is for a flag of ceiling the count),
+        // we need padding if the size is odd.
+        // 1. when voc_size * (topic_num + 1) is (2n+1), gives (n+1) 
+        // 2. when voc_size * (topic_num + 1) is (2n), gives (n) 
+        int dims[1] = {(voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t)};
         int lbs[1] = {1};
         state = madlib_construct_md_array(
             NULL, NULL, 1, dims, lbs, INT8TI.oid, INT8TI.len, INT8TI.byval,
             INT8TI.align);
+        // the reason we use bigint[] because integer[] has limit on number of
+        // elements and thus cannot be larger than 500MB
         model = reinterpret_cast<int32_t *>(state.ptr());
     } else {
         state = args[0].getAs<MutableArrayHandle<int64_t> >();
@@ -389,10 +399,10 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
         int32_t wordid = words[i];
         for(int32_t j = 0; j < counts[i]; j++){
             int32_t topic = topic_assignment[word_index];
-            if (model[wordid * (topic_num + 2) + topic] <= 2e9) {
-                model[wordid * (topic_num + 2) + topic]++;
+            if (model[wordid * (topic_num + 1) + topic] <= 2e9) {
+                model[wordid * (topic_num + 1) + topic]++;
             } else {
-                model[wordid * (topic_num + 2) + topic_num] = 1;
+                model[wordid * (topic_num + 1) + topic_num] = 1;
             }
             word_index++;
         }
@@ -496,7 +506,7 @@ AnyType lda_unnest_transpose::SRF_next(void *user_fctx, bool *is_last_call)
             NULL, ctx->dim, INT4TI.oid, INT4TI.len, INT4TI.byval,
             INT4TI.align));
     for (int i = 0; i < ctx->dim; i ++) {
-        outarray[i] = ctx->inarray[(ctx->maxcall + 2) * i + ctx->curcall];
+        outarray[i] = ctx->inarray[(ctx->maxcall + 1) * i + ctx->curcall];
     }
 
     ctx->curcall++;
@@ -535,7 +545,7 @@ AnyType lda_unnest::SRF_next(void *user_fctx, bool *is_last_call)
             NULL, ctx->dim, INT4TI.oid, INT4TI.len, INT4TI.byval,
             INT4TI.align));
     for (int i = 0; i < ctx->dim; i ++) {
-        outarray[i] = ctx->inarray[ctx->curcall * (ctx->dim + 2) + i];
+        outarray[i] = ctx->inarray[ctx->curcall * (ctx->dim + 1) + i];
     }
 
     ctx->curcall++;
@@ -569,6 +579,7 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
     double beta = args[6].getAs<double>();
     int32_t voc_size = args[7].getAs<int32_t>();
     int32_t topic_num = args[8].getAs<int32_t>();
+    size_t model64_size = static_cast<size_t>(voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t);
 
     if(alpha <= 0)
         throw std::invalid_argument("invalid argument - alpha");
@@ -598,15 +609,17 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
         throw std::invalid_argument("invalid values in doc_topic_counts");
 
     MutableArrayHandle<int64_t> state(NULL);
-    if(args[0].isNull()){
+    if (args[0].isNull()) {
         ArrayHandle<int64_t> model64 = args[4].getAs<ArrayHandle<int64_t> >();
 
-        if(model64.size() * sizeof(int64_t) / sizeof(int32_t)
-                != (size_t)(voc_size * (topic_num + 2)))
-            throw std::invalid_argument(
-                "invalid dimension - model.size() != voc_size * (topic_num + 2)");
-        if(__min(model64) < 0)
+        if (model64.size() != model64_size) {
+            std::stringstream ss;
+            ss << "invalid dimension: model64.size() = " << model64.size();
+            throw std::invalid_argument(ss.str());
+        }
+        if(__min(model64) < 0) {
             throw std::invalid_argument("invalid topic counts in model");
+        }
 
         state =  madlib_construct_array(NULL,
                                         static_cast<int>(model64.size())
@@ -619,11 +632,10 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
 
         memcpy(state.ptr(), model64.ptr(), model64.size() * sizeof(int64_t));
         int32_t *model = reinterpret_cast<int32_t *>(state.ptr());
-
         int64_t *total_topic_counts = reinterpret_cast<int64_t *>(state.ptr() + model64.size());
         for (int i = 0; i < voc_size; i ++) {
             for (int j = 0; j < topic_num; j ++) {
-                total_topic_counts[j] += model[i * (topic_num + 2) + j];
+                total_topic_counts[j] += model[i * (topic_num + 1) + j];
             }
         }
     }else{
@@ -631,8 +643,7 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
     }
 
     int32_t *model = reinterpret_cast<int32_t *>(state.ptr());
-    int64_t *total_topic_counts = reinterpret_cast<int64_t *>(
-            state.ptr() + voc_size * (topic_num + 2) * sizeof(int32_t) / sizeof(int64_t));
+    int64_t *total_topic_counts = reinterpret_cast<int64_t *>(state.ptr() + model64_size);
     double *perp = reinterpret_cast<double *>(state.ptr() + state.size() - 1);
 
     int32_t n_d = 0;
@@ -647,7 +658,7 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
         double sum_p = 0.0;
         for(int32_t z = 0; z < topic_num; z++){
                 int32_t n_dz = doc_topic_counts[z];
-                int32_t n_wz = model[w * (topic_num + 2) + z];
+                int32_t n_wz = model[w * (topic_num + 1) + z];
                 int64_t n_z = total_topic_counts[z];
                 sum_p += (static_cast<double>(n_wz) + beta) * (n_dz + alpha)
                             / (static_cast<double>(n_z) + voc_size * beta);
@@ -698,7 +709,7 @@ lda_check_count_ceiling::run(AnyType &args) {
     int count = 0;
     const int32_t *model = reinterpret_cast<const int32_t *>(model64.ptr());
     for (int wordid = 0; wordid < voc_size; wordid ++) {
-        int flag = model[wordid * (topic_num + 2) + topic_num];
+        int flag = model[wordid * (topic_num + 1) + topic_num];
         if (flag != 0) {
             example_words_hit_ceiling[count ++] = wordid;
         }
