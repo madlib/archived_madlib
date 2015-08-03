@@ -147,7 +147,7 @@ def parse_matrix_args(matrix_args, in_default_args=None):
                 col = Name of the column containing column id
                 val = Name of the column containing values
                 trans = Boolean indicating if a matrix should be transposed before operation
-
+                fmt = Format of the output table
     Returns:
          Dictionary: Parses the matrix_args and creates a dictionary containing
          all the {names: value}
@@ -248,8 +248,8 @@ def get_dims(matrix, matrix_args, is_block=False):
                 "from matrix {0}".format(matrix, ','.join(cols)))
         rv = plpy.execute("""
             SELECT
-                max({matrix_args[row]}::bigint) AS row_dim,
-                max({matrix_args[col]}::bigint) AS col_dim
+                max({matrix_args[row]}::BIGINT) AS row_dim,
+                max({matrix_args[col]}::BIGINT) AS col_dim
             FROM {matrix}
             WHERE {matrix_args[val]} IS NOT NULL
             """.format(matrix=matrix, matrix_args=matrix_args))
@@ -261,7 +261,7 @@ def get_dims(matrix, matrix_args, is_block=False):
                 "Matrix error: At least one of the columns ({1}) missing "
                 "from matrix {0}".format(matrix, ','.join(cols)))
         rv = plpy.execute("""
-            SELECT max({matrix_args[row]}::bigint) AS row_dim
+            SELECT max({matrix_args[row]}::BIGINT) AS row_dim
             FROM {matrix}
             """.format(matrix=matrix, matrix_args=matrix_args))
         row_dim = rv[0]['row_dim']
@@ -280,6 +280,11 @@ def get_dims(matrix, matrix_args, is_block=False):
 # -- Validation functions ------------------------------------------------------
 # ------------------------------------------------------------------------------
 
+def _validate_input_array(diag_elements):
+    _assert(diag_elements is not None,
+            "Matrix error: Invalid diag elements")
+    _assert(len(diag_elements) != 0,
+            "Matrix error: Empty diag elements")
 
 def _validate_output_table(table):
     _assert(table is not None and table.replace('"', '').strip() != '',
@@ -374,7 +379,7 @@ def validate_dense(matrix, matrix_args, checkCol=True, row_dim=None):
     c = unique_string()
     non_unique_rows = plpy.execute("""
             -- Check duplicates
-            SELECT {matrix_args[row]}::bigint as r
+            SELECT {matrix_args[row]}::BIGINT as r
             FROM {matrix}
             GROUP BY {matrix_args[row]}
             HAVING (count(*) > 1)
@@ -382,14 +387,14 @@ def validate_dense(matrix, matrix_args, checkCol=True, row_dim=None):
             UNION
 
             -- Check if all (and only) indices in [1, row_dim] are present
-            SELECT coalesce({c}::bigint, {matrix_args[row]}::bigint) as r
+            SELECT coalesce({c}::BIGINT, {matrix_args[row]}::BIGINT) as r
             FROM (
-                SELECT {matrix_args[row]}, {c}
+                SELECT {matrix_args[row]}::BIGINT, {c}
                 FROM
                     {matrix}
                         FULL OUTER JOIN
                     generate_series(1, {row_dim}) as {c}
-                        ON ({matrix_args[row]}::bigint = {c}::bigint)
+                        ON ({matrix_args[row]}::BIGINT = {c}::bigint)
             ) q
             WHERE
                 {matrix_args[row]} is NULL OR
@@ -535,11 +540,9 @@ def matrix_densify(schema_madlib, matrix_in, in_args, matrix_out, out_args):
         """.format(**locals()))
 # ------------------------------------------------------------------------------
 
-
 # ------------------------------------------------------------------------------
 # -- Element-wise operations ---------------------------------------------------
 # ------------------------------------------------------------------------------
-
 
 def matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
@@ -711,6 +714,80 @@ def matrix_sub(schema_madlib, matrix_a, a_args,
     matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
                    elem_ops)
+
+
+ # ------------------------------------------------------------------------------
+
+def matrix_extract_diag(schema_madlib, matrix_in, in_args):
+    """ Main function for main diagonal of matrix
+
+    Args:
+        @param schema_madlib: Name of the MADlib schema
+        @param matrix_in: Str, Name of the matrix who need the main diagonal
+        @param in_args: Str, Key-value string providing column names for matrix_in
+                        The string is of the format "key1=value1, key2=value2 ..."
+                        This is parsed to obtain a dictionary.
+                        Alternatively this argument can also be a dictionary
+                        containing the key-value information (in which case no
+                                                              parsing is performed)
+    Returns:
+        @param array_out: float[], Name of the main diagonal array
+    Side effect:
+        Creates an output table containing the transpose of matrix_in
+    """
+    _validate_input_table(matrix_in)
+    in_args = parse_matrix_args(in_args)
+    in_dim = get_dims(matrix_in, in_args)
+
+    if _is_sparse(matrix_in, in_args['val']):
+        validate_sparse(matrix_in, in_args)
+        return _matrix_extract_diag_sparse(
+            schema_madlib, matrix_in, in_args)
+    else:
+        validate_dense(matrix_in, in_args)
+        return _matrix_extract_diag_dense(
+            schema_madlib, matrix_in, in_args)
+
+
+def _matrix_extract_diag_sparse(schema_madlib, matrix_in, in_args):
+    in_dim = get_dims(matrix_in, in_args)
+    out_num = min(in_dim[0], in_dim[1])
+    res = plpy.execute("""
+        SELECT
+            array_agg(val order by row) AS array_diag
+        FROM
+        (SELECT
+            coalesce(val,0) AS val,
+            num AS row
+        FROM
+        (SELECT
+            {in_args[val]} AS val,
+            {in_args[row]}::BIGINT AS row
+        FROM
+            {matrix_in}
+        WHERE
+            {in_args[row]} = {in_args[col]}) AS t1
+        RIGHT OUTER  JOIN generate_series(1,{out_num}) num
+        ON t1.row=num
+        ) t2
+        """.format(**locals()))[0]['array_diag']
+    return res
+# ------------------------------------------------------------------------------
+
+
+def _matrix_extract_diag_dense(schema_madlib, matrix_in, in_args):
+    res = plpy.execute("""
+        SELECT
+             array_agg(val order by row) AS array_diag
+        FROM
+        (SELECT
+            {in_args[val]}[{in_args[row]}] AS val,
+            {in_args[row]}::BIGINT AS row
+        FROM
+            {matrix_in}) AS t2
+        WHERE val is not NULL
+        """.format(**locals()))[0]['array_diag']
+    return res
 # ------------------------------------------------------------------------------
 
 
@@ -1803,9 +1880,7 @@ def _matrix_scalar_mult_sparse_to_dense(schema_madlib, matrix_in, in_args,
         CREATE TABLE {matrix_out}
         ({out_args[row]} BIGINT, {out_args[val]} FLOAT8[])
         m4_ifdef(`__POSTGRESQL__', `',
-            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)')
-        m4_ifdef(`__POSTGRESQL__', `',
-            `DISTRIBUTED BY ({in_args[row]})');
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) DISTRIBUTED BY ({in_args[row]})');
         """
     row_dim = in_dim[0]
     col_dim = in_dim[1]
@@ -1832,9 +1907,7 @@ def _matrix_scalar_mult_sparse_to_sparse(matrix_in, in_args, scalar, matrix_out,
         CREATE TABLE {matrix_out}
         ({out_args[row]} BIGINT, {out_args[col]} BIGINT, {out_args[val]} FLOAT8)
         m4_ifdef(`__POSTGRESQL__', `',
-            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)')
-        m4_ifdef(`__POSTGRESQL__', `',
-            `DISTRIBUTED BY ({in_args[row]})');
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) DISTRIBUTED BY ({in_args[row]})');
         """
     plpy.execute(create_sql.format(**locals()))
     plan = plpy.prepare("""
@@ -2102,4 +2175,184 @@ def matrix_scale_and_add(schema_madlib,
                 {matrix_a} as a, {matrix_b} as b
             WHERE a.{a_args[row]}::bigint = b.{b_args[row]}::bigint
         """.format(**locals()))
+# ------------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------
+# Creation operations
+# -----------------------------------------------------------------------
+
+
+def _matrix_diag_sparse(schema_madlib, diag_elements, matrix_out, out_args):
+    plpy.execute("""
+        CREATE TABLE {matrix_out}
+        ({out_args[row]} INTEGER, {out_args[col]} INTEGER, {out_args[val]} FLOAT8)
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ) DISTRIBUTED BY ({out_args[row]})');
+        """.format(**locals()))
+    matrix_dim = len(diag_elements)
+    plan = plpy.prepare("""
+        INSERT INTO
+            {matrix_out}
+        SELECT
+                num as {out_args[row]},
+                num as {out_args[col]},
+                val as {out_args[val]}
+        FROM (
+              SELECT
+                unnest($1) as val,
+                generate_series(1, {matrix_dim}) as num
+            ) l1
+        WHERE val <> 0.0 or num = {matrix_dim}
+        """.format(**locals()), [ "FLOAT8[]" ])
+    plpy.execute(plan, [diag_elements])
+
+
+def _matrix_diag_dense(schema_madlib, diag_elements, matrix_out, out_args):
+    dim = len(diag_elements)
+    plan = plpy.prepare("""
+        CREATE TABLE {matrix_out}
+        m4_ifdef(`__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+        SELECT
+            row as {out_args[row]},
+            {schema_madlib}.__matrix_densify_agg({dim}, row, val) AS {out_args[val]}
+        FROM (
+              SELECT
+                unnest($1) AS val,
+                generate_series(1, {dim}) AS row
+            ) l
+        GROUP BY l.row
+        m4_ifdef(`__POSTGRESQL__', `',
+            `DISTRIBUTED BY ({out_args[row]})')
+        """.format(**locals()), ["FLOAT8[]"])
+    plpy.execute(plan, [diag_elements])
+
+
+def matrix_diag(schema_madlib, diag_elements, matrix_out, out_args):
+    """ Perform create a diagonal matrix with a specified vector on the main diagonal.
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib functions
+        @param diag_elements: array, Name of the vector containing diagonal elements.
+                                Requires not NULL, not empty, not contains NULL
+        @param matrix_out: str, Name of the table to store result diagonal matrix
+        @param out_args: str, Name-value pair string containing options for matrix_out
+
+    Returns:
+        None
+    Side effect:
+        Creates an output table containing the result diagonal matrix
+    """
+    _validate_input_array(diag_elements)
+    _validate_output_table(matrix_out)
+    out_args = parse_matrix_args(out_args, in_default_args={'row': 'row',
+                                                            'col': 'col',
+                                                            'val': 'val'})
+    if 'fmt' not in out_args or out_args['fmt'] == 'sparse':
+        _matrix_diag_sparse(schema_madlib, diag_elements, matrix_out, out_args)
+    else:
+        _matrix_diag_dense(schema_madlib, diag_elements, matrix_out, out_args)
+#-------------------------------------------------------------------------------
+
+
+def matrix_identity(schema_madlib, dim, matrix_out, out_args):
+    """ Perform create an identity matrix with the dimensionality specified by an integer.
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib functions
+        @param dim: integer, Name of a integer specifing the dimensinality.
+                                Requires not NULL, dim > 0
+        @param matrix_out: str, Name of the table to store result identity matrix
+        @param out_args: str, Name-value pair string containing options for matrix_out
+
+    Returns:
+        None
+    Side effect:
+        Creates an output table containing the result identity matrix
+    """
+    _assert(dim and dim > 0,
+            "Invalid input for dimensionality of matrix")
+    diag_elements = [1] * dim
+    matrix_diag(schema_madlib, diag_elements, matrix_out, out_args)
+#-------------------------------------------------------------------------------
+
+
+def _matrix_create_scalar(schema_madlib, row_dim, col_dim, matrix_out, out_args, scalar):
+
+    """ Create a row_dim by col_dim matrix every element of which is 1.
+
+    Args:
+        @param schema_madlib: str, Name of the schema containing madlib fuctions
+        @param row_dim: int, The number of rows of matrix
+        @param col_dim: int, The number of columns of matrix
+        @param matrix_out: str, Name of the table to store result matrix of ones
+        @param out_args: str, Name-value pair string containing options for matrix_out
+        @param scalar: float, Value of elements in matrix_out
+
+    Returns:
+        None
+    """
+    _validate_output_table(matrix_out)
+    _assert(row_dim > 0 and col_dim > 0,
+            "Matrix error: Invalid dimensions for input matrices: {0} x {1}".
+            format(row_dim, col_dim))
+    _assert(scalar is not None,
+            "Matrix error: Invalid none value for elements.")
+
+    out_args = parse_matrix_args(out_args,
+                                 in_default_args={'row': 'row',
+                                                  'col': 'col',
+                                                  'val': 'val'})
+
+    if 'fmt' not in out_args or out_args['fmt'] == 'sparse':
+        if scalar != 0:
+            plpy.execute("""
+               CREATE TABLE {matrix_out}
+               m4_ifdef(`__POSTGRESQL__', `',
+               `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+               SELECT
+                   {out_args[row]},
+                   {out_args[col]},
+                   {scalar}::FLOAT8 as {out_args[val]}
+               FROM
+                   generate_series(1, {row_dim}) {out_args[row]},
+                   generate_series(1, {col_dim}) {out_args[col]}
+               m4_ifdef(`__POSTGRESQL__', `',
+                   `DISTRIBUTED BY ({out_args[row]})')
+            """.format(**locals()))
+        else:
+            plpy.execute("""
+                CREATE TABLE {matrix_out}
+                m4_ifdef(`__POSTGRESQL__', `',
+               `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+                     SELECT {row_dim} as {out_args[row]},
+                            {col_dim} as {out_args[col]},
+                            0::FLOAT8 as {out_args[val]}
+                m4_ifdef(`__POSTGRESQL__', `',
+                   `DISTRIBUTED BY ({out_args[row]})')
+            """.format(**locals()))
+    else:
+        plpy.execute("""
+            CREATE TABLE {matrix_out}
+            m4_ifdef(`__POSTGRESQL__', `',
+               `WITH (APPENDONLY=TRUE,COMPRESSTYPE=QUICKLZ)') AS
+            SELECT
+                row as {out_args[row]},
+                madlib.array_fill(madlib.array_of_float({col_dim}),
+                                  {scalar}::FLOAT8) as {out_args[val]}
+            FROM
+                generate_series(1, {row_dim}) as row
+            m4_ifdef(`__POSTGRESQL__', `',
+               `DISTRIBUTED BY ({out_args[row]})')
+            """.format(**locals()))
+
+
+def matrix_zeros(schema_madlib, row_dim, col_dim, matrix_out, out_args):
+    """ Create a row_dim by col_dim matrix of zeros.
+    """
+    _matrix_create_scalar(schema_madlib, row_dim, col_dim, matrix_out, out_args, 0)
+
+
+def matrix_ones(schema_madlib, row_dim, col_dim, matrix_out, out_args):
+    """ Create a row_dim by col_dim matrix with each element set to 1.
+    """
+    _matrix_create_scalar(schema_madlib, row_dim, col_dim, matrix_out, out_args, 1)
 # ------------------------------------------------------------------------------
