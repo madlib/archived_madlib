@@ -22,6 +22,7 @@
 #include "lda/lda.hpp"
 #include "elastic_net/elastic_net.hpp"
 #include "linalg/matrix_ops.hpp"
+#include "linalg/matrix_decomp.hpp"
 #include "linalg/svd.hpp"
 #include "tsa/arima.hpp"
 #include "recursive_partitioning/decision_tree.hpp"

@@ -4,7 +4,7 @@
  *
  * @brief Dense linear systems
  *
- * We implement dense linear systems using the direct. 
+ * We implement dense linear systems using the direct.
  *
  *//* ----------------------------------------------------------------------- */
 #include <limits>
@@ -61,12 +61,12 @@ AnyType dense_residual_norm_merge_states::run(AnyType& args)
 {
     MutableResidualState state1 = args[0].getAs<MutableByteString>();
     IResidualState state2 = args[1].getAs<ByteString>();
-    
+
     if (state1.numRows == 0)
         return state2.storage();
     else if (state2.numRows == 0)
         return state1.storage();
-  
+
     state1.numRows += state2.numRows;
     state1.residual_norm += state2.residual_norm;
     state1.b_norm += state2.b_norm;
@@ -80,7 +80,7 @@ AnyType dense_residual_norm_final::run(AnyType& args)
 {
     IResidualState state = args[0].getAs<ByteString>();
 
-    if (state.numRows == 0) 
+    if (state.numRows == 0)
       return Null();
 
     AnyType tuple;
@@ -98,7 +98,6 @@ AnyType dense_residual_norm_final::run(AnyType& args)
 AnyType direct_dense_stateToResult(
     const Allocator &inAllocator,
     const ColumnVector &x);
-
 
 /**
  * @brief States for linear systems
@@ -140,7 +139,7 @@ public:
      *
      * This function is only called for the first iteration, for the first row.
      */
-    inline void initialize(const Allocator &inAllocator, 
+    inline void initialize(const Allocator &inAllocator,
                           uint32_t inWidthOfA,
                           uint32_t inWidthOfb
                           ) {
@@ -172,7 +171,7 @@ public:
         const DenseDirectLinearSystemTransitionState<OtherHandle> &inOtherState) {
 
         if (mStorage.size() != inOtherState.mStorage.size() ||
-            widthOfA != inOtherState.widthOfA || 
+            widthOfA != inOtherState.widthOfA ||
             widthOfb != inOtherState.widthOfb)
             throw std::logic_error("Internal error: Incompatible transition "
                 "states");
@@ -194,7 +193,7 @@ public:
     }
 
 private:
-    static inline size_t arraySize(const uint32_t inWidthOfA, 
+    static inline size_t arraySize(const uint32_t inWidthOfA,
                                    const uint32_t inWidthOfb) {
         return 4 + 1 * inWidthOfb * inWidthOfA + 1 * inWidthOfb;
     }
@@ -208,8 +207,8 @@ private:
      * Inter-iteration components (updated in final function):
      * - 0: widthOfA (number of variables)
      * - 1: widthOfb (number of equations)
-     * - 2: numRows 
-     * - 3: algorithm 
+     * - 2: numRows
+     * - 3: algorithm
      * - 4: b (RHS vector)
      * - 4 + 1 * widthOfb: a (LHS matrix)
      */
@@ -241,7 +240,7 @@ public:
 AnyType
 dense_direct_linear_system_transition::run(AnyType &args) {
 
-    DenseDirectLinearSystemTransitionState<MutableArrayHandle<double> > 
+    DenseDirectLinearSystemTransitionState<MutableArrayHandle<double> >
                                                               state = args[0];
     int32_t row_id = args[1].getAs<int32_t>();
     MappedColumnVector _a = args[2].getAs<MappedColumnVector>();
@@ -256,9 +255,9 @@ dense_direct_linear_system_transition::run(AnyType &args) {
     }
 
     if (state.numRows == 0) {
-        
+
         int algorithm = args[5].getAs<int>();
-        state.initialize(*this, 
+        state.initialize(*this,
                         static_cast<uint32_t>(_a.size()),
                         num_equations
                         );
@@ -266,7 +265,7 @@ dense_direct_linear_system_transition::run(AnyType &args) {
     }
 
     state.numRows++;
-	  
+
 	// Now do the transition step
 	// First we create a block of zeros in memory
 	// and then add the vector in the appropriate position
@@ -306,7 +305,6 @@ dense_direct_linear_system_merge_states::run(AnyType &args) {
 }
 
 
-
 /**
  * @brief Perform the linear system final step
  */
@@ -337,7 +335,6 @@ dense_direct_linear_system_final::run(AnyType &args) {
               break;
       case 7: x = (state.A).ldlt().solve(state.b);
               break;
-
     }
 
     // Compute the residual
@@ -361,16 +358,12 @@ AnyType direct_dense_stateToResult(
 
     // Return all coefficients, standard errors, etc. in a tuple
     AnyType tuple;
-    tuple << solution 
+    tuple << solution
           << Null()
           << Null();
 
     return tuple;
 }
-
-
-
-
 
 
 } // namespace linear_systems

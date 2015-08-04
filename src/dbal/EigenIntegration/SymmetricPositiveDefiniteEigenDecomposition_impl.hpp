@@ -80,12 +80,12 @@ SymmetricPositiveDefiniteEigenDecomposition<MatrixType>::pseudoInverse() const {
 /**
  * @brief Perform extra computations after the decomposition
  *
- * If the matrix has a condition number of less than 1000 (currently
+ * If the matrix has a condition number of less than 1e20 (currently
  * this is hard-coded), it necessarily has full rank and is invertible.
  * The Moore-Penrose pseudo-inverse coincides with the inverse and we
  * compute it directly, using a \f$ L D L^T \f$ Cholesky decomposition.
  *
- * If the matrix has a condition number of more than 1000, we are on the
+ * If the matrix has a condition number of more than 1e20, we are on the
  * safe side and use the eigen decomposition for computing the
  * pseudo-inverse.
  *

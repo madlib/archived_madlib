@@ -300,12 +300,19 @@ def _validate_input_table(table):
             "Matrix error: The input table ({0}) doesn't exist".format(table))
 
 
-def validate_sparse(matrix, matrix_args, checkCol=True):
+def validate_matrix(matrix, matrix_args, check_col=True):
+    if _is_sparse(matrix, matrix_args['val']):
+        validate_sparse(matrix, matrix_args, check_col=check_col)
+    else:
+        validate_dense(matrix, matrix_args, check_col=check_col)
+
+
+def validate_sparse(matrix, matrix_args, check_col=True):
     _assert(table_exists(matrix),
             "Matrix error: Could not find input table " + matrix)
     _assert(not table_is_empty(matrix),
             "Matrix error: The input table ({0}) is empty".format(matrix))
-    if checkCol:
+    if check_col:
         _assert(columns_exist_in_table(matrix,
                                        [matrix_args[i] for i in ('row', 'col', 'val')]),
                 "Matrix error: Missing columns from matrix {0}".format(matrix))
@@ -360,9 +367,9 @@ Error: The above entries (only {M_R} shown) were duplicated in sparse matrix ({m
                        M_R=MAX_ROWS))
 
 
-def validate_dense(matrix, matrix_args, checkCol=True, row_dim=None):
+def validate_dense(matrix, matrix_args, check_col=True, row_dim=None):
     _assert(table_exists(matrix), "Matrix error: Could not find table {0}".format(matrix))
-    if checkCol:
+    if check_col:
         cols = [matrix_args[i] for i in ('row', 'val')]
         _assert(columns_exist_in_table(
             matrix, cols),
@@ -613,10 +620,8 @@ def matrix_elem_op(schema_madlib, matrix_a, a_args,
 
     matrix_out1 = "pg_temp." + unique_string() + "_a"
     if not transform_a_func and not transform_b_func:
-        validate_a_func = validate_sparse if is_a_sparse else validate_dense
-        validate_a_func(matrix_a, a_args)
-        validate_b_func = validate_sparse if is_b_sparse else validate_dense
-        validate_b_func(matrix_b, b_args)
+        validate_matrix(matrix_a, a_args)
+        validate_matrix(matrix_b, b_args)
     elif transform_a_func:
         # transform function internally validates
         transform_a_func(schema_madlib, matrix_a, a_args, matrix_out1, a_args)
@@ -1501,7 +1506,6 @@ def matrix_mean(schema_madlib, matrix_in, in_args, dim):
     return matrix_reduction_op(schema_madlib, matrix_in, in_args, dim, vector_ops)
 # ------------------------------------------------------------------------------
 
-
 # ------------------------------------------------------------------------------
 # -- Mathematical operations ------------------------------------------------------
 # ------------------------------------------------------------------------------
@@ -2177,6 +2181,73 @@ def matrix_scale_and_add(schema_madlib,
         """.format(**locals()))
 # ------------------------------------------------------------------------------
 
+
+def matrix_inverse(schema_madlib, matrix_in, in_args,
+                   matrix_out, out_args):
+    """ Compute the inverse of a matrix.
+
+    Inverse of a matrix is typically a dense matrix, including sparse input matrices.
+    Hence we always return a dense matrix result - out_args['fmt'] = 'sparse'
+    ensures a sparsified output.
+
+    """
+    _validate_input_table(matrix_in)
+    _validate_output_table(matrix_out)
+
+    in_args = parse_matrix_args(in_args)
+    out_args = parse_matrix_args(out_args,
+                                 in_default_args={'row': in_args['row'],
+                                                  'col': in_args['col'],
+                                                  'val': in_args['val']})
+    dim = get_dims(matrix_in, in_args)
+    _assert(dim[0] == dim[1],
+            "Matrix error: Inverse operation is only defined for square matrices")
+    # FIXME: currently matrix inverse is computed on a single node after collating
+    # a distributed matrix. This places a limit on the maximum size of the matrix
+    # GPDB limit = 1GB implying size * size < 10^9 / 8 i.e. size <= 11100
+    max_size = 11100
+    _assert(dim[0] <= max_size,
+            """Matrix error: Reached maximum limit for matrix inverse operation.
+            Maximum limit for matrix size is {0} x {0} """.format(max_size))
+
+    fmt = None if 'fmt' not in out_args else out_args['fmt']
+    is_input_sparse = _is_sparse(matrix_in, in_args['val'])
+    if is_input_sparse:
+        validate_sparse(matrix_in, in_args)
+        inverse_agg = """{schema_madlib}.__matrix_sparse_inverse(
+                                {n_rows}::integer,
+                                {n_rows}::integer,
+                                ({in_args[row]}-1)::integer,
+                                ({in_args[col]}-1)::integer,
+                                ({in_args[val]})::double precision
+                                )
+                      """.format(schema_madlib=schema_madlib, n_rows=dim[0],
+                                 in_args=in_args)
+    else:
+        validate_dense(matrix_in, in_args)
+        inverse_agg = """{schema_madlib}.__matrix_dense_inverse(
+                                ({n_rows})::integer,
+                                ({in_args[row]}-1)::integer,
+                                ({in_args[val]})::double precision[]
+                                )
+                      """.format(schema_madlib=schema_madlib, n_rows=dim[0],
+                                 in_args=in_args)
+    is_output_sparse = fmt and fmt == 'sparse'
+    matrix_r = "pg_temp." + unique_string() if is_output_sparse else matrix_out
+    plpy.execute("""
+        CREATE TABLE {matrix_r} AS
+        SELECT row_id,
+               {schema_madlib}.get_row(res, row_id) as row_vec
+        FROM (
+              SELECT {inverse_agg} as res
+              FROM {matrix_in}
+        ) q, generate_series(1, {dim[0]}) as row_id
+        """.format(**locals()))
+    if is_output_sparse:
+        matrix_sparsify(schema_madlib, matrix_r, out_args, matrix_out, out_args)
+        plpy.execute('DROP TABLE IF EXISTS %s' % matrix_r)
+# ------------------------------------------------------------------------------
+
 # -----------------------------------------------------------------------
 # Creation operations
 # -----------------------------------------------------------------------
@@ -2252,7 +2323,6 @@ def matrix_diag(schema_madlib, diag_elements, matrix_out, out_args):
     else:
         _matrix_diag_dense(schema_madlib, diag_elements, matrix_out, out_args)
 #-------------------------------------------------------------------------------
-
 
 def matrix_identity(schema_madlib, dim, matrix_out, out_args):
     """ Perform create an identity matrix with the dimensionality specified by an integer.
@@ -2355,4 +2425,3 @@ def matrix_ones(schema_madlib, row_dim, col_dim, matrix_out, out_args):
     """ Create a row_dim by col_dim matrix with each element set to 1.
     """
     _matrix_create_scalar(schema_madlib, row_dim, col_dim, matrix_out, out_args, 1)
-# ------------------------------------------------------------------------------
