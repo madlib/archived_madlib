@@ -631,14 +631,14 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
                                         INT8TI.align);
 
         memcpy(state.ptr(), model64.ptr(), model64.size() * sizeof(int64_t));
-        int32_t *model = reinterpret_cast<int32_t *>(state.ptr());
-        int64_t *total_topic_counts = reinterpret_cast<int64_t *>(state.ptr() + model64.size());
+        int32_t *_model = reinterpret_cast<int32_t *>(state.ptr());
+        int64_t *_total_topic_counts = reinterpret_cast<int64_t *>(state.ptr() + model64.size());
         for (int i = 0; i < voc_size; i ++) {
             for (int j = 0; j < topic_num; j ++) {
-                total_topic_counts[j] += model[i * (topic_num + 1) + j];
+                _total_topic_counts[j] += _model[i * (topic_num + 1) + j];
             }
         }
-    }else{
+    } else {
         state = args[0].getAs<MutableArrayHandle<int64_t> >();
     }
 
@@ -738,6 +738,58 @@ AnyType l1_norm_with_smoothing::run(AnyType & args){
     for(size_t i = 0; i < arr.size(); i++)
         arr[i] = (arr[i] + smooth) * inverse_sum;
     return arr;
+}
+
+AnyType lda_parse_model::run(AnyType & args){
+    ArrayHandle<int64_t> state = args[0].getAs<ArrayHandle<int64_t> >();
+    int32_t voc_size = args[1].getAs<int32_t>();
+    int32_t topic_num = args[2].getAs<int32_t>();
+
+    const int32_t *model = reinterpret_cast<const int32_t *>(state.ptr());
+
+    int dims[2] = {voc_size/2, topic_num};
+    int lbs[2] = {1, 1};
+    MutableArrayHandle<int32_t> model_part1(
+        madlib_construct_md_array(
+            NULL, NULL, 2, dims, lbs, INT4TI.oid, INT4TI.len, INT4TI.byval,
+            INT4TI.align));
+
+    for(int32_t i = 0; i < voc_size/2; i++){
+        for(int32_t j = 0; j < topic_num; j++){
+               model_part1[i * topic_num + j] = model[i * (topic_num+1) + j];
+        }
+    }
+
+    int dims2[2] = {voc_size - voc_size/2, topic_num};
+
+    MutableArrayHandle<int32_t> model_part2(
+        madlib_construct_md_array(
+            NULL, NULL, 2, dims2, lbs, INT4TI.oid, INT4TI.len, INT4TI.byval,
+            INT4TI.align));
+
+    for(int32_t i = voc_size/2; i < voc_size; i++){
+        for(int32_t j = 0; j < topic_num; j++){
+               model_part2[(i-voc_size/2) * topic_num + j] = model[i * (topic_num+1) + j];
+        }
+    }
+
+    //int dims3[1] = {topic_num};
+    //int lbs3[1] = {1};
+
+    MutableNativeColumnVector total_topic_counts(allocateArray<double>(topic_num));
+
+    for (int i = 0; i < voc_size; i ++) {
+        for (int j = 0; j < topic_num; j ++) {
+            total_topic_counts[j] += static_cast<double>(model[i * (topic_num + 1) + j]);
+        }
+    }
+
+    AnyType tuple;
+    tuple << model_part1
+          << model_part2
+          << total_topic_counts;
+
+    return tuple;
 }
 
 }

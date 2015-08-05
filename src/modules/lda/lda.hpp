@@ -23,3 +23,4 @@ DECLARE_UDF(lda, lda_perplexity_ffunc)
 DECLARE_UDF(lda, lda_check_count_ceiling)
 
 DECLARE_UDF(lda, l1_norm_with_smoothing)
+DECLARE_UDF(lda, lda_parse_model)

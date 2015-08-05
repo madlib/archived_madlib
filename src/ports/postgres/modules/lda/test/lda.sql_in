@@ -70,8 +70,7 @@ CREATE TABLE lda_testing
     docid INT4,
     wordid INT4,
     count INT4
-)
-m4_ifdef(`__GREENPLUM__',`DISTRIBUTED BY (docid)');
+);
 
 INSERT INTO lda_testing VALUES
 (0, 0, 2),(0, 8, 1),(0, 9, 1),(0, 10, 1),(0, 12, 1),(0, 15, 2),(0, 18, 1),(0,
@@ -89,6 +88,37 @@ SELECT lda_train(
     'lda_model',
     'lda_output_data',
     20, 5, 2, 10, 0.01);
+
+
+SELECT lda_parse_model(model, voc_size, topic_num) AS parsed_model
+FROM lda_model;
+
+
+
+SELECT
+    assert(
+        topic_num IS NOT NULL AND topic_num = 5,
+        'topic_num should be 5!'
+    ),
+    assert(
+        sum_of_topic_counts IS NOT NULL AND sum_of_word_counts IS NOT NULL
+        AND sum_of_topic_counts = sum_of_word_counts,
+        'sum_of_topic_counts (' || sum_of_topic_counts::text || ') != sum_of_word_counts (' || sum_of_word_counts::text || ')!'
+    )
+FROM
+(
+    SELECT
+        array_upper((parsed_model).total_topic_counts, 1) AS topic_num,
+        array_sum((parsed_model).total_topic_counts) AS sum_of_topic_counts
+    FROM
+    (
+        SELECT lda_parse_model(model, voc_size, topic_num) AS parsed_model
+        FROM lda_model
+    ) subq_parsed_model
+) subq_topic_num,
+(
+    SELECT sum(count) AS sum_of_word_counts FROM lda_training
+)subq_word_count;
 
 SELECT lda_predict(
     'lda_testing',
