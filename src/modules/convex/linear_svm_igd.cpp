@@ -11,6 +11,8 @@
 #include "linear_svm_igd.hpp"
 
 #include "task/linear_svm.hpp"
+#include "task/l1.hpp"
+#include "task/l2.hpp"
 #include "algo/igd.hpp"
 #include "algo/loss.hpp"
 #include "algo/gradient.hpp"
@@ -26,16 +28,17 @@ namespace modules {
 namespace convex {
 
 // This 2 classes contain public static methods that can be called
-typedef IGD<GLMIGDState<MutableArrayHandle<double> >, GLMIGDState<ArrayHandle<double> >,
+typedef IGD<GLMIGDState<MutableArrayHandle<double> >,
+        GLMIGDState<ArrayHandle<double> >,
         LinearSVM<GLMModel, GLMTuple > > LinearSVMIGDAlgorithm;
 
-typedef Loss<GLMIGDState<MutableArrayHandle<double> >, GLMIGDState<ArrayHandle<double> >,
+typedef Loss<GLMIGDState<MutableArrayHandle<double> >,
+        GLMIGDState<ArrayHandle<double> >,
         LinearSVM<GLMModel, GLMTuple > > LinearSVMLossAlgorithm;
 
-typedef Gradient<GLMIGDState<MutableArrayHandle<double> >, GLMIGDState<ArrayHandle<double> >,
+typedef Gradient<GLMIGDState<MutableArrayHandle<double> >,
+        GLMIGDState<ArrayHandle<double> >,
         LinearSVM<GLMModel, GLMTuple > > LinearSVMGradientAlgorithm;
-
-
 
 /**
  * @brief Perform the linear support vector machine transition step
@@ -49,6 +52,10 @@ linear_svm_igd_transition::run(AnyType &args) {
     // indicates that we should do some initial operations.
     // For other tuples: args[0] holds the computation state until last tuple
     GLMIGDState<MutableArrayHandle<double> > state = args[0];
+
+    const double lambda = args[6].getAs<double>();
+    const bool isL2 = args[7].getAs<bool>();
+    const int nTuples = args[8].getAs<int>();
 
     // initilize the state if first tuple
     if (state.algo.numRows == 0) {
@@ -66,14 +73,23 @@ linear_svm_igd_transition::run(AnyType &args) {
         }
         // resetting in either case
         state.reset();
+        if (isL2) {
+            state.algo.loss += L2<GLMModel>::loss(state.task.model, lambda);
+            L2<GLMModel>::gradient(state.task.model, lambda, state.algo.gradient);
+        } else {
+            state.algo.loss += L1<GLMModel>::loss(state.task.model, lambda);
+            L1<GLMModel>::gradient(state.task.model, lambda, state.algo.gradient);
+        }
     }
 
-    // Skip the current record if args[1] (features) contains NULL values
+    // Skip the current record if args[1] (features) contains NULL values,
+    // or args[2] is NULL
     try {
         args[1].getAs<MappedColumnVector>();
     } catch (const ArrayWithNullException &e) {
         return args[0];
     }
+    if (args[2].isNull()) { return args[0]; }
 
     // tuple
     using madlib::dbal::eigen_integration::MappedColumnVector;
@@ -83,18 +99,15 @@ linear_svm_igd_transition::run(AnyType &args) {
     tuple.depVar = args[2].getAs<bool>() ? 1. : -1.;
 
     // Now do the transition step
-    LinearSVMIGDAlgorithm::transition(state, tuple);
-    // regularization, it can be added thru convex framework
-    double reg = args[6].getAs<double>();
-    if (reg > 0.) {
-        for (int i = 0; i < state.algo.incrModel.size(); i ++) {
-            if (state.algo.incrModel(i) > reg) {
-                state.algo.incrModel(i) -= reg;
-            } else if (state.algo.incrModel(i) < -reg) {
-                state.algo.incrModel(i) += reg;
-            } else { state.algo.incrModel(i) = 0.; }
-        }
+    // apply IGD with regularization
+    if (isL2) {
+        L2<GLMModel>::scaling(state.algo.incrModel, lambda, nTuples, state.task.stepsize);
+        LinearSVMIGDAlgorithm::transition(state, tuple);
+    } else {
+        LinearSVMIGDAlgorithm::transition(state, tuple);
+        L1<GLMModel>::clipping(state.algo.incrModel, lambda, nTuples, state.task.stepsize);
     }
+    // objective function and its gradient
     LinearSVMLossAlgorithm::transition(state, tuple);
     LinearSVMGradientAlgorithm::transition(state, tuple);
 

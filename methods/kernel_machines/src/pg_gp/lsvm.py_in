@@ -60,7 +60,9 @@ def __lsvm_train(schema_madlib, rel_args, rel_state, rel_source,
                         '),
                         {dimension}::INT4,
                         {stepsize}::FLOAT8, -- it.kwargs['stepsize']
-                        {reg}::FLOAT8)
+                        {reg}::FLOAT8,
+                        {is_l2}::BOOLEAN,
+                        {inds}::INTEGER)
                 FROM {rel_source} AS _src
                 """)
             if it.test("""
@@ -79,7 +81,7 @@ def __lsvm_train(schema_madlib, rel_args, rel_state, rel_source,
 # Function to run the linear classification algorithm
 # ---------------------------------------------------
 def lsvm_classification(schema_madlib, input_table, model_table, parallel,
-        verbose, eta, reg, max_iter, decay_factor, **kwargs):
+        verbose, eta, reg, max_iter, decay_factor, is_l2, **kwargs):
     """
     Executes the linear support vector classification algorithm.
 
@@ -109,6 +111,7 @@ def lsvm_classification(schema_madlib, input_table, model_table, parallel,
     reg = .001 if reg is None else reg
     max_iter = 100 if max_iter is None else max_iter
     decay_factor = 1 if decay_factor is None else decay_factor
+    is_l2 = True if is_l2 is None else is_l2
 
     # verbosing
     old_msg_level = plpy.execute("select setting from pg_settings where \
@@ -137,19 +140,8 @@ def lsvm_classification(schema_madlib, input_table, model_table, parallel,
             'col_dep_var': 'label'} # hard-coded name
     args.update(locals())
 
-    # temp table for iterating
-    plpy.execute("SELECT {schema_madlib}.create_schema_pg_temp()".format(**args))
-    plpy.execute("""
-            DROP TABLE IF EXISTS pg_temp.{rel_args};
-            CREATE TABLE pg_temp.{rel_args} AS
-            SELECT
-                {ind_dim}   AS dimension,
-                {eta}       AS stepsize,
-                {reg}       AS reg,
-                {max_iter}  AS num_iterations,
-                0           AS tolerance;
-            """.format(**args))
-
+    # place holder for compatibility
+    plpy.execute("CREATE TABLE pg_temp.{rel_args} AS SELECT 1".format(**args))
     # actual iterative algorithm computation
     iteration_run = __lsvm_train(**args)
 
