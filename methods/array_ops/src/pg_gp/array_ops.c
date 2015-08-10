@@ -13,6 +13,7 @@
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 #include "access/hash.h"
+#include <math.h>
 
 #ifndef NO_PG_MODULE_MAGIC
     PG_MODULE_MAGIC;
@@ -71,7 +72,11 @@ static inline Datum element_div(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_set(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_abs(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_sqrt(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_pow(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_square(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
@@ -86,6 +91,8 @@ static inline Datum element_min(Datum element, Oid elt_type, Datum result,
 static inline void* element_argmax(Datum element, Oid elt_type, int elt_index, void *result);
 static inline void* element_argmin(Datum element, Oid elt_type, int elt_index, void *result);
 static inline Datum element_sum(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type);
+static inline Datum element_abs_sum(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
 static inline Datum element_diff(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type);
@@ -108,13 +115,16 @@ static inline float8 float8_sub(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_mult(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_div(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_set(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_abs(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_sqrt(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_pow(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_square(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_dot(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_contains(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_max(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_min(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_sum(float8 op1, float8 op2, float8 opt_op);
+static inline float8 float8_abs_sum(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_diff(float8 op1, float8 op2, float8 opt_op);
 static inline float8 float8_sum_sqr(float8 op1, float8 op2, float8 opt_op);
 
@@ -182,6 +192,15 @@ float8_set(float8 op1, float8 op2, float8 opt_op){
 static
 inline
 float8
+float8_abs(float8 op1, float8 op2, float8 opt_op){
+    (void) op2;
+    (void) opt_op;
+    return fabs(op1);
+}
+
+static
+inline
+float8
 float8_sqrt(float8 op1, float8 op2, float8 opt_op){
     (void) op2;
     (void) opt_op;
@@ -191,6 +210,14 @@ float8_sqrt(float8 op1, float8 op2, float8 opt_op){
             errdetail("Arrays with negative values can not be input of array_sqrt")));
     }
     return sqrt(op1);
+}
+
+static
+inline
+float8
+float8_pow(float8 op1, float8 op2, float8 opt_op){
+	(void) op2;
+	return pow(op1, opt_op);
 }
 
 static
@@ -238,6 +265,15 @@ float8
 float8_sum(float8 op1, float8 op2, float8 opt_op){
     (void) opt_op;
     return op1 + op2;
+}
+
+
+static
+inline
+float8
+float8_abs_sum(float8 op1, float8 op2, float8 opt_op){
+    (void) opt_op;
+    return fabs(op1) + op2;
 }
 
 static
@@ -442,6 +478,26 @@ array_sum(PG_FUNCTION_ARGS){
 
     return float8_datum_cast(DatumGetFloat8(res), element_type);
 }
+
+/*
+ * This function returns sum of the array elements' absolute value.
+ */
+PG_FUNCTION_INFO_V1(array_abs_sum);
+Datum
+array_abs_sum(PG_FUNCTION_ARGS){
+    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
+
+    ArrayType *v = PG_GETARG_ARRAYTYPE_P(0);
+    Oid element_type = ARR_ELEMTYPE(v);
+
+    Datum res = General_Array_to_Element(v, Float8GetDatum(0), 0.0,
+            element_abs_sum, noop_finalize);
+
+    PG_FREE_IF_COPY(v, 0);
+
+    return float8_datum_cast(DatumGetFloat8(res), element_type);
+}
+
 
 /*
  * This function returns minimum of the array elements.
@@ -669,6 +725,27 @@ array_div(PG_FUNCTION_ARGS){
 }
 
 /*
+ * This function takes the absolute value for each element.
+ */
+PG_FUNCTION_INFO_V1(array_abs);
+Datum
+array_abs(PG_FUNCTION_ARGS){
+    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
+
+    ArrayType *v1 = PG_GETARG_ARRAYTYPE_P(0);
+
+    Oid element_type = ARR_ELEMTYPE(v1);
+    Datum v2 = float8_datum_cast(0, element_type);
+
+    ArrayType *res = General_Array_to_Array(v1, v2, element_abs);
+
+    PG_FREE_IF_COPY(v1, 0);
+
+    PG_RETURN_ARRAYTYPE_P(res);
+}
+
+
+/*
  * This function takes the square root for each element.
  */
 PG_FUNCTION_INFO_V1(array_sqrt);
@@ -684,6 +761,25 @@ array_sqrt(PG_FUNCTION_ARGS){
 
     if (v1 != x) { pfree(v1); }
     PG_FREE_IF_COPY(x, 0);
+
+    PG_RETURN_ARRAYTYPE_P(res);
+}
+
+/*
+ * This function takes the power for each element.
+ */
+PG_FUNCTION_INFO_V1(array_pow);
+Datum
+array_pow(PG_FUNCTION_ARGS){
+    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
+    if (PG_ARGISNULL(1)) { PG_RETURN_NULL(); }
+
+    ArrayType *v1 = PG_GETARG_ARRAYTYPE_P(0);
+    Datum v2 = PG_GETARG_DATUM(1);
+
+    ArrayType *res = General_Array_to_Array(v1, v2, element_pow);
+
+    PG_FREE_IF_COPY(v1, 0);
 
     PG_RETURN_ARRAYTYPE_P(res);
 }
@@ -1128,6 +1224,17 @@ element_diff(Datum element, Oid elt_type, Datum result,
 }
 
 /*
+ * Add abs(elt1) to result.
+ */
+static
+inline
+Datum
+element_abs_sum(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
+    return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_abs_sum);
+}
+
+/*
  * Add elt1 to result.
  */
 static
@@ -1276,6 +1383,17 @@ element_div(Datum element, Oid elt_type, Datum result,
 }
 
 /*
+ * Assign result to be fabs(elt1).
+ */
+static
+inline
+Datum
+element_abs(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
+    return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_abs);
+}
+
+/*
  * Assign result to be sqrt(elt1).
  */
 static
@@ -1284,6 +1402,17 @@ Datum
 element_sqrt(Datum element, Oid elt_type, Datum result,
         Oid result_type, Datum opt_elt, Oid opt_type){
     return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_sqrt);
+}
+
+/*
+ * Assign result to be power(elt1).
+ */
+static
+inline
+Datum
+element_pow(Datum element, Oid elt_type, Datum result,
+        Oid result_type, Datum opt_elt, Oid opt_type){
+    return element_op(element, elt_type, result, result_type, opt_elt, opt_type, float8_pow);
 }
 
 /*

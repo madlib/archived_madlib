@@ -207,6 +207,18 @@ def cast_dense_input_table_to_correct_columns(schema_madlib, matrix_in,
     return createTable
 
 
+def matrix_ndims(schema_madlib, matrix_in, in_args, is_block):
+    _validate_input_table(matrix_in)
+    in_args = parse_matrix_args(in_args)
+    if is_block:
+        _validate_block(matrix_in, in_args)
+    elif _is_sparse(matrix_in, in_args['val']):
+        validate_sparse(matrix_in, in_args)
+    else:
+        validate_dense(matrix_in, in_args)
+    return get_dims(matrix_in, in_args, is_block)
+
+
 def get_dims(matrix, matrix_args, is_block=False):
 
     if is_block:
@@ -280,11 +292,13 @@ def get_dims(matrix, matrix_args, is_block=False):
 # -- Validation functions ------------------------------------------------------
 # ------------------------------------------------------------------------------
 
+
 def _validate_input_array(diag_elements):
     _assert(diag_elements is not None,
             "Matrix error: Invalid diag elements")
     _assert(len(diag_elements) != 0,
             "Matrix error: Empty diag elements")
+
 
 def _validate_output_table(table):
     _assert(table is not None and table.replace('"', '').strip() != '',
@@ -551,6 +565,7 @@ def matrix_densify(schema_madlib, matrix_in, in_args, matrix_out, out_args):
 # -- Element-wise operations ---------------------------------------------------
 # ------------------------------------------------------------------------------
 
+
 def matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
                    elem_ops):
@@ -719,9 +734,8 @@ def matrix_sub(schema_madlib, matrix_a, a_args,
     matrix_elem_op(schema_madlib, matrix_a, a_args,
                    matrix_b, b_args, matrix_out, out_args,
                    elem_ops)
+# ------------------------------------------------------------------------------
 
-
- # ------------------------------------------------------------------------------
 
 def matrix_extract_diag(schema_madlib, matrix_in, in_args):
     """ Main function for main diagonal of matrix
@@ -742,16 +756,12 @@ def matrix_extract_diag(schema_madlib, matrix_in, in_args):
     """
     _validate_input_table(matrix_in)
     in_args = parse_matrix_args(in_args)
-    in_dim = get_dims(matrix_in, in_args)
-
     if _is_sparse(matrix_in, in_args['val']):
         validate_sparse(matrix_in, in_args)
-        return _matrix_extract_diag_sparse(
-            schema_madlib, matrix_in, in_args)
+        return _matrix_extract_diag_sparse(schema_madlib, matrix_in, in_args)
     else:
         validate_dense(matrix_in, in_args)
-        return _matrix_extract_diag_dense(
-            schema_madlib, matrix_in, in_args)
+        return _matrix_extract_diag_dense(schema_madlib, matrix_in, in_args)
 
 
 def _matrix_extract_diag_sparse(schema_madlib, matrix_in, in_args):
@@ -760,20 +770,21 @@ def _matrix_extract_diag_sparse(schema_madlib, matrix_in, in_args):
     res = plpy.execute("""
         SELECT
             array_agg(val order by row) AS array_diag
-        FROM
-        (SELECT
-            coalesce(val,0) AS val,
-            num AS row
-        FROM
-        (SELECT
-            {in_args[val]} AS val,
-            {in_args[row]}::BIGINT AS row
-        FROM
-            {matrix_in}
-        WHERE
-            {in_args[row]} = {in_args[col]}) AS t1
-        RIGHT OUTER  JOIN generate_series(1,{out_num}) num
-        ON t1.row=num
+        FROM (
+            SELECT coalesce(val,0) AS val,
+                   num AS row
+            FROM (
+                SELECT
+                    {in_args[val]} AS val,
+                    {in_args[row]}::BIGINT AS row
+                FROM
+                    {matrix_in}
+                WHERE
+                    {in_args[row]} = {in_args[col]}
+            ) AS t1
+                RIGHT OUTER JOIN
+            generate_series(1, {out_num}) num
+                ON t1.row = num
         ) t2
         """.format(**locals()))[0]['array_diag']
     return res
@@ -781,15 +792,20 @@ def _matrix_extract_diag_sparse(schema_madlib, matrix_in, in_args):
 
 
 def _matrix_extract_diag_dense(schema_madlib, matrix_in, in_args):
+    in_dim = get_dims(matrix_in, in_args)
+    out_num = min(in_dim[0], in_dim[1])
     res = plpy.execute("""
         SELECT
              array_agg(val order by row) AS array_diag
-        FROM
-        (SELECT
-            {in_args[val]}[{in_args[row]}] AS val,
-            {in_args[row]}::BIGINT AS row
-        FROM
-            {matrix_in}) AS t2
+        FROM (
+            SELECT
+                {in_args[val]}[{in_args[row]}] AS val,
+                {in_args[row]}::BIGINT AS row
+            FROM
+                {matrix_in}
+            WHERE
+                {in_args[row]} <= {out_num}
+        ) AS t2
         WHERE val is not NULL
         """.format(**locals()))[0]['array_diag']
     return res
@@ -2069,49 +2085,187 @@ def matrix_vec_mult(schema_madlib, matrix_in, in_args, vector):
 # ------------------------------------------------------------------------------
 
 
-def matrix_norm(schema_madlib, matrix_in, in_args, norm_type, **kwargs):
+def _matrix_elem_norm(schema_madlib, matrix_in, in_args, p):
     """
-    Perform a matrix norm operation on a dense matrix
+    Perform a matrix_elem_norm operation on a sparse matrix
+    Args:
+        @param matrix_in         Name of the source table
+        @param in_args           Name of the source table format args
+        @param p                 Element-wise norm value
+    Returns:
+        @param norm
+    Throws:
+        plpy.error if any argument is invalid
+    """
+    _validate_input_table(matrix_in)
+    is_input_sparse = _is_sparse(matrix_in, in_args['val'])
+    if is_input_sparse:
+        sum_fun = "sum"
+        pow_fun = "pow"
+        val_expr = "{0[val]}::float8".format(in_args)
+        validate_sparse(matrix_in, in_args)
+    else:
+        sum_fun = "{0}.array_sum".format(schema_madlib)
+        pow_fun = "{0}.array_pow".format(schema_madlib)
+        val_expr = "{0[val]}::float8[]".format(in_args)
+        validate_dense(matrix_in, in_args)
+    in_args = parse_matrix_args(in_args)
+    norm = plpy.execute("""
+        SELECT
+            pow(sum(pow_norm), 1./{p}::float8) as res
+        FROM (
+            SELECT {sum_fun}(
+                    {pow_fun}({val_expr}, {p}::float8)) AS pow_norm
+            FROM {matrix_in}
+        ) t
+        """.format(**locals()))
+    _assert(norm is not None and len(norm) == 1 and 'res' in norm[0],
+            "Matrix error: invalid result")
+    return norm[0]['res']
+# ------------------------------------------------------------------------------
+
+
+def _matrix_induced_norm(schema_madlib, matrix_in, in_args, norm_type):
+    _validate_input_table(matrix_in)
+    if norm_type == "spectral":
+        return _matrix_spectral_norm(schema_madlib, matrix_in, in_args)
+
+    is_input_sparse = _is_sparse(matrix_in, in_args['val'])
+    if is_input_sparse:
+        validate_sparse(matrix_in, in_args)
+        agg_double_fun = {'one': "sum(abs",
+                          'infinity': "sum(abs",
+                          'max': "max(abs"
+                          }[norm_type]
+        val_expr = "{0}::float8".format(in_args['val'])
+        group_by_str = {'one': "GROUP BY " + in_args['col'],
+                        'infinity': "GROUP BY " + in_args['row'],
+                        'max': ""
+                        }[norm_type]
+    else:
+        validate_dense(matrix_in, in_args)
+        agg_double_fun = ({'one': "{0}.array_max({0}.__matrix_column_abs_sum_agg",
+                           'infinity': "{0}.array_sum({0}.array_abs",
+                           'max': "{0}.array_max({0}.array_abs"
+                           }[norm_type]
+                          ).format(schema_madlib)
+        val_expr = "{0}::float8[]".format(in_args['val'])
+        group_by_str = ""
+    norm = plpy.execute(
+        """
+        SELECT max(v) as res
+        FROM (
+            -- output of inner query is 1 or more float8 values
+            SELECT
+                {agg_double_fun}({val_expr})) as v
+            FROM
+                {matrix_in}
+            {group_by_str}
+        ) t
+        """.format(**locals()))
+    _assert(norm is not None and len(norm) == 1 and 'res' in norm[0],
+            "Matrix error: invalid result ")
+    return norm[0]['res']
+# ------------------------------------------------------------------------------
+
+
+def _matrix_spectral_norm(schema_madlib, matrix_in, in_args):
+    matrix_in_temp = None
+    matrix_in_view = None
+
+    with plpy.subtransaction():
+        if _is_sparse(matrix_in, in_args['val']):
+            validate_sparse(matrix_in, in_args)
+            matrix_in_temp = "pg_temp." + unique_string() + "_in"
+            matrix_densify(schema_madlib, matrix_in, in_args,
+                           matrix_in_temp, 'row=row_id,val=row_vec')
+            matrix_in = matrix_in_temp
+            in_args = {'row': 'row_id', 'val': 'row_vec'}
+        else:
+            validate_dense(matrix_in, in_args)
+            matrix_in_view = "pg_temp." + unique_string() + "_view"
+            plpy.execute("""
+                CREATE VIEW {matrix_in_view} AS
+                (SELECT
+                    {in_args[row]} as row_id,
+                    {in_args[val]} as row_vec
+                 FROM {matrix_in})
+            """.format(**locals()))
+            matrix_in = matrix_in_view
+            in_args = {'row': 'row_id', 'val': 'row_vec'}
+
+        matrix_prefix = "pg_temp." + unique_string()
+        matrix_s = matrix_prefix + "_s"
+        matrix_u = matrix_prefix + "_u"
+        matrix_v = matrix_prefix + "_v"
+
+        plpy.execute("""
+            SELECT
+                {schema_madlib}.svd('{matrix_in}', '{matrix_prefix}', '{in_args[row]}', 1)
+        """.format(**locals()))
+
+        res = plpy.execute("""
+            SELECT value from {matrix_s}
+            WHERE row_id = 1 AND col_id = 1 AND value is not NULL
+        """.format(**locals()))
+
+        _assert(len(res) == 1 and 'value' in res[0],
+                "Matrix error: Failed to calculate spectral norm")
+
+        spectral_norm = res[0]['value']
+
+        if matrix_in_temp is not None:
+            plpy.execute('DROP TABLE IF EXISTS ' + matrix_in_temp)
+        if matrix_in_view is not None:
+            plpy.execute('DROP VIEW IF EXISTS ' + matrix_in_view)
+
+        plpy.execute('DROP TABLE IF EXISTS ' + matrix_s)
+        plpy.execute('DROP TABLE IF EXISTS ' + matrix_u)
+        plpy.execute('DROP TABLE IF EXISTS ' + matrix_v)
+
+        return spectral_norm
+# ------------------------------------------------------------------------------
+
+
+def matrix_norm(schema_madlib, matrix_in, in_args, norm_type):
+    """
+    Perform a matrix norm operation on a matrix
     Args:
         @param schema_madlib    Name of the schema where MADlib is installed
         @param matrix_a         Name of the source table
-        @param norm_type        Name of the output table
+        @param norm_type       Name of the norm computed
 
     Returns:
-        @param norm
+        @return norm value
 
     Throws:
         plpy.error if any argument is invalid
 
     """
-
     _validate_input_table(matrix_in)
-    if norm_type is None:
-        norm_type = 'fro'
-
-    # Add any supported norm types here for easy error checking
-    SUPPORTED_NORM_TYPES = ['fro']
-    if norm_type not in SUPPORTED_NORM_TYPES:
-        plpy.error("Matrix Norm Error: Supported norm types are (%s)",
-                   ','.join(SUPPORTED_NORM_TYPES))
     in_args = parse_matrix_args(in_args)
-
-    norm = plpy.execute(
-        """
-        SELECT sqrt(sum(s)) as p
-        FROM (
-            SELECT
-                {schema_madlib}.array_dot({in_args[val]}::float8[],
-                                          {in_args[val]}::float8[]) as s
-            FROM
-                {source_table}
-        ) Q1
-        """.format(source_table=matrix_in,
-                   schema_madlib=schema_madlib,
-                   in_args=in_args))
-
-    # Return the norm
-    return norm[0]['p']
+    norm_type = 'fro' if not norm_type else str(norm_type).lower()
+    if 'frobenius'.startswith(norm_type):
+        # frobenius norm is same as element-wise 2-norm
+        norm_type = '2'
+    try:
+        param = float(norm_type)
+        _assert(param > 0,
+                "Matrix error: Element-wise norm ({0}) should be a positive value."
+                .format(param))
+        return _matrix_elem_norm(schema_madlib, matrix_in, in_args, param)
+    except ValueError:
+        # if norm_type is not float then we interpret it as a string
+        # norm_type can be a prefix of any of the below supported types
+        supported_norm_types = ['one', 'spectral', 'infinity', 'max']
+        try:
+            norm_type_val = next(x for x in supported_norm_types
+                                 if x.startswith(norm_type))
+            return _matrix_induced_norm(schema_madlib, matrix_in, in_args, norm_type_val)
+        except StopIteration:
+            # next() returns a StopIteration if no element found
+            plpy.error("Matrix Error: Invalid norm type: {0}. Supported norm types are ({1})"
+                       .format(norm_type, ','.join(sorted(supported_norm_types))))
 # ------------------------------------------------------------------------------
 
 
@@ -2274,7 +2428,7 @@ def _matrix_diag_sparse(schema_madlib, diag_elements, matrix_out, out_args):
                 generate_series(1, {matrix_dim}) as num
             ) l1
         WHERE val <> 0.0 or num = {matrix_dim}
-        """.format(**locals()), [ "FLOAT8[]" ])
+        """.format(**locals()), ["FLOAT8[]"])
     plpy.execute(plan, [diag_elements])
 
 
@@ -2322,7 +2476,8 @@ def matrix_diag(schema_madlib, diag_elements, matrix_out, out_args):
         _matrix_diag_sparse(schema_madlib, diag_elements, matrix_out, out_args)
     else:
         _matrix_diag_dense(schema_madlib, diag_elements, matrix_out, out_args)
-#-------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
 
 def matrix_identity(schema_madlib, dim, matrix_out, out_args):
     """ Perform create an identity matrix with the dimensionality specified by an integer.
@@ -2342,7 +2497,7 @@ def matrix_identity(schema_madlib, dim, matrix_out, out_args):
             "Invalid input for dimensionality of matrix")
     diag_elements = [1] * dim
     matrix_diag(schema_madlib, diag_elements, matrix_out, out_args)
-#-------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def _matrix_create_scalar(schema_madlib, row_dim, col_dim, matrix_out, out_args, scalar):
