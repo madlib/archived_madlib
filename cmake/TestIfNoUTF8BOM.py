@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import sys
 
+
 def detectBOM(inFileName):
     file = open(inFileName, 'r')
     file.seek(0)
@@ -18,16 +19,16 @@ def detectBOM(inFileName):
     else:
         return "unknown"
 
-def main(argv = None):
+
+def main(argv=None):
     if argv is None:
         argv = sys.argv
     BOM = detectBOM(argv[1])
     if BOM != "utf_8":
         return 0
     else:
-        print 'Detected byte-order mark ({0}) in file "{1}".'.format(
-            BOM, argv[1])
+        print 'Detected byte-order mark (%s) in file "%s".' % (BOM, argv[1])
         return 1
-    
+
 if __name__ == '__main__':
     sys.exit(main())
