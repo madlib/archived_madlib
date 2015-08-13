@@ -3,11 +3,11 @@
  *
  * @file svm.sql_in
  *
- * @brief SQL functions for GLM (Poisson)
+ * @brief SQL functions for SVM (Poisson)
  * @date July 2015
  *
- * @sa For a brief introduction to GLM (Poisson), see the
- *     module description \ref grp_poisson.
+ * @sa For a brief introduction to SVM (Poisson), see the
+ *     module description \ref grp_svm.
  *
  */
 /* ----------------------------------------------------------------------- */
@@ -70,8 +70,8 @@ svm_classification(
 
   <DT>kernel_params (optional)</DT>
   <DD>TEXT, defaults: NULL for kernel='linear';
-                      'gamma'=\f$\frac{1}{num\_features}\f$ for kernel='gaussian',
-                      q=0,d=3 for kernel='polynomial'.
+                      'gamma=\f$\frac{1}{num\_features}\f$' for kernel='gaussian',
+                      'q=0,d=3' for kernel='polynomial'.
    <br>Parameters for non-linear kernel in a comma-separated string of key-value pairs.
    <br>For kernel='gaussian', one parameter, 'gamma', is expected.
    <br>For kernel='polynomial', two parameters are expected:
@@ -85,7 +85,7 @@ svm_classification(
     grouping is used and a single model is generated.</DD>
 
   <DT>optim_params (optional)</DT>
-  <DD>TEXT, default: 'init_stepsize=0.01, decay_factor=0.9, max_iters=100, tolerance=0.001'. <br>
+  <DD>TEXT, default: 'init_stepsize=0.01, decay_factor=0.9, max_iter=100, tolerance=0.001'. <br>
     Optimization paramters including stepsize, decay factor of stepsize, max
     number of iterations, and error tolerance. If the number of iterations of
     IGD reaches the maximum, the algorithm will halt. Alternatively, if the
@@ -93,15 +93,15 @@ svm_classification(
     previous iteration of less than the tolerance, the algorithm will halt.</DD>
 
   <DT>reg_params (optional)</DT>
-  <DD>TEXT, default: 'lambda=0.01, norm=L2, n_folds=0, possible_set_of_lambda_values=[]'. <br>
-    Regularization parameters. Parameter 'norm' corresponds which norm will be
-    used for regularization; user can select either 'L1' or 'L2'.
-    If the user specifies n_folds >0, then cross-validation will be performed
-    to select lambda from the set possible_set_of_lambda_values.
+  <DD>TEXT, default: 'lambda=0.01, norm=L2, n_folds=0'. <br>
+    Regularization parameters. Parameter 'norm' corresponds
+    which norm will be used for regularization; user can select either 'L1' or 'L2'.
+    If the user specifies n_folds > 1, then cross-validation will be performed to
+    select lambda from a list.
 
-    For example, if one wanted to regularize with the L1 norm and use a lamdba
-    value from the set [0.3, 0.4, 0.5], one would use 'norm=L1, n_folds=10,
-    possible_set_of_lambda_values=[0.3, 0.4, 0.5]' as reg_params.</DD>
+    For example, if one wanted to regularize with the L1 norm and use a lambda
+    value from the set {0.3, 0.4, 0.5}, one would input
+    'lambda={0.3, 0.4, 0.5}, norm=L1, n_folds=10' as reg_params.</DD>
 
   <DT>verbose (optional)</DT>
   <DD>BOOLEAN default: FALSE.
@@ -117,8 +117,8 @@ svm_classification(
         <td>FLOAT8. Vector of the coefficients.</td>
       </tr>
       <tr>
-        <th>grouping_col</th>
-        <td>TEXT Name of grouping columns.</td>
+        <th>grouping_key</th>
+        <td>TEXT Identifies the group to which the datum belongs.</td>
       </tr>
       <tr>
         <th>num_rows_processed</th>
@@ -369,3 +369,264 @@ File svm.sql_in documenting the training function
     \ref madlib::modules::regress documenting the implementation in C++
 @endinternal
 */
+
+-----------------
+
+
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.linear_svm_result CASCADE;
+CREATE TYPE MADLIB_SCHEMA.linear_svm_result AS (
+        coefficients        double precision[],
+        loss                double precision,
+        norm_of_gradient    double precision,
+        num_rows_processed  bigint
+);
+
+--------------------------------------------------------------------------
+-- create SQL functions for IGD optimizer
+--------------------------------------------------------------------------
+-- cannot be labeled as STRICT because we set previous_state NULL initially
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_svm_igd_transition(
+        state           double precision[],
+        ind_var         double precision[],
+        dep_var         boolean,
+        previous_state  double precision[],
+        dimension       integer,
+        stepsize        double precision,
+        reg             double precision,
+        is_l2           boolean,
+        n_tuples        integer)
+RETURNS double precision[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_svm_igd_merge(
+        state1 double precision[],
+        state2 double precision[])
+RETURNS double precision[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.linear_svm_igd_final(
+        state double precision[])
+RETURNS double precision[] AS 'MODULE_PATHNAME'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL');
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing linear support vector machine
+ */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.linear_svm_igd_step_serial(
+        /*+ ind_var */          double precision[],
+        /*+ dep_var */          boolean,
+        /*+ previous_state */   double precision[],
+        /*+ dimension */        integer,
+        /*+ stepsize */         double precision,
+        /*+ reg */              double precision,
+        /*+ is_l2 */            boolean,
+        /*+ n_tuples */         integer);
+CREATE AGGREGATE MADLIB_SCHEMA.linear_svm_igd_step_serial(
+        /*+ ind_var */          double precision[],
+        /*+ dep_var */          boolean,
+        /*+ previous_state */   double precision[],
+        /*+ dimension */        integer,
+        /*+ stepsize */         double precision,
+        /*+ reg */              double precision,
+        /*+ is_l2 */            boolean,
+        /*+ n_tuples */         integer) (
+    STYPE=double precision[],
+    SFUNC=MADLIB_SCHEMA.linear_svm_igd_transition,
+    FINALFUNC=MADLIB_SCHEMA.linear_svm_igd_final,
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+
+/**
+ * @internal
+ * @brief Perform one iteration of the incremental gradient
+ *        method for computing linear support vector machine
+ */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.linear_svm_igd_step(
+        /*+ ind_var */          double precision[],
+        /*+ dep_var */          boolean,
+        /*+ previous_state */   double precision[],
+        /*+ dimension */        integer,
+        /*+ stepsize */         double precision,
+        /*+ reg */              double precision,
+        /*+ is_l2 */            boolean,
+        /*+ n_tuples */         integer);
+CREATE AGGREGATE MADLIB_SCHEMA.linear_svm_igd_step(
+        /*+ ind_var */          double precision[],
+        /*+ dep_var */          boolean,
+        /*+ previous_state */   double precision[],
+        /*+ dimension */        integer,
+        /*+ stepsize */         double precision,
+        /*+ reg */              double precision,
+        /*+ is_l2 */            boolean,
+        /*+ n_tuples */         integer) (
+    STYPE=double precision[],
+    SFUNC=MADLIB_SCHEMA.linear_svm_igd_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.linear_svm_igd_merge,')
+    FINALFUNC=MADLIB_SCHEMA.linear_svm_igd_final,
+    INITCOND='{0,0,0,0,0,0,0}'
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_linear_svm_igd_distance(
+    /*+ state1 */ double precision[],
+    /*+ state2 */ double precision[])
+RETURNS double precision AS 'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.internal_linear_svm_igd_result(
+    /*+ state */ double precision[])
+RETURNS MADLIB_SCHEMA.linear_svm_result AS 'MODULE_PATHNAME'
+LANGUAGE c IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL');
+
+
+
+
+
+
+
+
+
+
+
+-----------------
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
+    source_table text,
+    model_table text,
+    dependent_varname text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text,
+    grouping_col text,
+    optim_params text,
+    reg_params text,
+    verbose bool)
+RETURNS void AS $$
+PythonFunction(svm, svm, svm_classification)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+-- all default value handling implemented in Python
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
+    source_table text,
+    model_table text,
+    dependent_varname text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text,
+    grouping_col text,
+    optim_params text,
+    reg_params text)
+RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_classification($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
+    source_table text,
+    model_table text,
+    dependent_varname text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text,
+    grouping_col text,
+    optim_params text)
+RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_classification($1, $2, $3, $4, $5, $6, $7, $8, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
+    source_table text,
+    model_table text,
+    dependent_varname text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text,
+    grouping_col text)
+  RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_classification($1, $2, $3, $4, $5, $6, $7, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
+    source_table text,
+    model_table text,
+    dependent_varname text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text)
+  RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_classification($1, $2, $3, $4, $5, $6, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
+    source_table text,
+    model_table text,
+    dependent_varname text,
+    independent_varname text,
+    kernel_func text)
+  RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_classification($1, $2, $3, $4, $5, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
+    source_table text,
+    model_table text,
+    dependent_varname text,
+    independent_varname text)
+  RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_classification($1, $2, $3, $4, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+
+------Prediction
+
+/**
+ * @brief Scores the data points stored in a table using a learned linear support-vector model
+ * @param model_table Name of table where the learned model to be used is stored
+ * @param new_data_table Name of table/view containing the data points to be scored
+ * @param id_col Name of column in new_data_table containing the integer identifier of data points
+ * 
+ *
+ * 
+ * @param output_table Name of table to store the results
+ *
+ * @return Textual summary of the algorithm run
+ *
+ * @internal
+ * @sa This function is a wrapper for svm.svm_predict().
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_predict(
+    model_table text,
+    new_data_table text,
+    id_col_name text,
+    output_table text)
+RETURNS void AS $$
+PythonFunction(svm, svm, svm_predict)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+

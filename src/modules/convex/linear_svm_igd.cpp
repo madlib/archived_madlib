@@ -181,43 +181,10 @@ internal_linear_svm_igd_result::run(AnyType &args) {
     AnyType tuple;
     tuple << state.task.model
         << static_cast<double>(state.algo.loss)
-        << state.algo.gradient.norm();
+        << state.algo.gradient.norm()
+        << static_cast<int64_t>(state.algo.numRows);
 
     return tuple;
-}
-
-/**
- * @brief Return the prediction reselt
- */
-AnyType
-linear_svm_igd_predict::run(AnyType &args) {
-    using madlib::dbal::eigen_integration::MappedColumnVector;
-    
-    try {
-        args[0].getAs<MappedColumnVector>();
-    } catch (const ArrayWithNullException &e) {
-        throw std::runtime_error(
-            "SVM error: the coefficients contain NULL values");
-    }
-
-    // returns NULL if args[1] (features) contains NULL values
-    try {
-        args[1].getAs<MappedColumnVector>();
-    } catch (const ArrayWithNullException &e) {
-        return Null(); 
-    }
-
-    MappedColumnVector model = args[0].getAs<MappedColumnVector>();
-    MappedColumnVector indVar = args[1].getAs<MappedColumnVector>();
-
-    if (model.size() != indVar.size()) {
-        throw std::runtime_error(
-                "SVM error: sizes of model and provided data do not match!");
-    }
-
-    double p = LinearSVM<MappedColumnVector, GLMTuple>::predict(model, indVar);
-
-    return p > 0. ? 1. : -1.;
 }
 
 } // namespace convex

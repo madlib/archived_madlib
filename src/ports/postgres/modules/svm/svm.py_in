@@ -1,0 +1,350 @@
+import plpy
+
+from utilities.control import IterationController2S
+from utilities.utilities import unique_string
+from utilities.utilities import extract_keyvalue_params
+from utilities.utilities import add_postfix
+from utilities.utilities import _assert
+
+from utilities.validate_args import table_exists
+from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import table_is_empty
+from utilities.validate_args import cols_in_tbl_valid
+from utilities.validate_args import input_tbl_valid
+from utilities.validate_args import output_tbl_valid
+from utilities.validate_args import is_var_valid
+from utilities.validate_args import get_expr_type
+
+
+def __svm_train(schema_madlib, rel_args, rel_state, rel_source,
+    col_ind_var, col_dep_var, **kwargs):
+    """
+    Driver function for Linear Support Vector Machine using IGD
+
+    @param schema_madlib Name of the MADlib schema, properly escaped/quoted
+    @rel_args Name of the (temporary) table containing all non-template
+        arguments
+    @rel_state Name of the (temporary) table containing the inter-iteration
+        states
+    @param rel_source Name of the relation containing input points
+    @param col_ind_var Name of the independent variables column
+    @param col_dep_var Name of the dependent variable column
+    @return The iteration number (i.e., the key) with which to look up the
+        result in \c rel_state
+    """
+    agg = 'linear_svm_igd_step'
+    iterationCtrl = IterationController2S(
+        rel_args=rel_args,
+        rel_state=rel_state,
+        stateType="double precision[]",
+        truncAfterIteration=False,
+        schema_madlib=schema_madlib, # Identifiers start here
+        rel_source=rel_source,
+        col_ind_var=col_ind_var,
+        col_dep_var=col_dep_var,
+        agg=agg,
+        stepsize=kwargs['init_stepsize'],
+        is_l2=True if kwargs['norm'] == 'l2' else False,
+        **kwargs)
+    with iterationCtrl as it:
+        it.iteration = 0
+        while True:
+            it.update("""
+                SELECT
+                    {schema_madlib}.{agg}(
+                        (_src.{col_ind_var})::FLOAT8[],
+                        CASE WHEN (_src.{col_dep_var}) IS NULL THEN NULL
+                            WHEN (_src.{col_dep_var}) = {mapped_value_for_negative} THEN FALSE
+                            ELSE TRUE
+                        END,
+                        m4_ifdef(`__HAWQ__', `
+                        ({{__state__}})
+                        ', `
+                        (SELECT _state FROM {rel_state}
+                            WHERE _iteration = {iteration})
+                        '),
+                        {n_features}::INT4,
+                        {stepsize}::FLOAT8, -- it.kwargs['stepsize']
+                        {lambda}::FLOAT8,
+                        {is_l2}::BOOLEAN,
+                        {n_tuples}::INTEGER)
+                FROM {rel_source} AS _src
+                """)
+            it.kwargs['stepsize'] = it.kwargs['stepsize'] * kwargs['decay_factor']
+            if it.test("""
+                {iteration} > {max_iter} OR
+                {schema_madlib}.internal_linear_svm_igd_distance(
+                    m4_ifdef(`__HAWQ__', `
+                    (SELECT _state FROM {rel_state}
+                        WHERE _iteration = {iteration} - 1),
+                    (SELECT _state FROM {rel_state}
+                        WHERE _iteration = {iteration})',`_state_previous, _state_current')) < 0
+                """):
+                break
+    return iterationCtrl.iteration
+
+# ---------------------------------------------------
+# Function to run the SVM classification algorithm
+
+def svm_classification(schema_madlib, source_table, model_table,
+         dependent_varname, independent_varname, kernel_func, kernel_params, grouping_col, 
+         optim_params, reg_params, verbose, **kwargs):
+    """
+    Executes the linear support vector classification algorithm.
+
+    """
+    # verbosing
+    verbose = False if verbose is None else verbose
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                  name='client_min_messages'")[0]['setting']
+    if verbose:
+        plpy.execute("set client_min_messages to info")
+    else:
+        plpy.execute("set client_min_messages to error")
+
+    # table names
+    # input
+    input_tbl_valid(source_table, 'SVM')
+    _assert(is_var_valid(source_table, dependent_varname),
+            "SVM error: invalid dependent_varname ('" + str(dependent_varname) + \
+            "') for source_table (" + source_table + ")!")
+    _assert(is_var_valid(source_table, independent_varname),
+            "SVM error: invalid independent_varname ('" + str(independent_varname) + \
+            "') for source_table (" + source_table + ")!")
+
+    #dependent variable mapping
+    dep_labels=plpy.execute("""
+        SELECT {dependent_varname} AS y 
+        FROM {source_table} 
+        WHERE {dependent_varname} IS NOT NULL 
+        GROUP BY {dependent_varname}""".format(**locals()))
+    __dep_var_mapping = ["'" + d['y'] + "'" if isinstance(d['y'], basestring)
+                         else str(d['y']) for d in dep_labels]
+    if len(__dep_var_mapping) != 2:
+        plpy.error("SVM error: must have exactly two dependent variable values for classification!")
+    dep_type = get_expr_type(dependent_varname, source_table)
+    if '[]' in dep_type:
+        plpy.error("SVM error: dependent_varname cannot be of array type!")
+
+    # output
+    output_tbl_valid(model_table, 'SVM')
+    summary_table = add_postfix(model_table, "_summary")
+    output_tbl_valid(summary_table, 'SVM')
+
+    args = {'rel_args': unique_string(),
+            'rel_state': unique_string(),
+            'rel_source': source_table,
+            'col_ind_var': independent_varname,
+            'col_dep_var': dependent_varname,
+            'mapped_value_for_negative': __dep_var_mapping[0]}
+
+    # arguments for iterating
+    n_features = plpy.execute("SELECT array_upper(" \
+            + independent_varname + ", 1) AS dim FROM " + \
+            source_table + " LIMIT 1")[0]['dim']
+    n_tuples = plpy.execute("SELECT count(*) AS c FROM " + source_table)[0]['c']
+    args.update(locals())
+
+    # other params
+    kernel_func = 'linear' if kernel_func is None else kernel_func.lower()
+    if kernel_func not in ('linear', 'polynomial', 'gaussian'):
+        plpy.error("SVM error: invalid kernel_func ('" + kernel_func + "')!")
+    if kernel_func != 'linear':
+        plpy.error("SVM error: only linear kernel is supported!")
+    if kernel_params is not None and kernel_params.lower().strip() != '':
+        plpy.error("SVM error: linear kernel accepts only null parameters!")
+    if grouping_col is not None and grouping_col.lower().strip() != '':
+        plpy.error("SVM error: grouping not yet supported! grouping_col must be null")
+
+    optim_params_dict = __extract_optim_params(schema_madlib, optim_params)
+    reg_params_dict = __extract_reg_params(schema_madlib, reg_params)
+    args.update(optim_params_dict)
+    args.update(reg_params_dict)
+
+    # place holder for compatibility
+    plpy.execute("CREATE TABLE pg_temp.{rel_args} AS SELECT 1".format(**args))
+    # actual iterative algorithm computation
+    iteration_run = __svm_train(**args)
+
+    # organizing results
+    args['mapping'] = __dep_var_mapping[0] + "," + __dep_var_mapping[1]
+    plpy.execute("""
+            CREATE TABLE {model_table} AS
+            SELECT
+                (result).coefficients           AS coef,
+                NULL                            AS grouping_key, 
+                (result).loss                   AS loss,
+                (result).norm_of_gradient       AS norm_of_gradient,
+                {iteration_run}                 AS num_iterations,
+                (result).num_rows_processed     AS num_rows_processed,
+                {n_tuples} - (result).num_rows_processed
+                                                AS num_rows_skipped,
+                NULL                            AS __random_feature_data, 
+                ARRAY[{mapping}]::{dep_type}[]  AS __dep_var_mapping
+            FROM (
+                SELECT {schema_madlib}.internal_linear_svm_igd_result(
+                    _state) AS result
+                FROM {rel_state}
+                WHERE _iteration = {iteration_run}) subq
+            """.format(iteration_run=iteration_run, **args))
+
+    if type(args['lambda']) is list:
+        args['lambda_str'] = '{' + ','.join(str(e) for e in args['lambda']) + '}'
+    else:
+        args['lambda_str'] = str(args['lambda'])
+    plpy.execute("""
+            CREATE TABLE {summary_table} AS
+            SELECT
+                'svm'::text                         AS method,
+                '__MADLIB_VERSION__'::text          AS version_number, 
+                '{source_table}'::text              AS source_table,
+                '{model_table}'::text               AS model_table, 
+                '{dependent_varname}'::text         AS dependent_varname,
+                '{independent_varname}'::text       AS independent_varname,
+                'linear'::text                      AS kernel_func,
+                NULL::text                          AS kernel_params,
+                NULL::text                          AS grouping_col,
+                'init_stepsize={init_stepsize}, ' ||
+                'decay_factor={decay_factor}, ' ||
+                'max_iter={max_iter}, ' ||
+                'tolerance={tolerance}'::text       AS optim_params,
+                'lambda={lambda_str}, ' ||
+                'norm={norm}, ' ||
+                'n_folds={n_folds}'::text           AS reg_params,
+                1::integer                          AS num_all_groups,
+                0::integer                          AS num_failed_groups,
+                num_rows_processed::bigint          AS total_rows_processed,
+                num_rows_skipped::bigint            AS total_rows_skipped
+            FROM {model_table};
+            """.format(**args))
+
+    plpy.execute("set client_min_messages to " + old_msg_level)
+
+
+# ------------------------------------------------------------------------------
+# Function to predict the labels of points in a table using a linear classifier
+# ------------------------------------------------------------------------------
+def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
+         output_table, **kwargs):
+    """
+    Scores the data points stored in a table using a learned support vector model.
+
+    @param model_table Name of learned model
+    @param new_data_table Name of table/view containing the data points to be scored
+    @param id_col_name Name of column in source_table containing (integer) identifier for data point
+    @param output_table Name of table to store the results
+    """
+    # model table
+    input_tbl_valid(model_table, 'SVM')
+    cols_in_tbl_valid(model_table, ['coef'], 'SVM')
+    # summary table
+    summary_table = add_postfix(model_table, "_summary")
+    input_tbl_valid(summary_table, 'SVM')
+    cols_in_tbl_valid(summary_table,
+            ['dependent_varname',
+             'independent_varname',
+             'kernel_func',
+             'kernel_params',
+             'grouping_col'],
+            'SVM')
+
+    # read necessary info from summary
+    summary = plpy.execute("""
+            SELECT
+                dependent_varname,
+                independent_varname,
+                kernel_func,
+                kernel_params,
+                grouping_col
+            FROM {summary_table}
+            """.format(**locals()))[0]
+    dependent_varname = summary['dependent_varname']
+    independent_varname = summary['independent_varname']
+    kernel_func = summary['kernel_func']
+    kernel_params = summary['kernel_params']
+    grouping_col = summary['grouping_col']
+    prediction = add_postfix(dependent_varname, '_prediction')
+
+    input_tbl_valid(new_data_table, 'SVM')
+    _assert(is_var_valid(new_data_table, dependent_varname),
+            "SVM error: dependent_varname ('" + dependent_varname + \
+            "') is invalid for new_data_table (" + new_data_table + ")!")
+    _assert(is_var_valid(new_data_table, independent_varname),
+            "SVM error: independent_varname ('" + independent_varname + \
+            "') is invalid for new_data_table (" + new_data_table + ")!")
+    if id_col_name is None:
+        plpy.error("SVM error: id_col_name is NULL!")
+    _assert(is_var_valid(new_data_table, id_col_name),
+            "SVM error: id_col_name ('" + id_col_name + \
+            "') is invalid for new_data_table (" + new_data_table + ")!")
+    output_tbl_valid(output_table, 'SVM')
+
+    plpy.execute("""
+        CREATE TABLE {output_table} AS
+        SELECT
+            {id_col_name} AS id,
+            CASE WHEN {schema_madlib}.array_dot(coef, {independent_varname}) >= 0
+                THEN __dep_var_mapping[2]
+                ELSE __dep_var_mapping[1]
+            END AS {prediction}
+        FROM {model_table}, {new_data_table}
+        WHERE not {schema_madlib}.array_contains_null({independent_varname})
+        """.format(**locals()))
+
+
+def __extract_optim_params(schema_madlib, optim_params, module='SVM'):
+    default_dict = dict(init_stepsize=0.01,decay_factor=0.9,max_iter=100, tolerance=1e-3)
+    optim_params_types = dict(init_stepsize=float,decay_factor=float,max_iter=int, tolerance=float)
+    optim_params_dict = extract_keyvalue_params(optim_params,
+                                                optim_params_types,
+                                                default_dict)
+
+    if optim_params_dict['init_stepsize'] <= 0:
+        plpy.error("{0} error: init_stepsize must be positive!".format(module))
+    if optim_params_dict['decay_factor'] <= 0 or optim_params_dict['decay_factor'] > 1:
+        plpy.error("{0} error: decay_factor must be in (0,1]!".format(module))
+    if optim_params_dict['max_iter'] <= 0:
+        plpy.error("{0} error: max_iter must be positive!".format(module))
+    if optim_params_dict['tolerance'] < 0:
+        plpy.error("{0} error: tolerance must be non-negative!".format(module))
+
+    return optim_params_dict
+
+
+def __extract_reg_params(schema_madlib, reg_params, module='SVM'):
+    default_dict = {'lambda': 0.01, 'norm': 'L2', 'n_folds': 0}
+    reg_params_types_lambda_scalar = {'lambda': float, 'norm': str, 'n_folds': int}
+    reg_params_types_lambda_list = {'lambda': list, 'norm': str, 'n_folds': int}
+    try:
+        reg_params_dict = extract_keyvalue_params(reg_params,
+                                                  reg_params_types_lambda_scalar,
+                                                  default_dict)
+        is_lambda_list = False
+    except ValueError:
+        reg_params_dict = extract_keyvalue_params(reg_params,
+                                                  reg_params_types_lambda_list,
+                                                  default_dict)
+        is_lambda_list = True
+
+    if reg_params_dict['n_folds'] < 0:
+        plpy.error("{0} error: n_folds must be non-negative!".format(module))
+    # FIXME
+    if reg_params_dict['n_folds'] > 1:
+        plpy.error("{0} error: cross-validation not implemented!".format(module))
+
+    # validate lambda
+    if not is_lambda_list and reg_params_dict['lambda'] < 0:
+        plpy.error("{0} error: lambda must be non-negative!".format(module))
+    if is_lambda_list:
+        if len(reg_params_dict['lambda']) != 1:
+            plpy.error("{0} error: lambda must be a scalar or of length 1 when n_folds is 0 or 1".format(module))
+        # good for only not CV
+        reg_params_dict['lambda'] = reg_params_dict['lambda'][0]
+        if reg_params_dict['lambda'] < 0:
+            plpy.error("{0} error: lambda must be non-negative!".format(module))
+
+    reg_params_dict['norm'] = reg_params_dict['norm'].lower()
+    if reg_params_dict['norm'] != 'l1' and reg_params_dict['norm'] != 'l2':
+        plpy.error("{0} error: norm must be either L1 or L2!".format(module))
+
+    return reg_params_dict

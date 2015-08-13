@@ -1,0 +1,308 @@
+/* -----------------------------------------------------------------------------
+ * Test Linear Support Vector Machine
+ * -------------------------------------------------------------------------- */
+
+CREATE OR REPLACE FUNCTION __svm_target_cl_func(ind float8[])
+RETURNS float8 AS $$
+BEGIN
+    IF (ind[1] > 0 AND ind[2] < 0) THEN RETURN 1; END IF;
+    RETURN -1;
+END
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION __svm_random_ind(d INT)
+RETURNS float8[] AS $$
+DECLARE
+    ret float8[];
+BEGIN
+    FOR i IN 1..(d-1) LOOP
+        ret[i] = RANDOM() * 40 - 20;
+    END LOOP;
+    IF (RANDOM() > 0.5) THEN
+        ret[d] = 10;
+    ELSE
+        ret[d] = -10;
+    END IF;
+    RETURN ret;
+END
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION svm_generate_cls_data(
+    output_table text, num int, dim int)
+RETURNS VOID AS $$
+DECLARE
+    temp_table text;
+BEGIN
+    temp_table := 'madlib_temp_' || output_table;
+    EXECUTE '
+        CREATE TABLE ' || temp_table || ' AS
+            SELECT
+                subq.val AS id,
+                __svm_random_ind(' || dim || ') AS ind
+            FROM
+                (SELECT generate_series(1, ' || num || ') AS val) subq';
+    EXECUTE '
+        CREATE TABLE ' || output_table || ' AS
+            SELECT id, ind, __svm_target_cl_func(ind) AS label
+            FROM ' || temp_table;
+END
+$$ LANGUAGE plpgsql;
+
+SELECT svm_generate_cls_data('svm_train_data', 1000, 4);
+SELECT svm_generate_cls_data('svm_test_data', 1000, 4);
+
+-- Example usage for LINEAR classification, replace the above by
+SELECT svm_classification(
+    'svm_train_data',
+    'lclss',
+    'label',
+    'ind',
+    NULL, -- kernel_func
+    NULL, -- kernel_pararms
+    NULL, --grouping_col
+    'max_iter=10, tolerance=0' --optim_params
+    );
+
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+SELECT svm_predict('lclss', 'svm_test_data', 'id', 'svm_test_predict');
+
+-- checking correctness with pre-conditioning
+DROP TABLE IF EXISTS svm_normalized CASCADE;
+CREATE TABLE svm_normalized AS
+SELECT
+    id,
+    array_append(array_div(array_sub(ind, ind_avg), ind_stddev), 1::FLOAT8) AS ind,
+    label
+FROM svm_train_data,
+    (
+        SELECT ARRAY[avg(ind[1]),avg(ind[2]),
+            avg(ind[3]),avg(ind[4])] AS ind_avg
+        FROM svm_train_data
+    ) AS svm_ind_avg,
+    (
+        SELECT ARRAY[stddev(ind[1]),stddev(ind[2]),
+            stddev(ind[3]),stddev(ind[4])] AS ind_stddev
+        FROM svm_train_data
+    ) AS svm_ind_stddev
+ORDER BY random();
+
+DROP TABLE IF EXISTS svm_test_normalized CASCADE;
+CREATE TABLE svm_test_normalized AS
+SELECT
+    id,
+    array_append(array_div(array_sub(ind, ind_avg), ind_stddev), 1::FLOAT8) AS ind,
+    label
+FROM svm_test_data,
+    (
+        SELECT ARRAY[avg(ind[1]),avg(ind[2]),
+            avg(ind[3]),avg(ind[4])] AS ind_avg
+        FROM svm_test_data
+    ) AS svm_test_ind_avg,
+    (
+        SELECT ARRAY[stddev(ind[1]),stddev(ind[2]),
+            stddev(ind[3]),stddev(ind[4])] AS ind_stddev
+        FROM svm_test_data
+    ) AS svm_test_ind_stddev;
+
+----------------------------------------------------------------
+-- serial
+-- learning
+DROP TABLE IF EXISTS svm_model CASCADE;
+DROP TABLE IF EXISTS svm_model_summary CASCADE;
+SELECT svm_classification(
+    'svm_normalized', 
+    'svm_model',
+    'label',
+    'ind', 
+    NULL, -- kernel_func
+    NULL, -- kernel_pararms
+    NULL, --grouping_col
+    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0',
+    'lambda=0',
+    true -- verbose
+    );
+\x on
+SELECT * FROM svm_model;
+SELECT * FROM svm_model_summary;
+\x off
+
+-- l2
+DROP TABLE IF EXISTS svm_model_small_norm2 CASCADE;
+DROP TABLE IF EXISTS svm_model_small_norm2_summary CASCADE;
+SELECT svm_classification(
+    'svm_normalized', 
+    'svm_model_small_norm2',
+    'label',
+    'ind', 
+    NULL, -- kernel_func
+    NULL, -- kernel_pararms
+    NULL, --grouping_col
+    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0',
+    'lambda=1'
+    );
+\x on
+SELECT * FROM svm_model_small_norm2;
+\x off
+
+SELECT
+    assert(
+        norm2(l2.coef) < norm2(noreg.coef),
+        'l2 regularization should produce coef with smaller l2 norm!')
+FROM svm_model AS noreg, svm_model_small_norm2 AS l2;
+
+
+-- l1 makes sprase models
+DROP TABLE IF EXISTS svm_model_very_sparse CASCADE;
+DROP TABLE IF EXISTS svm_model_very_sparse_summary CASCADE;
+SELECT svm_classification(
+    'svm_normalized', 
+    'svm_model_very_sparse',
+    'label',
+    'ind', 
+    NULL, -- kernel_func
+    NULL, -- kernel_pararms
+    NULL, --grouping_col
+    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0',
+    'lambda=1, norm=L1'
+    );
+\x on
+SELECT * FROM svm_model_very_sparse;
+\x off
+SELECT
+    assert(
+        count(*) > 0,
+        'The model is supposed to be sparse with reg=1')
+FROM
+(
+    SELECT unnest(coef) AS w_i FROM svm_model_very_sparse
+) subq
+WHERE w_i != 0;
+
+-- predicting
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+SELECT svm_predict('svm_model','svm_test_normalized', 'id', 'svm_test_predict');
+
+-- calculating accuracy
+-- the accuracy is not guaranteed to be high because the stepsize & decay_factor
+-- depend on the actual number of segments
+SELECT
+    count(*) AS misclassification_count
+FROM svm_test_predict NATURAL JOIN svm_test_normalized
+WHERE label_prediction <> label;
+
+----------------------------------------------------------------
+-- decay factor non-zero
+-- learning
+DROP TABLE IF EXISTS svm_model CASCADE;
+DROP TABLE IF EXISTS svm_model_summary CASCADE;
+SELECT svm_classification(
+    'svm_normalized', 
+    'svm_model',
+    'label',
+    'ind', 
+    NULL, -- kernel_func
+    NULL, -- kernel_pararms
+    NULL, --grouping_col
+    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0',
+    'lambda={0.001}',
+    true -- verbose
+    );
+SELECT norm_of_gradient FROM svm_model;
+
+-- predicting
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+CREATE TABLE svm_test_predict AS
+SELECT
+    svm_test_normalized.id,
+    CASE WHEN array_dot(coef, ind) >= 0 THEN 1 ELSE -1 END AS prediction,
+    label
+FROM svm_test_normalized, svm_model;
+
+-- stats for info
+SELECT count(*) AS misclassification_count
+FROM svm_test_predict
+WHERE prediction <> label;
+
+
+-----------------------------------------------------------------
+-- labels that are not just 1,-1
+DROP TABLE IF EXISTS svm_normalized_fancy_label CASCADE;
+CREATE TABLE svm_normalized_fancy_label AS
+SELECT
+    id,
+    array_append(array_div(array_sub(ind, ind_avg), ind_stddev), 1::FLOAT8) AS ind,
+    CASE when label = 1 THEN 'YES'
+        ELSE 'NO'
+    END AS label
+FROM svm_train_data,
+    (
+        SELECT ARRAY[avg(ind[1]),avg(ind[2]),
+            avg(ind[3]),avg(ind[4])] AS ind_avg
+        FROM svm_train_data
+    ) AS svm_ind_avg,
+    (
+        SELECT ARRAY[stddev(ind[1]),stddev(ind[2]),
+            stddev(ind[3]),stddev(ind[4])] AS ind_stddev
+        FROM svm_train_data
+    ) AS svm_ind_stddev
+ORDER BY random();
+INSERT INTO svm_normalized_fancy_label VALUES
+(1001, ARRAY[NULL,1,1,1,1]::float8[], 'YES'),
+(1002, ARRAY[5,1,1,1,1]::float8[], NULL),
+(1003, ARRAY[5,1,NULL,1,1]::float8[], NULL);
+
+DROP TABLE IF EXISTS svm_test_normalized_fancy_label CASCADE;
+CREATE TABLE svm_test_normalized_fancy_label AS
+SELECT
+    id,
+    array_append(array_div(array_sub(ind, ind_avg), ind_stddev), 1::FLOAT8) AS ind,
+    CASE when label = 1 THEN 'YES'
+        ELSE 'NO'
+    END AS label
+FROM svm_test_data,
+    (
+        SELECT ARRAY[avg(ind[1]),avg(ind[2]),
+            avg(ind[3]),avg(ind[4])] AS ind_avg
+        FROM svm_test_data
+    ) AS svm_test_ind_avg,
+    (
+        SELECT ARRAY[stddev(ind[1]),stddev(ind[2]),
+            stddev(ind[3]),stddev(ind[4])] AS ind_stddev
+        FROM svm_test_data
+    ) AS svm_test_ind_stddev;
+INSERT INTO svm_test_normalized_fancy_label VALUES
+(1001, ARRAY[NULL,1,1,1,1]::float8[], 'YES');
+
+-- training
+DROP TABLE IF EXISTS svm_model_fancy_label CASCADE;
+DROP TABLE IF EXISTS svm_model_fancy_label_summary CASCADE;
+SELECT svm_classification(
+    'svm_normalized_fancy_label', 
+    'svm_model_fancy_label',
+    'label',
+    'ind', 
+    NULL, -- kernel_func
+    NULL, -- kernel_pararms
+    NULL, --grouping_col
+    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0',
+    'lambda=0.001',
+    true -- verbose
+    );
+\x on
+SELECT * FROM svm_model_fancy_label;
+SELECT * FROM svm_model_fancy_label_summary;
+\x off
+SELECT assert(num_rows_skipped=3, 'num_rows_skipped is wrong')
+FROM svm_model_fancy_label;
+
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+SELECT svm_predict('svm_model_fancy_label', 'svm_test_normalized_fancy_label', 'id', 'svm_test_predict');
+SELECT * FROM svm_test_predict;
+
+-- calculating accuracy
+-- the accuracy is not guaranteed to be high because the stepsize & decay_factor
+-- depend on the actual number of segments
+SELECT
+    count(*) AS misclassification_count
+FROM svm_test_predict NATURAL JOIN svm_test_normalized_fancy_label
+WHERE label_prediction <> label;

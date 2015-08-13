@@ -31,7 +31,3 @@ DECLARE_UDF(convex, internal_linear_svm_igd_distance)
  */
 DECLARE_UDF(convex, internal_linear_svm_igd_result)
 
-/**
- * @brief Linear support vector machine (incremental gradient): Prediction
- */
-DECLARE_UDF(convex, linear_svm_igd_predict)
