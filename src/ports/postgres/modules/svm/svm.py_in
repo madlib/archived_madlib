@@ -52,9 +52,9 @@ def __svm_train(schema_madlib, rel_args, rel_state, rel_source,
             it.update("""
                 SELECT
                     {schema_madlib}.{agg}(
-                        (_src.{col_ind_var})::FLOAT8[],
-                        CASE WHEN (_src.{col_dep_var}) IS NULL THEN NULL
-                            WHEN (_src.{col_dep_var}) = {mapped_value_for_negative} THEN FALSE
+                        ({col_ind_var})::FLOAT8[],
+                        CASE WHEN ({col_dep_var}) IS NULL THEN NULL
+                            WHEN ({col_dep_var}) = {mapped_value_for_negative} THEN FALSE
                             ELSE TRUE
                         END,
                         m4_ifdef(`__HAWQ__', `
@@ -116,8 +116,9 @@ def svm_classification(schema_madlib, source_table, model_table,
     dep_labels=plpy.execute("""
         SELECT {dependent_varname} AS y 
         FROM {source_table} 
-        WHERE {dependent_varname} IS NOT NULL 
-        GROUP BY {dependent_varname}""".format(**locals()))
+        WHERE ({dependent_varname}) IS NOT NULL 
+        GROUP BY ({dependent_varname})
+        ORDER BY ({dependent_varname})""".format(**locals()))
     __dep_var_mapping = ["'" + d['y'] + "'" if isinstance(d['y'], basestring)
                          else str(d['y']) for d in dep_labels]
     if len(__dep_var_mapping) != 2:
@@ -234,6 +235,11 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
     @param id_col_name Name of column in source_table containing (integer) identifier for data point
     @param output_table Name of table to store the results
     """
+    # suppress warnings
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                  name='client_min_messages'")[0]['setting']
+    plpy.execute("set client_min_messages to error")
+
     # model table
     input_tbl_valid(model_table, 'SVM')
     cols_in_tbl_valid(model_table, ['coef'], 'SVM')
@@ -263,7 +269,6 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
     kernel_func = summary['kernel_func']
     kernel_params = summary['kernel_params']
     grouping_col = summary['grouping_col']
-    prediction = add_postfix(dependent_varname, '_prediction')
 
     input_tbl_valid(new_data_table, 'SVM')
     _assert(is_var_valid(new_data_table, dependent_varname),
@@ -286,10 +291,12 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
             CASE WHEN {schema_madlib}.array_dot(coef, {independent_varname}) >= 0
                 THEN __dep_var_mapping[2]
                 ELSE __dep_var_mapping[1]
-            END AS {prediction}
+            END AS prediction
         FROM {model_table}, {new_data_table}
         WHERE not {schema_madlib}.array_contains_null({independent_varname})
         """.format(**locals()))
+
+    plpy.execute("set client_min_messages to " + old_msg_level)
 
 
 def __extract_optim_params(schema_madlib, optim_params, module='SVM'):
