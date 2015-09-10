@@ -23,14 +23,7 @@ namespace modules {
 
 namespace prob {
 
-// CERN ROOT namespace. We use this namespace, so that the original
-// implementation could be copied as is, without any modification.
-namespace TMath {
-    // CERN ROOT type definitions in: core/base/inc/Rtypes.h
-    typedef int32_t Int_t;
-    typedef double Double_t;
-    Double_t KolmogorovProb(Double_t z);
-}
+double KolmogorovProb(double);
 
 template <
     class RealType = double,
@@ -75,18 +68,20 @@ inline
 RealType
 cdf(const kolmogorov_distribution<RealType, Policy>&, const RealType& x) {
     static const char* function = "madlib::modules::prob::cdf("
-        "const kolmogorov_distribution<%1%>&, %1%)";
+                                    "const kolmogorov_distribution<%1%>&, %1%)";
     RealType result;
 
     if ((boost::math::isinf)(x)) {
-        if(x < 0) return 0; // -infinity
-        return 1; // + infinity
+        if(x < 0)
+            return 0; // -infinity
+        else
+            return 1; // + infinity
     }
     if (boost::math::detail::check_x(function, x, &result, Policy()) == false)
         return result;
 
     // FIXME: Numerically questionable if t is close to 1.
-    return 1. - TMath::KolmogorovProb(x);
+    return 1. - KolmogorovProb(x);
 }
 
 template <class RealType, class Policy>
@@ -110,7 +105,7 @@ cdf(
     if (boost::math::detail::check_x(function, x, &result, Policy()) == false)
         return result;
 
-    return TMath::KolmogorovProb(x);
+    return KolmogorovProb(x);
 }
 
 } // namespace prob

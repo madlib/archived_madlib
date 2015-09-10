@@ -24,8 +24,6 @@ MADlib incorporates material from the following third-party components:
 - Boost 1.47.0 (or newer) "provides peer-reviewed portable C++ source
   libraries"
   http://www.boost.org/
-- CERN ROOT is "an object oriented framework for large scale data analysis"
-  http://root.cern.ch/
 - doxypy 0.4.2 "is an input filter for Doxygen"
   http://code.foosel.org/doxypy
 - Eigen 3.2.2 "is a C++ template library for linear algebra"
