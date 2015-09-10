@@ -79,7 +79,7 @@ L1<Model>::loss(
         const double                        &lambda) {
     double s = 0.;
     for (Index i = 0; i < model.size(); i++) {
-        s += abs(model(i));
+        s += std::abs(model(i));
     }
     return lambda * s;
 }

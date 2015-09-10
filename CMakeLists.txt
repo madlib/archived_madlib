@@ -101,10 +101,11 @@ if(CMAKE_COMPILER_IS_GNUCXX)
     # disable warnings. However, on Mac OS X, a CMake variable is not set
     # correctly on Mac OS X. http://www.cmake.org/Bug/view.php?id=10837
     if(APPLE)
-        set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-isystem ")
+        set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-isystem")
     endif(APPLE)
-endif(CMAKE_COMPILER_IS_GNUCXX)
-
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_CXX_FLAGS "-stdlib=libstdc++")
+endif()
 # force a `m4_' prefix to all builtins
 if(FREEBSD)
 set(M4_ARGUMENTS "-P")
