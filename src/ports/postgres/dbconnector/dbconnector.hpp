@@ -85,6 +85,8 @@ extern "C" {
 #include <boost/tr1/array.hpp>
 #include <boost/tr1/functional.hpp>
 #include <boost/tr1/tuple.hpp>
+#include <algorithm>
+#include <complex>
 #include <limits>
 #include <stdexcept>
 #include <vector>

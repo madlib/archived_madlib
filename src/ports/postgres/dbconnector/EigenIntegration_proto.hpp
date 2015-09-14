@@ -32,6 +32,10 @@ typedef HandleMap<Matrix, TransparentHandle<double, Mutable> > MutableMappedMatr
 typedef HandleMap<const IntegerVector, TransparentHandle<int> > MappedIntegerVector;
 typedef HandleMap<IntegerVector, TransparentHandle<int, Mutable> >
     MutableMappedIntegerVector;
+typedef HandleMap<const VectorXcd, TransparentHandle<std::complex<double> > >
+    MappedVectorXcd;
+typedef HandleMap<VectorXcd, TransparentHandle<std::complex<double> > >
+    MutableMappedVectorXcd;
 
 } // namespace eigen_integration
 

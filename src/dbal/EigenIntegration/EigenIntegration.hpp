@@ -23,25 +23,38 @@ namespace eigen_integration {
 typedef Eigen::VectorXi IntegerVector;
 typedef Eigen::VectorXd ColumnVector;
 typedef Eigen::RowVectorXd RowVector;
+typedef Eigen::VectorXcd VectorXcd;
 typedef Eigen::MatrixXd Matrix;
+typedef Eigen::MatrixXcd ComplexMatrix;
 typedef EIGEN_DEFAULT_DENSE_INDEX_TYPE Index;
+typedef Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic, Index> PermutationMatrix;
 
 typedef Eigen::SparseVector<double> SparseColumnVector;
 typedef Eigen::SparseMatrix<double> SparseMatrix;
 
+typedef Eigen::LDLT<Eigen::MatrixXd> MatrixLDLT;
+typedef Eigen::HouseholderQR<Eigen::MatrixXd> HouseholderQR;
+typedef Eigen::FullPivLU<Eigen::MatrixXd> FullPivLU;
+typedef Eigen::JacobiSVD<Eigen::MatrixXd> JacobiSVD;
+
 enum ViewMode {
     Lower = Eigen::Lower,
-    Upper = Eigen::Upper
+    Upper = Eigen::Upper,
+    StrictlyLower = Eigen::StrictlyLower
 };
 
 enum DecompositionOptions {
     ComputeEigenvectors = Eigen::ComputeEigenvectors,
-    EigenvaluesOnly = Eigen::EigenvaluesOnly
+    EigenvaluesOnly = Eigen::EigenvaluesOnly,
+    ComputeFullU = Eigen::ComputeFullU,
+    ComputeFullV = Eigen::ComputeFullV
 };
 
 enum SPDDecompositionExtras {
     ComputePseudoInverse = 0x01
 };
+
+using Eigen::Success;
 
 // In the following we make several definitions that allow certain object
 // methods to be called as a plain functions. This makes using Eigen more

@@ -610,6 +610,38 @@ struct TypeTraits<
     ))
 };
 
+// MappedVectorXcd and MutableMappedVectorXcd
+template <bool IsMutable>
+struct TypeTraits<
+    dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::VectorXcd,
+            const dbal::eigen_integration::VectorXcd>::type,
+        TransparentHandle<std::complex<double>, IsMutable> > >
+  : public TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::VectorXcd,
+            const dbal::eigen_integration::VectorXcd>::type,
+        TransparentHandle<std::complex<double>, IsMutable> > > {
+
+    typedef TypeTraitsBase<dbal::eigen_integration::HandleMap<
+        typename boost::mpl::if_c<IsMutable,
+            dbal::eigen_integration::VectorXcd,
+            const dbal::eigen_integration::VectorXcd>::type,
+        TransparentHandle<std::complex<double>, IsMutable> > > Base;
+    typedef typename Base::value_type value_type;
+
+    enum { oid = FLOAT8ARRAYOID };
+    enum { alignment = MAXIMUM_ALIGNOF };
+    enum { isMutable = IsMutable };
+    enum { typeClass = dbal::ArrayType };
+
+    WITH_TO_PG_CONVERSION( PointerGetDatum(VectorXcdToNativeArray(value)) )
+    WITH_TO_CXX_CONVERSION((
+        NativeArrayToMappedVectorXcd<value_type>(value, needMutableClone)
+    ))
+};
+
 // ------------------------------------------------------------------------
 // locally allocated structures require copying
 // ------------------------------------------------------------------------

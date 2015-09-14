@@ -380,6 +380,70 @@ NativeArrayToMappedVector(Datum inDatum, bool inNeedMutableClone) {
 }
 
 /**
+ * @brief Convert an Eigen VectorXcd to a two-dimensional PostgreSQL array
+ */
+template <typename Derived>
+ArrayType*
+VectorXcdToNativeArray(const Eigen::MatrixBase<Derived>& inMatrix) {
+    typedef typename Derived::Scalar::value_type T;
+    typedef typename Derived::Index Index;
+
+    MutableArrayHandle<T> arrayHandle
+        = defaultAllocator().allocateArray<T>(
+            inMatrix.rows(), 2 /* for real and imag */);
+
+    T* ptr = arrayHandle.ptr();
+    // We use columnar storage, i.e., each column is a contiguous block
+    for (Index row = 0; row < inMatrix.rows(); ++row) {
+        const std::complex<T> &value = inMatrix(row, 0);
+        *(ptr++) = value.real();
+        *(ptr++) = value.imag();
+    }
+
+    return arrayHandle.array();
+}
+
+/**
+ * @brief Convert a native array to [Mutable]VectorXcd
+ */
+template <class VectorType>
+VectorType
+NativeArrayToMappedVectorXcd(Datum inDatum, bool inNeedMutableClone) {
+    typedef typename VectorType::Scalar Scalar;
+
+    ArrayType* array = reinterpret_cast<ArrayType*>(
+        madlib_DatumGetArrayTypeP(inDatum));
+
+    if (ARR_NDIM(array) != 2 || ARR_DIMS(array)[1] != 2) {
+        std::stringstream errorMsg;
+        errorMsg << "Invalid type conversion to VectorXcd. Expected two-"
+            "dimensional array with two elements for secondary dimension "
+            "but got " << ARR_NDIM(array) << " dimensions and "
+            << ARR_DIMS(array)[1] << " elements in secondary dimension.";
+        throw std::invalid_argument(errorMsg.str());
+    }
+
+    size_t arraySize = ARR_DIMS(array)[0];
+
+    Scalar* origData = reinterpret_cast<Scalar*>(ARR_DATA_PTR(array));
+    std::complex<Scalar>* data;
+
+    if (inNeedMutableClone) {
+        data = reinterpret_cast<Scalar*>(
+            defaultAllocator().allocate<dbal::FunctionContext, dbal::DoNotZero,
+                dbal::ThrowBadAlloc>(sizeof(std::complex<Scalar>) * arraySize));
+        for (size_t i = 0; i < arraySize; ++i) {
+            data[i] = std::complex<Scalar>(origData[0], origData[1]);
+            origData += 2;
+        }
+    } else {
+        data = reinterpret_cast<std::complex<Scalar>*>(ARR_DATA_PTR(array));
+    }
+
+    return VectorType(data, arraySize);
+}
+
+/**
  * @brief Convert a native array to [Mutable]MappedMatrix
  */
 template <class MatrixType>

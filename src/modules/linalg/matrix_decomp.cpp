@@ -9,6 +9,7 @@
 #include <dbconnector/dbconnector.hpp>
 #include <modules/shared/HandleTraits.hpp>
 #include <utils/Math.hpp>
+#include <Eigen/Core>
 #include <Eigen/LU>
 
 #include "matrix_decomp.hpp"
@@ -130,7 +131,7 @@ matrix_compose_dense_transition::run(AnyType& args) {
 
     if (state.numCols == 0)
         state.initialize(*this, numRows, static_cast<uint32_t>(curr_row.size()));
-    else if (curr_row.size() != state.matrix.rows() ||
+    else if (curr_row.size() != state.matrix.cols() ||
              state.numRows != static_cast<uint32_t>(state.matrix.rows()) ||
              state.numCols != static_cast<uint32_t>(state.matrix.cols()))
         throw std::invalid_argument("Invalid arguments: Dimensions of vectors "
@@ -187,7 +188,6 @@ matrix_compose_merge::run(AnyType &args) {
     return stateLeft;
 }
 
-
 AnyType
 matrix_inv::run(AnyType& args){
     if (args.isNull()) {
@@ -197,7 +197,140 @@ matrix_inv::run(AnyType& args){
     // we apply a transpose operation at the end since Eigen matrices are interpreted
     // as column-major when returned to the database
     const Matrix m_inverse = state.matrix.inverse().transpose();
-    return MappedMatrix(m_inverse.leftCols(static_cast<Index>(state.numCols)));
+    return m_inverse;
+}
+
+AnyType
+matrix_eigen::run(AnyType& args) {
+    if (args.isNull()) {
+        return Null();
+    }
+    MatrixComposeState<ArrayHandle<double> > state = args[0];
+    // we apply a transpose operation at the end since Eigen matrices are interpreted
+    // as column-major when returned to the database
+    const VectorXcd eigenvalues = state.matrix.eigenvalues();
+    return MappedVectorXcd(eigenvalues.leftCols(static_cast<Index>(1)));
+}
+
+AnyType
+matrix_cholesky::run(AnyType& args){
+    if (args.isNull()) {
+        return Null();
+    }
+    MatrixComposeState<ArrayHandle<double> > state = args[0];
+    const MatrixLDLT ldlt = state.matrix.ldlt();
+    if (ldlt.info() != Success) {
+        throw std::invalid_argument("Invalida arguments: Cholesky decomposition of input matrix"
+                " does not exist");
+    }
+    // we apply a transpose operation at the end since Eigen matrices are interpreted
+    // as column-major when returned to the database
+    const Matrix m_p(PermutationMatrix(ldlt.transpositionsP()));
+    const Matrix m_l = ldlt.matrixL();
+    const Matrix m_d(ldlt.vectorD().asDiagonal());
+    Matrix m_cholesky(state.matrix.rows(), state.matrix.cols() * 3);
+    m_cholesky.block(0, 0, state.matrix.rows(), state.matrix.cols()) << m_p;
+    m_cholesky.block(0, state.matrix.cols(), state.matrix.rows(), state.matrix.cols()) << m_l;
+    m_cholesky.block(0, state.matrix.cols() * 2, state.matrix.rows(), state.matrix.cols()) << m_d;
+    const Matrix res = m_cholesky.transpose();
+    return res;
+}
+
+AnyType
+matrix_qr::run(AnyType& args){
+    if (args.isNull()) {
+        return Null();
+    }
+    MatrixComposeState<ArrayHandle<double> > state = args[0];
+    const HouseholderQR qr = state.matrix.householderQr();
+    const Matrix &R = qr.matrixQR().triangularView<Upper>();
+    const Matrix &Q =  qr.householderQ();
+
+    madlib_assert(Q.rows() == Q.cols() && Q.cols() == R.rows(),
+        std::runtime_error("Error QR decomposition result."));
+    Matrix m(Q.rows(), Q.cols() + R.cols());
+    m.block(0, 0, Q.rows(), Q.cols()) << Q;
+    m.block(0, Q.cols(), R.rows(), R.cols()) << R;
+    // we apply a transpose operation at the end since Eigen matrices are interpreted
+    // as column-major when returned to the database
+    const Matrix & res = m.transpose();
+    return res;
+}
+
+AnyType
+matrix_rank::run(AnyType& args){
+    if (args.isNull()) {
+        return Null();
+    }
+    MatrixComposeState<ArrayHandle<double> > state = args[0];
+    return static_cast<int64_t>(state.matrix.fullPivLu().rank());
+}
+
+AnyType
+matrix_lu::run(AnyType& args){
+    if (args.isNull()) {
+        return Null();
+    }
+    MatrixComposeState<ArrayHandle<double> > state = args[0];
+    const FullPivLU &lu = state.matrix.fullPivLu();
+
+    Matrix l = Matrix::Identity(state.numRows, state.numRows);
+    l.block(0, 0, lu.matrixLU().rows(), lu.matrixLU().cols()).triangularView<StrictlyLower>() = lu.matrixLU();
+    const Matrix &u = lu.matrixLU().triangularView<Upper>();
+    const Matrix &p(lu.permutationP());
+    const Matrix &q(lu.permutationQ());
+    Matrix m(static_cast<Index>(std::max(state.numRows, state.numCols)),
+             static_cast<Index>(state.numRows * 2 + state.numCols * 2));
+    m.block(0, 0, state.numRows, state.numRows) << p;
+    m.block(0, state.numRows, state.numRows, state.numRows) << l;
+    m.block(0, state.numRows * 2, state.numRows, state.numCols) << u;
+    m.block(0, state.numRows * 2 + state.numCols, state.numCols, state.numCols) << q;
+
+    // we apply a transpose operation at the end since Eigen matrices are interpreted
+    // as column-major when returned to the database
+    const Matrix res = m.transpose();
+    return res;
+}
+
+AnyType
+matrix_nuclear_norm::run(AnyType& args){
+    if (args.isNull()) {
+        return Null();
+    }
+    MatrixComposeState<ArrayHandle<double> > state = args[0];
+    const JacobiSVD &svd = state.matrix.jacobiSvd(EigenvaluesOnly);
+    const Matrix u = svd.matrixU();
+    const Matrix v = svd.matrixV();
+    double norm = 0;
+    for (Index i = 0; i < svd.singularValues().rows(); ++i)
+        norm += svd.singularValues()(i);
+    return norm;
+}
+
+AnyType
+matrix_pinv::run(AnyType& args) {
+    if (args.isNull()) {
+        return Null();
+    }
+    using namespace std;
+    MatrixComposeState<ArrayHandle<double> > state = args[0];
+    const JacobiSVD &svd = state.matrix.jacobiSvd(ComputeFullU|ComputeFullV);
+    const Matrix u = svd.matrixU();
+    const Matrix v = svd.matrixV();
+    Matrix s(svd.singularValues().asDiagonal());
+    double pinvtoler = 1.e-6;
+    for (Index i = 0; i < s.rows(); ++i) {
+        for (Index j = 0; j < s.cols(); ++j) {
+            // for very small singular values we treat the inverse as zero
+            if (s(i, j) > pinvtoler)
+                s(i, j) = 1.0 / s(i, j);
+            else s(i, j) = 0;
+        }
+    }
+    // we apply a transpose operation at the end since Eigen matrices are interpreted
+    // as column-major when returned to the database
+    const Matrix &res = (v * s * u.transpose()).transpose();
+    return res;
 }
 
 } // namespace linalg

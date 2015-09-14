@@ -237,7 +237,7 @@ one_way_anova_merge_states::run(AnyType &args) {
     for (uint64_t posRight = 0; posRight < stateRight.numGroups; posRight++) {
         int32_t value
             = static_cast<int32_t>(stateRight.groupValues[posRight]);
-        uint32_t idxRight = stateRight.posToIndices[posRight];
+        uint32_t idxRight = static_cast<uint32_t>(stateRight.posToIndices[posRight]);
         uint32_t idxLeft = stateLeft.idxOfGroup(*this, value);
         updateCorrectedSumOfSquares(
             stateLeft.num(idxLeft), stateLeft.sum(idxLeft),
