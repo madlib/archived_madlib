@@ -1,0 +1,203 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file logistic.sql_in
+ *
+ * @brief SQL functions for logistic regression
+ * @date January 2011
+ *
+ * @sa For a brief introduction to logistic regression, see the
+ *     module description \ref grp_logreg.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+DROP TYPE IF EXISTS MADLIB_SCHEMA.__logregr_simple_result CASCADE;
+CREATE TYPE MADLIB_SCHEMA.__logregr_simple_result AS (
+    coef            DOUBLE PRECISION[],
+    log_likelihood  DOUBLE PRECISION,
+    std_err         DOUBLE PRECISION[],
+    z_stats         DOUBLE PRECISION[],
+    p_values        DOUBLE PRECISION[],
+    odds_ratios     DOUBLE PRECISION[],
+    vcov            DOUBLE PRECISION[],
+    condition_no    DOUBLE PRECISION,
+    status          INTEGER,
+    num_processed   BIGINT,
+    num_iterations  INTEGER
+);
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__logregr_simple_step_transition(
+    DOUBLE PRECISION[],   
+    BOOLEAN,                /*+ y */
+    DOUBLE PRECISION[],     /*+ x */
+    DOUBLE PRECISION[])     /*+ previous state */
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'logregr_simple_step_transition'
+LANGUAGE C IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__logregr_simple_step_merge_states(
+    state1 DOUBLE PRECISION[],
+    state2 DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'logregr_simple_step_merge_states'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__logregr_simple_step_final(
+    state DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION[]
+AS 'MODULE_PATHNAME', 'logregr_simple_step_final'
+LANGUAGE C IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+/**
+ * @internal
+ * @brief Perform one iteration of the conjugate-gradient method for computing
+ *        logistic regression
+ */
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.__logregr_simple_step(
+    BOOLEAN, DOUBLE PRECISION[], DOUBLE PRECISION[]);
+CREATE AGGREGATE MADLIB_SCHEMA.__logregr_simple_step(
+    /*+ y */ BOOLEAN,
+    /*+ x */ DOUBLE PRECISION[],
+    /*+ previous_state */ DOUBLE PRECISION[]) (
+
+    STYPE=DOUBLE PRECISION[],
+    SFUNC=MADLIB_SCHEMA.__logregr_simple_step_transition,
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.__logregr_simple_step_merge_states,')
+    FINALFUNC=MADLIB_SCHEMA.__logregr_simple_step_final,
+    INITCOND='{0,0,0,0,0,0}'
+);
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__logregr_simple_step_distance(
+    /*+ state1 */ DOUBLE PRECISION[],
+    /*+ state2 */ DOUBLE PRECISION[])
+RETURNS DOUBLE PRECISION AS
+'MODULE_PATHNAME', 'internal_logregr_simple_step_distance'
+LANGUAGE c IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__logregr_simple_finalizer(
+    /*+ state */ DOUBLE PRECISION[])
+RETURNS MADLIB_SCHEMA.__logregr_simple_result 
+AS 'MODULE_PATHNAME', 'internal_logregr_simple_result'
+LANGUAGE c IMMUTABLE STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+------------------------------------------------------------------------
+
+
+/**
+ * @brief Compute logistic-regression coefficients and diagnostic statistics
+ *
+ * To include an intercept in the model, set one coordinate in the
+ * <tt>independentVariables</tt> array to 1.
+ *
+ * @param source_table Name of the source relation containing the training data
+ * @param out_table Name of the output relation to store the model results
+ *
+ *                   Columns of the output relation are as follows:
+ *                    - <tt>coef FLOAT8[]</tt> - Array of coefficients, \f$ \boldsymbol c \f$
+ *                    - <tt>log_likelihood FLOAT8</tt> - Log-likelihood \f$ l(\boldsymbol c) \f$
+ *                    - <tt>std_err FLOAT8[]</tt> - Array of standard errors,
+ *                      \f$ \mathit{se}(c_1), \dots, \mathit{se}(c_k) \f$
+ *                    - <tt>z_stats FLOAT8[]</tt> - Array of Wald z-statistics, \f$ \boldsymbol z \f$
+ *                    - <tt>p_values FLOAT8[]</tt> - Array of Wald p-values, \f$ \boldsymbol p \f$
+ *                    - <tt>odds_ratios FLOAT8[]</tt>: Array of odds ratios,
+ *                      \f$ \mathit{odds}(c_1), \dots, \mathit{odds}(c_k) \f$
+ *                    - <tt>condition_no FLOAT8</tt> - The condition number of
+ *                          matrix \f$ X^T A X \f$ during the iteration
+ *                          immediately <em>preceding</em> convergence
+ *                          (i.e., \f$ A \f$ is computed using the coefficients
+ *                          of the previous iteration)
+ * @param dependent_varname Name of the dependent column (of type BOOLEAN)
+ * @param independent_varname Name of the independent column (of type DOUBLE
+ *        PRECISION[])
+ * @param max_iter The maximum number of iterations
+ * @param tolerance The difference between log-likelihood values in successive
+ *         iterations that should indicate convergence. This value should be
+ *         non-negative and a zero value here disables the convergence criterion,
+ *         and execution will only stop after \c maxNumIterations iterations.
+ * @param verbose If true, any error or warning message will be printed to the
+ *         console (irrespective of the 'client_min_messages' set by server).
+ *         If false, no error/warning message is printed to console.
+ *
+ *
+ * @usage
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$ and all diagnostic
+ *    statistics:\n
+ *    <pre>SELECT logregr_train('<em>sourceName</em>', '<em>outName</em>'
+ *           '<em>dependentVariable</em>', '<em>independentVariables</em>');
+ *          SELECT * from outName;
+ *    </pre>
+ *  - Get vector of coefficients \f$ \boldsymbol c \f$:\n
+ *    <pre>SELECT coef from outName;</pre>
+ *  - Get a subset of the output columns, e.g., only the array of coefficients
+ *    \f$ \boldsymbol c \f$, the log-likelihood of determination
+ *    \f$ l(\boldsymbol c) \f$, and the array of p-values \f$ \boldsymbol p \f$:
+ *    <pre>SELECT coef, log_likelihood, p_values FROM outName;</pre>
+ *
+ * @note This function starts an iterative algorithm. It is not an aggregate
+ *       function. Source, output, and column names have to be passed as strings
+ *       (due to limitations of the SQL syntax).
+ *
+ * @internal
+ * @sa This function is a wrapper for logistic::compute_logregr(), which
+ *     sets the default values.
+ */
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_simple_train (
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR,
+    max_iter            INTEGER,
+    tolerance           DOUBLE PRECISION,
+    verbose             BOOLEAN
+) RETURNS VOID AS $$
+PythonFunction(hello_world, simple_logistic, logregr_simple_train)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_simple_train (
+    source_table        VARCHAR,
+    out_table           VARCHAR,
+    dependent_varname   VARCHAR,
+    independent_varname VARCHAR)
+RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.logregr_simple_train($1, $2, $3, $4, 20, 0.0001, False);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+------------------------------------------------------------------------
+
+-- Help messages -------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_simple_train(
+    message    TEXT
+) RETURNS TEXT AS $$
+    PythonFunction(hello_world, simple_logistic, logregr_simple_help_msg)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.logregr_simple_train()
+RETURNS TEXT
+AS $$
+    SELECT MADLIB_SCHEMA.logregr_simple_train(NULL::TEXT);
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+-------------------------------------------------------------
