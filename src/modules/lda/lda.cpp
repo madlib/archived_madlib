@@ -378,9 +378,9 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
         // to store a voc_size x (topic_num+1) integer matrix in
         // bigint[] (the +1 is for a flag of ceiling the count),
         // we need padding if the size is odd.
-        // 1. when voc_size * (topic_num + 1) is (2n+1), gives (n+1) 
-        // 2. when voc_size * (topic_num + 1) is (2n), gives (n) 
-        int dims[1] = {(voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t)};
+        // 1. when voc_size * (topic_num + 1) is (2n+1), gives (n+1)
+        // 2. when voc_size * (topic_num + 1) is (2n), gives (n)
+        int dims[1] = {static_cast<int>( (voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t) )};
         int lbs[1] = {1};
         state = madlib_construct_md_array(
             NULL, NULL, 1, dims, lbs, INT8TI.oid, INT8TI.len, INT8TI.byval,
@@ -407,7 +407,6 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
             word_index++;
         }
     }
-
     return state;
 }
 

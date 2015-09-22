@@ -32,7 +32,7 @@ if(LATEX_BINARY AND BIBTEX_BINARY AND MAKEINDEX_BINARY)
         BIBFILES ../literature.bib
         INPUTS
             ${DESIGN_DOC_MODULES}
-        MANGLE_TARGET_NAMES
+        EXCLUDE_FROM_ALL
     )
 else()
     message(STATUS "A complete LaTeX installation could not be found. "

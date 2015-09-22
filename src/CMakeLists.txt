@@ -18,6 +18,10 @@ set(BITBUCKET_BASE_URL
     "${MADLIB_REDIRECT_PREFIX}https://bitbucket.org"
     CACHE STRING
     "Base URL for Bitbucket projects. May be overridden for testing purposes.")
+set(GITHUB_MADLIB_BASE_URL
+    "${MADLIB_REDIRECT_PREFIX}https://github.com/madlib"
+    CACHE STRING
+    "Base URL for MADlib Github projects. May be overridden for testing purposes.")
 
 # Boost might not be present on the system (or simply too old). In this case, we
 # download the following version (unless it is already present in
@@ -47,16 +51,16 @@ endif (NOT BOOST_TAR_SOURCE)
 # specify an alternative path to the Eigen tarball:
 # -DEIGEN_TAR_SOURCE=/path/to/eigen-x.x.x.tar.gz
 
-set(EIGEN_VERSION "3.2.2")
-set(EIGEN_TAR_MD5 f8817c258b1495cb474d412e528aedb6)
+set(EIGEN_VERSION "branches/3.2")
+set(EIGEN_URL "${GITHUB_MADLIB_BASE_URL}/eigen/archive/${EIGEN_VERSION}.tar.gz")
+set(EIGEN_TAR_MD5 52cd37725d0a1852325d9325674423fa)
 set(EIGEN_MPL2_ONLY TRUE)
 
-set(EIGEN_TAR "eigen-${EIGEN_VERSION}.tar.gz")
-set(EIGEN_URL "${BITBUCKET_BASE_URL}/eigen/eigen/get/${EIGEN_VERSION}.tar.gz")
-
 if(NOT EIGEN_TAR_SOURCE)
+    STRING(REGEX REPLACE "/" "-" EIGEN_VERSION_NO_SLASH ${EIGEN_VERSION})
+    set(EIGEN_TAR "eigen-${EIGEN_VERSION_NO_SLASH}.tar.gz")
     find_file(EIGEN_TAR_SOURCE ${EIGEN_TAR}
-        PATHS ${MAD_THIRD_PARTY}/downloads)
+              PATHS ${MAD_THIRD_PARTY}/downloads)
 endif(NOT EIGEN_TAR_SOURCE)
 
 if(NOT EIGEN_TAR_SOURCE)
@@ -129,15 +133,10 @@ endif(Boost_FOUND)
 
 
 # -- Third-party dependencies: Download the C++ linear-algebra library Eigen ---
-
-# FIXME: Eigen is a third-party source that is patched in-place. Other
-# third-party headers are patched in the patch directory.
 ExternalProject_Add(EP_eigen
     PREFIX ${MAD_THIRD_PARTY}
     DOWNLOAD_DIR ${MAD_THIRD_PARTY}/downloads
     URL ${EIGEN_TAR_SOURCE}
-    URL_MD5 ${EIGEN_TAR_MD5}
-    PATCH_COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/patch/Eigen.sh"
     CMAKE_COMMAND /usr/bin/env echo Ignored: cmake
     BUILD_COMMAND /usr/bin/env echo Ignored: make
     INSTALL_COMMAND /usr/bin/env echo Ignored: make
