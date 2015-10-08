@@ -14,14 +14,6 @@ class GroupIterationController:
     @brief Abstraction for implementing in-memory iteration controller for
     SQL aggregate with STYPE=madlib.bytea8 (e.g. DynamicStruct) in PL/Python
 
-    The inter-state iteration table contains:
-    - Columns that are provided as grouping arguments
-    - <tt>_grouping_cols <em>text</em></tt>
-        - Text representation of all grouping columns
-    - <tt>_iteration <em>integer</em></tt> - The 0-based iteration number
-    - <tt>_state <em>self.kwargs.stateType</em></tt>
-        - The state (after iteration \c <tt>_iteration</tt>)
-    - and the actual grouping columns typed and named as in source table
     """
 
     def __init__(self, arg_dict):
@@ -31,17 +23,26 @@ class GroupIterationController:
         self.is_group_null = True if arg_dict["grouping_col"] is None else False
         self.kwargs = arg_dict
         self.kwargs.update(
-            state_type=self.schema_madlib+".bytea8",
+            state_type=arg_dict['stateType'].format(**arg_dict),
             col_grp_null=_unique_string(),
             col_grp_key=_unique_string(),
             grouping_col=("NULL" if arg_dict["grouping_col"] is None
                           else arg_dict["grouping_col"]),
             )
 
+        self.grp_to_n_tuples = {}
         self.new_states = {}
         self.old_states = {}
         self.finished_states = {}
         self.failed_grp_keys = []
+
+        self.is_state_type_bytea8 = False
+        if self.kwargs['state_type'] == "{schema_madlib}.bytea8".format(**self.kwargs):
+            self.is_state_type_bytea8 = True
+        elif self.kwargs['state_type'].lower() == "double precision[]" or self.kwargs['state_type'].lower() == "float8[]":
+            self.is_state_type_bytea8 = False
+        else:
+            plpy.error("Internal error: unexpected state type!")
 
     def __enter__(self):
         with MinWarning('warning'):
@@ -60,8 +61,11 @@ class GroupIterationController:
                                         ',') AS {col_grp_key},
                         0::integer AS {col_grp_iteration},
                         NULL::{state_type} AS {col_grp_state},
+                        count(*) AS {col_n_tuples},
                         {group_col}
                     FROM {rel_source}
+                    WHERE ({col_dep_var}) IS NOT NULL
+                      AND NOT {schema_madlib}.array_contains_null({col_ind_var})
                     GROUP BY {groupby_str}
                 );
                 """.format(group_col=group_col, groupby_str=groupby_str,
@@ -86,37 +90,66 @@ class GroupIterationController:
             ret_states = plpy.execute("SELECT * FROM {rel_state}".format(**self.kwargs))
             for state in ret_states:
                 self.new_states[state[self.kwargs['col_grp_key']]] = None
+                self.grp_to_n_tuples[state[self.kwargs['col_grp_key']]] = int(state[self.kwargs['col_n_tuples']])
 
         self.in_with = True
         return self
 
     def final(self):
+        """ Store the final converged state to a table for output """
+        if self.is_state_type_bytea8:
+            unnest_str = "unnest($1) AS {col_grp_key}, unnest($2) AS {col_grp_state}".format(**self.kwargs)
+            grouped_state_type = "{schema_madlib}.bytea8[]".format(**self.kwargs)
+        else:
+            unnest_str = ("grp_key AS {col_grp_key}, state AS {col_grp_state} "
+                          "FROM {schema_madlib}._gen_state($1, NULL, $2)".
+                          format(**self.kwargs))
+            grouped_state_type = "float8[]"
+
+        n_tuples_unnest_str = "unnest($3) AS {col_grp_key}, unnest($4) AS {col_n_tuples}".format(**self.kwargs)
+
         insert_plan = plpy.prepare("""
             INSERT INTO {rel_state}
             SELECT
                 {col_grp_key},
                 {iteration},
                 {col_grp_state},
-                {grouping_col}
-            FROM
-                (
+                {grouping_col},
+                {col_n_tuples}
+            FROM (
                     SELECT {grouping_col}, {col_grp_key}
                     FROM {rel_state}
                 ) AS _src
-            JOIN
-                (
-                    SELECT
-                        unnest($1) AS {col_grp_key},
-                        unnest($2) AS {col_grp_state}
+            JOIN (
+                    SELECT {unnest_str}
                 ) AS _rel_state
             USING ({col_grp_key})
-            """.format(iteration=self.iteration, **self.kwargs),
-            ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)])
+            JOIN (
+                    SELECT {n_tuples_unnest_str}
+                ) AS _rel_n_tuples
+            USING ({col_grp_key})
+            """.format(
+                iteration=self.iteration,
+                unnest_str=unnest_str,
+                n_tuples_unnest_str=n_tuples_unnest_str,
+                **self.kwargs),
+            ["text[]", grouped_state_type, "text[]", "integer[]"])
+
+        if self.is_state_type_bytea8:
+            insert_values = self.finished_states.values()
+
+        else:
+            insert_values = [c for state in self.finished_states.values()
+                             for c in state]
 
         plpy.execute(insert_plan, [self.finished_states.keys(),
-                                   self.finished_states.values()])
-
-        plpy.execute(insert_plan, [self.failed_grp_keys, [None]])
+                                   insert_values,
+                                   self.grp_to_n_tuples.keys(),
+                                   self.grp_to_n_tuples.values()])
+        plpy.execute(insert_plan, [self.failed_grp_keys,
+                                   [],
+                                   self.grp_to_n_tuples.keys(),
+                                   self.grp_to_n_tuples.values()])
 
     def __exit__(self, type, value, tb):
         self.in_with = False
@@ -143,6 +176,22 @@ class GroupIterationController:
             # in the previous update
             return True
 
+        self.is_state_type_bytea8 = False
+        if self.kwargs['state_type'] == "{schema_madlib}.bytea8".format(**self.kwargs):
+            self.is_state_type_bytea8 = True
+        elif self.kwargs['state_type'].lower() == "double precision[]" or self.kwargs['state_type'].lower() == "float8[]":
+            self.is_state_type_bytea8 = False
+        else:
+            plpy.error("Internal error: unexpected state type!")
+        if self.is_state_type_bytea8:
+            unnest_str_previous = "unnest($1) AS {col_grp_key}, unnest($2) AS _state_previous".format(**self.kwargs)
+            unnest_str_current = "unnest($3) AS {col_grp_key}, unnest($4) AS _state_current".format(**self.kwargs)
+            grouped_state_type = "{schema_madlib}.bytea8[]".format(**self.kwargs)
+        else:
+            unnest_str_previous = "grp_key AS {col_grp_key}, state AS _state_previous FROM {schema_madlib}._gen_state($1, NULL, $2)".format(**self.kwargs)
+            unnest_str_current = "grp_key AS {col_grp_key}, state AS _state_current FROM {schema_madlib}._gen_state($3, NULL, $4)".format(**self.kwargs)
+            grouped_state_type = "float8[]"
+
         condition = condition.format(iteration=self.iteration, **self.kwargs)
         eval_plan = plpy.prepare("""
             SELECT
@@ -151,26 +200,35 @@ class GroupIterationController:
             FROM
             (
                 (
-                    SELECT
-                        unnest($1) AS {col_grp_key},
-                        unnest($2) AS _state_previous
+                    SELECT {unnest_str_previous}
                 ) sub1
                 JOIN
                 (
-                    SELECT
-                        unnest($3) AS {col_grp_key},
-                        unnest($4) AS _state_current
+                    SELECT {unnest_str_current}
                 ) sub2
                 USING ({col_grp_key})
             ) subq1
-            """.format(condition=condition, **self.kwargs),
-            ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)] * 2)
+            """.format(condition=condition,
+                unnest_str_current=unnest_str_current,
+                unnest_str_previous=unnest_str_previous, **self.kwargs),
+            ["text[]", grouped_state_type] * 2)
 
-        ret_tuples = plpy.execute(eval_plan,
-                                  [self.old_states.keys(),
-                                   self.old_states.values(),
-                                   self.new_states.keys(),
-                                   self.new_states.values()])
+        if self.is_state_type_bytea8:
+            ret_tuples = plpy.execute(eval_plan,
+                                      [self.old_states.keys(),
+                                       self.old_states.values(),
+                                       self.new_states.keys(),
+                                       self.new_states.values()])
+        else:
+            if self.iteration == 1:
+                flatten_agg_states_old = []
+            else:
+                flatten_agg_states_old = [c for state in self.old_states.values() for c in state]
+            ret_tuples = plpy.execute(eval_plan,
+                                      [self.old_states.keys(),
+                                       flatten_agg_states_old,
+                                       self.new_states.keys(),
+                                       [c for state in self.new_states.values() for c in state]])
 
         self.old_states = {}
         for t in ret_tuples:
@@ -200,6 +258,7 @@ class GroupIterationController:
         this will replace the old state, otherwise the history of all old states
         is kept.
         """
+
         newState = newState.format(**self.kwargs)
         self.iteration = self.iteration + 1
 
@@ -207,6 +266,14 @@ class GroupIterationController:
                 **self.kwargs) if not self.is_group_null else ""
         using_str = "USING ({col_grp_key})".format(
                 **self.kwargs) if not self.is_group_null else "ON TRUE"
+        if self.is_state_type_bytea8:
+            unnest_str = "unnest($1) AS {col_grp_key}, unnest($2) AS {col_grp_state}".format(**self.kwargs)
+            grouped_state_type = "{schema_madlib}.bytea8[]".format(**self.kwargs)
+        else:
+            unnest_str = "grp_key AS {col_grp_key}, state AS {col_grp_state} FROM {schema_madlib}._gen_state($1, NULL, $2)".format(**self.kwargs)
+            grouped_state_type = "float8[]"
+
+        n_tuples_unnest_str = "unnest($3) AS {col_grp_key}, unnest($4) AS {col_n_tuples}".format(**self.kwargs)
 
         update_plan = plpy.prepare(
             """
@@ -226,10 +293,15 @@ class GroupIterationController:
             ) AS _src
             JOIN
             (
-                SELECT
-                    unnest($1) AS {col_grp_key},
-                    unnest($2) AS {col_grp_state}
+                SELECT {unnest_str}
+
             ) AS {rel_state}
+            {using_str}
+            JOIN
+            (
+                SELECT
+                    {n_tuples_unnest_str}
+            ) AS _rel_n_tuples
             {using_str}
             {groupby_str}
             """.format(
@@ -241,11 +313,25 @@ class GroupIterationController:
                           "',')".format(**self.kwargs) if self.is_group_null
                           else self.kwargs['col_grp_key']),
                 newState=newState,
+                unnest_str=unnest_str,
+                n_tuples_unnest_str=n_tuples_unnest_str,
                 **self.kwargs),
-            ["text[]", "{schema_madlib}.bytea8[]".format(**self.kwargs)])
+            ["text[]", grouped_state_type, "text[]", "integer[]"])
 
-        res_tuples = plpy.execute(update_plan, [self.new_states.keys(),
-                                                self.new_states.values()])
+        if self.is_state_type_bytea8:
+            res_tuples = plpy.execute(update_plan, [self.new_states.keys(),
+                                                    self.new_states.values(),
+                                                    self.grp_to_n_tuples.keys(),
+                                                    self.grp_to_n_tuples.values()])
+        else:
+            if self.iteration == 1:
+                flatten_agg_states = []
+            else:
+                flatten_agg_states = [c for state in self.new_states.values() for c in state]
+            res_tuples = plpy.execute(update_plan, [self.new_states.keys(),
+                                                    flatten_agg_states,
+                                                    self.grp_to_n_tuples.keys(),
+                                                    self.grp_to_n_tuples.values()])
 
         self.old_states = self.new_states
         self.new_states = {}

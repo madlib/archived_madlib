@@ -168,7 +168,7 @@ internal_linear_svm_igd_distance::run(AnyType &args) {
     GLMIGDState<ArrayHandle<double> > stateRight = args[1];
 
     return std::abs((stateLeft.algo.loss - stateRight.algo.loss)
-            / stateRight.algo.loss);
+            / stateLeft.algo.loss);
 }
 
 /**

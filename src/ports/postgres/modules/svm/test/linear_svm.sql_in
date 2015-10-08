@@ -233,7 +233,8 @@ SELECT
     array_append(array_div(array_sub(ind, ind_avg), ind_stddev), 1::FLOAT8) AS ind,
     CASE when label = 1 THEN 'YES'
         ELSE 'NO'
-    END AS label
+    END AS label,
+    (id % 4) AS gid
 FROM svm_train_data,
     (
         SELECT ARRAY[avg(ind[1]),avg(ind[2]),
@@ -247,9 +248,9 @@ FROM svm_train_data,
     ) AS svm_ind_stddev
 ORDER BY random();
 INSERT INTO svm_normalized_fancy_label VALUES
-(1001, ARRAY[NULL,1,1,1,1]::float8[], 'YES'),
-(1002, ARRAY[5,1,1,1,1]::float8[], NULL),
-(1003, ARRAY[5,1,NULL,1,1]::float8[], NULL);
+(1001, ARRAY[NULL,1,1,1,1]::float8[], 'YES', 1001 % 4),
+(1002, ARRAY[5,1,1,1,1]::float8[], NULL, 1002 % 4),
+(1003, ARRAY[5,1,NULL,1,1]::float8[], NULL, 1003 % 4);
 
 DROP TABLE IF EXISTS svm_test_normalized_fancy_label CASCADE;
 CREATE TABLE svm_test_normalized_fancy_label AS
@@ -258,7 +259,8 @@ SELECT
     array_append(array_div(array_sub(ind, ind_avg), ind_stddev), 1::FLOAT8) AS ind,
     CASE when label = 1 THEN 'YES'
         ELSE 'NO'
-    END AS label
+    END AS label,
+    (id % 4) as gid
 FROM svm_test_data,
     (
         SELECT ARRAY[avg(ind[1]),avg(ind[2]),
@@ -271,7 +273,7 @@ FROM svm_test_data,
         FROM svm_test_data
     ) AS svm_test_ind_stddev;
 INSERT INTO svm_test_normalized_fancy_label VALUES
-(1001, ARRAY[NULL,1,1,1,1]::float8[], 'YES');
+(1001, ARRAY[NULL,1,1,1,1]::float8[], 'YES', 1001 % 4);
 
 -- training
 DROP TABLE IF EXISTS svm_model_fancy_label CASCADE;
@@ -283,29 +285,30 @@ SELECT svm_classification(
     'ind', 
     NULL, -- kernel_func
     NULL, -- kernel_pararms
-    NULL, --grouping_col
+    'gid', --grouping_col
     'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0',
     'lambda=0.001',
-    true -- verbose
+    TRUE -- verbose
     );
 \x on
 SELECT * FROM svm_model_fancy_label;
 SELECT * FROM svm_model_fancy_label_summary;
 \x off
-SELECT assert(num_rows_skipped=3, 'num_rows_skipped is wrong')
-FROM svm_model_fancy_label;
+SELECT assert(count(*)=4, '4 group exist') FROM svm_model_fancy_label;
+-- SELECT assert(total_rows_skipped=3, 'total_rows_skipped is wrong')
+-- FROM svm_model_fancy_label_summary;
 
 DROP TABLE IF EXISTS svm_test_predict CASCADE;
 SELECT svm_predict('svm_model_fancy_label', 'svm_test_normalized_fancy_label', 'id', 'svm_test_predict');
-SELECT * FROM svm_test_predict;
+SELECT o.id, label, prediction, gid FROM svm_test_predict p, svm_test_normalized_fancy_label o where o.id = p.id;
 
 -- calculating accuracy
 -- the accuracy is not guaranteed to be high because the stepsize & decay_factor
 -- depend on the actual number of segments
-SELECT
-    count(*) AS misclassification_count
-FROM svm_test_predict NATURAL JOIN svm_test_normalized_fancy_label
-WHERE prediction <> label;
+-- SELECT
+--     count(*) AS misclassification_count
+-- FROM svm_test_predict NATURAL JOIN svm_test_normalized_fancy_label
+-- WHERE prediction <> label;
 
 -- tests for depend varname being expression
 DROP TABLE IF EXISTS svm_model_expression CASCADE;
