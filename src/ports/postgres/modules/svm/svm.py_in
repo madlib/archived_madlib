@@ -65,7 +65,6 @@ def svm_classification(schema_madlib, source_table, model_table,
     Executes the linear support vector classification algorithm.
 
     """
-
     # verbosing
     verbosity_level = "info" if verbose else "error"
     with MinWarning(verbosity_level):
@@ -80,12 +79,12 @@ def svm_classification(schema_madlib, source_table, model_table,
 
         # map dependent variables
         dep_labels=plpy.execute("""
-                SELECT {dependent_varname} AS y
-                FROM {source_table}
-                WHERE ({dependent_varname}) IS NOT NULL
-                GROUP BY ({dependent_varname})
-                ORDER BY ({dependent_varname})
-            """.format(**locals()))
+                SELECT {dep} AS y
+                FROM {tbl}
+                WHERE ({dep}) IS NOT NULL
+                GROUP BY ({dep})
+                ORDER BY ({dep})
+            """.format(dep=dependent_varname, tbl=source_table))
         _dep_var_mapping = ["'" + d['y'] + "'" if isinstance(d['y'], basestring)
                             else str(d['y']) for d in dep_labels]
         if len(_dep_var_mapping) != 2:
@@ -96,12 +95,16 @@ def svm_classification(schema_madlib, source_table, model_table,
         if '[]' in dep_type:
             plpy.error("SVM error: dependent_varname cannot be of array type!")
 
-        # output
+        # validate output tables
         output_tbl_valid(model_table, 'SVM')
         summary_table = add_postfix(model_table, "_summary")
         output_tbl_valid(summary_table, 'SVM')
 
         # arguments for iterating
+        n_features = plpy.execute("SELECT array_upper({0}, 1) AS dim "
+                                  "FROM {1} LIMIT 1".
+                                  format(independent_varname, source_table)
+                                  )[0]['dim']
         if grouping_col:
             grouping_list = [i + "::text"
                              for i in explicit_bool_to_text(
@@ -114,21 +117,21 @@ def svm_classification(schema_madlib, source_table, model_table,
         grouping_str1 = "" if not grouping_col else grouping_col + ","
         grouping_str2 = "1 = 1" if not grouping_col else grouping_col
 
-        n_features = plpy.execute("SELECT array_upper({0}, 1) AS dim "
-                                  "FROM {1} LIMIT 1".
-                                  format(independent_varname, source_table)
-                                  )[0]['dim']
         args = {'rel_args': unique_string(),
                 'rel_state': unique_string(),
+                'col_grp_iteration': unique_string(),
+                'col_grp_state': unique_string(),
+                'col_grp_key': unique_string(),
+                'col_n_tuples': unique_string(),
+                'state_type': "double precision[]",
                 'rel_source': source_table,
                 'col_ind_var': independent_varname,
                 'col_dep_var': dependent_varname,
-                'col_grp_iteration': unique_string(),
-                'col_grp_state': unique_string(),
-                'col_n_tuples': unique_string(),
-                'mapped_value_for_negative': _dep_var_mapping[0],
-                'stateType': "double precision[]"}
+                'mapped_value_for_negative': _dep_var_mapping[0]
+                }
         args.update(locals())
+        # variables defined above cannot be moved below this line
+        # -------------------------------------------------------
 
         # other params
         kernel_func = 'linear' if not kernel_func else kernel_func.lower()
@@ -160,12 +163,12 @@ def svm_classification(schema_madlib, source_table, model_table,
         optim_params_dict = _extract_optim_params(schema_madlib, optim_params)
         reg_params_dict = _extract_reg_params(schema_madlib, reg_params)
         args.update(optim_params_dict)
-        args.update(reg_params_dict),
+        args.update(reg_params_dict)
         args['stepsize'] = args['init_stepsize']
         args['is_l2'] = True if args['norm'] == 'l2' else False
 
         # place holder for compatibility
-        plpy.execute("CREATE TABLE pg_temp.{rel_args} AS SELECT 1".format(**args))
+        plpy.execute("CREATE TABLE pg_temp.{0} AS SELECT 1".format(args['rel_args']))
         # actual iterative algorithm computation
         n_iters_run = _compute_svm(args)
 
@@ -173,8 +176,8 @@ def svm_classification(schema_madlib, source_table, model_table,
         args['mapping'] = _dep_var_mapping[0] + "," + _dep_var_mapping[1]
         groupby_str = "GROUP BY {grouping_col}, {col_grp_key}".format(**args) if grouping_col else ""
         using_str = "USING ({col_grp_key})".format(**args) if grouping_col else "ON TRUE"
-        plpy.execute("""
-                CREATE TABLE {model_table} AS
+        model_table_query = """
+            CREATE TABLE {model_table} AS
                 SELECT
                     {grouping_str1}
                     (result).coefficients           AS coef,
@@ -206,9 +209,10 @@ def svm_classification(schema_madlib, source_table, model_table,
                     {groupby_str}
                 ) n_tuples_including_nulls_subq
                 {using_str}
-                """.format(n_iters_run=n_iters_run,
-                           groupby_str=groupby_str,
-                           using_str=using_str, **args))
+            """.format(n_iters_run=n_iters_run,
+                       groupby_str=groupby_str,
+                       using_str=using_str, **args)
+        plpy.execute(model_table_query)
 
         if type(args['lambda']) is list:
             args['lambda_str'] = '{' + ','.join(str(e) for e in args['lambda']) + '}'
@@ -225,7 +229,7 @@ def svm_classification(schema_madlib, source_table, model_table,
                     '{independent_varname}'::text       AS independent_varname,
                     'linear'::text                      AS kernel_func,
                     NULL::text                          AS kernel_params,
-                    '{grouping_col}'::text              AS grouping_col,
+                    '{grouping_text}'::text             AS grouping_col,
                     'init_stepsize={init_stepsize}, ' ||
                     'decay_factor={decay_factor}, ' ||
                     'max_iter={max_iter}, ' ||
@@ -238,7 +242,8 @@ def svm_classification(schema_madlib, source_table, model_table,
                     sum(num_rows_processed)::bigint     AS total_rows_processed,
                     sum(num_rows_skipped)::bigint       AS total_rows_skipped
                 FROM {model_table};
-                """.format(**args))
+                """.format(grouping_text="NULL" if not grouping_col else grouping_col,
+                           **args))
 # ------------------------------------------------------------------------------
 
 

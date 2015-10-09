@@ -6,7 +6,7 @@
 
 import plpy
 from control import MinWarning
-from utilities import unique_string as _unique_string
+from utilities import unique_string
 
 
 class GroupIterationController:
@@ -17,19 +17,30 @@ class GroupIterationController:
     """
 
     def __init__(self, arg_dict):
+        """
+        arg_dict: Dictionary containing arguments to be defined by the calling function:
+            Necessary:
+                state_type: Type of the transition state
+                            (can be double precision[] or <schema_madlib>.bytea8)
+                col_dep_var: Name of the dependent column name
+                col_ind_var: Name of the independent column name
+            Optional:
+                col_n_tuples: Name of the column containing count of tuples.
+                              Set to a unique string if not defined
+        """
         self.schema_madlib = arg_dict['schema_madlib']
         self.in_with = False
         self.iteration = -1
         self.is_group_null = True if arg_dict["grouping_col"] is None else False
-        self.kwargs = arg_dict
+        self.kwargs = dict(arg_dict)
         self.kwargs.update(
-            state_type=arg_dict['stateType'].format(**arg_dict),
-            col_grp_null=_unique_string(),
-            col_grp_key=_unique_string(),
+            state_type=arg_dict.get('state_type', 'double precision[]').format(**arg_dict),
+            col_grp_null=unique_string(),
+            col_n_tuples=self.kwargs.get('col_n_tuples', unique_string()),
+            col_grp_key=self.kwargs.get('col_grp_key', unique_string()),
             grouping_col=("NULL" if arg_dict["grouping_col"] is None
                           else arg_dict["grouping_col"]),
             )
-
         self.grp_to_n_tuples = {}
         self.new_states = {}
         self.old_states = {}
@@ -37,9 +48,10 @@ class GroupIterationController:
         self.failed_grp_keys = []
 
         self.is_state_type_bytea8 = False
-        if self.kwargs['state_type'] == "{schema_madlib}.bytea8".format(**self.kwargs):
+        if self.kwargs['state_type'] == "{0}.bytea8".format(self.schema_madlib):
             self.is_state_type_bytea8 = True
-        elif self.kwargs['state_type'].lower() == "double precision[]" or self.kwargs['state_type'].lower() == "float8[]":
+        elif (self.kwargs['state_type'].lower() == "double precision[]" or
+                self.kwargs['state_type'].lower() == "float8[]"):
             self.is_state_type_bytea8 = False
         else:
             plpy.error("Internal error: unexpected state type!")
@@ -57,18 +69,18 @@ class GroupIterationController:
                 DROP TABLE IF EXISTS {rel_state};
                 CREATE TEMPORARY TABLE {rel_state} AS (
                     SELECT
-                        array_to_string(ARRAY[{grouping_str}],
-                                        ',') AS {col_grp_key},
-                        0::integer AS {col_grp_iteration},
-                        NULL::{state_type} AS {col_grp_state},
-                        count(*) AS {col_n_tuples},
+                        array_to_string(ARRAY[{grouping_str}], ',') AS {col_grp_key},
+                        0::integer                                  AS {col_grp_iteration},
+                        NULL::{state_type}                          AS {col_grp_state},
+                        count(*)                                    AS {col_n_tuples},
                         {group_col}
                     FROM {rel_source}
                     WHERE ({col_dep_var}) IS NOT NULL
                       AND NOT {schema_madlib}.array_contains_null({col_ind_var})
                     GROUP BY {groupby_str}
                 );
-                """.format(group_col=group_col, groupby_str=groupby_str,
+                """.format(group_col=group_col,
+                           groupby_str=groupby_str,
                            **self.kwargs))
 
             ############################
@@ -79,7 +91,8 @@ class GroupIterationController:
                              self.kwargs['grouping_col'].split(",")]))
                 null_count = plpy.execute("""
                     SELECT count(*) FROM {rel_state} WHERE {null_test}
-                    """.format(null_test=null_test, **self.kwargs))[0]['count']
+                    """.format(null_test=null_test,
+                               rel_state=self.kwargs['rel_state']))[0]['count']
                 if null_count != 0:
                     plpy.error("Grouping error: at least one of the grouping "
                                "columns contains NULL values! Please filter "
@@ -87,10 +100,11 @@ class GroupIterationController:
 
             ############################
             # initialize states
-            ret_states = plpy.execute("SELECT * FROM {rel_state}".format(**self.kwargs))
+            ret_states = plpy.execute("SELECT * FROM " + self.kwargs['rel_state'])
             for state in ret_states:
                 self.new_states[state[self.kwargs['col_grp_key']]] = None
-                self.grp_to_n_tuples[state[self.kwargs['col_grp_key']]] = int(state[self.kwargs['col_n_tuples']])
+                self.grp_to_n_tuples[state[self.kwargs['col_grp_key']]] = \
+                    long(state[self.kwargs['col_n_tuples']])
 
         self.in_with = True
         return self
@@ -99,23 +113,21 @@ class GroupIterationController:
         """ Store the final converged state to a table for output """
         if self.is_state_type_bytea8:
             unnest_str = "unnest($1) AS {col_grp_key}, unnest($2) AS {col_grp_state}".format(**self.kwargs)
-            grouped_state_type = "{schema_madlib}.bytea8[]".format(**self.kwargs)
+            grouped_state_type = "{0}.bytea8[]".format(self.kwargs['schema_madlib'])
         else:
             unnest_str = ("grp_key AS {col_grp_key}, state AS {col_grp_state} "
                           "FROM {schema_madlib}._gen_state($1, NULL, $2)".
                           format(**self.kwargs))
             grouped_state_type = "float8[]"
 
-        n_tuples_unnest_str = "unnest($3) AS {col_grp_key}, unnest($4) AS {col_n_tuples}".format(**self.kwargs)
-
-        insert_plan = plpy.prepare("""
+        insert_sql = """
             INSERT INTO {rel_state}
             SELECT
                 {col_grp_key},
-                {iteration},
+                {iteration}::int,
                 {col_grp_state},
-                {grouping_col},
-                {col_n_tuples}
+                {col_n_tuples}::bigint,
+                {grouping_col}
             FROM (
                     SELECT {grouping_col}, {col_grp_key}
                     FROM {rel_state}
@@ -125,15 +137,17 @@ class GroupIterationController:
                 ) AS _rel_state
             USING ({col_grp_key})
             JOIN (
-                    SELECT {n_tuples_unnest_str}
+                    SELECT unnest($3) AS {col_grp_key},
+                           unnest($4) AS {col_n_tuples}
                 ) AS _rel_n_tuples
             USING ({col_grp_key})
             """.format(
                 iteration=self.iteration,
                 unnest_str=unnest_str,
-                n_tuples_unnest_str=n_tuples_unnest_str,
-                **self.kwargs),
-            ["text[]", grouped_state_type, "text[]", "integer[]"])
+                **self.kwargs)
+        insert_plan = plpy.prepare(insert_sql,
+                                   ["text[]", grouped_state_type,
+                                    "text[]", "bigint[]"])
 
         if self.is_state_type_bytea8:
             insert_values = self.finished_states.values()
@@ -141,7 +155,6 @@ class GroupIterationController:
         else:
             insert_values = [c for state in self.finished_states.values()
                              for c in state]
-
         plpy.execute(insert_plan, [self.finished_states.keys(),
                                    insert_values,
                                    self.grp_to_n_tuples.keys(),
@@ -177,9 +190,10 @@ class GroupIterationController:
             return True
 
         self.is_state_type_bytea8 = False
-        if self.kwargs['state_type'] == "{schema_madlib}.bytea8".format(**self.kwargs):
+        if self.kwargs['state_type'] == "{0}.bytea8".format(self.kwargs['schema_madlib']):
             self.is_state_type_bytea8 = True
-        elif self.kwargs['state_type'].lower() == "double precision[]" or self.kwargs['state_type'].lower() == "float8[]":
+        elif (self.kwargs['state_type'].lower() == "double precision[]" or
+                self.kwargs['state_type'].lower() == "float8[]"):
             self.is_state_type_bytea8 = False
         else:
             plpy.error("Internal error: unexpected state type!")
@@ -209,8 +223,8 @@ class GroupIterationController:
                 USING ({col_grp_key})
             ) subq1
             """.format(condition=condition,
-                unnest_str_current=unnest_str_current,
-                unnest_str_previous=unnest_str_previous, **self.kwargs),
+                       unnest_str_current=unnest_str_current,
+                       unnest_str_previous=unnest_str_previous, **self.kwargs),
             ["text[]", grouped_state_type] * 2)
 
         if self.is_state_type_bytea8:
@@ -244,7 +258,7 @@ class GroupIterationController:
         Update the inter-iteration state
 
         @param newState SQL expression of (or returning) type
-            <tt>stateType.kwargs.stateType</tt>. The
+            <tt>state_type.kwargs.state_type</tt>. The
             following names are defined and can be used in the condition:
             - \c _args  - The (single-row) argument table
             - \c _state - In memory inter-iteration state
@@ -282,23 +296,17 @@ class GroupIterationController:
                 {grouping_col} {as_string},
                 {iteration} AS {col_grp_iteration},
                 ({newState}) AS {col_grp_state}
-            FROM
-            (
+            FROM (
                 SELECT
                     *,
-                    array_to_string(ARRAY[{grouping_str}],
-                                    ','
-                                   ) AS {col_grp_key}
+                    array_to_string(ARRAY[{grouping_str}], ',') AS {col_grp_key}
                 FROM {rel_source}
             ) AS _src
-            JOIN
-            (
+            JOIN (
                 SELECT {unnest_str}
-
             ) AS {rel_state}
             {using_str}
-            JOIN
-            (
+            JOIN (
                 SELECT
                     {n_tuples_unnest_str}
             ) AS _rel_n_tuples

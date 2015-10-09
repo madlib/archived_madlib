@@ -47,9 +47,9 @@ def __compute_multinom(arg_dict):
                 """
                 {schema_madlib}.__multinom_{link}_agg(
                     ({category_expr})::integer,
-                    ({ind_col})::double precision[],
+                    ({col_ind_var})::double precision[],
                     {rel_state}.{col_grp_state},
-                    {num_cate}::smallint)
+                    {n_categories}::smallint)
                 """)
             if it.test(
                     """
@@ -161,8 +161,8 @@ def __multinom_validate_args(
 # ========================================================================
 
 
-def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
-                       ind_col, ref_category, category_list, link_func,
+def __multinom_compute(schema_madlib, tbl_source, tbl_output, col_dep_var,
+                       col_ind_var, ref_category, category_list, link_func,
                        grouping_col, optim_params_dict, verbose):
 
     old_msg_level = plpy.execute("""
@@ -177,18 +177,16 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
     args = {'schema_madlib': schema_madlib,
             'rel_source': tbl_source,
             'tbl_output': tbl_output,
-            'dep_col': dep_col,
-            'ind_col': ind_col,
             'rel_state': unique_string(),
-            'col_dep_var': dep_col,
-            'col_ind_var': ind_col,
+            'col_dep_var': col_dep_var,
+            'col_ind_var': col_ind_var,
             'col_grp_iteration': unique_string(),
             'col_grp_state': unique_string(),
             'col_n_tuples': unique_string(),
             'ref_category': ref_category,
-            'num_cate': len(category_list),
+            'n_categories': len(category_list),
             'link': link_func,
-            'stateType': "double precision[]"
+            'state_type': schema_madlib + ".bytea8"
             }
     args.update(optim_params_dict)
 
@@ -209,8 +207,8 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
     # build the case when expression to convert category value to integer
     # when aggregate is called
     category_expr_tmp = """\n               """.join([
-            "WHEN ({dep_col})::text = '{c}' THEN {i}".
-            format(dep_col=dep_col, c=c, i=i)
+            "WHEN ({col_dep_var})::text = '{c}' THEN {i}".
+            format(col_dep_var=col_dep_var, c=c, i=i)
             for i, c in enumerate(category_list)])
     args['category_expr'] = "CASE " + category_expr_tmp + "\nEND"
 
@@ -279,7 +277,7 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
             {using_str}
         ) q3,
         (
-            SELECT generate_series(1, {num_cate}-1) AS index
+            SELECT generate_series(1, {n_categories}-1) AS index
         ) q4,
         (
             SELECT '{{{category_str}}}'::varchar[] AS category_list
@@ -322,9 +320,9 @@ def __multinom_compute(schema_madlib, tbl_source, tbl_output, dep_col,
             'multinom'::varchar                 AS method,
             '{rel_source}'::varchar             AS source_table,
             '{tbl_output}'::varchar             AS out_table,
-            $madlib_super_quote${dep_col}$madlib_super_quote$::varchar
+            $madlib_super_quote${col_dep_var}$madlib_super_quote$::varchar
                                                 AS dependent_varname,
-            $madlib_super_quote${ind_col}$madlib_super_quote$::varchar
+            $madlib_super_quote${col_ind_var}$madlib_super_quote$::varchar
                                                 AS independent_varname,
             '{ref_category}'::varchar           AS ref_category,
             '{category_str}'::varchar           AS category_list,
