@@ -23,33 +23,42 @@ class L1 {
 public:
     typedef Model model_type;
 
+    static double lambda;
+
+    static int n_tuples;
+
     static void gradient(
-            const model_type                &model,
-            const double                    &lambda,
-            model_type                      &gradient);
+            const model_type &model,
+            model_type &gradient);
 
     static void clipping(
-            model_type                      &incrModel,
-            const double                    &lambda,
-            const int                       &n_tuples,
-            const double                    &stepsize);
+            model_type &model,
+            const double &stepsize);
 
     static double loss(
-            const model_type                &model,
-            const double                    &lambda);
+            const model_type &model);
 };
+
+template <class Model>
+double
+L1<Model>::lambda = 0.;
+
+template <class Model>
+int
+L1<Model>::n_tuples = 1;
 
 template <class Model>
 void
 L1<Model>::gradient(
-        const model_type                    &model,
-        const double                        &lambda,
-        model_type                          &gradient) {
-    for (Index i = 0; i < model.size(); i++) {
-        if (model(i) > 0) {
-            gradient(i) += lambda;
-        } else if (model(i) < 0) {
-            gradient(i) -= lambda;
+        const model_type &model,
+        model_type &gradient) {
+    if (lambda != 0.) {
+        for (Index i = 0; i < model.size(); i++) {
+            if (model(i) > 0) {
+                gradient(i) += lambda;
+            } else if (model(i) < 0) {
+                gradient(i) -= lambda;
+            }
         }
     }
 }
@@ -57,30 +66,30 @@ L1<Model>::gradient(
 template <class Model>
 void
 L1<Model>::clipping(
-        model_type                          &incrModel,
-        const double                        &lambda,
-        const int                           &n_tuples,
-        const double                        &stepsize) {
-    // implement the Clipping method mentioned in Tsuruoka et al. 2009
-    double clip_boundry = lambda / n_tuples * stepsize;
-    for (Index i = 0; i < incrModel.size(); i++) {
-        if (incrModel(i) > clip_boundry) {
-            incrModel(i) -= clip_boundry;
-        } else if (incrModel(i) < - clip_boundry) {
-            incrModel(i) += clip_boundry;
-        } else { incrModel(i) = 0.; }
+        model_type &model,
+        const double &stepsize) {
+    if (lambda != 0.) {
+        // implement the Clipping method mentioned in Tsuruoka et al. 2009
+        double clip_boundry = lambda / n_tuples * stepsize;
+        for (Index i = 0; i < model.size(); i++) {
+            if (model(i) > clip_boundry) {
+                model(i) -= clip_boundry;
+            } else if (model(i) < - clip_boundry) {
+                model(i) += clip_boundry;
+            } else { model(i) = 0.; }
+        }
     }
 }
 
 template <class Model>
 double
 L1<Model>::loss(
-        const model_type                    &model,
-        const double                        &lambda) {
+    const model_type &model) {
     double s = 0.;
-    for (Index i = 0; i < model.size(); i++) {
-        s += std::abs(model(i));
-    }
+    if (lambda != 0.)
+        for (Index i = 0; i < model.size(); i++) {
+            s += std::abs(model(i));
+        }
     return lambda * s;
 }
 

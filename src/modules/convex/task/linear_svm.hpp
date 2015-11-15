@@ -16,6 +16,7 @@ namespace convex {
 // Use Eigen
 using namespace madlib::dbal::eigen_integration;
 
+
 template <class Model, class Tuple>
 class LinearSVM {
 public:
@@ -24,6 +25,9 @@ public:
     typedef typename Tuple::independent_variables_type
         independent_variables_type;
     typedef typename Tuple::dependent_variable_type dependent_variable_type;
+
+    static double epsilon;
+    static bool is_svc;
 
     static void gradient(
             const model_type                    &model,
@@ -48,6 +52,12 @@ public:
 };
 
 template <class Model, class Tuple>
+double LinearSVM<Model, Tuple >::epsilon = 0.;
+
+template <class Model, class Tuple>
+bool LinearSVM<Model, Tuple >::is_svc = false;
+
+template <class Model, class Tuple>
 void
 LinearSVM<Model, Tuple>::gradient(
         const model_type                    &model,
@@ -55,10 +65,18 @@ LinearSVM<Model, Tuple>::gradient(
         const dependent_variable_type       &y,
         model_type                          &gradient) {
     double wx = dot(model, x);
-    if (1 - wx * y > 0) {
-        double c = -y; // minus for "-loglik"
-        gradient += c * x;
-    } else { gradient += 0. * x; }
+    if (is_svc) {
+        if (1 - wx * y > 0) {
+            double c = -y;   // minus for "-loglik"
+            gradient += c * x;
+        }
+    }
+    else {
+        double wx_y = wx - y;
+        double c = wx_y > 0 ? 1. : -1.;
+        if (c*wx_y - epsilon > 0.)
+            gradient += c * x;
+    }
 }
 
 template <class Model, class Tuple>
@@ -69,10 +87,18 @@ LinearSVM<Model, Tuple>::gradientInPlace(
         const dependent_variable_type       &y,
         const double                        &stepsize) {
     double wx = dot(model, x);
-    if (1. - wx * y > 0.) {
-        double c = -y; // minus for "-loglik"
-        model -= stepsize * c * x;
-    } else { }
+    if (is_svc) {
+        if (1. - wx * y > 0.) {
+            double c = -y;   // minus for "-loglik"
+            model -= stepsize * c * x;
+        }
+    }
+    else {
+        double wx_y = wx - y;
+        double c = wx_y > 0 ? 1. : -1.;
+        if (c*wx_y - epsilon > 0.)
+            model -= stepsize * c * x;
+    }
 }
 
 template <class Model, class Tuple>
@@ -82,7 +108,13 @@ LinearSVM<Model, Tuple>::loss(
         const independent_variables_type    &x,
         const dependent_variable_type       &y) {
     double wx = dot(model, x);
-    double distance = 1. - wx * y;
+    double distance = 0.;
+    if (is_svc) {
+        distance = 1. - wx * y;
+    }
+    else {
+        distance = fabs(wx - y) - epsilon;
+    }
     return distance > 0. ? distance : 0.;
 }
 

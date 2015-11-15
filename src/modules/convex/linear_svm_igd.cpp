@@ -53,12 +53,10 @@ linear_svm_igd_transition::run(AnyType &args) {
     // For other tuples: args[0] holds the computation state until last tuple
     GLMIGDState<MutableArrayHandle<double> > state = args[0];
 
-    const double lambda = args[6].getAs<double>();
-    const bool isL2 = args[7].getAs<bool>();
-    const int nTuples = args[8].getAs<int>();
-
-    // initilize the state if first tuple
+    // initialize the state if first tuple
     if (state.algo.numRows == 0) {
+        LinearSVM<GLMModel, GLMTuple >::epsilon = args[9].getAs<double>();;
+        LinearSVM<GLMModel, GLMTuple >::is_svc = args[10].getAs<bool>();;
         if (!args[3].isNull()) {
             GLMIGDState<ArrayHandle<double> > previousState = args[3];
             state.allocate(*this, previousState.task.dimension);
@@ -66,20 +64,20 @@ linear_svm_igd_transition::run(AnyType &args) {
         } else {
             // configuration parameters
             uint32_t dimension = args[4].getAs<uint32_t>();
-            double stepsize = args[5].getAs<double>();
-
             state.allocate(*this, dimension); // with zeros
-            state.task.stepsize = stepsize;
         }
         // resetting in either case
         state.reset();
-        if (isL2) {
-            state.algo.loss += L2<GLMModel>::loss(state.task.model, lambda);
-            L2<GLMModel>::gradient(state.task.model, lambda, state.algo.gradient);
-        } else {
-            state.algo.loss += L1<GLMModel>::loss(state.task.model, lambda);
-            L1<GLMModel>::gradient(state.task.model, lambda, state.algo.gradient);
-        }
+        state.task.stepsize = args[5].getAs<double>();
+        const double lambda = args[6].getAs<double>();
+        const bool isL2 = args[7].getAs<bool>();
+        const int nTuples = args[8].getAs<int>();
+        L1<GLMModel>::n_tuples = nTuples;
+        L2<GLMModel>::n_tuples = nTuples;
+        if (isL2)
+            L2<GLMModel>::lambda = lambda;
+        else
+            L1<GLMModel>::lambda = lambda;
     }
 
     // Skip the current record if args[1] (features) contains NULL values,
@@ -89,25 +87,23 @@ linear_svm_igd_transition::run(AnyType &args) {
     } catch (const ArrayWithNullException &e) {
         return args[0];
     }
-    if (args[2].isNull()) { return args[0]; }
+    if (args[2].isNull())
+        return args[0];
 
     // tuple
     using madlib::dbal::eigen_integration::MappedColumnVector;
     GLMTuple tuple;
     tuple.indVar.rebind(args[1].getAs<MappedColumnVector>().memoryHandle(),
-            state.task.dimension);
-    tuple.depVar = args[2].getAs<bool>() ? 1. : -1.;
+                        state.task.dimension);
+    tuple.depVar = args[2].getAs<double>();
 
     // Now do the transition step
     // apply IGD with regularization
-    if (isL2) {
-        L2<GLMModel>::scaling(state.algo.incrModel, lambda, nTuples, state.task.stepsize);
-        LinearSVMIGDAlgorithm::transition(state, tuple);
-    } else {
-        LinearSVMIGDAlgorithm::transition(state, tuple);
-        L1<GLMModel>::clipping(state.algo.incrModel, lambda, nTuples, state.task.stepsize);
-    }
-    // objective function and its gradient
+    L2<GLMModel>::scaling(state.algo.incrModel, state.task.stepsize);
+    LinearSVMIGDAlgorithm::transition(state, tuple);
+    L1<GLMModel>::clipping(state.algo.incrModel, state.task.stepsize);
+    // evaluate objective function and its gradient
+    // at the old model - state.task.model
     LinearSVMLossAlgorithm::transition(state, tuple);
     LinearSVMGradientAlgorithm::transition(state, tuple);
 
@@ -153,9 +149,17 @@ linear_svm_igd_final::run(AnyType &args) {
     // Aggregates that haven't seen any data just return Null.
     if (state.algo.numRows == 0) { return Null(); }
 
+    state.algo.loss += L2<GLMModel>::loss(state.task.model);
+    state.algo.loss += L1<GLMModel>::loss(state.task.model);
+    L2<GLMModel>::gradient(state.task.model, state.algo.gradient);
+    L1<GLMModel>::gradient(state.task.model, state.algo.gradient);
+
     // finalizing
     LinearSVMIGDAlgorithm::final(state);
-
+    elog(NOTICE, "loss = %e, |gradient| = %e, |model| = %e\n",
+         (double) state.algo.loss,
+         state.algo.gradient.norm(),
+         state.task.model.norm());
     return state;
 }
 

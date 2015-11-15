@@ -10,6 +10,13 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION __svr_target_cl_func(ind float8[])
+RETURNS float8 AS $$
+BEGIN
+    RETURN 1*ind[1] + 2*ind[2];
+END
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION __svm_random_ind(d INT)
 RETURNS float8[] AS $$
 DECLARE
@@ -48,8 +55,93 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
+CREATE OR REPLACE FUNCTION svr_generate_cls_data(
+    output_table text, num int, dim int)
+RETURNS VOID AS $$
+DECLARE
+    temp_table text;
+BEGIN
+    temp_table := 'madlib_temp_' || output_table;
+    EXECUTE '
+        CREATE TABLE ' || temp_table || ' AS
+            SELECT
+                subq.val AS id,
+                __svm_random_ind(' || dim || ') AS ind
+            FROM
+                (SELECT generate_series(1, ' || num || ') AS val) subq';
+    EXECUTE '
+        CREATE TABLE ' || output_table || ' AS
+            SELECT id, ind, __svr_target_cl_func(ind) AS label
+            FROM ' || temp_table;
+END
+$$ LANGUAGE plpgsql;
+
 SELECT svm_generate_cls_data('svm_train_data', 1000, 4);
 SELECT svm_generate_cls_data('svm_test_data', 1000, 4);
+SELECT svr_generate_cls_data('svr_train_data', 1000, 4);
+SELECT svr_generate_cls_data('svr_test_data', 1000, 4);
+
+-- check the default values
+DROP TABLE IF EXISTS svr_model, svr_model_summary;
+SELECT svm_regression(
+     'svr_train_data',
+     'svr_model',
+     'label',
+     'ind');
+\x on
+SELECT * FROM svr_model;
+SELECT * FROM svr_model_summary;
+\x off
+SELECT
+    assert(
+        norm1(coef) < 4,
+        'optimal coef should be close to [1, 2, 0, 0]!')
+FROM svr_model;
+
+-- check the use of l1 norm
+DROP TABLE IF EXISTS svr_model, svr_model_summary;
+SELECT svm_regression(
+     'svr_train_data',
+     'svr_model',
+     'label',
+     'ind',
+     NULL,
+     NULL,
+     NULL,
+     'init_stepsize=0.01, max_iter=50, lambda=2, norm=l1, epsilon=0.01',
+     false);
+DROP TABLE IF EXISTS svr_test_result; 
+SELECT svm_predict('svr_model', 'svr_train_data', 'id', 'svr_test_result');
+\x on
+SELECT * FROM svr_model;
+\x off
+SELECT 
+    assert(
+           avg(subq.err) < 0.1,
+           'prediction error is too large!')
+FROM 
+    (
+        SELECT 
+            train.id, 
+            abs(train.label - test.prediction) AS err
+        FROM svr_train_data AS train, svr_test_result AS test
+        WHERE train.id = test.id
+    ) AS subq;
+
+-- by default using epsilon == 0.1
+DROP TABLE IF EXISTS svr_model, svr_model_summary;
+SELECT svm_regression(
+     'svr_train_data',
+     'svr_model',
+     'label',
+     'ind', 
+     NULL, 
+     NULL, 
+     NULL, 
+     'init_stepsize=1, max_iter=10, lambda=2');
+SELECT 
+    assert(epsilon > 0,'default epsilon is positive!') 
+FROM svr_model_summary;
 
 -- Example usage for LINEAR classification, replace the above by
 SELECT svm_classification(
@@ -118,9 +210,8 @@ SELECT svm_classification(
     'ind',
     NULL, -- kernel_func
     NULL, -- kernel_pararms
-    NULL, --grouping_col
-    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0',
-    'lambda=0',
+    NULL, -- grouping_col
+    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0, lambda=0',
     true -- verbose
     );
 \x on
@@ -139,8 +230,7 @@ SELECT svm_classification(
     NULL, -- kernel_func
     NULL, -- kernel_pararms
     NULL, --grouping_col
-    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0',
-    'lambda=1'
+    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0, lambda=1'
     );
 \x on
 SELECT * FROM svm_model_small_norm2;
@@ -164,8 +254,7 @@ SELECT svm_classification(
     NULL, -- kernel_func
     NULL, -- kernel_pararms
     NULL, --grouping_col
-    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0',
-    'lambda=1, norm=L1'
+    'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0, lambda=1, norm=L1'
     );
 \x on
 SELECT * FROM svm_model_very_sparse;
@@ -205,8 +294,7 @@ SELECT svm_classification(
     NULL, -- kernel_func
     NULL, -- kernel_pararms
     NULL, --grouping_col
-    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0',
-    'lambda={0.001}',
+    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0, lambda={0.001}',
     true -- verbose
     );
 SELECT norm_of_gradient FROM svm_model;
@@ -288,8 +376,7 @@ SELECT svm_classification(
     NULL, -- kernel_func
     NULL, -- kernel_pararms
     'gid', --grouping_col
-    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0',
-    'lambda=0.001',
+    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0, lambda=0.001',
     TRUE -- verbose
     );
 \x on
@@ -323,8 +410,7 @@ SELECT svm_classification(
     NULL, -- kernel_func
     NULL, -- kernel_pararms
     NULL, --grouping_col
-    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0',
-    'lambda=0.001',
+    'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0, lambda=0.001',
     true -- verbose
     );
 \x on
@@ -335,4 +421,213 @@ SELECT * FROM svm_model_expression_summary;
 DROP TABLE IF EXISTS svm_test_predict CASCADE;
 SELECT svm_predict('svm_model_expression', 'svm_test_normalized', 'id', 'svm_test_predict');
 SELECT * FROM svm_test_predict;
+
+DROP TABLE IF EXISTS abalone_train_small_tmp;
+CREATE TABLE abalone_train_small_tmp (
+    sex TEXT,
+    id SERIAL NOT NULL,
+    length DOUBLE PRECISION,
+    diameter DOUBLE PRECISION,
+    height DOUBLE PRECISION,
+    whole DOUBLE PRECISION,
+    shucked DOUBLE PRECISION,
+    viscera DOUBLE PRECISION,
+    shell DOUBLE PRECISION,
+    rings INTEGER);
+
+INSERT INTO abalone_train_small_tmp(id,sex,length,diameter,height,whole,shucked,viscera,shell,rings) VALUES
+(1040,'F',0.66,0.475,0.18,1.3695,0.641,0.294,0.335,6),
+(3160,'F',0.34,0.255,0.085,0.204,0.097,0.021,0.05,6),
+(3984,'F',0.585,0.45,0.125,0.874,0.3545,0.2075,0.225,6),
+(861,'F',0.595,0.475,0.16,1.1405,0.547,0.231,0.271,6),
+(932,'F',0.445,0.335,0.11,0.4355,0.2025,0.1095,0.1195,6),
+(1585,'F',0.515,0.375,0.11,0.6065,0.3005,0.131,0.15,6),
+(3187,'F',0.47,0.36,0.11,0.4965,0.237,0.127,0.13,6),
+(3202,'F',0.385,0.3,0.1,0.2725,0.1115,0.057,0.08,6),
+(949,'F',0.475,0.36,0.12,0.5915,0.3245,0.11,0.127,6),
+(2582,'F',0.53,0.42,0.17,0.828,0.41,0.208,0.1505,6),
+(2551,'I',0.28,0.22,0.08,0.1315,0.066,0.024,0.03,5),
+(1246,'I',0.385,0.28,0.09,0.228,0.1025,0.042,0.0655,5),
+(819,'I',0.35,0.25,0.07,0.18,0.0655,0.048,0.054,6),
+(297,'I',0.275,0.205,0.075,0.1105,0.045,0.0285,0.035,6),
+(3630,'I',0.27,0.205,0.05,0.084,0.03,0.0185,0.029,6),
+(2196,'I',0.26,0.215,0.08,0.099,0.037,0.0255,0.045,5),
+(2343,'I',0.255,0.185,0.07,0.075,0.028,0.018,0.025,6),
+(49,'I',0.325,0.245,0.07,0.161,0.0755,0.0255,0.045,6),
+(2185,'I',0.32,0.235,0.08,0.1485,0.064,0.031,0.045,6),
+(2154,'I',0.28,0.2,0.075,0.1225,0.0545,0.0115,0.035,5),
+(1996,'I',0.32,0.24,0.07,0.133,0.0585,0.0255,0.041,6),
+(126,'I',0.27,0.195,0.06,0.073,0.0285,0.0235,0.03,5),
+(1227,'I',0.35,0.27,0.075,0.215,0.1,0.036,0.065,6),
+(3969,'I',0.375,0.29,0.095,0.2875,0.123,0.0605,0.08,6),
+(2505,'I',0.31,0.24,0.105,0.2885,0.118,0.065,0.083,6),
+(2039,'I',0.28,0.215,0.08,0.132,0.072,0.022,0.033,5),
+(829,'I',0.41,0.325,0.1,0.394,0.208,0.0655,0.106,6),
+(3197,'I',0.325,0.245,0.075,0.1495,0.0605,0.033,0.045,5),
+(1447,'I',0.44,0.34,0.105,0.369,0.164,0.08,0.1015,5),
+(2821,'I',0.375,0.285,0.09,0.2545,0.119,0.0595,0.0675,6),
+(1828,'I',0.34,0.26,0.085,0.1885,0.0815,0.0335,0.06,6),
+(2002,'I',0.36,0.27,0.085,0.2185,0.1065,0.038,0.062,6),
+(785,'I',0.215,0.155,0.06,0.0525,0.021,0.0165,0.015,5),
+(2199,'I',0.27,0.19,0.08,0.081,0.0265,0.0195,0.03,6),
+(3527,'I',0.335,0.26,0.085,0.192,0.097,0.03,0.054,6),
+(466,'I',0.175,0.125,0.05,0.0235,0.008,0.0035,0.008,5),
+(425,'I',0.26,0.2,0.07,0.092,0.037,0.02,0.03,6),
+(1825,'I',0.185,0.135,0.04,0.027,0.0105,0.0055,0.009,5),
+(3815,'I',0.38,0.275,0.095,0.2425,0.106,0.0485,0.21,6),
+(2503,'I',0.285,0.21,0.07,0.109,0.044,0.0265,0.033,5),
+(3998,'I',0.36,0.27,0.09,0.2075,0.098,0.039,0.062,6),
+(333,'I',0.3,0.22,0.08,0.121,0.0475,0.042,0.035,5),
+(1837,'I',0.415,0.31,0.09,0.2815,0.1245,0.0615,0.085,6),
+(2813,'I',0.24,0.17,0.05,0.0545,0.0205,0.016,0.0155,5),
+(930,'I',0.44,0.345,0.13,0.4495,0.209,0.0835,0.134,6),
+(1436,'I',0.385,0.3,0.09,0.247,0.1225,0.044,0.0675,5),
+(3972,'I',0.4,0.295,0.095,0.252,0.1105,0.0575,0.066,6),
+(1433,'I',0.365,0.255,0.08,0.1985,0.0785,0.0345,0.053,5),
+(1252,'I',0.405,0.285,0.09,0.2645,0.1265,0.0505,0.075,6),
+(3439,'I',0.43,0.335,0.105,0.378,0.188,0.0785,0.09,6),
+(1250,'I',0.395,0.27,0.1,0.2985,0.1445,0.061,0.082,5),
+(2865,'I',0.31,0.23,0.07,0.1245,0.0505,0.0265,0.038,6),
+(3411,'I',0.415,0.31,0.105,0.3595,0.167,0.083,0.0915,6),
+(1539,'I',0.355,0.27,0.075,0.1775,0.079,0.0315,0.054,6),
+(1990,'I',0.28,0.21,0.075,0.1195,0.053,0.0265,0.03,6),
+(1771,'I',0.455,0.335,0.105,0.422,0.229,0.0865,0.1,6),
+(2291,'I',0.325,0.27,0.1,0.185,0.08,0.0435,0.065,6),
+(3381,'I',0.19,0.13,0.045,0.0265,0.009,0.005,0.009,5),
+(1545,'I',0.37,0.27,0.095,0.2175,0.097,0.046,0.065,6),
+(652,'I',0.335,0.245,0.09,0.1665,0.0595,0.04,0.06,6),
+(3434,'I',0.365,0.27,0.105,0.2155,0.0915,0.0475,0.063,6),
+(2004,'I',0.375,0.28,0.08,0.226,0.105,0.047,0.065,6),
+(2000,'I',0.35,0.25,0.07,0.1605,0.0715,0.0335,0.046,6),
+(3946,'I',0.235,0.175,0.065,0.0615,0.0205,0.02,0.019,6),
+(177,'I',0.315,0.21,0.06,0.125,0.06,0.0375,0.035,5),
+(920,'I',0.41,0.31,0.09,0.3335,0.1635,0.061,0.091,6),
+(3437,'I',0.38,0.275,0.095,0.2505,0.0945,0.0655,0.075,6),
+(2630,'I',0.33,0.24,0.075,0.163,0.0745,0.033,0.048,6),
+(1092,'I',0.45,0.33,0.11,0.3685,0.16,0.0885,0.102,6),
+(3476,'I',0.4,0.315,0.085,0.2675,0.116,0.0585,0.0765,6),
+(3526,'I',0.33,0.23,0.085,0.1695,0.079,0.026,0.0505,6),
+(1534,'I',0.295,0.215,0.07,0.121,0.047,0.0155,0.0405,6),
+(921,'I',0.415,0.33,0.09,0.3595,0.17,0.081,0.09,6),
+(2206,'I',0.275,0.22,0.08,0.1365,0.0565,0.0285,0.042,6),
+(1218,'I',0.315,0.23,0.08,0.1375,0.0545,0.031,0.0445,5),
+(1998,'I',0.335,0.25,0.08,0.1695,0.0695,0.044,0.0495,6),
+(2455,'I',0.275,0.2,0.065,0.092,0.0385,0.0235,0.027,5),
+(2548,'I',0.23,0.18,0.05,0.064,0.0215,0.0135,0.02,5),
+(3996,'I',0.245,0.175,0.055,0.0785,0.04,0.018,0.02,5),
+(3408,'I',0.35,0.265,0.08,0.192,0.081,0.0465,0.053,6),
+(3907,'M',0.245,0.18,0.065,0.0635,0.0245,0.0135,0.02,4),
+(3850,'M',0.385,0.3,0.115,0.3435,0.1645,0.085,0.1025,6),
+(124,'M',0.37,0.265,0.075,0.214,0.09,0.051,0.07,6),
+(2583,'M',0.53,0.41,0.14,0.681,0.3095,0.1415,0.1835,6),
+(526,'M',0.175,0.125,0.04,0.024,0.0095,0.006,0.005,4),
+(2184,'M',0.495,0.4,0.155,0.8085,0.2345,0.1155,0.35,6),
+(2132,'M',0.32,0.24,0.08,0.18,0.08,0.0385,0.055,6),
+(651,'M',0.255,0.18,0.065,0.079,0.034,0.014,0.025,5),
+(612,'M',0.195,0.145,0.05,0.032,0.01,0.008,0.012,4),
+(958,'M',0.5,0.39,0.135,0.6595,0.3145,0.1535,0.1565,6),
+(3174,'M',0.35,0.265,0.09,0.2265,0.0995,0.0575,0.065,6),
+(265,'M',0.27,0.2,0.08,0.1205,0.0465,0.028,0.04,6),
+(519,'M',0.325,0.23,0.09,0.147,0.06,0.034,0.045,4),
+(2382,'M',0.155,0.115,0.025,0.024,0.009,0.005,0.0075,5),
+(698,'M',0.28,0.205,0.1,0.1165,0.0545,0.0285,0.03,5),
+(2381,'M',0.175,0.135,0.04,0.0305,0.011,0.0075,0.01,5),
+(516,'M',0.27,0.195,0.08,0.1,0.0385,0.0195,0.03,6),
+(831,'M',0.415,0.305,0.1,0.325,0.156,0.0505,0.091,6),
+(3359,'M',0.285,0.215,0.075,0.106,0.0415,0.023,0.035,5);
+
+DROP TABLE IF EXISTS abalone_train_small;
+CREATE TABLE abalone_train_small AS (
+    SELECT * FROM abalone_train_small_tmp
+);
+
+-- create epsilon input table
+
+DROP TABLE IF EXISTS abalone_eps;
+CREATE TABLE abalone_eps (
+    sex TEXT,
+    epsilon DOUBLE PRECISION);
+
+INSERT INTO abalone_eps(sex, epsilon) VALUES
+('I', 0.2),
+('M', 0.05);
+
+-- solve it with grouping and table of epsilon as inputs
+
+DROP TABLE IF EXISTS svr_mdl, svr_mdl_summary; 
+SELECT madlib.svm_regression(
+        'abalone_train_small',
+        'svr_mdl', 
+        'rings',
+        'ARRAY[1,diameter,shell,shucked,length]',
+        NULL,NULL,'sex', 
+        'max_iter=50, init_stepsize=1, decay_factor=0.9, tolerance=1e-16, epsilon = 50, eps_table=abalone_eps', 
+        false); 
+SELECT * FROM svr_mdl;
+
+
+DROP TABLE IF EXISTS svr_mdl_i, svr_mdl_i_summary; 
+SELECT madlib.svm_regression(
+        'abalone_train_small',
+        'svr_mdl_i', 
+        'rings',
+        'ARRAY[1,diameter,shell,shucked,length]',
+        NULL,NULL,'sex', 
+        'max_iter=50, init_stepsize=1, decay_factor=0.9, tolerance=1e-16, epsilon = 0.2', 
+        false); 
+SELECT * FROM svr_mdl_i where sex = 'I';
+
+DROP TABLE IF EXISTS svr_mdl_m, svr_mdl_m_summary; 
+SELECT madlib.svm_regression(
+        'abalone_train_small',
+        'svr_mdl_m', 
+        'rings',
+        'ARRAY[1,diameter,shell,shucked,length]',
+        NULL,NULL,'sex', 
+        'max_iter=50, init_stepsize=1, decay_factor=0.9, tolerance=1e-16, epsilon = 0.05', 
+        false); 
+SELECT * FROM svr_mdl_m where sex = 'M';
+
+DROP TABLE IF EXISTS svr_mdl_f, svr_mdl_f_summary; 
+SELECT madlib.svm_regression(
+        'abalone_train_small',
+        'svr_mdl_f', 
+        'rings',
+        'ARRAY[1,diameter,shell,shucked,length]',
+        NULL,NULL,'sex', 
+        'max_iter=50, init_stepsize=1, decay_factor=0.9, tolerance=1e-16, epsilon = 50', 
+        false); 
+SELECT * FROM svr_mdl_f where sex = 'F';
+
+-- verify that the results are the same 
+
+SELECT assert(
+    abs_err < 1e-5, 
+    'SVR with epsilon table input: Wrong results!')
+FROM (
+    SELECT 
+        abs(t1.norm_of_gradient - t2.norm_of_gradient) AS abs_err
+    FROM svr_mdl_f AS t1 JOIN svr_mdl AS t2 USING (sex)
+    where sex = 'F'
+) AS q1;
+
+SELECT assert(
+    rel_err < 1e-1, 
+    'SVR with epsilon table input: Wrong results!')
+FROM (
+    SELECT 
+        relative_error(t1.norm_of_gradient,  t2.norm_of_gradient) AS rel_err
+    FROM svr_mdl_i AS t1 JOIN svr_mdl AS t2 USING (sex)
+    where sex = 'I'
+) AS q1;
+
+SELECT assert(
+    rel_err < 1e-1, 
+    'SVR with epsilon table input: Wrong results!')
+FROM (
+    SELECT 
+        relative_error(t1.norm_of_gradient,  t2.norm_of_gradient) AS rel_err
+    FROM svr_mdl_m AS t1 JOIN svr_mdl AS t2 USING (sex)
+    where sex = 'M'
+) AS q1;
 
