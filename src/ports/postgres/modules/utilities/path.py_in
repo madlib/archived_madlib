@@ -1,0 +1,127 @@
+"""
+@file pathing.py_in
+
+@brief Pathing functions
+
+@namespace utilities
+"""
+import plpy
+import shlex
+import string
+
+from utilities import unique_string
+from utilities import _assert
+from validate_args import input_tbl_valid
+from validate_args import output_tbl_valid
+# ------------------------------------------------------------------------
+
+
+def path(schema_madlib, source_table, output_table, partition_expr,
+         order_expr, pattern_regex, symbol_expr, result_fun, **kwargs):
+    """
+        Perform regular pattern matching over a sequence of rows.
+
+        Args:
+        @param schema_madlib: str, Name of the MADlib schema
+        @param source_table: str, Name of the input table/view
+        @param output_table: str, Name of the table to store result
+        @param partition_expr: str, Expression to partition (group) the input data
+        @param order_expr: str, Expression to order the input data
+        @param pattern_expr: str, Expression to define the pattern to search for
+        @param symbol_expr: str, Definition for each symbol, comma-separated list
+        @param result_fun: str, List of the result functions/aggregates to apply on matched patterns
+
+    """
+    symbol_str = _build_symbol_str(symbol_expr)
+    _validate(source_table, output_table, partition_expr, order_expr,
+              pattern_regex, symbol_str, result_fun)
+    input_view = unique_string()
+
+    sql = """
+        CREATE TABLE {output_table} as
+        WITH {input_view} as (
+            select *,
+                case
+                    {symbol_str}
+                end as symbol
+            FROM {source_table}
+        )
+        SELECT
+            {partition_expr},
+            {result_fun}
+        FROM {input_view}
+        GROUP BY {partition_expr}
+        HAVING
+            array_to_string(array_agg(symbol ORDER BY {order_expr}), '') ~* '^{pattern_regex}'
+    """.format(**locals())
+    plpy.execute(sql)
+# ------------------------------------------------------------------------------
+
+
+def _validate(source_table, output_table, partition_expr, order_expr,
+              pattern_expr, symbol_expr, result_fun):
+    input_tbl_valid(source_table, 'Path')
+    output_tbl_valid(output_table, 'Path')
+    _assert(partition_expr, "Path error: Invalid partition expression")
+    _assert(order_expr, "Path error: Invalid order expression")
+    _assert(pattern_expr, "Path error: Invalid pattern expression")
+    _assert(symbol_expr, "Path error: Invalid symbol expression")
+    _assert(result_fun, "Path error: Invalid result expression")
+# ----------------------------------------------------------------------
+
+
+def _build_symbol_str(symbol_expr):
+    """ Parse a symbol definition string and return a dictionary of the definitions
+
+        symbol_expr: A comma-separated string containing symbol definitions of the form:
+            <symbol> := <symbol_definition>
+        Example:
+            symbol_expr = ('BEFORE:=starttime >= \'0:00:00\'::time and '
+                            'starttime < \'9:30:00\', '
+                           'MARKET:=starttime >= \'9:30:00\'::time and '
+                            'starttime < \'16:00:00\'::time')
+    """
+    symbol_expr_parser = shlex.shlex(symbol_expr)
+    symbol_expr_parser.wordchars = [i for i in string.printable
+                                    if i not in (symbol_expr_parser.quotes + ",")]
+    symbol_expr_parser.whitespace = ','
+    symbol_splits = list(symbol_expr_parser)
+    symbol_definitions = {}
+    for each_sym in symbol_splits:
+        each_sym_splits = each_sym.split(":=")
+        if len(each_sym_splits) > 1:
+            symbol_definitions[each_sym_splits[0].strip()] = each_sym_splits[1].strip()
+    return '\n'.join("WHEN {1} THEN '{0}'::text".format(key, val)
+                     for key, val in symbol_definitions.items())
+# ----------------------------------------------------------------------
+
+
+def path_help_message(schema_madlib, message, **kwargs):
+    """ Help message for path function
+    """
+    help_string = """
+------------------------------------------------------------
+                        SUMMARY
+------------------------------------------------------------
+Functionality: Path
+
+The goal of the MADlib path function is to perform regular pattern
+matching over a sequence of rows, and to extract useful information about the
+matches.  The useful information could be a simple count of matches or
+something more involved like aggregation.
+
+------------------------------------------------------------
+                        USAGE
+------------------------------------------------------------
+SELECT {schema_madlib}.path(
+    'source_table',    -- Name of the table
+    'output_table',    -- Table name to store the path results
+    'partition_expr',  -- Partition expression to group the data table
+    'order_expr',      -- Order expression to sort the tuples of the data table
+    'pattern_def',     -- Definition of the path pattern to search for
+    'symbol_def',      -- Definition of various symbols used in the pattern definition
+    'result_fun',      -- Aggregate/window functions to be applied on the matched paths
+);
+"""
+    return help_string.format(schema_madlib=schema_madlib)
+# ------------------------------------------------------------

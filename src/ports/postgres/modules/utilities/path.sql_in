@@ -1,0 +1,207 @@
+/* ----------------------------------------------------------------------- */
+/**
+ *
+ * @file pathing.sql_in
+ *
+ * @brief SQL functions for pathing functions
+ * @date Sep 2015
+ *
+ */
+/* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_path
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#syntax">Function Syntax</a></li>
+<li><a href="#examples">Examples</a></li>
+</ul>
+</div>
+
+@brief Path functions
+@details The goal of the MADlib path function is to perform regular pattern
+matching over a sequence of rows, and to extract useful information about the
+matches.  The useful information could be a simple count of matches or
+something more involved like aggregation.
+
+There are many use cases where path functions are typically used:
+- Web analytics (clickstream)
+- Marketing revenue attribution
+- Telephone calling patterns
+- Stock market trading sequences
+- Predictive maintenance
+- Genomics sequencing
+
+@anchor syntax
+@par Function Syntax
+<pre class="syntax">
+path(
+    source_table,
+    output_table,
+    partition_expr,
+    order_expr,
+    pattern,
+    symbol,
+    result
+)
+</pre>
+
+\b Arguments
+<dl class="arglist">
+    <dt>source_table</dt>
+    <dd>VARCHAR. Name of the source table, containing data for path analysis.</dd>
+
+    <dt>output_table</dt>
+    <dd>VARCHAR. Name of the result table. This table contains columns predicated
+    by the <em>result</em> argument (shown below).</dd>
+
+    <dt>partition_expr</dt>
+    <dd>VARCHAR. The 'partition_expr' can be a list of columns or expressions (separated by comma)
+    to divide all rows into groups, or partitions, that share the same values of the
+    partition expression(s). For each row, the matching is applied across the rows
+    that fall into the same partition. This can be NULL or '' to indicate the matching
+    is to be applied on the whole table.</dd>
+
+    <dt>order_expr</dt>
+    <dd>VARCHAR. This expression controls the order in which rows are processed or matched in a
+    partition.
+    </dd>
+
+    <dt>pattern</dt>
+    <dd>VARCHAR. The PATTERN clause defines the pattern that path searches for.
+        You express the PATTERN using symbols and operators. Symbols defined using more
+        than 1 characters need to be wrapped in parentheses '()'.
+        The following pattern-matching metacharacters are supported:
+        <ul>
+            <li>| denotes alternation (either of two alternatives). </li>
+            <li>? denotes repetition of the previous item zero or one time. </li>
+            <li>* denotes repetition of the previous item zero or more times. </li>
+            <li>+ denotes repetition of the previous item one or more times. </li>
+            <li>{m} denotes repetition of the previous item exactly m times. </li>
+            <li>{m,} denotes repetition of the previous item m or more times. </li>
+            <li>{m,n} denotes repetition of the previous item at least m and not more than n times. </li>
+            <li>Parentheses () can be used to group items into a single logical item.</li>
+        </ul>
+    </dd>
+
+    <dt>symbol</dt>
+    <dd>VARCHAR. A symbol represents a row of a particular type that you’re searching
+for as part of a row sequence. In the SYMBOLS clause, you write a predicate to define the
+type of row that matches the symbol.
+    </dd>
+
+    <dt>result</dt>
+    <dd>VARCHAR. A comma-separated list of window functions and aggregates to be
+    applied on the matched window.
+    </dd>
+
+</dl>
+
+
+@anchor examples
+@examp
+
+- Build sample dataset
+<pre class="example">
+CREATE TABLE data (id integer, sessionid integer, starttime timestamp, topic varchar, portfolio integer);
+COPY data FROM STDIN DELIMITER AS '|';
+1|1|1/01/00 5:00 AM|Real-time Equity pricing|769
+1|2|1/01/00 5:30 AM|Real-time Index pricing|9898
+1|3|1/01/00 6:00 AM|Real-time Index pricing|9898
+1|4|1/01/00 5:00 AM|Calendar|98977
+1|5|1/01/00 10:00 AM|Real-time Equity pricing|769
+1|6|1/01/00 10:30 AM|Real-time Equity pricing|9898
+1|7|1/01/00 12:00 PM|Calendar|1325
+1|8|1/01/00 12:00 PM|Calendar|6777
+1|9|1/01/00 4:05 PM|Real-time Equity pricing|769
+1|10|1/01/00 4:10 PM|Report Dates and Analyst Recommendations|34346
+1|11|1/01/00 4:15 PM|Real-time Index pricing|9898
+1|12|1/01/00 4:20 PM|Snapshot Futures pricing|5568
+1|13|1/01/00 4:21 PM|Real-time Equity pricing|769
+1|14|1/01/00 4:25 PM|Bond security master|789
+1|15|1/01/00 10:00 PM|Bond pricing|55
+1|16|1/01/00 10:00 PM|Bond pricing|55
+1|17|1/01/00 10:00 PM|Bond pricing|55
+1|18|1/01/00 10:00 PM|Bond Yield Analysis|655
+1|19|1/01/00 10:00 PM|Bond pricing|55
+1|20|1/01/00 10:00 PM|Bond pricing|55
+2|1|1/04/00 12:00 AM|Real-time Equity pricing|769
+2|2|1/04/00 12:00 AM|Real-time Equity pricing|234234
+2|3|1/04/00 12:00 AM|Calendar|1325
+2|4|1/04/00 12:00 AM|Calendar|6777
+2|5|1/04/00 12:00 AM|Real-time Equity pricing|769
+2|6|1/04/00 12:00 AM|Report Dates and Analyst Recommendations|34346
+2|7|1/04/00 12:00 AM|Real-time Index pricing|9898
+2|8|1/04/00 12:00 AM|Snapshot Futures pricing|5568
+2|9|1/04/00 12:00 AM|Real-time Equity pricing|769
+2|10|1/04/00 12:00 AM|Bond security master|789
+2|11|1/04/00 12:00 AM|Bond pricing|55
+2|12|1/04/00 12:00 AM|Bond pricing|55
+2|13|1/04/00 12:00 AM|Bond pricing|55
+2|14|1/04/00 12:00 AM|Bond pricing|55
+\\.
+&nbsp;
+CREATE TABLE trades AS
+SELECT *, starttimestamp::date startdate,
+        CASE WHEN  THEN 'before'
+            WHEN  THEN 'market'
+            WHEN  THEN 'close'
+            WHEN  THEN 'after'
+        END tradingperiod
+FROM sessiontable
+</pre>
+
+- Compare within each day for the same Topic/Portfolio across every user
+<pre class="example">
+    SELECT madlib.path(
+        'trades',
+        'trades_out',
+        'startdate, topic, portfolio'  \-\- each day of activity is looked at independently
+        'starttime'                     \-\- order by time
+        'BEFORE*.MARKET+.CLOSE+.AFTER*' \-\- at least one event during each of MARKET and CLOSE, but gather up the rest
+        'BEFORE:=starttimestamp::time >= ''0:00:00'' and starttimestamp::time < ''9:30:00''::time,
+         MARKET:=starttimestamp::time >= ''9:30:00'' and starttimestamp::time < ''16:00:00''::time,
+         CLOSE:= starttimestamp::time <= ''16:00:00'' and starttimestamp::time < ''16:30:00''::time,
+         AFTER:= starttimestamp::time <= ''16:30:00'' and starttimestamp::time < ''24:00:00''::time
+        ',
+        'first(startdate) as starttime, array_agg(id) as all_users, count(*) as num_matches'
+    )
+</pre>
+*/
+-------------------------------------------------------------------------
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
+    source_table        varchar,
+    output_table        varchar,
+    partition_expr      varchar,
+    order_expr          varchar,
+    pattern_regex       varchar,
+    symbol_expr         varchar,
+    result_fun          varchar
+) RETURNS void AS $$
+PythonFunction(utilities, path, path)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------
+-- To Implement: overloaded functions for default arguments ---------------
+
+
+-------------------------------------------------------------------------
+-- To Implement -----------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(message TEXT)
+RETURNS text AS $$
+PythonFunction(utilities, path, path_help_message)
+$$ language plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path()
+RETURNS text AS $$
+    SELECT MADLIB_SCHEMA.path('');
+$$ language SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
