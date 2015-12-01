@@ -1,3 +1,5 @@
+from __future__ import division
+
 import plpy
 
 from utilities.control import MinWarning
@@ -9,12 +11,15 @@ from utilities.utilities import add_postfix
 from utilities.utilities import _string_to_array_with_quotes
 from utilities.utilities import _string_to_array
 from utilities.utilities import _assert
+from utilities.utilities import num_features
 
 from utilities.validate_args import cols_in_tbl_valid
 from utilities.validate_args import input_tbl_valid
 from utilities.validate_args import output_tbl_valid
 from utilities.validate_args import is_var_valid
 from utilities.validate_args import get_expr_type
+
+from validation.internal.cross_validation import CrossValidator
 
 
 def _compute_svm(args):
@@ -23,6 +28,8 @@ def _compute_svm(args):
 
     @return Number of iterations that has been run
     """
+    init_stepsize = args['init_stepsize']
+    args['stepsize'] = init_stepsize
     iterationCtrl = GroupIterationController(args)
     with iterationCtrl as it:
         it.iteration = 0
@@ -45,18 +52,201 @@ def _compute_svm(args):
                 """)
             it.info()
             if it.kwargs['decay_factor'] > 0:
-                it.kwargs['stepsize'] = it.kwargs['stepsize'] * it.kwargs['decay_factor']
+                it.kwargs['stepsize'] *= it.kwargs['decay_factor']
             else:
-                it.kwargs['stepsize'] = it.kwargs['init_stepsize'] / (it.iteration + 1)
+                it.kwargs['stepsize'] = init_stepsize / (it.iteration + 1)
             has_converged = it.test(
-                    """
-                    {iteration} >= {max_iter}
-                    OR {schema_madlib}.internal_linear_svm_igd_distance(
-                        _state_previous, _state_current) < {tolerance}
-                    """)
+                """
+                {iteration} >= {max_iter}
+                OR {schema_madlib}.internal_linear_svm_igd_distance(
+                    _state_previous, _state_current) < {tolerance}
+                """)
         it.final()
     return iterationCtrl.iteration
 # ---------------------------------------------------
+
+
+def _verify_table(source_table, model_table, dependent_varname,
+                  independent_varname, **kwargs):
+    # validate input
+    input_tbl_valid(source_table, 'SVM')
+    _assert(is_var_valid(source_table, dependent_varname),
+            "SVM error: invalid dependent_varname "
+            "('{dependent_varname}') for source_table "
+            "({source_table})!".format(dependent_varname=dependent_varname,
+                                       source_table=source_table))
+    _assert(is_var_valid(source_table, independent_varname),
+            "SVM error: invalid independent_varname "
+            "('{independent_varname}') for source_table "
+            "({source_table})!".format(independent_varname=independent_varname,
+                                       source_table=source_table))
+
+    dep_type = get_expr_type(dependent_varname, source_table)
+    if '[]' in dep_type:
+        plpy.error("SVM error: dependent_varname cannot be of array type!")
+
+    # validate output tables
+    output_tbl_valid(model_table, 'SVM')
+    summary_table = add_postfix(model_table, "_summary")
+    output_tbl_valid(summary_table, 'SVM')
+
+
+def _verify_grouping(schema_madlib, source_table, grouping_col):
+    if grouping_col:
+        cols_in_tbl_valid(source_table,
+                          _string_to_array_with_quotes(grouping_col),
+                          'SVM')
+        intersect = frozenset(
+            _string_to_array(grouping_col)).intersection(
+                frozenset(
+                    ('coef', '__random_feature_data',
+                     '__random_feature_data', 'loss'
+                     'num_rows_processed', 'num_rows_skipped',
+                     'norm_of_gradient', 'num_iterations')))
+        _assert(len(intersect) == 0,
+                "SVM error: Conflicting grouping column name.\n"
+                "Some predefined keyword(s) ({0}) are not allowed "
+                "for grouping column names!".format(', '.join(intersect)))
+
+        grouping_list = [i + "::text"
+                         for i in explicit_bool_to_text(
+                             source_table,
+                             _string_to_array_with_quotes(grouping_col),
+                             schema_madlib)]
+        grouping_str = ','.join(grouping_list)
+    else:
+        grouping_str = "Null"
+    return grouping_str
+
+
+def _verify_kernel(kernel_func):
+    kernel_func = 'linear' if not kernel_func else kernel_func.lower()
+    # Add non-linear kernels below after implementing them.
+    supported_kernels = ['linear']
+    try:
+        # allow user to specify a prefix substring of
+        # supported kernel function names. This works because the supported
+        # kernel functions have unique prefixes.
+        kernel_func = next(x for x in supported_kernels
+                           if x.startswith(kernel_func))
+    except StopIteration:
+        # next() returns a StopIteration if no element found
+        plpy.error("SVM Error: Invalid kernel function: "
+                   "{0}. Supported kernel functions are ({1})"
+                   .format(kernel_func, ','.join(sorted(supported_kernels))))
+    return kernel_func
+
+
+def _verify_params_dict(params_dict):
+    _assert(not hasattr(params_dict['lambda'], '__len__'),
+            "SVM Error: lambda should not be a list after cross validation!")
+    _assert(not hasattr(params_dict['epsilon'], '__len__'),
+            "SVM Error: epsilon should not be a list after cross validation!")
+    _assert(not hasattr(params_dict['init_stepsize'], '__len__'),
+            "SVM Error: init_stepsize should not be a "
+            "list after cross validation!")
+    _assert(not hasattr(params_dict['decay_factor'], '__len__'),
+            "SVM Error: decay_factor should not be a "
+            "list after cross validation!")
+    _assert(not hasattr(params_dict['max_iter'], '__len__'),
+            "SVM Error: max_iter should not be a list after cross validation!")
+    return params_dict
+
+
+def _build_output_tables(n_iters_run, model_table, args):
+    grouping_col = args['grouping_col']
+    dependent_varname = args['col_dep_var']
+    independent_varname = args['col_ind_var']
+    source_table = args['rel_source']
+    col_grp_key = args['col_grp_key']
+    groupby_str, grouping_str1, using_str = "", "", "ON TRUE"
+    if grouping_col:
+        groupby_str = "GROUP BY {grouping_col}, {col_grp_key}".format(
+            grouping_col=grouping_col, col_grp_key=col_grp_key)
+        grouping_str1 = grouping_col + ","
+        using_str = "USING ({col_grp_key})".format(col_grp_key=col_grp_key)
+    # organizing results
+    dep_type = get_expr_type(dependent_varname, source_table)
+    model_table_query = """
+        CREATE TABLE {model_table} AS
+            SELECT
+                {grouping_str1}
+                (result).coefficients           AS coef,
+                (result).loss                   AS loss,
+                (result).norm_of_gradient       AS norm_of_gradient,
+                {n_iters_run}                   AS num_iterations,
+                (result).num_rows_processed     AS num_rows_processed,
+                n_tuples_including_nulls - (result).num_rows_processed
+                                                AS num_rows_skipped,
+                NULL                            AS __random_feature_data,
+                ARRAY[{mapping}]::{dep_type}[]  AS dep_var_mapping
+            FROM
+            (
+                SELECT
+                    {schema_madlib}.internal_linear_svm_igd_result(
+                        {col_grp_state}
+                    ) AS result,
+                    {col_grp_key}
+                FROM {rel_state}
+                WHERE {col_grp_iteration} = {n_iters_run}
+            ) rel_state_subq
+            JOIN
+            (
+                SELECT
+                    {grouping_str1}
+                    count(*) AS n_tuples_including_nulls,
+                    array_to_string(ARRAY[{grouping_str}],
+                                    ','
+                                   ) AS {col_grp_key}
+                FROM {source_table}
+                {groupby_str}
+            ) n_tuples_including_nulls_subq
+            {using_str}
+        """.format(n_iters_run=n_iters_run,
+                   groupby_str=groupby_str,
+                   grouping_str1=grouping_str1,
+                   using_str=using_str,
+                   source_table=source_table,
+                   model_table=model_table,
+                   dep_type=dep_type, **args)
+    plpy.execute(model_table_query)
+
+    args['lambda_str'] = str(args['lambda'])
+    summary_table = add_postfix(model_table, "_summary")
+    grouping_text = "NULL" if not grouping_col else grouping_col
+    plpy.execute("""
+            CREATE TABLE {summary_table} AS
+            SELECT
+                '{method}'::text                    AS method,
+                '__MADLIB_VERSION__'::text          AS version_number,
+                '{source_table}'::text              AS source_table,
+                '{model_table}'::text               AS model_table,
+                '{dependent_varname}'::text         AS dependent_varname,
+                '{independent_varname}'::text       AS independent_varname,
+                'linear'::text                      AS kernel_func,
+                NULL::text                          AS kernel_params,
+                '{grouping_text}'::text             AS grouping_col,
+                'init_stepsize={init_stepsize}, '   ||
+                    'decay_factor={decay_factor}, ' ||
+                    'max_iter={max_iter}, '         ||
+                    'tolerance={tolerance}'::text   AS optim_params,
+                'lambda={lambda_str}, ' ||
+                    'norm={norm}, '     ||
+                    'n_folds={n_folds}'::text       AS reg_params,
+                count(*)::integer                   AS num_all_groups,
+                0::integer                          AS num_failed_groups,
+                sum(num_rows_processed)::bigint     AS total_rows_processed,
+                sum(num_rows_skipped)::bigint       AS total_rows_skipped,
+                '{epsilon}'::double precision       AS epsilon,
+                '{eps_table}'::text                 AS eps_table
+            FROM {model_table};
+            """.format(grouping_text=grouping_text,
+                       summary_table=summary_table,
+                       source_table=source_table,
+                       model_table=model_table,
+                       dependent_varname=dependent_varname,
+                       independent_varname=independent_varname,
+                       **args))
 
 
 def svm(schema_madlib, source_table, model_table,
@@ -69,218 +259,122 @@ def svm(schema_madlib, source_table, model_table,
     # verbosing
     verbosity_level = "info" if verbose else "error"
     with MinWarning(verbosity_level):
-        # validate input
-        input_tbl_valid(source_table, 'SVM')
-        _assert(is_var_valid(source_table, dependent_varname),
-                "SVM error: invalid dependent_varname ('" + str(dependent_varname) +
-                "') for source_table (" + source_table + ")!")
-        _assert(is_var_valid(source_table, independent_varname),
-                "SVM error: invalid independent_varname ('" + str(independent_varname) +
-                "') for source_table (" + source_table + ")!")
+        _verify_table(source_table,
+                      model_table,
+                      dependent_varname,
+                      independent_varname)
+        args = locals()
+        args['params_dict'] = _extract_params(schema_madlib, params)
+        _cross_validate_svm(args)
+        _svm_parsed_params(**args)
 
-        dep_type = get_expr_type(dependent_varname, source_table)
-        if '[]' in dep_type:
-            plpy.error("SVM error: dependent_varname cannot be of array type!")
 
-        # validate output tables
-        output_tbl_valid(model_table, 'SVM')
-        summary_table = add_postfix(model_table, "_summary")
-        output_tbl_valid(summary_table, 'SVM')
+def _cross_validate_svm(args):
+    # updating params_dict will also update args['params_dict']
+    params_dict = args['params_dict']
 
-        # arguments for iterating
-        n_features = plpy.execute("SELECT array_upper({0}, 1) AS dim "
-                                  "FROM {1} LIMIT 1".
-                                  format(independent_varname, source_table)
-                                  )[0]['dim']
-        if grouping_col:
-            grouping_list = [i + "::text"
-                             for i in explicit_bool_to_text(
-                                source_table,
-                                _string_to_array_with_quotes(grouping_col),
-                                schema_madlib)]
-            grouping_str = ','.join(grouping_list)
-        else:
-            grouping_str = "Null"
-        grouping_str1 = "" if not grouping_col else grouping_col + ","
-        grouping_str2 = "1 = 1" if not grouping_col else grouping_col
+    if params_dict['n_folds'] > 1 and args['grouping_col']:
+        plpy.error('SVM Error: cross validation '
+                   'with grouping is not supported!')
 
-        args = {
-                'rel_args': unique_string(desp='rel_args'),
-                'rel_state': unique_string(desp='rel_state'),
-                'col_grp_iteration': unique_string(desp='col_grp_iteration'),
-                'col_grp_state': unique_string(desp='col_grp_state'),
-                'col_grp_key': unique_string(desp='col_grp_key'),
-                'col_n_tuples': unique_string(desp='col_n_tuples'),
-                'state_type': "double precision[]",
-                'rel_source': source_table,
-                'col_ind_var': independent_varname,
-                'col_dep_var': dependent_varname}
-        args.update(locals())
-        # variables defined above cannot be moved below this line
-        # -------------------------------------------------------
+    cv_params = {}
+    if len(params_dict['lambda']) > 1:
+        cv_params['lambda'] = params_dict['lambda']
+    else:
+        params_dict['lambda'] = params_dict['lambda'][0]
+    if len(params_dict['epsilon']) > 1 and not args['is_svc']:
+        cv_params['epsilon'] = params_dict['epsilon']
+    else:
+        params_dict['epsilon'] = params_dict['epsilon'][0]
+    if len(params_dict['init_stepsize']) > 1:
+        cv_params['init_stepsize'] = params_dict['init_stepsize']
+    else:
+        params_dict['init_stepsize'] = params_dict['init_stepsize'][0]
+    if len(params_dict['max_iter']) > 1:
+        cv_params['max_iter'] = params_dict['max_iter']
+    else:
+        params_dict['max_iter'] = params_dict['max_iter'][0]
+    if len(params_dict['decay_factor']) > 1:
+        cv_params['decay_factor'] = params_dict['decay_factor']
+    else:
+        params_dict['decay_factor'] = params_dict['decay_factor'][0]
 
-        # other params
-        kernel_func = 'linear' if not kernel_func else kernel_func.lower()
-        # Add non-linear kernels below after implementing them.
-        supported_kernels = ['linear']
-        try:
-            # allow user to specify a prefix substring of
-            # supported kernel function names. This works because the supported
-            # kernel functions have unique prefixes.
-            kernel_func = next(x for x in supported_kernels if x.startswith(kernel_func))
-        except StopIteration:
-            # next() returns a StopIteration if no element found
-            plpy.error("SVM Error: Invalid kernel function: {0}. "
-                       "Supported kernel functions are ({1})"
-                       .format(kernel_func, ','.join(sorted(supported_kernels))))
+    if not cv_params and params_dict['n_folds'] <= 1:
+        # no cross validation
+        return
 
-        if grouping_col:
-            cols_in_tbl_valid(source_table, _string_to_array_with_quotes(grouping_col), 'SVM')
-            intersect = frozenset(_string_to_array(grouping_col)).intersection(
-                                    frozenset(
-                                        ('coef', '__random_feature_data',
-                                         '__random_feature_data', 'loss'
-                                         'num_rows_processed', 'num_rows_skipped',
-                                         'norm_of_gradient', 'num_iterations')))
-            if len(intersect) > 0:
-                plpy.error("SVM error: Conflicting grouping column name.\n"
-                           "Some predefined keyword(s) ({0}) are not allowed!".format(
-                                ', '.join(intersect)))
+    if cv_params and params_dict['n_folds'] <= 1:
+        plpy.error("SVM Error: All parameters must be scalar "
+                   "or of length 1 when n_folds is 0 or 1")
 
-        args.update(_extract_params(schema_madlib, params))
-        args.update(_process_epsilon(is_svc, args))
+    if not cv_params and params_dict['n_folds'] > 1:
+        plpy.warning('SVM Warning: n_folds > 1 but no cross validate params provided'
+                     'Ignoring cross validation request.')
+        return
 
-        if not is_svc:
-            # transform col_dep_var to binary (1 or -1) if classification
-            args.update({
-                    'col_dep_var_trans': dependent_varname,
-                    'mapping': 'NULL',
-                    'method': 'SVR'})
-        else:
-            # dependent variable mapping
-            dep_labels=plpy.execute("""
-                SELECT {dependent_varname} AS y
-                FROM {source_table}
-                WHERE ({dependent_varname}) IS NOT NULL
-                GROUP BY ({dependent_varname})
-                ORDER BY ({dependent_varname})""".format(**locals()))
-            dep_var_mapping = ["'" + d['y'] + "'" if isinstance(d['y'], basestring)
-                               else str(d['y']) for d in dep_labels]
-            if len(dep_var_mapping) != 2:
-                plpy.error("SVM error: Classification currently only supports binary output")
-
-            col_dep_var_trans = (
-                """
-                CASE WHEN ({col_dep_var}) IS NULL THEN NULL
-                    WHEN ({col_dep_var}) = {mapped_value_for_negative} THEN -1.0
-                    ELSE 1.0
-                END
-                """
-                .format(col_dep_var=dependent_varname,
-                        mapped_value_for_negative=dep_var_mapping[0])
-                )
-
-            args.update({
-                 'mapped_value_for_negative': dep_var_mapping[0],
-                 'col_dep_var_trans': col_dep_var_trans,
-                 'mapping': dep_var_mapping[0] + "," + dep_var_mapping[1],
-                 'method': 'SVC'})
-
-        args['stepsize'] = args['init_stepsize']
-        args['is_l2'] = True if args['norm'] == 'l2' else False
-
-        # place holder for compatibility
-        plpy.execute("CREATE TABLE pg_temp.{0} AS SELECT 1".format(args['rel_args']))
-        # actual iterative algorithm computation
-        n_iters_run = _compute_svm(args)
-
-        # organizing results
-        groupby_str = "GROUP BY {grouping_col}, {col_grp_key}".format(**args) if grouping_col else ""
-        using_str = "USING ({col_grp_key})".format(**args) if grouping_col else "ON TRUE"
-        model_table_query = """
-            CREATE TABLE {model_table} AS
-                SELECT
-                    {grouping_str1}
-                    (result).coefficients           AS coef,
-                    (result).loss                   AS loss,
-                    (result).norm_of_gradient       AS norm_of_gradient,
-                    {n_iters_run}                   AS num_iterations,
-                    (result).num_rows_processed     AS num_rows_processed,
-                    n_tuples_including_nulls - (result).num_rows_processed
-                                                    AS num_rows_skipped,
-                    NULL                            AS __random_feature_data,
-                    ARRAY[{mapping}]::{dep_type}[]  AS dep_var_mapping
-                FROM
-                (
-                    SELECT
-                        {schema_madlib}.internal_linear_svm_igd_result(
-                            {col_grp_state}
-                        ) AS result,
-                        {col_grp_key}
-                    FROM {rel_state}
-                    WHERE {col_grp_iteration} = {n_iters_run}
-                ) rel_state_subq
-                JOIN
-                (
-                    SELECT
-                        {grouping_str1}
-                        count(*) AS n_tuples_including_nulls,
-                        array_to_string(ARRAY[{grouping_str}],
-                                        ','
-                                       ) AS {col_grp_key}
-                    FROM {source_table}
-                    {groupby_str}
-                ) n_tuples_including_nulls_subq
-                {using_str}
-            """.format(n_iters_run=n_iters_run,
-                       groupby_str=groupby_str,
-                       using_str=using_str, **args)
-        plpy.execute(model_table_query)
-
-        if isinstance(args['lambda'], list):
-            args['lambda_str'] = '{' + ','.join(str(e) for e in args['lambda']) + '}'
-        else:
-            args['lambda_str'] = str(args['lambda'])
-
-        plpy.execute("""
-                CREATE TABLE {summary_table} AS
-                SELECT
-                    '{method}'::text                    AS method,
-                    '__MADLIB_VERSION__'::text          AS version_number,
-                    '{source_table}'::text              AS source_table,
-                    '{model_table}'::text               AS model_table,
-                    '{dependent_varname}'::text         AS dependent_varname,
-                    '{independent_varname}'::text       AS independent_varname,
-                    'linear'::text                      AS kernel_func,
-                    NULL::text                          AS kernel_params,
-                    '{grouping_text}'::text             AS grouping_col,
-                    'init_stepsize={init_stepsize}, '   ||
-                        'decay_factor={decay_factor}, ' ||
-                        'max_iter={max_iter}, '         ||
-                        'tolerance={tolerance}'::text   AS optim_params,
-                    'lambda={lambda_str}, ' ||
-                        'norm={norm}, '     ||
-                        'n_folds={n_folds}'::text       AS reg_params,
-                    count(*)::integer                   AS num_all_groups,
-                    0::integer                          AS num_failed_groups,
-                    sum(num_rows_processed)::bigint     AS total_rows_processed,
-                    sum(num_rows_skipped)::bigint       AS total_rows_skipped,
-                    '{epsilon}'::double precision       AS epsilon,
-                    '{eps_table}'::text                 AS eps_table
-                FROM {model_table};
-                """.format(grouping_text="NULL" if not grouping_col else grouping_col,
-                           **args))
+    scorer = 'classification' if args['is_svc'] else 'regression'
+    sub_args = {'params_dict': cv_params}
+    cv = CrossValidator(_svm_parsed_params, svm_predict, scorer, args)
+    val_res = cv.validate(sub_args, params_dict['n_folds']).sorted()
+    val_res.output_tbl(params_dict['validation_result'])
+    params_dict.update(val_res.first('sub_args')['params_dict'])
 # ------------------------------------------------------------------------------
+
+
+def _svm_parsed_params(schema_madlib, source_table, model_table,
+                       dependent_varname, independent_varname, kernel_func,
+                       kernel_params, grouping_col, params_dict, is_svc,
+                       verbose, **kwargs):
+    """
+    Executes the linear support vector algorithm.
+    """
+    grouping_str = _verify_grouping(schema_madlib, source_table, grouping_col)
+
+    kernel_func = _verify_kernel(kernel_func)
+
+    # arguments for iterating
+    n_features = num_features(source_table, independent_varname)
+
+    args = {
+        'rel_args': unique_string(desp='rel_args'),
+        'rel_state': unique_string(desp='rel_state'),
+        'col_grp_iteration': unique_string(desp='col_grp_iteration'),
+        'col_grp_state': unique_string(desp='col_grp_state'),
+        'col_grp_key': unique_string(desp='col_grp_key'),
+        'col_n_tuples': unique_string(desp='col_n_tuples'),
+        'state_type': "double precision[]",
+        'n_features': n_features,
+        'verbose': verbose,
+        'is_svc': is_svc,
+        'schema_madlib': schema_madlib,
+        'grouping_str': grouping_str,
+        'grouping_col': grouping_col,
+        'rel_source': source_table,
+        'col_ind_var': independent_varname,
+        'col_dep_var': dependent_varname}
+
+    args.update(_verify_params_dict(params_dict))
+    args.update(_process_epsilon(is_svc, args))
+    args.update(_svc_or_svr(is_svc, source_table, dependent_varname))
+
+    # place holder for compatibility
+    plpy.execute("CREATE TABLE pg_temp.{0} AS SELECT 1"
+                 .format(args['rel_args']))
+    # actual iterative algorithm computation
+    n_iters_run = _compute_svm(args)
+    _build_output_tables(n_iters_run, model_table, args)
 
 
 def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
                 output_table, **kwargs):
-    """
-    Scores the data points stored in a table using a learned support vector model.
+    """ Scores the data points stored in a table using a
+        learned support vector model.
 
     @param model_table Name of learned model
-    @param new_data_table Name of table/view containing the data points to be scored
-    @param id_col_name Name of column in source_table containing (integer) identifier for data point
+    @param new_data_table Name of table/view containing the data
+        points to be scored
+    @param id_col_name Name of column in source_table containing
+        (integer) identifier for data point
     @param output_table Name of table to store the results
     """
     # suppress warnings
@@ -292,8 +386,9 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
         summary_table = add_postfix(model_table, "_summary")
         input_tbl_valid(summary_table, 'SVM')
         cols_in_tbl_valid(summary_table,
-                          ['dependent_varname', 'independent_varname', 'kernel_func',
-                           'kernel_params', 'grouping_col'], 'SVM')
+                          ['dependent_varname', 'independent_varname',
+                           'kernel_func', 'kernel_params', 'grouping_col'],
+                          'SVM')
 
         # read necessary info from summary
         summary = plpy.execute("""
@@ -315,21 +410,22 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
 
         input_tbl_valid(new_data_table, 'SVM')
         _assert(is_var_valid(new_data_table, dependent_varname),
-                "SVM error: dependent_varname ('" + dependent_varname +
+                "SVM Error: dependent_varname ('" + dependent_varname +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
         _assert(is_var_valid(new_data_table, independent_varname),
-                "SVM error: independent_varname ('" + independent_varname +
+                "SVM Error: independent_varname ('" + independent_varname +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
-        _assert(id_col_name is not None, "SVM error: id_col_name is NULL!")
+        _assert(id_col_name is not None, "SVM Error: id_col_name is NULL!")
         _assert(is_var_valid(new_data_table, id_col_name),
-                "SVM error: id_col_name ('" + id_col_name +
+                "SVM Error: id_col_name ('" + id_col_name +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
         output_tbl_valid(output_table, 'SVM')
         if method.upper() == 'SVC':
             pred_query = """
                         CASE WHEN {schema_madlib}.array_dot(
-                                coef::double precision [],
-                                {independent_varname}::double precision []) >= 0
+                                    coef::double precision [],
+                                    {independent_varname}::double precision []
+                                ) >= 0
                             THEN dep_var_mapping[2]
                             ELSE dep_var_mapping[1]
                         END
@@ -343,31 +439,27 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
                         """.format(schema_madlib=schema_madlib,
                                    independent_varname=independent_varname)
         else:
-            plpy.error("SVM error: Invalid 'method' value in summary table. "
+            plpy.error("SVM Error: Invalid 'method' value in summary table. "
                        "'method' can only be SVC or SVR!")
 
         if grouping_col != "NULL":
             sql = """
             CREATE TABLE {output_table} AS
             SELECT
-                {id_col_name} AS id,
+                {id_col_name} AS {id_col_name},
                 {pred_query} AS prediction,
                 {model_table}.{grouping_col} as grouping_col
-            FROM
-                {model_table}
-                    JOIN
-                {new_data_table}
-                    ON {model_table}.{grouping_col} = {new_data_table}.{grouping_col}
-            WHERE
-                not {schema_madlib}.array_contains_null({independent_varname})
-            ORDER BY
-                grouping_col, id
+            FROM {model_table}
+            JOIN {new_data_table}
+            ON {model_table}.{grouping_col} = {new_data_table}.{grouping_col}
+            WHERE not {schema_madlib}.array_contains_null({independent_varname})
+            ORDER BY grouping_col, {id_col_name}
             """.format(**locals())
         else:
-            sql="""
+            sql = """
             CREATE TABLE {output_table} AS
             SELECT
-                {id_col_name} AS id,
+                {id_col_name} AS {id_col_name},
                 {pred_query} as prediction
             FROM
                 {model_table},
@@ -378,58 +470,115 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
         plpy.execute(sql)
 
 
+def _svc_or_svr(is_svc, source_table, dependent_varname):
+    # transform col_dep_var to binary (1`or -1) if classification
+    _args = {'col_dep_var_trans': dependent_varname,
+             'mapping': 'NULL',
+             'method': 'SVR'}
+
+    if is_svc:
+        # dependent variable mapping
+        dep_labels = plpy.execute("""
+            SELECT {dependent_varname} AS y
+            FROM {source_table}
+            WHERE ({dependent_varname}) IS NOT NULL
+            GROUP BY ({dependent_varname})
+            ORDER BY ({dependent_varname})
+            """.format(source_table=source_table,
+                       dependent_varname=dependent_varname))
+
+        dep_var_mapping = ["'{0}'".format(d['y'])
+                           if isinstance(d['y'], basestring)
+                           else str(d['y']) for d in dep_labels]
+
+        _assert(len(dep_var_mapping) == 2,
+                "SVM Error: Classification currently "
+                "only supports binary output!")
+
+        col_dep_var_trans = (
+            """
+            CASE WHEN ({col_dep_var}) IS NULL THEN NULL
+                WHEN ({col_dep_var}) = {mapped_value_for_negative} THEN -1.0
+                ELSE 1.0
+            END
+            """
+            .format(col_dep_var=dependent_varname,
+                    mapped_value_for_negative=dep_var_mapping[0])
+            )
+
+        _args.update({
+            'mapped_value_for_negative': dep_var_mapping[0],
+            'col_dep_var_trans': col_dep_var_trans,
+            'mapping': dep_var_mapping[0] + "," + dep_var_mapping[1],
+            'method': 'SVC'})
+
+    return _args
+
+
 def _process_epsilon(is_svc, args):
     eps_table = args['eps_table']
     grouping_col = args['grouping_col']
     grouping_str = args['grouping_str']
     col_grp_key = args['col_grp_key']
     rel_source = args['rel_source']
+    epsilon = args['epsilon']
     rel_epsilon = ''
-    select_epsilon = ''
+    select_epsilon = '{0}'.format(epsilon)
     as_rel_source = '_src'
 
-    epsilon = args['epsilon']
-    if is_svc or not grouping_col or not eps_table:
-        if eps_table:
-            plpy.warning('SVM: ignoring the input epsilon table!')
-        select_epsilon = str(epsilon)
-    else:
+    if not is_svc and grouping_col and eps_table:
         rel_epsilon = unique_string(desp='rel_epsilon')
         input_tbl_valid(eps_table, 'SVM')
         _assert(is_var_valid(eps_table, grouping_col),
-                "SVM error: invalid column names ('" + str(grouping_col) +
-                "') for eps_table (" + eps_table + ")!")
+                "SVM Error: invalid column names ('{grouping_col}') "
+                "for eps_table ('{eps_table}')!"
+                .format(grouping_col=grouping_col,
+                        eps_table=eps_table))
         plpy.execute("""
             DROP TABLE IF EXISTS {rel_epsilon};
             CREATE TEMPORARY TABLE {rel_epsilon} AS (
                     SELECT
                         {col_grp_key},
                         coalesce(epsilon, {epsilon}) AS epsilon
-                    FROM
-                    (
-                        SELECT array_to_string(ARRAY[{grouping_str}], ',') AS
+                    FROM (
+                        SELECT
+                            array_to_string(ARRAY[{grouping_str}], ',') AS
                                 {col_grp_key}
-                        FROM {rel_source}
+                        FROM
+                            {rel_source}
                         GROUP BY {grouping_col}
                     ) q1
                     LEFT JOIN
                     (
-                        SELECT array_to_string(ARRAY[{grouping_str}], ',') AS
+                        SELECT
+                            array_to_string(ARRAY[{grouping_str}], ',') AS
                                 {col_grp_key},
                                epsilon
                         FROM {eps_table}
                     ) q2
                     USING ({col_grp_key})
             );
-            """.format(**locals()))
+            """.format(rel_epsilon=rel_epsilon,
+                       col_grp_key=col_grp_key,
+                       epsilon=epsilon,
+                       grouping_str=grouping_str,
+                       rel_source=rel_source,
+                       grouping_col=grouping_col,
+                       eps_table=eps_table))
 
-        select_epsilon = """SELECT epsilon
-                            FROM
-                                {rel_epsilon}
-                            WHERE
-                                {rel_epsilon}.{col_grp_key} = {as_rel_source}.{col_grp_key}
-            """.format(rel_epsilon=rel_epsilon, as_rel_source=as_rel_source,
-                       col_grp_key=col_grp_key)
+        select_epsilon = (
+            """
+            (
+                SELECT epsilon
+                FROM
+                    {rel_epsilon}
+                WHERE
+                    {rel_epsilon}.{col_grp_key} = {as_rel_source}.{col_grp_key}
+            )
+            """
+            .format(rel_epsilon=rel_epsilon,
+                    as_rel_source=as_rel_source,
+                    col_grp_key=col_grp_key))
 
     return {'select_epsilon': select_epsilon,
             'epsilon': epsilon,
@@ -440,55 +589,63 @@ def _process_epsilon(is_svc, args):
 def _extract_params(schema_madlib, params, module='SVM'):
     # NOTICE: the type of values in params_default should be consistent with
     # the types specified in params_types
-    params_default = {'init_stepsize': 0.01,
-                      'decay_factor': 0.9,
-                      'max_iter': 100,
-                      'tolerance': 1e-10,
-                      'lambda': 1.0,
-                      'norm': 'L2',
-                      'n_folds': 0,
-                      'epsilon': 0.01,
-                      'eps_table': ''}
+    params_default = {
+        'init_stepsize': [0.01],
+        'decay_factor': [0.9],
+        'max_iter': [100],
+        'tolerance': 1e-10,
+        'lambda': [0.01],
+        'norm': 'L2',
+        'n_folds': 0,
+        'validation_result': '',
+        'epsilon': [0.01],
+        'eps_table': ''}
 
-    params_types = {'init_stepsize': float,
-                    'decay_factor': float,
-                    'max_iter': int,
-                    'tolerance': float,
-                    'lambda': list,
-                    'norm': str,
-                    'n_folds': int,
-                    'epsilon': float,
-                    'eps_table': str}
+    params_types = {
+        'init_stepsize': list,
+        'decay_factor': list,
+        'max_iter': list,
+        'tolerance': float,
+        'lambda': list,
+        'norm': str,
+        'n_folds': int,
+        'validation_result': str,
+        'epsilon': list,
+        'eps_table': str}
 
     params_vals = extract_keyvalue_params(params,
                                           params_types,
                                           params_default)
-
     if params_vals['n_folds'] < 0:
-        plpy.error("SVM error: n_folds must be non-negative")
-    # FIXME
-    _assert(params_vals['n_folds'] <= 1,
-            "SVM error: cross-validation has not been implemented")
+        plpy.error("{0} Error: n_folds must be non-negative!".format(module))
 
     # validate lambda
-    if hasattr(params_vals['lambda'], '__len__'):
-        # this check should be removed after cross validation is added
-        if len(params_vals['lambda']) != 1:
-            plpy.error("{0} error: lambda must be a scalar or of length 1 when n_folds is 0 or 1".format(module))
-        params_vals['lambda'] = params_vals['lambda'][0]
-    _assert(params_vals['lambda'] >= 0,
-            "SVM error: lambda must be non-negative!")
+    params_vals['lambda'] = map(float, params_vals['lambda'])
+    _assert(all(lmd >= 0 for lmd in params_vals['lambda']),
+            "{0} Error: lambda must be non-negative!".format(module))
+    # validate epsilon
+    params_vals['epsilon'] = map(float, params_vals['epsilon'])
+    _assert(all(e >= 0 for e in params_vals['epsilon']),
+            "{0} Error: epsilon must be non-negative!".format(module))
+    # validating cross validation is delegated to _cross_validate_svm()
+    params_vals['init_stepsize'] = map(float, params_vals['init_stepsize'])
+    _assert(all(e > 0 for e in params_vals['init_stepsize']),
+            "{0} Error: init_stepsize must be positive!".format(module))
+    params_vals['max_iter'] = map(int, params_vals['max_iter'])
+    _assert(all(e > 0 for e in params_vals['max_iter']),
+            "{0} Error: max_iter must be positive!".format(module))
+    params_vals['decay_factor'] = map(float, params_vals['decay_factor'])
+    _assert(all(e <= 1 for e in params_vals['decay_factor']),
+            "{0} Error: decay_factor must be <= 1!".format(module))
+
+    if params_vals['validation_result']:
+        output_tbl_valid(params_vals['validation_result'], 'SVM')
+
     params_vals['norm'] = params_vals['norm'].lower()
     _assert(params_vals['norm'] == 'l1' or params_vals['norm'] == 'l2',
-            "SVM error: norm must be either L1 or L2")
-    _assert(params_vals['init_stepsize'] > 0,
-            "SVM error: init_stepsize must be positive")
-    _assert(params_vals['decay_factor'] <= 1,
-            "SVM error: decay_factor must be <= 1")
-    _assert(params_vals['max_iter'] > 0,
-            "SVM error: max_iter must be positive")
+            "{0} Error: norm must be either L1 or L2!".format(module))
     _assert(params_vals['tolerance'] >= 0,
-            "SVM error: tolerance must be non-negative")
-    _assert(params_vals['epsilon'] >= 0,
-            "SVM error: epsilon cannot be less than 0")
+            "{0} error: tolerance must be non-negative!".format(module))
+
+    params_vals['is_l2'] = True if params_vals['norm'] == 'l2' else False
     return params_vals
