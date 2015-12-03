@@ -2305,27 +2305,31 @@ def matrix_norm(schema_madlib, matrix_in, in_args, norm_type):
     _validate_input_table(matrix_in)
     in_args = parse_matrix_args(in_args)
     norm_type = 'fro' if not norm_type else str(norm_type).lower()
-    if 'frobenius'.startswith(norm_type):
-        # frobenius norm is same as element-wise 2-norm
-        norm_type = '2'
+
+    # norm_type can be a prefix of any of the below supported types
+    supported_norm_types = ['one', 'spectral', 'infinity', 'max', 'frobenius']
     try:
-        param = float(norm_type)
-        _assert(param > 0,
-                "Matrix error: Element-wise norm ({0}) should be a positive value."
-                .format(param))
-        return _matrix_elem_norm(schema_madlib, matrix_in, in_args, param)
-    except ValueError:
-        # if norm_type is not float then we interpret it as a string
-        # norm_type can be a prefix of any of the below supported types
-        supported_norm_types = ['one', 'spectral', 'infinity', 'max']
-        try:
-            norm_type_val = next(x for x in supported_norm_types
-                                 if x.startswith(norm_type))
+        norm_type_val = next(x for x in supported_norm_types
+                             if x.startswith(norm_type))
+        if norm_type_val == "frobenius":
+            # frobenius norm is same as element-wise 2-norm
+            return _matrix_elem_norm(schema_madlib, matrix_in, in_args, 2)
+        else:
             return _matrix_induced_norm(schema_madlib, matrix_in, in_args, norm_type_val)
-        except StopIteration:
-            # next() returns a StopIteration if no element found
-            plpy.error("Matrix Error: Invalid norm type: {0}. Supported norm types are ({1})"
-                       .format(norm_type, ','.join(sorted(supported_norm_types))))
+    except StopIteration:
+        # next() returns a StopIteration if no element found
+        # If norm_type is not a supported string then it has be a positive float
+        try:
+            param = float(norm_type)
+            _assert(param > 0,
+                    "Matrix error: Element-wise norm ({0}) should be a positive value."
+                    .format(param))
+            return _matrix_elem_norm(schema_madlib, matrix_in, in_args, param)
+        except ValueError:
+            plpy.error("Matrix Error: Invalid norm type: {0}. "
+                       "It can either be a positive float or (subset string) of "
+                       "one of the supported norm types ({1})"
+                       .format(norm_type, ', '.join(sorted(supported_norm_types))))
 # ------------------------------------------------------------------------------
 
 
@@ -2360,8 +2364,8 @@ def matrix_transform_helper(schema_madlib, matrix_in, in_args, matrix_out,
     matrix_r = "pg_temp." + unique_string() if is_output_sparse else matrix_out
     plpy.execute("""
         CREATE TABLE {matrix_r} AS
-        SELECT row_id,
-               {schema_madlib}.get_row(res, row_id) as row_vec
+        SELECT row_id as {out_args[row]},
+               {schema_madlib}.get_row(res, row_id) as {out_args[val]}
         FROM (
               SELECT {agg_str} as res
               FROM {matrix_in}
@@ -2407,7 +2411,7 @@ def matrix_inverse(schema_madlib, matrix_in, in_args, matrix_out, out_args):
 # ------------------------------------------------------------------------------
 
 
-def matrix_eigen(schema_madlib, matrix_in, in_args, matrix_out):
+def matrix_eigen(schema_madlib, matrix_in, in_args, matrix_out, out_args):
     """ Compute the eigen values of a matrix.
 
     The eigenvalues are repeated according to their algebraic multiplicity, so
@@ -2423,7 +2427,11 @@ def matrix_eigen(schema_madlib, matrix_in, in_args, matrix_out):
             "Matrix error: Invalid dimensions for input matrix")
     _assert(dim[0] == dim[1],
             "Matrix error: Eigen value is only defined for square matrices")
-    # FIXME: currently matrix inverse is computed on a single node after collating
+    out_args = parse_matrix_args(out_args,
+                                 in_default_args={'row': in_args['row'],
+                                                  'col': in_args['col'],
+                                                  'val': 'eigen_values'})
+    # FIXME: currently matrix eigen is computed on a single node after collating
     # a distributed matrix. This places a limit on the maximum size of the matrix
     # GPDB limit = 1GB implying size * size < 10^9 / 8 i.e. size <= 11100
     max_size = 11100
@@ -2454,8 +2462,8 @@ def matrix_eigen(schema_madlib, matrix_in, in_args, matrix_out):
                                  in_args=in_args)
     plpy.execute("""
         CREATE TABLE {matrix_out} AS
-        SELECT row_id,
-               row(value[1], value[2])::{schema_madlib}.complex as eigen
+        SELECT row_id as {out_args[row]},
+               row(value[1], value[2])::{schema_madlib}.complex as {out_args[val]}
         FROM (
             SELECT row_id,
                    {schema_madlib}.get_row(res, row_id) as value
@@ -2532,7 +2540,6 @@ def matrix_cholesky(schema_madlib, matrix_in, in_args,
                 """.format(schema_madlib=schema_madlib, n_rows=dim[0],
                            in_args=in_args)
     matrix_temp = "pg_temp." + unique_string()
-    temp_args = {'row': 'row_id', 'val': 'row_vec'}
     plpy.execute("""
         CREATE TABLE {matrix_temp} AS
         SELECT row_id,
@@ -2546,31 +2553,34 @@ def matrix_cholesky(schema_madlib, matrix_in, in_args,
     matrix_p_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_p
     plpy.execute("""
         CREATE TABLE {matrix_p_temp} AS
-        SELECT row_id, row_vec[1:{dim[0]}] AS row_vec
+        SELECT row_id AS {out_args[row]},
+               row_vec[1:{dim[0]}] AS {out_args[val]}
         FROM {matrix_temp}
         """.format(**locals()))
     if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_p_temp, temp_args, matrix_p, out_args)
+        matrix_sparsify(schema_madlib, matrix_p_temp, out_args, matrix_p, out_args)
         plpy.execute('DROP TABLE IF EXISTS %s' % matrix_p_temp)
 
     matrix_l_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_l
     plpy.execute("""
         CREATE TABLE {matrix_l_temp} AS
-        SELECT row_id AS row_id, row_vec[{dim[0]} + 1 : {dim[0]} * 2] AS row_vec
+        SELECT row_id AS {out_args[row]},
+               row_vec[{dim[0]} + 1 : {dim[0]} * 2] AS {out_args[val]}
         FROM {matrix_temp}
         """.format(**locals()))
     if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_l_temp, temp_args, matrix_l, out_args)
+        matrix_sparsify(schema_madlib, matrix_l_temp, out_args, matrix_l, out_args)
         plpy.execute('DROP TABLE IF EXISTS %s' % matrix_l_temp)
 
     matrix_d_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_d
     plpy.execute("""
         CREATE TABLE {matrix_d_temp} AS
-        SELECT row_id AS row_id, row_vec[{dim[0]} * 2 + 1: {dim[0]} * 3] AS row_vec
+        SELECT row_id AS {out_args[row]},
+               row_vec[{dim[0]} * 2 + 1: {dim[0]} * 3] AS {out_args[val]}
         FROM {matrix_temp}
         """.format(**locals()))
     if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_d_temp, temp_args, matrix_d, out_args)
+        matrix_sparsify(schema_madlib, matrix_d_temp, out_args, matrix_d, out_args)
         plpy.execute('DROP TABLE IF EXISTS %s' % matrix_d_temp)
     plpy.execute('DROP TABLE IF EXISTS %s' % matrix_temp)
 # ------------------------------------------------------------------------------
@@ -2633,7 +2643,6 @@ def matrix_qr(schema_madlib, matrix_in, in_args, matrix_out_prefix, out_args):
                 """.format(schema_madlib=schema_madlib, n_rows=dim[0],
                            in_args=in_args)
     matrix_temp = "pg_temp." + unique_string()
-    temp_args = {'row': 'row_id', 'val': 'row_vec'}
     plpy.execute("""
         CREATE TABLE {matrix_temp} AS
         SELECT row_id,
@@ -2647,21 +2656,23 @@ def matrix_qr(schema_madlib, matrix_in, in_args, matrix_out_prefix, out_args):
     matrix_q_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_q
     plpy.execute("""
         CREATE TABLE {matrix_q_temp} AS
-        SELECT row_id, row_vec[1:{dim[0]}] AS row_vec
+        SELECT row_id as {out_args[row]},
+               row_vec[1:{dim[0]}] AS {out_args[val]}
         FROM {matrix_temp}
         """.format(**locals()))
     if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_q_temp, temp_args, matrix_q, out_args)
+        matrix_sparsify(schema_madlib, matrix_q_temp, out_args, matrix_q, out_args)
         plpy.execute('DROP TABLE IF EXISTS %s' % matrix_q_temp)
 
     matrix_r_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_r
     plpy.execute("""
         CREATE TABLE {matrix_r_temp} AS
-        SELECT row_id AS row_id, row_vec[{dim[0]} + 1 : {dim[0]} + {dim[1]}] AS row_vec
+        SELECT row_id as {out_args[row]},
+               row_vec[{dim[0]} + 1 : {dim[0]} + {dim[1]}] AS {out_args[val]}
         FROM {matrix_temp}
         """.format(**locals()))
     if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_r_temp, temp_args, matrix_r, out_args)
+        matrix_sparsify(schema_madlib, matrix_r_temp, out_args, matrix_r, out_args)
         plpy.execute('DROP TABLE IF EXISTS %s' % matrix_r_temp)
     plpy.execute('DROP TABLE IF EXISTS %s' % matrix_temp)
 # ------------------------------------------------------------------------------
@@ -2744,8 +2755,8 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
     _validate_input_table(matrix_in)
     _assert(matrix_out_prefix is not None and matrix_out_prefix.replace('"', '').strip() != '',
             "Matrix error: Invalid output prefix ({0})".format(matrix_out_prefix))
-    matrix_p, matrix_l, matrix_u, matrix_q = (
-        add_postfix(matrix_out_prefix, i) for i in ("_p", "_l", "_u", "_q"))
+    matrix_p, matrix_l, matrix_u, matrix_q = (add_postfix(matrix_out_prefix, i)
+                                              for i in ("_p", "_l", "_u", "_q"))
     for each_output in (matrix_p, matrix_l, matrix_u, matrix_q):
         _validate_output_table(each_output)
 
@@ -2802,7 +2813,8 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
     matrix_p_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_p
     plpy.execute("""
         CREATE TABLE {matrix_p_temp} AS
-        SELECT row_id, row_vec[1:{dim[0]}] AS row_vec
+        SELECT row_id AS {out_args[row]},
+               row_vec[1:{dim[0]}] AS {out_args[val]}
         FROM {matrix_temp} WHERE row_id <= {dim[0]}
         """.format(**locals()))
     if is_output_sparse:
@@ -2812,7 +2824,8 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
     matrix_l_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_l
     plpy.execute("""
         CREATE TABLE {matrix_l_temp} AS
-        SELECT row_id, row_vec[{dim[0]} + 1 : 2 * {dim[0]}] AS row_vec
+        SELECT row_id AS {out_args[row]},
+               row_vec[{dim[0]} + 1 : 2 * {dim[0]}] AS {out_args[val]}
         FROM {matrix_temp} WHERE row_id <= {dim[0]}
         """.format(**locals()))
     if is_output_sparse:
@@ -2822,7 +2835,8 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
     matrix_u_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_u
     plpy.execute("""
         CREATE TABLE {matrix_u_temp} AS
-        SELECT row_id, row_vec[2 * {dim[0]} + 1 : 2 * {dim[0]} + {dim[1]}] AS row_vec
+        SELECT row_id AS {out_args[row]},
+               row_vec[2 * {dim[0]} + 1 : 2 * {dim[0]} + {dim[1]}] AS {out_args[val]}
         FROM {matrix_temp} WHERE row_id <= {dim[0]}
         """.format(**locals()))
     if is_output_sparse:
@@ -2832,7 +2846,8 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
     matrix_q_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_q
     plpy.execute("""
         CREATE TABLE {matrix_q_temp} AS
-        SELECT row_id, row_vec[2 * {dim[0]} + {dim[1]} + 1:2 * {dim[0]} + 2 * {dim[1]}] AS row_vec
+        SELECT row_id AS {out_args[row]},
+               row_vec[2 * {dim[0]} + {dim[1]} + 1:2 * {dim[0]} + 2 * {dim[1]}] AS {out_args[val]}
         FROM {matrix_temp} WHERE row_id <= {dim[1]}
         """.format(**locals()))
     if is_output_sparse:
@@ -3022,10 +3037,8 @@ def _matrix_create_scalar(schema_madlib, row_dim, col_dim, matrix_out, out_args,
     _assert(scalar is not None,
             "Matrix error: Invalid none value for elements.")
 
-    out_args = parse_matrix_args(out_args,
-                                 in_default_args={'row': 'row',
-                                                  'col': 'col',
-                                                  'val': 'val'})
+    out_args = parse_matrix_args(
+        out_args, in_default_args={'row': 'row', 'col': 'col', 'val': 'val'})
 
     if 'fmt' not in out_args or out_args['fmt'] == 'sparse':
         if scalar != 0:
