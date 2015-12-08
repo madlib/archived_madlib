@@ -2755,9 +2755,10 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
     _validate_input_table(matrix_in)
     _assert(matrix_out_prefix is not None and matrix_out_prefix.replace('"', '').strip() != '',
             "Matrix error: Invalid output prefix ({0})".format(matrix_out_prefix))
-    matrix_p, matrix_l, matrix_u, matrix_q = (add_postfix(matrix_out_prefix, i)
-                                              for i in ("_p", "_l", "_u", "_q"))
-    for each_output in (matrix_p, matrix_l, matrix_u, matrix_q):
+
+    matrix_output_names = dict([(i, add_postfix(matrix_out_prefix, "_" + i))
+                                for i in ("p", "l", "u", "q")])
+    for each_output in matrix_output_names.values():
         _validate_output_table(each_output)
 
     in_args = parse_matrix_args(in_args)
@@ -2798,7 +2799,9 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
                             in_args=in_args)
     is_output_sparse = out_fmt and out_fmt == 'sparse'
     matrix_temp = "pg_temp." + unique_string()
-    row_count = dim[0] if dim[0] > dim[1] else dim[1]
+
+    row_count = max(dim)
+    # number of rows in result is determined by the max(dim)
     plpy.execute("""
         CREATE TABLE {matrix_temp} AS
         SELECT row_id,
@@ -2808,51 +2811,40 @@ def matrix_lu(schema_madlib, matrix_in, in_args,
               FROM {matrix_in}
         ) q, generate_series(1, {row_count}) as row_id
         """.format(**locals()))
-    temp_args = {'row': 'row_id', 'val': 'row_vec'}
 
-    matrix_p_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_p
+    matrix_temp_names = dict([
+            (k, 'pg_temp.' + unique_string() if is_output_sparse else v)
+            for k, v in matrix_output_names.items()])
     plpy.execute("""
-        CREATE TABLE {matrix_p_temp} AS
+        CREATE TABLE {matrix_temp_names[p]} AS
         SELECT row_id AS {out_args[row]},
                row_vec[1:{dim[0]}] AS {out_args[val]}
         FROM {matrix_temp} WHERE row_id <= {dim[0]}
         """.format(**locals()))
-    if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_p_temp, temp_args, matrix_p, out_args)
-        plpy.execute('DROP TABLE IF EXISTS %s' % matrix_p_temp)
-
-    matrix_l_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_l
     plpy.execute("""
-        CREATE TABLE {matrix_l_temp} AS
-        SELECT row_id AS {out_args[row]},
-               row_vec[{dim[0]} + 1 : 2 * {dim[0]}] AS {out_args[val]}
-        FROM {matrix_temp} WHERE row_id <= {dim[0]}
-        """.format(**locals()))
-    if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_l_temp, temp_args, matrix_l, out_args)
-        plpy.execute('DROP TABLE IF EXISTS %s' % matrix_l_temp)
-
-    matrix_u_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_u
-    plpy.execute("""
-        CREATE TABLE {matrix_u_temp} AS
-        SELECT row_id AS {out_args[row]},
-               row_vec[2 * {dim[0]} + 1 : 2 * {dim[0]} + {dim[1]}] AS {out_args[val]}
-        FROM {matrix_temp} WHERE row_id <= {dim[0]}
-        """.format(**locals()))
-    if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_u_temp, temp_args, matrix_u, out_args)
-        plpy.execute('DROP TABLE IF EXISTS %s' % matrix_u_temp)
-
-    matrix_q_temp = "pg_temp." + unique_string() if is_output_sparse else matrix_q
-    plpy.execute("""
-        CREATE TABLE {matrix_q_temp} AS
+        CREATE TABLE {matrix_temp_names[q]} AS
         SELECT row_id AS {out_args[row]},
                row_vec[2 * {dim[0]} + {dim[1]} + 1:2 * {dim[0]} + 2 * {dim[1]}] AS {out_args[val]}
         FROM {matrix_temp} WHERE row_id <= {dim[1]}
         """.format(**locals()))
+    plpy.execute("""
+        CREATE TABLE {matrix_temp_names[l]} AS
+        SELECT row_id AS {out_args[row]},
+               row_vec[{dim[0]} + 1 : 2 * {dim[0]}] AS {out_args[val]}
+        FROM {matrix_temp} WHERE row_id <= {dim[0]}
+        """.format(**locals()))
+    plpy.execute("""
+        CREATE TABLE {matrix_temp_names[u]} AS
+        SELECT row_id AS {out_args[row]},
+               row_vec[2 * {dim[0]} + 1 : 2 * {dim[0]} + {dim[1]}] AS {out_args[val]}
+        FROM {matrix_temp} WHERE row_id <= {dim[0]}
+        """.format(**locals()))
+
     if is_output_sparse:
-        matrix_sparsify(schema_madlib, matrix_q_temp, temp_args, matrix_q, out_args)
-        plpy.execute('DROP TABLE IF EXISTS %s' % matrix_q_temp)
+        for temp, output in zip(matrix_temp_names.values(),
+                                matrix_output_names.values()):
+            matrix_sparsify(schema_madlib, temp, out_args, output, out_args)
+            plpy.execute('DROP TABLE IF EXISTS %s' % temp)
 
     plpy.execute('DROP TABLE IF EXISTS %s' % matrix_temp)
 # ------------------------------------------------------------------------------
