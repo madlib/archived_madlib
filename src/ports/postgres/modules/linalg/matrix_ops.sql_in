@@ -2361,6 +2361,45 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 -------------------------------------------------------------------------
 
 /**
+ * @brief Initializes matrix with random distribution. It requires that all the values are NON-NULL.
+ * @param distribution Name of the distribution to use (normal or uniform)
+ * @param row_dim Name of the column containing the row index for the one matrix
+ * @param col_dim Name of the column containing the column index for the one matrix
+ * @param matrix_out Name of the table where to output the result matrix
+ * @returns Name of the table containing the result matrix
+ *
+ */
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_random
+(
+    distribution  TEXT,
+    row_dim       INTEGER,
+    col_dim       INTEGER,
+    in_args       TEXT,
+    matrix_out    TEXT,
+    out_args      TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    PythonFunctionBodyOnly(`linalg', `matrix_ops')
+    matrix_ops.matrix_random(schema_madlib, distribution,
+        row_dim, col_dim, in_args, matrix_out, out_args)
+    return [matrix_out]
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.matrix_random
+(
+    row_id     INTEGER,
+    col_id     INTEGER,
+    matrix_out TEXT
+)
+RETURNS MADLIB_SCHEMA.matrix_result AS $$
+    SELECT MADLIB_SCHEMA.matrix_random('uniform', $1, $2, ''::TEXT, $3, ''::TEXT)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/**
  * @brief Initializes matrix with ones. It requires that all the values are NON-NULL.
  * @param row_dim Name of the column containing the row index for the one matrix
  * @param col_dim Name of the column containing the column index for the one matrix
@@ -2896,6 +2935,87 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 -------------------------------------------------------------------------
 
 /* Internal functions */
+
+/*
+ *  @brief In-memory multiplication of a vector with a matrix
+ *  @param vec  a 1 x r vector
+ *  @param mat  a r x n matrix
+ *  @return vec * mat
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__matrix_vec_mult_in_mem(
+    vector  FLOAT8[],
+    matrix  FLOAT8[][]
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_vec_mult_in_mem_2d'
+LANGUAGE C STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+/*
+ *  @brief In-memory broadcast multiplication of a vector with a vector
+ *  @param vec1  a vector with r elements
+ *  @param vec2  a vector with multiples (n) of r elements
+ *  @note first cast vec2 to r x n matrix mat in column-major, then return trans(mat) * vec1
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__matrix_vec_mult_in_mem(
+    vector  FLOAT8[],
+    matrix  FLOAT8[]
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'matrix_vec_mult_in_mem_1d'
+LANGUAGE C STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__uniform_vector
+(
+    dim INTEGER,
+    a FLOAT8,
+    b FLOAT8,
+    seed INTEGER
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'uniform_vector'
+LANGUAGE C STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__uniform_vector
+(
+    dim INTEGER,
+    a FLOAT8,
+    b FLOAT8
+)
+RETURNS FLOAT8[] AS $$
+    SELECT MADLIB_SCHEMA.__uniform_vector($1, $2, $3, 42::INTEGER)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__normal_vector
+(
+    dim INTEGER,
+    mu FLOAT8,
+    sigma FLOAT8,
+    seed INTEGER
+)
+RETURNS FLOAT8[]
+AS 'MODULE_PATHNAME', 'normal_vector'
+LANGUAGE C STRICT
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.__normal_vector
+(
+    dim INTEGER,
+    mu FLOAT8,
+    sigma FLOAT8
+)
+RETURNS FLOAT8[] AS $$
+    SELECT MADLIB_SCHEMA.__normal_vector($1, $2, $3, 42::INTEGER)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
 
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.__rand_vector

@@ -555,7 +555,7 @@ INSERT INTO abalone_eps(sex, epsilon) VALUES
 -- solve it with grouping and table of epsilon as inputs
 
 DROP TABLE IF EXISTS svr_mdl, svr_mdl_summary;
-SELECT madlib.svm_regression(
+SELECT svm_regression(
         'abalone_train_small',
         'svr_mdl',
         'rings',
@@ -567,7 +567,7 @@ SELECT * FROM svr_mdl;
 
 
 DROP TABLE IF EXISTS svr_mdl_i, svr_mdl_i_summary;
-SELECT madlib.svm_regression(
+SELECT svm_regression(
         'abalone_train_small',
         'svr_mdl_i',
         'rings',
@@ -578,7 +578,7 @@ SELECT madlib.svm_regression(
 SELECT * FROM svr_mdl_i where sex = 'I';
 
 DROP TABLE IF EXISTS svr_mdl_m, svr_mdl_m_summary;
-SELECT madlib.svm_regression(
+SELECT svm_regression(
         'abalone_train_small',
         'svr_mdl_m',
         'rings',
@@ -589,7 +589,7 @@ SELECT madlib.svm_regression(
 SELECT * FROM svr_mdl_m where sex = 'M';
 
 DROP TABLE IF EXISTS svr_mdl_f, svr_mdl_f_summary;
-SELECT madlib.svm_regression(
+SELECT svm_regression(
         'abalone_train_small',
         'svr_mdl_f',
         'rings',
@@ -704,7 +704,128 @@ SELECT
 FROM svm_test_predict NATURAL JOIN svm_test_data
 WHERE prediction <> label;
 
+-- verify guassian kernel mapping dimensions
+DROP TABLE IF EXISTS m1, m1_summary, m1_random;
+SELECT svm_classification(
+     'svm_train_data',
+     'm1',
+     'label',
+     'ind',
+     'gaussian',
+     'n_components=3',
+     NULL,
+     'max_iter=2');
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT
+    assert(
+        array_upper(coef, 1) = 3,
+        'The dimension of the coefficients must be equal to n_components (3)!')
+FROM m1;
+
+-- verify gaussian kernel with grouping
+-- verify partial string support in kernel specification
+DROP TABLE IF EXISTS svr_mdl_m, svr_mdl_m_summary, svr_mdl_m_random;
+SELECT svm_regression(
+        'abalone_train_small',
+        'svr_mdl_m',
+        'rings',
+        'ARRAY[1,diameter,shell,shucked,length]',
+        'gau',
+        'n_components=10',
+        'sex',
+        'max_iter=2, init_stepsize=1, decay_factor=0.9, tolerance=1e-16, epsilon = 0.05',
+        false);
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+SELECT svm_predict('svr_mdl_m','abalone_train_small', 'id', 'svm_test_predict');
+SELECT
+    assert(
+        array_upper(coef, 1) = 10,
+        'The dimension of the coefficients must be equal to n_components (10)!')
+FROM svr_mdl_m;
+
+-- verify guassian kernel with cross validation
+DROP TABLE IF EXISTS m1, m1_summary, m1_random CASCADE;
+SELECT svm_classification(
+     'svm_train_data',
+     'm1',
+     'label',
+     'ind',
+     'gaussian',
+     'n_components=3',
+     NULL,
+     'max_iter=2, n_folds=3, lambda=[0.01, 0.1, 0.5]');
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT
+    assert(
+        array_upper(coef, 1) = 3,
+        'The dimension of the coefficients must be equal to n_components (3)!')
+FROM m1;
+
+-- verify guassian kernel with out-of-memory support
+DROP TABLE IF EXISTS m1, m1_summary, m1_random CASCADE;
+SELECT svm_classification(
+     'svm_train_data',
+     'm1',
+     'label',
+     'ind',
+     'gaussian',
+     'n_components=3, in_memory=0',
+     NULL,
+     'max_iter=2, n_folds=3, lambda=[0.01, 0.1, 0.5]');
+DROP TABLE IF EXISTS svm_test_predict CASCADE;
+SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT
+    assert(
+        array_upper(coef, 1) = 3,
+        'The dimension of the coefficients must be equal to n_components (3)!')
+FROM m1;
+
+DROP TABLE IF EXISTS kernel_data;
+CREATE TABLE kernel_data (
+    index bigint,
+    x1 double precision,
+    x2 double precision,
+    y double precision
+);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (0, 0.400000000000000022, -0.699999999999999956, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (1, -1.5, -1, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (2, -1.39999999999999991, -0.900000000000000022, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (3, -1.30000000000000004, -1.19999999999999996, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (4, -1.10000000000000009, -0.200000000000000011, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (5, -1.19999999999999996, -0.400000000000000022, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (6, -0.5, 1.19999999999999996, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (7, -1.5, 2.10000000000000009, 0);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (8, 1, 1, 1);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (9, 1.30000000000000004, 0.800000000000000044, 1);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (10, 1.19999999999999996, 0.5, 1);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (11, 0.200000000000000011, -2, 1);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (12, 0.5, -2.39999999999999991, 1);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (13, 0.200000000000000011, -2.29999999999999982, 1);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (14, 0, -2.70000000000000018, 1);
+INSERT INTO kernel_data (index, x1, x2, y) VALUES (15, 1.30000000000000004, 2.10000000000000009, 1);
 
 
-
+DROP TABLE IF EXISTS m1, m1_summary, m1_random;
+SELECT svm_classification(
+     'kernel_data',
+     'm1',
+     'y',
+     'array[x1, x2]',
+     'gaussian',
+     'gamma=1, n_components=20, random_state=2',
+     NULL,
+     'init_stepsize=1, max_iter=10');
+SELECT * FROM m1;
+DROP TABLE IF EXISTS kernel_predict CASCADE;
+SELECT svm_predict('m1','kernel_data', 'index', 'kernel_predict');
+SELECT
+    count(*) as misclassification
+FROM kernel_predict NATURAL JOIN kernel_data
+WHERE prediction <> y;
+SELECT
+    assert(count(*) = 0, 'Using kernel should perfectly fit the data!')
+FROM kernel_predict NATURAL JOIN kernel_data
+WHERE prediction <> y;
 

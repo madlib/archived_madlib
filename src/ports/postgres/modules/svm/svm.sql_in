@@ -16,6 +16,29 @@ m4_include(`SQLCommon.m4')
 /**
 @addtogroup grp_svm
 
+<div class="toc"><b>Contents</b><ul>
+<li class="level1"><a href="#svm_classification">Classification Function</a></li>
+<li class="level1"><a href="#svm_regression">Regression Function</a></li>
+<li class="level1"><a href="#kernel_params">Kernel Parameters</a></li>
+<li class="level1"><a href="#parameters">Other Parameters</a></li>
+<li class="level1"><a href="#predict">Prediction Functions</a></li>
+<li class="level1"><a href="#example">Examples</a></li>
+<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul></div>
+
+Support Vector Machines (SVMs) are models for regression and classification
+tasks. SVM models have two particularly desirable features: robustness in the
+presence of noisy data and applicability to a variety of data configurations. At
+its core, a <em>linear</em> SVM model is a hyperplane separating the two
+distinct classes of data (in the case of classification problems), in such a way
+that the distance between the hyperplane and the nearest training data point
+(called the <em>margin</em>) is maximized. Vectors that lie on this margin are
+called support vectors. With the support vectors fixed, perturbations of vectors
+beyond the margin will not affect the model; this contributes to the models
+robutstness.  Subsituting a kernel function for the usual inner product, one can
+approximate a large variety of decision boundaries beyond linear hyperplanes.
 @brief Solves classification and regression problems by separating the data with
 a hyperplane or other nonlinear decision boundaries.
 
@@ -31,8 +54,7 @@ svm_classification(
     kernel_func,
     kernel_params,
     grouping_col,
-    optim_params,
-    reg_params,
+    params,
     verbose
     )
 </pre>
@@ -68,14 +90,10 @@ svm_classification(
     </DD>
 
   <DT>kernel_params (optional)</DT>
-  <DD>TEXT, defaults: NULL for kernel='linear';
-                      'gamma=\f$\frac{1}{num\_features}\f$' for kernel='gaussian',
-                      'q=0,d=3' for kernel='polynomial'.
+  <DD>TEXT, defaults: NULL
    <br>Parameters for non-linear kernel in a comma-separated string of key-value pairs.
-   <br>For kernel='gaussian', one parameter, 'gamma', is expected.
-   <br>For kernel='polynomial', two parameters are expected:
-        a coefficient \f$q\f$ and degree \f$d\f$, as in \f$ (\langle x,y\rangle + q)^d \f$.
-    </DD>
+   The parameters differ depending on the value of \e kernel_func. See the description below for details.
+  </DD>
 
   <DT>grouping_col (optional)</DT>
   <DD>TEXT, default: NULL. An expression list used to group
@@ -83,24 +101,10 @@ svm_classification(
     Similar to the SQL "GROUP BY" clause. When this value is NULL, no
     grouping is used and a single model is generated.</DD>
 
-  <DT>optim_params (optional)</DT>
-  <DD>TEXT, default: 'init_stepsize=0.01, decay_factor=0.9, max_iter=100, tolerance=0.001'. <br>
-    Optimization paramters including stepsize, decay factor of stepsize, max
-    number of iterations, and error tolerance. If the number of iterations of
-    IGD reaches the maximum, the algorithm will halt. Alternatively, if the
-    current value of the objective function has a relative difference from the
-    previous iteration of less than the tolerance, the algorithm will halt.</DD>
-
-  <DT>reg_params (optional)</DT>
-  <DD>TEXT, default: 'lambda=0.01, norm=L2, n_folds=0'. <br>
-    Regularization parameters. Parameter 'norm' corresponds
-    which norm will be used for regularization; user can select either 'L1' or 'L2'.
-    If the user specifies n_folds > 1, then cross-validation will be performed to
-    select lambda from a list.
-
-    For example, if one wanted to regularize with the L1 norm and use a lambda
-    value from the set {0.3, 0.4, 0.5}, one would input
-    'lambda={0.3, 0.4, 0.5}, norm=L1, n_folds=10' as reg_params.</DD>
+  <DT>params (optional)</DT>
+  <DD>TEXT, default: NULL.
+    <br> Parameters for optimization and regularization in a comma-separated string of key-value pairs. If a list of values are provided, then cross-validation will be performed to select the \e best value from the list.
+    See the description below for details. </DD>
 
   <DT>verbose (optional)</DT>
   <DD>BOOLEAN default: FALSE.
@@ -135,19 +139,12 @@ svm_classification(
       </tr>
       <tr>
         <th>__dep_var_mapping</th>
-        <td>TEXT[]. Vector of dependendent variable labels. The first entry will
+        <td>TEXT[]. Vector of dependent variable labels. The first entry will
         correspond to -1 and the second to +1, for internal use.</td>
-      </tr>
-      <tr>
-        <th>__random_feature_data</th>
-        <td>BYTEA8. Data needed to embed test data into random feature space
-        (see references [2,3]). This data is used internally by svm_predict and
-        not meaningful on its own. NULL if the kernel is linear.</td>
       </tr>
     </table>
 
-    A summary table named \<model_table\>_summary is also created at the same time,
-    which has the following columns:
+    An auxiliary table named \<model_table\>_random is created if the kernel is not linear. It contains data needed to embed test data into random feature space (see reference [2,3]). This data is used internally by svm_predict and not meaningful on its own. And a summary table named \<model_table\>_summary is also created at the same time, which has the following columns:
     <table class="output">
     <tr>
         <th>method</th>
@@ -195,11 +192,11 @@ svm_classification(
     </tr>
     <tr>
         <th>num_all_groups</th>
-        <td>Number of groups in glm training.</td>
+        <td>Number of groups in svm training.</td>
     </tr>
     <tr>
         <th>num_failed_groups</th>
-        <td>Number of failed groups in glm training.</td>
+        <td>Number of failed groups in svm training.</td>
     </tr>
     <tr>
       <th>total_rows_processed</th>
@@ -224,9 +221,7 @@ svm_regression(source_table,
     kernel_func,
     kernel_params,
     grouping_col,
-    optim_params,
-    reg_params,
-    epsilon,
+    params,
     verbose
     )
 </pre>
@@ -244,16 +239,138 @@ arguments have specifications which differ from svm_classification:
   Otherwise, an error will be thrown.
   </DD>
 
-<DT>epsilon (optional)</DT>
-<DD>DOUBLE PRECISION, default: 'epsilon=0.1'.
-    Determines the \f$\epsilon\f$ for \f$\epsilon\f$-regression. When training
-    the model, differences of less than \f$\epsilon\f$ between estimated labels
-    and actual labels are ignored. A larger \f$\epsilon\f$ will yield a model
-    with fewer support vectors, but will not generalize as well to future data.
-    Generally, it has been suggested that epsilon should increase with noisier
-    data, and decrease with the number of samples. See [5].   </DD>
+<DT>params (optional)</DT>
+<DD>TEXT, default: NULL.
+The parameters \e epsilon and \e eps_table are only meaningful for regression. See descriptions below for more details.
+</DD>
+</DL>
 
 
+@anchor kernel_params
+@par Kernel Parameters
+Kernel parameters are supplied in a string containing a comma-delimited
+list of name-value pairs. All of these named parameters are optional, and
+their order does not matter. You must use the format "<param_name> = <value>"
+to specify the value of a parameter, otherwise the parameter is ignored.
+
+When the \ref svm_classification() \e kernel_func argument value is \b 'gaussian', the \e kernel_params argument is a string containing name-value pairs with the following format. (Line breaks are inserted for readability.)
+<pre class="syntax">
+  'gamma = &lt;value>,
+   n_components = &lt;value>,
+   random_state = &lt;value>'
+</pre>
+\b Parameters
+<DL class="arglist">
+<DT>gamma</dt>
+<DD>Default: 1/num_features. The parameter \f$\gamma\f$ in the Radius Basis Function kernel, i.e., \f$\exp(-\gamma||x-y||^2)\f$. Choosing a proper value for \e gamma is critical to the performance of kernel machine, e.g., while a large \e gamma tends to cause overfitting, a small \e gamma will make the model too constrained to capture the complexity of the data.
+.</DD>
+
+<DT>n_components</DT>
+<DD>Default: 2*num_features. The dimensionality of the transformed feature space. A larger value lowers the variance of the estimate of kernel but requires more memory and takes longer to train.</DD>
+
+<DT>random_state</DT>
+<DD>Default: 1. Seed used by the random number generator. </DD>
+</DL>
+
+When the \ref svm_classification() \e kernel_func argument value is \b 'poly', the \e kernel_params argument is a string containing name-value pairs with the following format. (Line breaks are inserted for readability.)
+<pre class="syntax">
+  'coef0 = &lt;value>,
+   degree = &lt;value>,
+   n_components = &lt;value>,
+   random_state = &lt;value>'
+</pre>
+\b Parameters
+<DL class="arglist">
+<DT>coef0</dt>
+<DD>Default: 1.0. The independent term \f$q\f$ in \f$ (\langle x,y\rangle + q)^r \f$. Must be larger or equal to 0. When it is 0, the polynomial kernel is in homogeneous form.
+</DD>
+
+<DT>degree</dt>
+<DD>Default: 3. The parameter \f$r\f$ in \f$ (\langle x,y\rangle + q)^r \f$.
+</DD>
+
+<DT>n_components</DT>
+<DD>Default: 2*num_features. The dimensionality of the transformed feature space. A larger value lowers the variance of the estimate of kernel but requires more memory and takes longer to train.</DD>
+
+<DT>random_state</DT>
+<DD>Default: 1. Seed used by the random number generator. </DD>
+</DL>
+
+
+@anchor parameters
+@par Other Parameters
+Parameters in this sections are supplied in \e params argument as a string containing a comma-delimited
+list of name-value pairs. Hyperparameter optimization can be carried out through the built-in cross validation mechanism, which is activated by assigning a value greater than 1 to the parameter \e n_folds in \e params.
+All of these named parameters are optional, and their order does not matter.
+You must use the format "<param_name> = <value>" to specify the value of a parameter, otherwise the parameter is ignored.
+The validating values of the parameter are provided in a list, i.e., "lambda = [0.01, 0.1, 1]".
+For example, if one wanted to regularize with the L1 norm and use a lambda value from the set {0.3, 0.4, 0.5}, one would input 'lambda={0.3, 0.4, 0.5}, norm=L1, n_folds=10' in \e params. Note that the use of '{}' and '[]' are both valid here.
+
+Not all parameters below can be cross-validated. And for those who do, their default values, as described below, are specified in a list, i.e., [0.01].
+<pre class="syntax">
+  'init_stepsize = &lt;value>,
+   decay_factor = &lt;value>,
+   max_iter = &lt;value>,
+   tolerance = &lt;value>,
+   lambda = &lt;value>,
+   norm = &lt;value>,
+   epsilon = &lt;value>,
+   eps_table = &lt;value>,
+   validation_result = &lt;value>,
+   n_folds = &lt;value>'
+</pre>
+\b Parameters
+<DL class="arglist">
+
+<DT>init_stepsize</dt>
+<DD>Default: [0.01]. Also known as the inital learning rate. A small value is usually desirable to ensure convergence, while a large value provides more room for progress during training. Since the best value depends on the condition number of the data, in practice one can search in a exponential grid using the built-in cross validation, i.e., "init_stepsize = [1, 0.1, 0.001]". This can be done on a subsampled dataset which usually provides a good estimate of the condition number of the whole dataset.
+</DD>
+
+<DT>decay_factor</DT>
+<DD>Default: [0.9]. Control the learning rate schedule: 0 means constant rate; -1 means inverse scaling, i.e., stepsize = init_stepsize / iteration; > 0 means exponential decay, i.e., stepsize = init_stepsize * decay_factor^iteration.
+</DD>
+
+<DT>max_iter</dt>
+<DD>Default: [100]. The maximum number of iterations allowed.
+</DD>
+
+<DT>tolerance</dt>
+<DD>Default: 1e-10. The criteria to end iterations. The training stops whenever the difference between the training models of two consecutive iterations is smaller than \e tolerance or the iteration number is larger than \e max_iter.
+</DD>
+
+<DT>lambda</dt>
+<DD>Default: [0.01]. Regularization parameter, positive.
+</DD>
+
+<DT>norm</dt>
+<DD>Default: 'L2'. Name of the regularization, either 'L2' or 'L1'.
+</DD>
+
+<DT>epsilon</dt>
+<DD>Default: [0.01].
+Determines the \f$\epsilon\f$ for \f$\epsilon\f$-regression. Ignored during classification.
+When training the model, differences of less than \f$\epsilon\f$ between estimated labels
+and actual labels are ignored. A larger \f$\epsilon\f$ will yield a model
+with fewer support vectors, but will not generalize as well to future data.
+Generally, it has been suggested that epsilon should increase with noisier
+data, and decrease with the number of samples. See [5].
+</DD>
+
+<DT>eps_tabl</dt>
+<DD>Default: NULL.
+Name of the table that contains values of epsilon for different groups. Ignored when \e grouping_col is NULL.
+The table consists of the column named epsilon which specifies the epsilon values, as well as those columns used in \e grouping_col. Extra groups are ignored, and groups not present in this table will use the epsilon value specified in parameter \e epsilon.
+</DD>
+
+<DT>validation_result</dt>
+<DD>Default: NULL.
+Name of the table to store the cross validation results including the values of parameters and their averaged error values. For now simple metric like 0-1 loss is used for classification and mean square error is used for regression. The table is only created if the name is not NULL.
+</DD>
+
+<DT>n_folds</dt>
+<DD>Default: 0.
+Number of folds. Must be at least 2 to activate cross validation. If a value of k > 2 is specified, each fold is then used as a validation set once while the k - 1 remaining fold form the training set.
+</DD>
 </DL>
 
 
@@ -289,20 +406,101 @@ id_col_name column giving the 'id' for each prediction and the prediction
 columns for the dependent variable.</DD>
 </DL>
 
+@anchor example
+@par Examples
+-#  Create an input data set.
+<pre class="example">
+CREATE TABLE houses (id INT, tax INT, bedroom INT, bath FLOAT, price INT,
+            size INT, lot INT);
+COPY houses FROM STDIN WITH DELIMITER '|';
+  1 |  590 |       2 |    1 |  50000 |  770 | 22100
+  2 | 1050 |       3 |    2 |  85000 | 1410 | 12000
+  3 |   20 |       3 |    1 |  22500 | 1060 |  3500
+  4 |  870 |       2 |    2 |  90000 | 1300 | 17500
+  5 | 1320 |       3 |    2 | 133000 | 1500 | 30000
+  6 | 1350 |       2 |    1 |  90500 |  820 | 25700
+  7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000
+  8 |  680 |       2 |    1 | 142500 | 1170 | 22000
+  9 | 1840 |       3 |    2 | 160000 | 1500 | 19000
+ 10 | 3680 |       4 |    2 | 240000 | 2790 | 20000
+ 11 | 1660 |       3 |    1 |  87000 | 1030 | 17500
+ 12 | 1620 |       3 |    2 | 118600 | 1250 | 20000
+ 13 | 3100 |       3 |    2 | 140000 | 1760 | 38000
+ 14 | 2070 |       2 |    3 | 148000 | 1550 | 14000
+ 15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000
+\\.
+</pre>
+-#  Train a classification model. First, a linear model.
+<pre class="example">
+SELECT madlib.svm_classification('houses',
+                                 'houses_svm',
+                                 'price < 100000',
+                                 'ARRAY[1, tax, bath, size]'
+                           );
+</pre>
+-# Generate a nonlinear model using gaussian kernel. This time we specify the intital step size and maximum number of iteration to run. As part of the kernel parameter, we choose 10 as the dimension of the space where we train svm. A larger number will lead to a more powerful model but run the risk of overfitting. As a result, the model will be a 10 dimensional vector, instead of 4 as in the case of linear model, which we will verify when we examine the models.
+<pre class="example">
+SELECT madlib.linregr_train( 'houses',
+                             'houses_svm_gaussian',
+                             'price < 100000',
+                             'ARRAY[1, tax, bath, size]',
+                             'gaussian',
+                             'n_components=10',
+                             '',
+                             'init_stepsize=1, max_iter=200'
+                           );
+</pre>
+-# Examine the resulting models.
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x ON
+SELECT * FROM houses_svm;
+</pre>
+Result:
+<pre class="result">
+-[ RECORD 1 ]+---------------------------------------------------------------------------
+coef               | [0.113989576847, -0.00226133300602, -0.0676303607996, 0.00179440841072]
+loss               | 9.21745071385
+norm_of_gradient   | 108.171180769
+num_iterations     | 100
+num_rows_processed | 15
+num_rows_skipped   | 0
+dep_var_mapping    | [False, True]
+</pre>
+
+-# View the results from kernel svm.
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x ON
+SELECT * FROM houses_svm_gaussian;
+</pre>
+Result:
+<pre class="result">
+-[ RECORD 1 ]+---------------------------------------------------------------------------
+coef               | [-2.00789985255, 2.02625531256, -1.09903715824, 2.04431020735, 3.14208435644, 0.14838741816, 2.07527256499, 3.0816372960, 0.853428649407, 3.63747384926]
+loss               | 0.255909866744
+norm_of_gradient   | 0.0715415776655
+num_iterations     | 184
+num_rows_processed | 15
+num_rows_skipped   | 0
+dep_var_mapping    | [False, True]
+</pre>
+
+-# Use the prediction function to evaluate the models. The predicted results are in the \e prediction column and the actual data is in the \e target column.
+For the linear model:
+<pre class="example">
+SELECT madlib.svm_predict('houses_svm', 'houses', 'id', 'houses_pred');
+SELECT *, price < 100000 AS target FROM houses JOIN houses_pred USING (id)
+</pre>
+and for the gaussian model:
+<pre class="example">
+SELECT madlib.svm_predict('houses_svm_gaussian', 'houses', 'id', 'houses_pred_gaussian');
+SELECT *, price < 100000 AS target FROM houses JOIN houses_pred_gaussian USING (id)
+</pre>
+
+
 @anchor background
 @par Technical Background
-
-Support Vector Machines (SVMs) are models for regression and classification
-tasks. SVM models have two particularly desirable features: robustness in the
-presence of noisy data and applicability to a variety of data configurations. At
-its core, a <em>linear</em> SVM model is a hyperplane separating the two
-distinct classes of data (in the case of classification problems), in such a way
-that the distance between the hyperplane and the nearest training data point
-(called the <em>margin</em>) is maximized. Vectors that lie on this margin are
-called support vectors. With the support vectors fixed, perturbations of vectors
-beyond the margin will not affect the model; this contributes to the models
-robutstness.  Subsituting a kernel function for the usual inner product, one can
-approximate a large variety of decision boundaries beyond linear hyperplanes.
 
 To solve linear SVM, the following objective function is minimized:
 \f[
@@ -649,4 +847,35 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
 
 -- Online Help -----------------------------------------------------------
 
+/**
+ * @brief Help function
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification (
+    message  TEXT
+) RETURNS TEXT AS $$
+    global is_svc
+    is_svc = True
+    PythonFunction(svm, svm, svm_help)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification ()
+RETURNS TEXT AS $$
+  SELECT MADLIB_SCHEMA.svm_classification(NULL::TEXT)
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_regression (
+    message  TEXT
+) RETURNS TEXT AS $$
+    global is_svc
+    is_svc = False
+    PythonFunction(svm, svm, svm_help)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_regression ()
+RETURNS TEXT AS $$
+  SELECT MADLIB_SCHEMA.svm_regression(NULL::TEXT)
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');

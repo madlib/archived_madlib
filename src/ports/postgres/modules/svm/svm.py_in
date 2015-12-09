@@ -20,6 +20,7 @@ from utilities.validate_args import is_var_valid
 from utilities.validate_args import get_expr_type
 
 from validation.internal.cross_validation import CrossValidator
+from .kernel_approximation import createKernel, loadKernel
 
 
 def _compute_svm(args):
@@ -99,8 +100,8 @@ def _verify_grouping(schema_madlib, source_table, grouping_col):
         intersect = frozenset(
             _string_to_array(grouping_col)).intersection(
                 frozenset(
-                    ('coef', '__random_feature_data',
-                     '__random_feature_data', 'loss'
+                    ('coef', 'random_feature_data',
+                     'random_feature_data', 'loss'
                      'num_rows_processed', 'num_rows_skipped',
                      'norm_of_gradient', 'num_iterations')))
         _assert(len(intersect) == 0,
@@ -121,24 +122,6 @@ def _verify_grouping(schema_madlib, source_table, grouping_col):
     return grouping_str, grouping_col
 
 
-def _verify_kernel(kernel_func):
-    kernel_func = 'linear' if not kernel_func else kernel_func.lower()
-    # Add non-linear kernels below after implementing them.
-    supported_kernels = ['linear']
-    try:
-        # allow user to specify a prefix substring of
-        # supported kernel function names. This works because the supported
-        # kernel functions have unique prefixes.
-        kernel_func = next(x for x in supported_kernels
-                           if x.startswith(kernel_func))
-    except StopIteration:
-        # next() returns a StopIteration if no element found
-        plpy.error("SVM Error: Invalid kernel function: "
-                   "{0}. Supported kernel functions are ({1})"
-                   .format(kernel_func, ','.join(sorted(supported_kernels))))
-    return kernel_func
-
-
 def _verify_params_dict(params_dict):
     _assert(not hasattr(params_dict['lambda'], '__len__'),
             "SVM Error: lambda should not be a list after cross validation!")
@@ -155,11 +138,24 @@ def _verify_params_dict(params_dict):
     return params_dict
 
 
-def _build_output_tables(n_iters_run, model_table, args):
+def _build_output_tables(n_iters_run, model_table, args, transformer,**kwargs):
+    if transformer is None:
+        dependent_varname = args['col_dep_var']
+        independent_varname = args['col_ind_var']
+        source_table = args['rel_source']
+        kernel_func = "linear"
+        kernel_params = "NULL"
+    else:
+        original_table = transformer.original_table
+        dependent_varname = original_table['dependent_varname']
+        independent_varname = original_table['independent_varname']
+        source_table = original_table['source_table']
+        random_table = add_postfix(model_table, "_random")
+        transformer.saveAs(random_table)
+        kernel_func = transformer.kernel_func
+        kernel_params = transformer.kernel_params
+
     grouping_col = args['grouping_col']
-    dependent_varname = args['col_dep_var']
-    independent_varname = args['col_ind_var']
-    source_table = args['rel_source']
     col_grp_key = args['col_grp_key']
     groupby_str, grouping_str1, using_str = "", "", "ON TRUE"
     if grouping_col:
@@ -180,7 +176,6 @@ def _build_output_tables(n_iters_run, model_table, args):
                 (result).num_rows_processed     AS num_rows_processed,
                 n_tuples_including_nulls - (result).num_rows_processed
                                                 AS num_rows_skipped,
-                NULL                            AS __random_feature_data,
                 ARRAY[{mapping}]::{dep_type}[]  AS dep_var_mapping
             FROM
             (
@@ -225,8 +220,8 @@ def _build_output_tables(n_iters_run, model_table, args):
                 '{model_table}'::text               AS model_table,
                 '{dependent_varname}'::text         AS dependent_varname,
                 '{independent_varname}'::text       AS independent_varname,
-                'linear'::text                      AS kernel_func,
-                NULL::text                          AS kernel_params,
+                '{kernel_func}'::text               AS kernel_func,
+                '{kernel_params}'::text             AS kernel_params,
                 '{grouping_text}'::text             AS grouping_col,
                 'init_stepsize={init_stepsize}, '   ||
                     'decay_factor={decay_factor}, ' ||
@@ -246,9 +241,213 @@ def _build_output_tables(n_iters_run, model_table, args):
                        summary_table=summary_table,
                        source_table=source_table,
                        model_table=model_table,
+                       kernel_func=kernel_func,
+                       kernel_params=kernel_params,
                        dependent_varname=dependent_varname,
                        independent_varname=independent_varname,
                        **args))
+
+
+def svm_help(schema_madlib, message, is_svc, **kwargs):
+    method = 'svm_classification' if is_svc else 'svm_regression'
+
+    args = dict(schema_madlib=schema_madlib, method=method)
+
+    summary = """
+    ----------------------------------------------------------------
+                            SUMMARY
+    ----------------------------------------------------------------
+    Support Vector Machines (SVMs) are models for regression
+    and classification tasks.
+
+    SVM models have two particularly desirable features:
+    robustness in the presence of noisy data and applicability
+    to a variety of data configurations.
+
+    For more details on function usage:
+        SELECT {schema_madlib}.{method}('usage')
+        """.format(**args)
+
+    usage = """
+    ---------------------------------------------------------------------------
+                                    USAGE
+    ---------------------------------------------------------------------------
+    SELECT {schema_madlib}.{method}(
+        source_table,         -- name of input table
+        model_table,          -- name of output model table
+        dependent_varname,    -- name of dependent variable
+        independent_varname,  -- names of independent variables
+        kernel_func,          -- optional, default: 'linear'.
+                                 supported type of kernel: 'linear', 'gaussian',
+                                 and 'polynomial'
+        kernel_params,        -- optional, default: NULL
+                                 parameters for non-linear kernel in a
+                                 comma-separated string of key-value pairs. The
+                                 parameters differ depending on the value of
+                                 kernel_func.
+                                 to find out more:
+
+                                    SELECT {schema_madlib}.{method}('kernel_func')
+
+                                 where replace 'kernel_func' with whatever kernel
+                                 you are interested in, i.e.,
+
+                                    SELECT {schema_madlib}.{method}('gaussian')
+
+        grouping_cols,        -- optional, default NULL
+                                 names of columns to group-by
+        params,               -- optional, default NULL
+                                 parameters for optimization and regularization in
+                                 a comma-separated string of key-value pairs. If a
+                                 list of values are provided, then cross-
+                                 validation will be performed to select the best
+                                 value from the list.
+                                 to find out more:
+
+                                    SELECT {schema_madlib}.{method}('params')
+
+        verbose               -- optional, default FALSE
+                                 whether to print useful info
+    );
+
+
+    ---------------------------------------------------------------------------
+                                    OUTPUT
+    ---------------------------------------------------------------------------
+    The model table produced by svm contains the following columns:
+
+    coef                FLOAT8,     -- vector of the coefficients.
+    grouping_key        TEXT,       -- identifies the group to which
+                                       the datum belongs.
+    num_rows_processed  BIGINT,     -- numbers of rows processed.
+    num_rows_skipped    BIGINT,     -- numbers of rows skipped due
+                                       to missing values or failures.
+    num_iterations      INTEGER,    -- number of iterations completed by
+                                       the optimization algorithm.
+                                       The algorithm either converged in this
+                                       number of iterations or hit the maximum
+                                       number specified in the
+                                       optimization parameters.
+    __dep_var_mapping   TEXT[],     -- vector of dependendent variable labels.
+                                       The first entry will correspond to -1
+                                       and the second to +1, for internal use.
+
+    An auxiliary table named <model_table>_random is created if the kernel is not
+    linear. It contains data needed to embed test data into random feature space
+    (see reference [2,3]). This data is used internally by svm_predict and not
+    meaningful on its own.
+
+    A summary table named <model_table>_summary is also created at the same time,
+    which has the following columns:
+    method                  varchar,    -- 'svm'
+    version_number          varchar,    -- version of madlib which was used to
+                                           generate the model.
+    source_table            varchar,    -- the data source table name.
+    model_table             varchar,    -- the model table name.
+    dependent_varname       varchar,    -- the dependent variable.
+    independent_varname     varchar,    -- the independent variables.
+    kernel_func             varchar,    -- the kernel function.
+    kernel_parameters       varchar,    -- the kernel parameters.
+    grouping_col            varchar,    -- columns on which to group.
+    optim_params            varchar,    -- a string containing the
+                                           optimization parameters.
+    reg_params              varchar,    -- a string containing the
+                                           regularization parameters.
+    num_all_groups          integer,    -- number of groups in glm training.
+    num_failed_groups       integer,    -- number of failed groups in glm training.
+    total_rows_processed    integer,    -- total numbers of rows processed
+                                           in all groups.
+    total_rows_skipped      integer,    -- numbers of rows skipped in all groups
+                                           due to missing values or failures.
+    """.format(**args)
+
+    params_usage = """
+    ---------------------------------------------------------------------------
+                                OTHER PARAMETERS
+    ---------------------------------------------------------------------------
+    Parameters are supplied in params argument as a string
+    containing a comma-delimited list of name-value pairs.
+
+    Hyperparameter optimization can be carried out through
+    the built-in cross validation mechanism
+
+    init_stepsize       -- Default: [0.01]. Also known as the inital learning rate.
+    decay_factor        -- Default: [0.9].
+                           Control the learning rate schedule:
+                           0 means constant rate; -1 means inverse scaling, i.e.,
+                           stepsize = init_stepsize / iteration;
+                           > 0 means exponential decay, i.e.,
+                           stepsize = init_stepsize * decay_factor^iteration.
+    max_iter            -- Default: [100].
+                           The maximum number of iterations allowed.
+    tolerance           -- Default: 1e-10. The criteria to end iterations.
+    lambda              -- Default: [0.01]. Regularization parameter, positive.
+    norm                -- Default: 'L2'.
+                           Name of the regularization, either 'L2' or 'L1'.
+    epsilon             -- Default: [0.01].
+                           Determines the $\epsilon$ for $\epsilon$-regression.
+                           Ignored during classification.
+    eps_tabl            -- Default: NULL.
+                           Name of the table that contains values of epsilon for
+                           different groups. Ignored when grouping_col is NULL.
+    validation_result   -- Default: NULL.
+                           Name of the table to store the cross validation results
+                           including the values of parameters and
+                           their averaged error values.
+    n_folds             -- Default: 0. Number of folds.
+                           Must be at least 2 to activate cross validation.
+    """
+
+    gaussian_usage = """
+    ---------------------------------------------------------------------------
+                                GAUSSIAN PARAMETERS
+    ---------------------------------------------------------------------------
+    Parameters are supplied in kernel_params argument as a string
+    containing a comma-delimited list of name-value pairs.
+
+    gamma               -- Default: 1/num_features.
+                           The parameter $\gamma$ in the Radius Basis
+                           Function kernel,
+    n_components        -- Default: 2*num_features.
+                           The dimensionality of the transformed feature space.
+    random_state        -- Default: 1. Seed used by the random number generator.
+    """
+
+    poly_usage = """
+    ---------------------------------------------------------------------------
+                                POLYNOMIAL PARAMETERS
+    ---------------------------------------------------------------------------
+    Parameters are supplied in kernel_params argument as a string
+    containing a comma-delimited list of name-value pairs.
+
+    coef0               -- Default: 1.0.
+                           The independent term q in (xTy + q)^r.
+                           Must be larger or equal to 0. When it is 0,
+                           the polynomial kernel is in homogeneous form.
+    degree              -- Default: 3.
+                           The parameter r in (xTy + q)^r.
+    n_components        -- Default: 2*num_features.
+                           The dimensionality of the transformed feature space.
+                           A larger value lowers the variance of the estimate of
+                           kernel but requires more memory and
+                           takes longer to train.
+    random_state        -- Default: 1. Seed used by the random number generator.
+    """
+
+    if not message:
+        return summary
+    elif message.lower() in ('usage', 'help', '?'):
+        return usage
+    elif message.lower() == 'params':
+        return params_usage
+    elif message.lower() == 'gaussian':
+        return gaussian_usage
+    elif message.lower() == 'polynomial':
+        return poly_usage
+    else:
+        return """
+            No such option. Use "SELECT {schema_madlib}.{method}()" for help.
+        """.format(**args)
 
 
 def svm(schema_madlib, source_table, model_table,
@@ -265,8 +464,16 @@ def svm(schema_madlib, source_table, model_table,
                       model_table,
                       dependent_varname,
                       independent_varname)
+        grouping_str, grouping_col = _verify_grouping(schema_madlib,
+                              source_table, grouping_col)
+        kernel_func = _verify_kernel(kernel_func)
+        transformer = _random_feature_map(schema_madlib, source_table,
+                            dependent_varname, independent_varname,
+                            kernel_func, kernel_params, grouping_col)
+        params_dict = _extract_params(schema_madlib, params)
         args = locals()
-        args['params_dict'] = _extract_params(schema_madlib, params)
+        if transformer is not None:
+            args.update(transformer.transformed_table)
         _cross_validate_svm(args)
         _svm_parsed_params(**args)
 
@@ -316,27 +523,58 @@ def _cross_validate_svm(args):
 
     scorer = 'classification' if args['is_svc'] else 'regression'
     sub_args = {'params_dict': cv_params}
+    transformer = args.get('transformer', None)
+    # we want svm in cross validation to behave as if transformer is None
+    # if it is not, then svm_predict will transform the test data again,
+    # which will not be correct since test data in cross validation
+    # comes from training data which has already been transformed
+    args.update(dict(transformer=None))
     cv = CrossValidator(_svm_parsed_params, svm_predict, scorer, args)
     val_res = cv.validate(sub_args, params_dict['n_folds']).sorted()
     val_res.output_tbl(params_dict['validation_result'])
     params_dict.update(val_res.first('sub_args')['params_dict'])
-# ------------------------------------------------------------------------------
+    args.update(dict(transformer=transformer))
+
+
+def _verify_kernel(kernel_func):
+    kernel_func = 'linear' if not kernel_func else kernel_func.lower()
+    # Add non-linear kernels below after implementing them.
+    supported_kernels = ['linear', 'gaussian']
+    try:
+        # allow user to specify a prefix substring of
+        # supported kernel function names. This works because the supported
+        # kernel functions have unique prefixes.
+        kernel_func = next(x for x in supported_kernels
+                           if x.startswith(kernel_func))
+    except StopIteration:
+        # next() returns a StopIteration if no element found
+        plpy.error("SVM Error: Invalid kernel function: "
+                   "{0}. Supported kernel functions are ({1})"
+                   .format(kernel_func, ','.join(sorted(supported_kernels))))
+    return kernel_func
+
+
+def _random_feature_map(schema_madlib, source_table, dependent_varname,
+                        independent_varname, kernel_func,
+                        kernel_params, grouping_col):
+    if kernel_func == 'linear':
+        return None
+
+    n_features = num_features(source_table, independent_varname)
+    transformer = createKernel(schema_madlib, n_features,
+                               kernel_func, kernel_params)
+    return (transformer.fit(n_features)
+            .transform(source_table, independent_varname,
+                       dependent_varname, grouping_col))
 
 
 def _svm_parsed_params(schema_madlib, source_table, model_table,
-                       dependent_varname, independent_varname, kernel_func,
-                       kernel_params, grouping_col, params_dict, is_svc,
+                       dependent_varname, independent_varname, transformer,
+                       grouping_str, grouping_col, params_dict, is_svc,
                        verbose, **kwargs):
     """
     Executes the linear support vector algorithm.
     """
-    grouping_str, grouping_col = _verify_grouping(schema_madlib,
-                                                  source_table,
-                                                  grouping_col)
-
-    kernel_func = _verify_kernel(kernel_func)
-
-    # arguments for iterating
     n_features = num_features(source_table, independent_varname)
 
     args = {
@@ -366,7 +604,8 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
                  .format(args['rel_args']))
     # actual iterative algorithm computation
     n_iters_run = _compute_svm(args)
-    _build_output_tables(n_iters_run, model_table, args)
+    _build_output_tables(n_iters_run, model_table,
+                         args, transformer, **kwargs)
 
 
 def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
@@ -411,6 +650,7 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
         kernel_func = summary['kernel_func']
         kernel_params = summary['kernel_params']
         grouping_col = summary['grouping_col']
+        grouping_col = None if grouping_col == 'NULL' else grouping_col
 
         input_tbl_valid(new_data_table, 'SVM')
         grouping_str, grouping_col = _verify_grouping(schema_madlib,
@@ -424,6 +664,23 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
                 "SVM Error: id_col_name ('" + id_col_name +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
         output_tbl_valid(output_table, 'SVM')
+
+        if kernel_func.lower() != 'linear':
+            random_table = add_postfix(model_table, '_random')
+            input_tbl_valid(random_table, 'SVM')
+            transformer = loadKernel(schema_madlib,
+                                     random_table,
+                                     kernel_func,
+                                     kernel_params)
+            transformer.transform(new_data_table,
+                                  independent_varname,
+                                  grouping_col=grouping_col,
+                                  id_col=id_col_name)
+            transformed_table = transformer.transformed_table
+            new_data_table = transformed_table['source_table']
+            independent_varname = transformed_table['independent_varname']
+            dependent_varname = transformed_table['dependent_varname']
+
         if method.upper() == 'SVC':
             pred_query = """
                         CASE WHEN {schema_madlib}.array_dot(
