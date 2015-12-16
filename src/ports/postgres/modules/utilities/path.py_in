@@ -8,16 +8,20 @@
 import plpy
 import shlex
 import string
+import re
 
 from utilities import unique_string
 from utilities import _assert
+from utilities import add_postfix
+from validate_args import get_cols
 from validate_args import input_tbl_valid
 from validate_args import output_tbl_valid
 # ------------------------------------------------------------------------
 
 
 def path(schema_madlib, source_table, output_table, partition_expr,
-         order_expr, pattern_regex, symbol_expr, result_fun, **kwargs):
+         order_expr, pattern_expr, symbol_expr, agg_func,
+         persist_rows=False, **kwargs):
     """
         Perform regular pattern matching over a sequence of rows.
 
@@ -29,70 +33,144 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         @param order_expr: str, Expression to order the input data
         @param pattern_expr: str, Expression to define the pattern to search for
         @param symbol_expr: str, Definition for each symbol, comma-separated list
-        @param result_fun: str, List of the result functions/aggregates to apply on matched patterns
+        @param agg_func: str, List of the result functions/aggregates to apply on matched patterns
 
     """
-    symbol_str = _build_symbol_str(symbol_expr)
     _validate(source_table, output_table, partition_expr, order_expr,
-              pattern_regex, symbol_str, result_fun)
-    input_view = unique_string()
+              pattern_expr, symbol_expr, agg_func, persist_rows)
+    # replace each occurence of the original symbol with the new
+    # perform this operation in descending order of length to avoid substituting
+    # subset of any symbol
+    sym_mapping, sym_str = _parse_symbol_str(symbol_expr)
+    old_sym_desc = list(reversed(sorted(sym_mapping.keys(), key=len)))
+    replace_pattern = re.compile('|'.join(old_sym_desc), re.IGNORECASE)
+    pattern_expr = replace_pattern.sub(
+        lambda m: sym_mapping[re.escape(string.lower(m.group(0)))],
+        pattern_expr)
+    input_with_id = unique_string('input_with_id')
+    matched_view = unique_string('matched_view')
+    matched_rows = add_postfix(output_table, "_rows") if persist_rows else unique_string('matched_rows')
+    table_or_view = 'TABLE' if persist_rows else 'VIEW'
+    id_col_name = unique_string('id_col')
+    seq_gen = unique_string('seq_gen')
+    all_input_cols_str = ', '.join(get_cols(source_table, schema_madlib))
 
-    sql = """
-        CREATE TABLE {output_table} as
-        WITH {input_view} as (
-            select *,
-                case
-                    {symbol_str}
-                end as symbol
-            FROM {source_table}
-        )
-        SELECT
-            {partition_expr},
-            {result_fun}
-        FROM {input_view}
-        GROUP BY {partition_expr}
-        HAVING
-            array_to_string(array_agg(symbol ORDER BY {order_expr}), '') ~* '^{pattern_regex}'
+    # build a new input temp table that contains a sequence
+    plpy.execute("CREATE SEQUENCE " + seq_gen)
+    plpy.execute("""
+                 CREATE TEMP TABLE {input_with_id} AS (
+                     SELECT
+                        *,
+                        nextval('{seq_gen}') AS {id_col_name},
+                        CASE
+                            {sym_str}
+                        END AS symbol
+                     FROM {source_table}
+                 )""".format(**locals()))
+    build_matched_rows = """
+        CREATE {table_or_view} {matched_rows} AS (
+            SELECT {all_input_cols_str}
+            FROM
+                {input_with_id} as q1,
+                (
+                 SELECT
+                    unnest(match_ids[match_position+1:match_position+match_length]) as match_ids
+                 FROM(
+                     SELECT
+                        {partition_expr},
+                        length(substring(array_to_string(
+                                    array_agg(symbol ORDER BY {order_expr}), '')
+                               FROM '(?i)(^.*){pattern_expr}')) as match_position,
+                        length(substring(array_to_string(
+                                    array_agg(symbol ORDER BY {order_expr}), '')
+                               FROM '(?i)^.*({pattern_expr}).*$')) as match_length,
+                        array_agg({id_col_name} ORDER BY {order_expr}) as match_ids
+                     FROM {input_with_id}
+                     GROUP BY {partition_expr}
+                     HAVING
+                        array_to_string(array_agg(symbol ORDER BY {order_expr}), '')
+                            ~* '{pattern_expr}'
+                 ) subq
+                ) q2
+            WHERE q1.{id_col_name} = q2.match_ids
+        );
     """.format(**locals())
-    plpy.execute(sql)
+    plpy.execute(build_matched_rows)
+    plpy.execute("""
+        CREATE TABLE {output_table} AS
+           SELECT
+            {partition_expr},
+            {agg_func}
+           FROM {matched_rows}
+           GROUP BY {partition_expr}
+        """.format(**locals()))
+    if not persist_rows:
+        plpy.execute("DROP VIEW IF EXISTS " + matched_rows)
+    plpy.execute("DROP TABLE IF EXISTS " + input_with_id)
+    plpy.execute("DROP SEQUENCE IF EXISTS " + seq_gen)
 # ------------------------------------------------------------------------------
 
 
 def _validate(source_table, output_table, partition_expr, order_expr,
-              pattern_expr, symbol_expr, result_fun):
+              pattern_expr, symbol_expr, agg_func, persist_rows):
     input_tbl_valid(source_table, 'Path')
     output_tbl_valid(output_table, 'Path')
+    if persist_rows:
+        output_tbl_valid(add_postfix(output_table, "_rows"), 'Path')
+
+    # ensure the expressions are not None or empty strings
     _assert(partition_expr, "Path error: Invalid partition expression")
     _assert(order_expr, "Path error: Invalid order expression")
     _assert(pattern_expr, "Path error: Invalid pattern expression")
     _assert(symbol_expr, "Path error: Invalid symbol expression")
-    _assert(result_fun, "Path error: Invalid result expression")
+    _assert(agg_func, "Path error: Invalid result expression")
 # ----------------------------------------------------------------------
 
 
-def _build_symbol_str(symbol_expr):
-    """ Parse a symbol definition string and return a dictionary of the definitions
+def _parse_symbol_str(symbol_expr):
+    """ Parse symbol definition string to build a CASE statement string
+        and return a mapping of the definitions.
+
+        We currently only allow single-character symbols. To allow input for
+        multicharacter symbol, we map the symbols to a single character and
+        return a dictionary that provides the mapping from old symbol to new symbol.
 
         symbol_expr: A comma-separated string containing symbol definitions of the form:
             <symbol> := <symbol_definition>
         Example:
-            symbol_expr = ('BEFORE:=starttime >= \'0:00:00\'::time and '
-                            'starttime < \'9:30:00\', '
-                           'MARKET:=starttime >= \'9:30:00\'::time and '
-                            'starttime < \'16:00:00\'::time')
+            symbol_expr = ('BEFORE:=start >= \'0:00:00\' and start < \'9:30:00\', '
+                           'MARKET:=start >= \'9:30:00\' and start < \'16:00:00\'')
+            output = ({'BEFORE': 'a',
+                       'MARKET': 'b'},
+                       "CASE
+                        WHEN BEFORE THEN start >= \'0:00:00\' and start < \'9:30:00\'
+                        WHEN MARKET THEN start >= \'9:30:00\' and start < \'16:00:00\'
+                       END"
     """
+    all_symbols = iter(string.ascii_lowercase + string.digits)
     symbol_expr_parser = shlex.shlex(symbol_expr)
     symbol_expr_parser.wordchars = [i for i in string.printable
                                     if i not in (symbol_expr_parser.quotes + ",")]
     symbol_expr_parser.whitespace = ','
     symbol_splits = list(symbol_expr_parser)
     symbol_definitions = {}
+    symbol_mapping = {}
     for each_sym in symbol_splits:
         each_sym_splits = each_sym.split(":=")
-        if len(each_sym_splits) > 1:
-            symbol_definitions[each_sym_splits[0].strip()] = each_sym_splits[1].strip()
-    return '\n'.join("WHEN {1} THEN '{0}'::text".format(key, val)
-                     for key, val in symbol_definitions.items())
+        if len(each_sym_splits) == 2:
+            old_sym, sym_def = each_sym_splits
+            old_sym = re.escape(old_sym.strip().lower())
+            try:
+                next_sym = all_symbols.next()
+            except StopIteration:
+                plpy.error("Path error: Maximum number of symbols reached.")
+            _assert(old_sym not in symbol_mapping,
+                    "Path error: Multipe definitions of a symbol")
+            symbol_mapping[old_sym] = next_sym
+            symbol_definitions[next_sym] = sym_def
+    return (symbol_mapping,
+            '\n'.join("WHEN {1} THEN '{0}'::text".format(key, val)
+                      for key, val in symbol_definitions.items()))
 # ----------------------------------------------------------------------
 
 
@@ -120,7 +198,8 @@ SELECT {schema_madlib}.path(
     'order_expr',      -- Order expression to sort the tuples of the data table
     'pattern_def',     -- Definition of the path pattern to search for
     'symbol_def',      -- Definition of various symbols used in the pattern definition
-    'result_fun',      -- Aggregate/window functions to be applied on the matched paths
+    'agg_func',        -- Aggregate/window functions to be applied on the matched paths
+    persist_rows       -- Boolean indicating whether to output the matched rows in a table
 );
 """
     return help_string.format(schema_madlib=schema_madlib)
