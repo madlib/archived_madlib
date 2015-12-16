@@ -92,7 +92,7 @@ def _verify_table(source_table, model_table, dependent_varname,
 
 
 def _verify_grouping(schema_madlib, source_table, grouping_col):
-    if grouping_col:
+    if grouping_col and grouping_col.lower() != 'null':
         cols_in_tbl_valid(source_table,
                           _string_to_array_with_quotes(grouping_col),
                           'SVM')
@@ -330,8 +330,8 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
     """
     Executes the linear support vector algorithm.
     """
-    grouping_str, grouping_col = _verify_grouping(schema_madlib, 
-                                                  source_table, 
+    grouping_str, grouping_col = _verify_grouping(schema_madlib,
+                                                  source_table,
                                                   grouping_col)
 
     kernel_func = _verify_kernel(kernel_func)
@@ -413,9 +413,9 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
         grouping_col = summary['grouping_col']
 
         input_tbl_valid(new_data_table, 'SVM')
-        _assert(is_var_valid(new_data_table, dependent_varname),
-                "SVM Error: dependent_varname ('" + dependent_varname +
-                "') is invalid for new_data_table (" + new_data_table + ")!")
+        grouping_str, grouping_col = _verify_grouping(schema_madlib,
+                                                      new_data_table,
+                                                      grouping_col)
         _assert(is_var_valid(new_data_table, independent_varname),
                 "SVM Error: independent_varname ('" + independent_varname +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
@@ -446,16 +446,17 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
             plpy.error("SVM Error: Invalid 'method' value in summary table. "
                        "'method' can only be SVC or SVR!")
 
-        if grouping_col != "NULL":
+        if grouping_col:
             sql = """
             CREATE TABLE {output_table} AS
             SELECT
                 {id_col_name} AS {id_col_name},
                 {pred_query} AS prediction,
-                {model_table}.{grouping_col} as grouping_col
+                ARRAY[{grouping_str}] as grouping_col,
+                {grouping_col}
             FROM {model_table}
             JOIN {new_data_table}
-            ON {model_table}.{grouping_col} = {new_data_table}.{grouping_col}
+            USING ({grouping_col})
             WHERE not {schema_madlib}.array_contains_null({independent_varname})
             ORDER BY grouping_col, {id_col_name}
             """.format(**locals())
