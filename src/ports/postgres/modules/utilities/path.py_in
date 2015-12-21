@@ -36,6 +36,11 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         @param agg_func: str, List of the result functions/aggregates to apply on matched patterns
 
     """
+    if not partition_expr:
+        partition_expr = "1 = 1"
+        as_partition_expr = "1 = 1 as ALL"
+    else:
+        as_partition_expr = partition_expr
     _validate(source_table, output_table, partition_expr, order_expr,
               pattern_expr, symbol_expr, agg_func, persist_rows)
     # replace each occurence of the original symbol with the new
@@ -49,7 +54,7 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         pattern_expr)
     input_with_id = unique_string('input_with_id')
     matched_view = unique_string('matched_view')
-    matched_rows = add_postfix(output_table, "_rows") if persist_rows else unique_string('matched_rows')
+    matched_rows = add_postfix(output_table, "_tuples") if persist_rows else unique_string('matched_rows')
     table_or_view = 'TABLE' if persist_rows else 'VIEW'
     id_col_name = unique_string('id_col')
     seq_gen = unique_string('seq_gen')
@@ -77,7 +82,6 @@ def path(schema_madlib, source_table, output_table, partition_expr,
                     unnest(match_ids[match_position+1:match_position+match_length]) as match_ids
                  FROM(
                      SELECT
-                        {partition_expr},
                         length(substring(array_to_string(
                                     array_agg(symbol ORDER BY {order_expr}), '')
                                FROM '(?i)(^.*){pattern_expr}')) as match_position,
@@ -99,7 +103,7 @@ def path(schema_madlib, source_table, output_table, partition_expr,
     plpy.execute("""
         CREATE TABLE {output_table} AS
            SELECT
-            {partition_expr},
+            {as_partition_expr},
             {agg_func}
            FROM {matched_rows}
            GROUP BY {partition_expr}
@@ -116,7 +120,7 @@ def _validate(source_table, output_table, partition_expr, order_expr,
     input_tbl_valid(source_table, 'Path')
     output_tbl_valid(output_table, 'Path')
     if persist_rows:
-        output_tbl_valid(add_postfix(output_table, "_rows"), 'Path')
+        output_tbl_valid(add_postfix(output_table, "_tuples"), 'Path')
 
     # ensure the expressions are not None or empty strings
     _assert(partition_expr, "Path error: Invalid partition expression")
@@ -199,7 +203,8 @@ SELECT {schema_madlib}.path(
     'pattern_def',     -- Definition of the path pattern to search for
     'symbol_def',      -- Definition of various symbols used in the pattern definition
     'agg_func',        -- Aggregate/window functions to be applied on the matched paths
-    persist_rows       -- Boolean indicating whether to output the matched rows in a table
+    persist_rows       -- Boolean indicating whether to output the matched rows
+                       --  in an additional table (named <output_table>_tuples)
 );
 """
     return help_string.format(schema_madlib=schema_madlib)
