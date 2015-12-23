@@ -243,67 +243,23 @@ def table_is_empty(tbl):
 # -------------------------------------------------------------------------
 
 
-def _get_cols_in_current_schema(tbl, schema_madlib="madlib"):
-    """
-    Get all column names in a table.
-
-    All schemas in current_schemas are searched for the table and the first one
-    found is returned.
-    Note: This function assumes that the table name is *not* qualified with
-    the schema name
-    """
-    schema = plpy.execute("select current_schemas(True) as cs")[0]["cs"]
-    # special handling for array in GPDB <= 4.1
-    schema = _string_to_array(schema)
-    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
-    sql_string = "SELECT " + array_agg_string + \
-                 """(quote_ident(column_name)::varchar) AS cols
-                    FROM information_schema.columns
-                    WHERE table_name = '{table_name}'
-                    AND table_schema = '{s}'
-                 """
-    tbl = _unquote_name(tbl)
-    for s in schema:
-        s = _unquote_name(s)
-        existing_cols = plpy.execute(sql_string.format(table_name=tbl,
-                                                       s=s))[0]["cols"]
-        if existing_cols is not None:
-            return existing_cols
-    return None
-# -------------------------------------------------------------------------
-
-
-def get_cols(tbl, schema_madlib="madlib"):
+def get_cols(tbl, *args, **kwargs):
     """
     Get all column names in a table.
 
     If the table is schema qualified then the appropriate schema is searched.
     If no schema qualification is provided then the current schema is used.
     """
-    array_agg_string = version_wrapper.select_array_agg(schema_madlib)
-
     if tbl is None or tbl.lower() == 'null':
         plpy.error('Input error: Table name (NULL) is invalid')
-    if not schema_madlib:
-        plpy.error('Input error: Invalid MADlib schema name')
 
-    names = tbl.split(".")
-
-    if len(names) == 1:
-        return _get_cols_in_current_schema(tbl, schema_madlib)
-    elif len(names) == 2:
-        schema = _unquote_name(names[0])
-        table = _unquote_name(names[1])
-        sql_string = "SELECT " + array_agg_string + \
-                     """(quote_ident(attname)::varchar ORDER BY attnum) AS cols
-                        FROM pg_attribute
-                        WHERE attrelid = '{tbl}'::regclass
-                          AND NOT attisdropped
-                          AND attnum > 0"""
-        existing_cols = plpy.execute(sql_string.format(**locals()))[0]["cols"]
-    else:
-        plpy.error("Input error: Invalid table name - {0}!".format(tbl))
-    return existing_cols
+    sql_string = """SELECT array_agg(quote_ident(attname)::varchar
+                                        ORDER BY attnum) AS cols
+                    FROM pg_attribute
+                    WHERE attrelid = '{tbl}'::regclass
+                      AND NOT attisdropped
+                      AND attnum > 0"""
+    return plpy.execute(sql_string.format(**locals()))[0]["cols"]
 # -------------------------------------------------------------------------
 
 
