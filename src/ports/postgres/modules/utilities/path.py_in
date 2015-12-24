@@ -5,9 +5,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -27,13 +27,18 @@ import shlex
 import string
 import re
 
+from control import MinWarning
 from utilities import unique_string
 from utilities import _assert
 from utilities import add_postfix
 from validate_args import get_cols
 from validate_args import input_tbl_valid
 from validate_args import output_tbl_valid
+from validate_args import quote_ident
 # ------------------------------------------------------------------------
+
+
+m4_changequote(`<!', `!>')
 
 
 def path(schema_madlib, source_table, output_table, partition_expr,
@@ -53,82 +58,201 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         @param agg_func: str, List of the result functions/aggregates to apply on matched patterns
 
     """
-    if not partition_expr:
-        partition_expr = "1 = 1"
-        as_partition_expr = "1 = 1 as ALL"
-    else:
-        as_partition_expr = partition_expr
-    _validate(source_table, output_table, partition_expr, order_expr,
-              pattern_expr, symbol_expr, agg_func, persist_rows)
-    # replace each occurence of the original symbol with the new
-    # perform this operation in descending order of length to avoid substituting
-    # subset of any symbol
-    sym_mapping, sym_str = _parse_symbol_str(symbol_expr)
-    old_sym_desc = list(reversed(sorted(sym_mapping.keys(), key=len)))
-    replace_pattern = re.compile('|'.join(old_sym_desc), re.IGNORECASE)
-    pattern_expr = replace_pattern.sub(
-        lambda m: sym_mapping[re.escape(string.lower(m.group(0)))],
-        pattern_expr)
-    input_with_id = unique_string('input_with_id')
-    matched_view = unique_string('matched_view')
-    matched_rows = add_postfix(output_table, "_tuples") if persist_rows else unique_string('matched_rows')
-    table_or_view = 'TABLE' if persist_rows else 'VIEW'
-    id_col_name = unique_string('id_col')
-    seq_gen = unique_string('seq_gen')
-    all_input_cols_str = ', '.join(get_cols(source_table, schema_madlib))
+    with MinWarning("error"):
+        if not partition_expr:
+            partition_expr = "1 = 1"
+            as_partition_expr = "1 = 1 as all"
+        else:
+            as_partition_expr = partition_expr
+        _validate(source_table, output_table, partition_expr, order_expr,
+                  pattern_expr, symbol_expr, agg_func, persist_rows)
 
-    # build a new input temp table that contains a sequence
-    plpy.execute("CREATE SEQUENCE " + seq_gen)
-    plpy.execute("""
-                 CREATE TEMP TABLE {input_with_id} AS (
-                     SELECT
-                        *,
-                        nextval('{seq_gen}') AS {id_col_name},
-                        CASE
-                            {sym_str}
-                        END AS symbol
-                     FROM {source_table}
-                 )""".format(**locals()))
-    build_matched_rows = """
-        CREATE {table_or_view} {matched_rows} AS (
+        # replace each occurence of the original symbol with the new
+        # perform this operation in descending order of length to avoid substituting
+        # subset of any symbol
+        sym_mapping, sym_str = _parse_symbol_str(symbol_expr)
+        old_sym_desc = list(reversed(sorted(sym_mapping.keys(), key=len)))
+        replace_pattern = re.compile('|'.join(old_sym_desc), re.IGNORECASE)
+        pattern_expr = replace_pattern.sub(
+            lambda m: sym_mapping[re.escape(string.lower(m.group(0)))],
+            pattern_expr)
+
+        # build variables for intermediate objects
+        input_with_id = unique_string('input_with_id')
+        matched_view = unique_string('matched_view')
+        id_col_name = unique_string('id_col')
+        matched_partitions = unique_string('matched_partitions')
+        seq_gen = unique_string('seq_gen')
+        symbol_name_str = unique_string('symbol')
+        all_input_cols_str = ', '.join(get_cols(source_table, schema_madlib))
+        if persist_rows:
+            matched_rows = add_postfix(output_table, "_tuples")
+            table_or_view = 'TABLE'
+        else:
+            matched_rows = unique_string('matched_rows')
+            table_or_view = 'VIEW'
+
+        # build a new input temp table that contains a sequence and partition columns
+        split_p_cols = [i.strip() for i in partition_expr.split(',')]
+        p_col_names = [unique_string() for i in split_p_cols]
+        p_col_as_str = ','.join(
+            [i + " AS " + j for i, j in zip(split_p_cols, p_col_names)])
+        p_col_name_str = ', '.join(p_col_names)
+        distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
+                                <!"DISTRIBUTED BY ({0})".format(p_col_name_str)!>)
+        plpy.execute("CREATE SEQUENCE " + seq_gen)
+        plpy.execute("""
+                     CREATE TEMP TABLE {input_with_id} AS
+                         SELECT
+                            {p_col_as_str},
+                            *,
+                            nextval('{seq_gen}') AS {id_col_name},
+                            CASE
+                                {sym_str}
+                            END AS {symbol_name_str}
+                         FROM {source_table}
+                     {distribution}
+                    """.format(**locals()))
+        # Explanation for computing the path matches:
+        #   Match is performed using regular expression pattern matching on a
+        #   string produced by concatenating the symbols. The exact rows that
+        #   produce the match are identified by correlating the matched string
+        #   indices with another array containing row ids.
+        #
+        #   matched_partitions: For each partition (group), concatenate all symbols
+        #       into a single string (sym_str). Keep corresponding ids in an array in the
+        #       same order as the symbols. This is performed only for partitions
+        #       that contain a match.
+        #   build_multiple_matched_rows:
+        #       q1: Split sym_str into an array containing the lengths of the
+        #           strings between the matches.
+        #       q2: Store lengths of matches into an array
+        #       q3: Merge q1 and q2 and unnest the arrays (ensuring same length).
+        #           Also right shift the matches array.
+        #       q4: Compute the cumulative sum of the arrays.
+        plpy.execute("""
+            CREATE TABLE {matched_partitions} AS
+                SELECT
+                    {p_col_name_str},
+                    array_to_string(array_agg({symbol_name_str} ORDER BY {order_expr}), '') as sym_str,
+                    array_agg({id_col_name} ORDER BY {order_expr}) as matched_ids
+                FROM {input_with_id}
+                GROUP BY {p_col_name_str}
+                HAVING array_to_string(array_agg({symbol_name_str} ORDER BY {order_expr}), '') ~* '{pattern_expr}'
+            """.format(**locals()))
+        build_multiple_matched_rows = """
+            CREATE {table_or_view} {matched_rows} AS
             SELECT {all_input_cols_str}
             FROM
-                {input_with_id} as q1,
+                {input_with_id} as source,
                 (
-                 SELECT
-                    unnest(match_ids[match_position+1:match_position+match_length]) as match_ids
-                 FROM(
+                    SELECT
+                        unnest(matched_ids[l:r]) AS matched_ids
+                    FROM
+                    (
                      SELECT
-                        length(substring(array_to_string(
-                                    array_agg(symbol ORDER BY {order_expr}), '')
-                               FROM '(?i)(^.*){pattern_expr}')) as match_position,
-                        length(substring(array_to_string(
-                                    array_agg(symbol ORDER BY {order_expr}), '')
-                               FROM '(?i)^.*({pattern_expr}).*$')) as match_length,
-                        array_agg({id_col_name} ORDER BY {order_expr}) as match_ids
-                     FROM {input_with_id}
-                     GROUP BY {partition_expr}
-                     HAVING
-                        array_to_string(array_agg(symbol ORDER BY {order_expr}), '')
-                            ~* '{pattern_expr}'
-                 ) subq
-                ) q2
-            WHERE q1.{id_col_name} = q2.match_ids
-        );
-    """.format(**locals())
-    plpy.execute(build_matched_rows)
-    plpy.execute("""
-        CREATE TABLE {output_table} AS
-           SELECT
-            {as_partition_expr},
-            {agg_func}
-           FROM {matched_rows}
-           GROUP BY {partition_expr}
-        """.format(**locals()))
-    if not persist_rows:
-        plpy.execute("DROP VIEW IF EXISTS " + matched_rows)
-    plpy.execute("DROP TABLE IF EXISTS " + input_with_id)
-    plpy.execute("DROP SEQUENCE IF EXISTS " + seq_gen)
+                        matched_ids,
+                        unnest(left_range) AS l,
+                        unnest(right_range) AS r
+                     FROM (
+                        SELECT
+                            {p_col_name_str},
+                            matched_ids,
+                            {m}.array_cum_sum({m}.array_add(match_splits, prev_matches)) AS left_range,
+                            {m}.array_cum_sum({m}.array_add(match_splits, matches)) AS right_range
+                        FROM (
+                            SELECT
+                               {p_col_name_str}, q1.matched_ids,
+                               match_splits[1:array_upper(matches, 1)] AS match_splits,
+                               matches AS matches,
+                               array_prepend(1, matches[1:array_upper(matches, 1) - 1]) AS prev_matches
+                            FROM (
+                                    -- lengths of text between matches
+                                    SELECT
+                                        {p_col_name_str},
+                                        matched_ids,
+                                        array_agg(length(match_splits) ORDER BY match_index) AS match_splits
+                                    FROM (
+                                        SELECT
+                                            {p_col_name_str},
+                                            matched_ids,
+                                            generate_series(1, array_upper(match_splits, 1)) AS match_index,
+                                            unnest(match_splits) AS match_splits
+                                        FROM (
+                                            SELECT
+                                                {p_col_name_str},
+                                                matched_ids,
+                                                regexp_split_to_array(sym_str, '(?i){pattern_expr}') AS match_splits
+                                            FROM
+                                                {matched_partitions}
+                                            ) ssubq1
+                                        ) subq1
+                                    GROUP BY {p_col_name_str}, matched_ids
+                                ) q1
+                                JOIN
+                                (
+                                    -- lengths of all matches
+                                    SELECT
+                                        {p_col_name_str},
+                                        matched_ids,
+                                        array_agg(length(matches) ORDER BY match_index) AS matches
+                                    FROM (
+                                        SELECT
+                                            {p_col_name_str},
+                                            matched_ids,
+                                            generate_series(1, num_matches) AS match_index,
+                                            (regexp_matches(
+                                                   sym_str, '(?i)({pattern_expr})', 'g'))[1] AS matches
+                                        FROM (
+                                            SELECT
+                                                {p_col_name_str},
+                                                matched_ids,
+                                                sym_str,
+                                                count(matches) AS num_matches
+                                            FROM (
+                                                SELECT
+                                                    {p_col_name_str},
+                                                    matched_ids,
+                                                    sym_str,
+                                                    (regexp_matches(
+                                                           sym_str, '(?i)({pattern_expr})', 'g'))[1] AS matches
+                                                FROM
+                                                   {matched_partitions}
+                                                ) t1
+                                            GROUP BY {p_col_name_str}, matched_ids, sym_str
+                                            ) t2
+                                        ) subq2
+                                    GROUP BY {p_col_name_str}, matched_ids
+                                ) q2
+                                USING ({p_col_name_str})
+                            GROUP BY {p_col_name_str}, q1.matched_ids, match_splits, matches
+                            ) q3
+                        ) q4
+                    ) q5
+                ) matched_rows
+            WHERE source.{id_col_name} = matched_rows.matched_ids
+         """.format(m=schema_madlib, **locals())
+        plpy.execute(build_multiple_matched_rows)
+        quoted_split_p_cols = [quote_ident(i) for i in split_p_cols]
+        p_col_orig_name_str = ','.join(
+            [i + " AS " + j for i, j in zip(p_col_names, quoted_split_p_cols)])
+
+        plpy.execute("""
+            CREATE TABLE {output_table} AS
+               SELECT
+                    {as_partition_expr},
+                    {agg_func}
+               FROM {matched_rows}
+               GROUP BY {partition_expr}
+            """.format(**locals()))
+        if not persist_rows:
+            plpy.execute("DROP VIEW IF EXISTS " + matched_rows)
+            plpy.execute("DROP TABLE IF EXISTS " + input_with_id)
+            plpy.execute("DROP SEQUENCE IF EXISTS " + seq_gen)
+    result = "Result available in table " + output_table
+    if persist_rows:
+        result += "\n Matched tuples can be found in table " + matched_rows
+    return result
 # ------------------------------------------------------------------------------
 
 
@@ -139,6 +263,11 @@ def _validate(source_table, output_table, partition_expr, order_expr,
     if persist_rows:
         output_tbl_valid(add_postfix(output_table, "_tuples"), 'Path')
 
+    plpy.execute("""SELECT {partition_expr}
+                    FROM {source_table}
+                    ORDER BY {order_expr}
+                    LIMIT 0
+                 """.format(**locals()))
     # ensure the expressions are not None or empty strings
     _assert(partition_expr, "Path error: Invalid partition expression")
     _assert(order_expr, "Path error: Invalid order expression")
@@ -168,6 +297,7 @@ def _parse_symbol_str(symbol_expr):
                         WHEN MARKET THEN start >= \'9:30:00\' and start < \'16:00:00\'
                        END"
     """
+
     all_symbols = iter(string.ascii_lowercase + string.digits)
     symbol_expr_parser = shlex.shlex(symbol_expr)
     symbol_expr_parser.wordchars = [i for i in string.printable
@@ -217,8 +347,8 @@ SELECT {schema_madlib}.path(
     'output_table',    -- Table name to store the path results
     'partition_expr',  -- Partition expression to group the data table
     'order_expr',      -- Order expression to sort the tuples of the data table
-    'pattern_def',     -- Definition of the path pattern to search for
     'symbol_def',      -- Definition of various symbols used in the pattern definition
+    'pattern_def',     -- Definition of the path pattern to search for
     'agg_func',        -- Aggregate/window functions to be applied on the matched paths
     persist_rows       -- Boolean indicating whether to output the matched rows
                        --  in an additional table (named <output_table>_tuples)

@@ -59,8 +59,8 @@ path(
     output_table,
     partition_expr,
     order_expr,
-    pattern,
     symbol,
+    pattern,
     aggregate_func,
     persist_rows
 )
@@ -72,19 +72,26 @@ path(
     <dd>VARCHAR. Name of the source table, containing data for path analysis.</dd>
 
     <dt>output_table</dt>
-    <dd>VARCHAR. Name of the result table. This table contains columns predicated
-    by the <em>result</em> argument (shown below).</dd>
+    <dd>VARCHAR. Name of the result table. This table contains columns
+    predicated by the <em>result</em> argument (shown below).</dd>
 
     <dt>partition_expr</dt>
-    <dd>VARCHAR. The 'partition_expr' can be a list of columns or expressions (separated by comma)
-    to divide all rows into groups, or partitions, that share the same values of the
-    partition expression(s). For each row, the matching is applied across the rows
-    that fall into the same partition. This can be NULL or '' to indicate the matching
-    is to be applied on the whole table.</dd>
+    <dd>VARCHAR. The 'partition_expr' can be a single column or a list of
+    comma-separated columns/expressions to divide all rows into groups,
+    or partitions, that share the same values of the partition expression(s).
+    The matching is applied across the rows that fall into the same partition.
+    This can be NULL or '' to indicate the matching is to be applied on the
+    whole table.</dd>
 
     <dt>order_expr</dt>
-    <dd>VARCHAR. This expression controls the order in which rows are processed or matched in a
-    partition.
+    <dd>VARCHAR. This expression controls the order in which rows are
+    processed or matched in a partition.
+    </dd>
+
+    <dt>symbol</dt>
+    <dd>VARCHAR. A symbol represents a row of a particular type that you’re
+    searching for as part of a row sequence. In the SYMBOLS clause, you write a
+    predicate to define the type of row that matches the symbol.
     </dd>
 
     <dt>pattern</dt>
@@ -102,12 +109,6 @@ path(
             <li>{m,n} denotes repetition of the previous item at least m and not more than n times. </li>
             <li>Parentheses () can be used to group items into a single logical item.</li>
         </ul>
-    </dd>
-
-    <dt>symbol</dt>
-    <dd>VARCHAR. A symbol represents a row of a particular type that you’re searching
-for as part of a row sequence. In the SYMBOLS clause, you write a predicate to define the
-type of row that matches the symbol.
     </dd>
 
     <dt>aggregate_func</dt>
@@ -129,8 +130,8 @@ type of row that matches the symbol.
 
 - Build sample dataset
 <pre class="example">
-CREATE TABLE data (id integer, sessionid integer, starttime timestamp, topic varchar, portfolio integer);
-COPY data FROM STDIN DELIMITER AS '|';
+CREATE TABLE trades (id integer, sessionid integer, starttime timestamp, topic varchar, portfolio integer);
+COPY trades FROM STDIN DELIMITER AS '|';
 1|1|1/01/00 5:00 AM|Real-time Equity pricing|769
 1|2|1/01/00 5:30 AM|Real-time Index pricing|9898
 1|3|1/01/00 6:00 AM|Real-time Index pricing|9898
@@ -166,15 +167,6 @@ COPY data FROM STDIN DELIMITER AS '|';
 2|13|1/04/00 12:00 AM|Bond pricing|55
 2|14|1/04/00 12:00 AM|Bond pricing|55
 \\.
-&nbsp;
-CREATE TABLE trades AS
-SELECT *, starttimestamp::date startdate,
-        CASE WHEN  THEN 'before'
-            WHEN  THEN 'market'
-            WHEN  THEN 'close'
-            WHEN  THEN 'after'
-        END tradingperiod
-FROM sessiontable
 </pre>
 
 - Compare within each day for the same Topic/Portfolio across every user
@@ -182,15 +174,14 @@ FROM sessiontable
     SELECT madlib.path(
         'trades',
         'trades_out',
-        'startdate, topic, portfolio'  \-\- each day of activity is looked at independently
-        'starttime'                     \-\- order by time
-        'BEFORE*.MARKET+.CLOSE+.AFTER*' \-\- at least one event during each of MARKET and CLOSE, but gather up the rest
-        'BEFORE:=starttimestamp::time >= ''0:00:00'' and starttimestamp::time < ''9:30:00''::time,
-         MARKET:=starttimestamp::time >= ''9:30:00'' and starttimestamp::time < ''16:00:00''::time,
-         CLOSE:= starttimestamp::time <= ''16:00:00'' and starttimestamp::time < ''16:30:00''::time,
-         AFTER:= starttimestamp::time <= ''16:30:00'' and starttimestamp::time < ''24:00:00''::time
-        ',
-        'first(startdate) as starttime, array_agg(id) as all_users, count(*) as num_matches'
+        'starttime::date, topic, portfolio',  \-\- each day of activity is looked at independently
+        'starttime',                    \-\- order by time
+        'BEFORE:=starttime::time >= ''0:00:00'' and starttime::time < ''9:30:00''::time,'
+            'MARKET:=starttime::time >= ''9:30:00'' and starttime::time < ''16:00:00''::time,'
+            'CLOSE:= starttime::time <= ''16:00:00'' and starttime::time < ''16:30:00''::time,'
+            'AFTER:= starttime::time <= ''16:30:00'' and starttime::time < ''24:00:00''::time',
+        'BEFORE*.MARKET+.CLOSE+.AFTER*', \-\- at least one event during each of MARKET and CLOSE, but gather up the rest
+        'count(*) as num_matches'
     )
 </pre>
 */
@@ -202,11 +193,11 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     output_table        VARCHAR,
     partition_expr      VARCHAR,
     order_expr          VARCHAR,
-    pattern_expr        VARCHAR,
     symbol_expr         VARCHAR,
+    pattern_expr        VARCHAR,
     agg_func            VARCHAR,
     persist_rows        BOOLEAN
-) RETURNS void AS $$
+) RETURNS TEXT AS $$
 PythonFunction(utilities, path, path)
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -219,10 +210,10 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     output_table        VARCHAR,
     partition_expr      VARCHAR,
     order_expr          VARCHAR,
-    pattern_expr        VARCHAR,
     symbol_expr         VARCHAR,
+    pattern_expr        VARCHAR,
     agg_func            VARCHAR
-) RETURNS void AS $$
+) RETURNS TEXT AS $$
     SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, $7, FALSE)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

@@ -1,6 +1,9 @@
+
 import plpy
-from utilities import __mad_version
 import re
+import string
+from utilities import __mad_version
+
 
 version_wrapper = __mad_version()
 _string_to_array = version_wrapper.select_vecfunc()
@@ -24,7 +27,7 @@ DELETE, or UPDATE statements).
 """
 
 
-def _unquote_name(input_str):
+def unquote_ident(input_str):
     """
     Returns input_str with starting and trailing double quotes stripped
 
@@ -48,6 +51,42 @@ def _unquote_name(input_str):
             return input_str.lower()
     else:
         return input_str
+# -------------------------------------------------------------------------
+
+
+def quote_ident(input_str):
+    """
+    Returns input_str with quotes added per Postgres identifier rules.
+
+    This function is available via plpy.quote_ident in PG > 9.1. We add this
+    function for compatibility with Greenplum and HAWQ.
+
+    If the input_str is a lower case string with characters in [a-z0-9_] then the
+    string is returned as is, else a double quote is added in front and back of the string.
+    Every double quote in the original string is preceeded by another double qoute.
+
+    Note: we don't check for SQL keywords. plpy.quote_ident is a better alternative
+    when available.
+
+    Args:
+        @param input_str
+
+    Returns:
+        String
+    """
+
+    def quote_not_needed(ch):
+        return (ch in string.ascii_lowercase or ch in string.digits or ch == '_')
+
+    if input_str:
+        input_str = input_str.strip()
+        if all(quote_not_needed(c) for c in input_str):
+            return input_str
+        else:
+            # if input_str has double quotes then each double quote
+            # is prependend with a double quote
+            # (the 1st double quote is used to escape the 2nd double quote)
+            return '"' + re.sub(r'"', r'""', input_str) + '"'
 # -------------------------------------------------------------------------
 
 
@@ -80,12 +119,12 @@ def _get_table_schema_names(tbl, only_first_schema=False):
         else:
             all_schemas = _string_to_array(plpy.execute(
                 "SELECT current_schemas(True) ""AS cs")[0]["cs"])
-        schema_str = "('{0}')".format("','".join(_unquote_name(s)
+        schema_str = "('{0}')".format("','".join(unquote_ident(s)
                                                  for s in all_schemas))
-        table = _unquote_name(names[0])
+        table = unquote_ident(names[0])
     elif len(names) == 2:
-        schema_str = "('" + _unquote_name(names[0]) + "')"
-        table = _unquote_name(names[1])
+        schema_str = "('" + unquote_ident(names[0]) + "')"
+        table = unquote_ident(names[1])
     else:
         plpy.error("Incorrect table name ({0}) provided! Table name "
                    "should be of the form: <schema name>.<table name>".format(tbl))
@@ -199,7 +238,7 @@ def get_first_schema(table_name):
         raise TypeError("Incorrect table name ({0}) provided! Table name should be "
                         "of the form: <schema name>.<table name>".format(table_name))
     elif len(names) == 2:
-        return _unquote_name(names[0])
+        return unquote_ident(names[0])
 
     # create a list of schema names in search path
     # _string_to_array is used for GPDB versions less than 4.2 where an array
@@ -342,9 +381,9 @@ def columns_exist_in_table(tbl, cols, schema_madlib="madlib"):
     Returns:
         True if all columns in 'cols' exist in source table else False
     """
-    existing_cols = set(_unquote_name(i) for i in get_cols(tbl, schema_madlib))
+    existing_cols = set(unquote_ident(i) for i in get_cols(tbl, schema_madlib))
     for col in cols:
-        if not col or _unquote_name(col) not in existing_cols:
+        if not col or unquote_ident(col) not in existing_cols:
             return False
     return True
 # -------------------------------------------------------------------------
@@ -362,11 +401,11 @@ def columns_missing_from_table(tbl, cols):
     """
     if not cols:
         return []
-    existing_cols = set(_unquote_name(i) for i in get_cols(tbl))
+    existing_cols = set(unquote_ident(i) for i in get_cols(tbl))
     # column is considered missing if the name is invalid (None or empty) or
     #  if the column is not present in the table
     return [col for col in cols
-            if not col or _unquote_name(col) not in existing_cols]
+            if not col or unquote_ident(col) not in existing_cols]
 # -------------------------------------------------------------------------
 
 
@@ -387,7 +426,7 @@ def is_col_array(tbl, col):
         plpy.error("Input error: Invalid table {0}".format(tbl))
     if not col:
         plpy.error("Input error: Invalid column name {0}".format(col))
-    col = _unquote_name(col)
+    col = unquote_ident(col)
 
     data_type_list = plpy.execute(
         """
@@ -563,10 +602,10 @@ class TestValidateFunctions(unittest.TestCase):
                          _get_table_schema_names('test_schema.test_table'))
         self.assertEqual(('"test_schema"', '"test_table"'),
                          _get_table_schema_names('"test_schema"."test_table"'))
-        self.assertEqual('Test', _unquote_name('"Test"'))
-        self.assertEqual('test', _unquote_name('Test'))
-        self.assertEqual('Test123', _unquote_name('"Test123"'))
-        self.assertEqual('test', _unquote_name('"test"'))
+        self.assertEqual('Test', unquote_ident('"Test"'))
+        self.assertEqual('test', unquote_ident('Test'))
+        self.assertEqual('Test123', unquote_ident('"Test123"'))
+        self.assertEqual('test', unquote_ident('"test"'))
 
 
 if __name__ == '__main__':
