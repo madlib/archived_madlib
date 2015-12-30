@@ -50,6 +50,16 @@ correlation( source_table,
            )
 </pre>
 
+The covariance function, with a similar syntax,
+can be used to compute the covariance between features.
+<pre class="syntax">
+covariance( source_table,
+             output_table,
+             target_cols,
+             verbose
+           )
+</pre>
+
 <dl class="arglist">
 
 <dt>source_table</dt>
@@ -176,6 +186,26 @@ Result:
 (2 rows)
 </pre>
 
+-# Compute the covariance of features in the data set.
+<pre class="example">
+SELECT madlib.covariance( 'example_data',
+                          'cov_output'
+                         );
+</pre>
+
+-# View the covariance matrix.
+<pre class="example">
+SELECT * FROM cov_output ORDER BY column_position;
+</pre>
+Result:
+<pre class="result">
+ column_position |  variable   |    temperature    | humidity
+-----------------+-------------+-------------------+----------
+               1 | temperature |      146.25       |
+               2 | humidity    |      82.125       | 121.1875
+(2 rows)
+</pre>
+
 @par Notes
 Current implementation ignores a row that contains NULL entirely. This means
 any correlation in such a row (with NULLs) does not contribute to the final answer.
@@ -228,6 +258,21 @@ CREATE AGGREGATE MADLIB_SCHEMA.correlation_agg(
     m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.correlation_merge,')
     FinalFunc = MADLIB_SCHEMA.correlation_final
     -- use NULL as the initial value
+);
+
+DROP AGGREGATE IF EXISTS MADLIB_SCHEMA.covariance_agg(
+    double precision[], double precision[]);
+CREATE AGGREGATE MADLIB_SCHEMA.covariance_agg(
+    /* x */     double precision[],
+    /* mean */  double precision[]
+) (
+    SType = double precision[],
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.correlation_merge,')
+    SFunc = MADLIB_SCHEMA.correlation_transition
+    -- use NULL as the initial value
+    -- return the last transition or merge state as the final state
+    -- this aggregate does not divide by the number of samples
+    --    (hence it's sum of (x-mean)^2 instead of expectation)
 );
 
 -----------------------------------------------------------------------
@@ -306,6 +351,78 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.correlation()
 RETURNS text AS $$
     PythonFunctionBodyOnly(`stats', `correlation')
     return correlation.correlation_help_message(schema_madlib, None)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+-------------------------------------------------------------------------
+
+-----------------------------------------------------------------------
+-- Main function for covariance
+-----------------------------------------------------------------------
+/* @brief Compute a covariance matrix for a table with optional target columns specified
+
+   @param source_table Name of source relation containing the data
+   @param output_table Name of output table name to store the correlation
+   @param target_cols  String with comma separated list of columns for which cross-correlation is desired
+   @param verbose      Flag to determine verbosity
+
+   @usage
+   <pre> SELECT MADLIB_SCHEMA.covariance (
+         '<em>source_table</em>', '<em>output_table</em>',
+         '<em>target_cols</em>'
+     );
+     SELECT * FROM '<em>output_table</em>' ORDER BY '<em>colum_position</em>';
+   </pre>
+*/
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.covariance(
+    source_table varchar, --  input table name
+    output_table varchar, -- output table name
+    target_cols  varchar, -- comma separated list of output cols (default = '*')
+    verbose      boolean  -- flag to determine verbosity
+) RETURNS MADLIB_SCHEMA.correlation_result AS $$
+    PythonFunctionBodyOnly(`stats', `correlation')
+    return correlation.correlation(schema_madlib, source_table, output_table,
+                                   target_cols, True, verbose)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-----------------------------------------------------------------------
+-- Overloaded functions
+-----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.covariance(
+    source_table varchar, --  input table name
+    output_table varchar, -- output table name
+    target_cols  varchar  -- comma separated list of output cols (default = '*')
+)
+RETURNS MADLIB_SCHEMA.correlation_result AS $$
+    select MADLIB_SCHEMA.covariance($1, $2, $3, FALSE)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.covariance(
+    source_table varchar, --  input table name
+    output_table varchar  -- output table name
+) RETURNS MADLIB_SCHEMA.correlation_result AS $$
+    select MADLIB_SCHEMA.covariance($1, $2, NULL)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-----------------------------------------------------------------------
+-- Help functions
+-----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.covariance(
+    input_message       text
+) RETURNS TEXT AS $$
+    PythonFunctionBodyOnly(`stats', `correlation')
+    return correlation.correlation_help_message(schema_madlib, input_message, cov=True)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+-----------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.covariance()
+RETURNS text AS $$
+    PythonFunctionBodyOnly(`stats', `correlation')
+    return correlation.correlation_help_message(schema_madlib, None, cov=True)
 $$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 -------------------------------------------------------------------------

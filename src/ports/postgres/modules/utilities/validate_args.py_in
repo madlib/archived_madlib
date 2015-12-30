@@ -282,23 +282,28 @@ def get_cols_and_types(tbl):
     if tbl is None or tbl.lower() == 'null':
         plpy.error('Input error: Table name (NULL) is invalid')
 
-    names = tbl.split(".")
+   # determine the exact table_schema and table_name
+    # in case that source_table only contains table_name
+    row = plpy.execute("""
+                        SELECT
+                            quote_ident(nspname) AS table_schema,
+                            quote_ident(relname) AS table_name
+                        FROM
+                            pg_class AS c,
+                            pg_namespace AS nsp
+                        WHERE
+                            c.oid = '{source_table}'::regclass::oid AND
+                            c.relnamespace = nsp.oid
+                        """.format(source_table=tbl))
+    schema = row[0]['table_schema']
+    table = row[0]['table_name']
 
-    if not names or len(names) > 2:
-        raise TypeError("Input error: Invalid table name - {0}!".format(tbl))
-    elif len(names) == 1:
-        table = _unquote_name(names[0])
-        schema = get_first_schema(table)
-    elif len(names) == 2:
-        schema = _unquote_name(names[0])
-        table = _unquote_name(names[1])
     sql_string = """SELECT array_agg(quote_ident(column_name)::varchar) AS cols,
                            array_agg(data_type::varchar) AS types
                     FROM information_schema.columns
-                    WHERE table_name = '{table_name}'
-                    AND table_schema = '{schema_name}'
-                """.format(table_name=table,
-                           schema_name=schema)
+                    WHERE table_name = '{table}'
+                    AND table_schema = '{schema}'
+                """.format(table=table, schema=schema)
     result = plpy.execute(sql_string)[0]
     col_names = _string_to_array(result['cols'])
     col_types = _string_to_array(result['types'])

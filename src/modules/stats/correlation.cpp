@@ -20,7 +20,7 @@ using namespace dbal::eigen_integration;
 
 AnyType
 correlation_transition::run(AnyType& args) {
-    // args[2]
+    // args[2] is the mean of features vector
     if (args[2].isNull()) {
         throw std::runtime_error("Correlation: Mean vector is NULL.");
     }
@@ -31,7 +31,7 @@ correlation_transition::run(AnyType& args) {
     } catch (const ArrayWithNullException &e) {
         throw std::runtime_error("Correlation: Mean vector contains NULL.");
     }
-    // args[0]
+    // args[0] is the covariance matrix
     MutableNativeMatrix state;
     if (args[0].isNull()) {
         state.rebind(this->allocateArray<double>(mean.size(), mean.size()),
@@ -39,7 +39,7 @@ correlation_transition::run(AnyType& args) {
     } else {
         state.rebind(args[0].getAs<MutableArrayHandle<double> >());
     }
-    // args[1]
+    // args[1] is the current data vector
     if (args[1].isNull()) { return state; }
     MappedColumnVector x;
     try {
