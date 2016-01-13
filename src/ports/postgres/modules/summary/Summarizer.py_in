@@ -1,12 +1,13 @@
 import plpy
 import math
 
-from utilities.validate_args import table_exists
-from utilities.validate_args import table_is_empty
-from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import input_tbl_valid, output_tbl_valid
+from utilities.validate_args import cols_in_tbl_valid
+from utilities.utilities import py_list_to_sql_string
 
 
 class Summarizer:
+
     def __init__(self, schema_madlib, source_table, output_table,
                  target_cols, grouping_cols, distinctify, get_quartiles,
                  xtileify='Exact', ntile_array=None, how_many_mfv=10,
@@ -22,28 +23,35 @@ class Summarizer:
         self._ntile_array = ntile_array
         self._how_many_mfv = how_many_mfv
         self._get_mfv_quick = get_mfv_quick
-        self._tableoid = None
         self._columns = None
         self._column_names = None
         self._delimiter = '_.*.&.!.!.&.*_'
 
     def _populate_columns(self):
+        if self._target_cols:
+            lower_target_cols = [each_col.lower() for each_col in self._target_cols
+                                 if '"' not in each_col]
+            target_selection = "AND attname = ANY({0})".format(
+                    py_list_to_sql_string(lower_target_cols, array_type="text"))
+        else:
+            target_selection = ""
         self._columns = plpy.execute("""
-                                        SELECT
-                                            quote_ident(attname) AS attname,
-                                            typname,
-                                            attnum
-                                        FROM
-                                            pg_attribute a
-                                        JOIN
-                                            pg_type t
-                                        ON (a.atttypid=t.oid)
-                                        WHERE attrelid = {tableoid}::regclass
-                                          AND attnum > 0
-                                          AND not attisdropped
-                                        ORDER BY attnum
-                                      """.format(tableoid=self._tableoid)
-                                    )
+            SELECT
+                quote_ident(attname) AS attname,
+                typname,
+                attnum
+            FROM
+                pg_attribute a
+            JOIN
+                pg_type t
+            ON (a.atttypid=t.oid)
+            WHERE attrelid = '{tbl}'::regclass
+              AND attnum > 0
+              AND not attisdropped
+              {target_selection}
+            ORDER BY attnum
+            """.format(tbl=self._source_table,
+                       target_selection=target_selection))
         self._column_names = [col['attname'] for col in self._columns]
 
 # -----------------------------------------------------------------------
@@ -56,37 +64,15 @@ class Summarizer:
         # source table
         if self._source_table is None or self._source_table.strip() == '':
             plpy.error("Summary error: Invalid data table name!")
-        # self._tableoid is needed for the other function
-        try:
-            self._tableoid = plpy.execute("""
-                SELECT '{source_table}'::regclass::oid
-                """.format(source_table=self._source_table))[0]['oid']
-        except:
-            plpy.error("""
-                Summary -- Relation '{source_table}' does not exist""".format(
-                                            source_table=self._source_table))
-        if table_is_empty(self._source_table):
-            plpy.error("Summary error: Data table is empty!")
+        input_tbl_valid(self._source_table, "Summary")
 
         # output table
-        if self._output_table is None or self._output_table.strip() == '':
-            plpy.error("Logregr error: Invalid output table name!")
-        if (table_exists(self._output_table, only_first_schema=True)):
-            plpy.error("Summary error: Output table name already exists. "
-                    "Drop the table before calling the function.")
-        try:
-            plpy.execute("CREATE TABLE {0}();"
-                    "DROP TABLE {0};".format(self._output_table))
-        except:
-            plpy.error("Summary error: Invalid output table name!")
+        output_tbl_valid(self._output_table, "Summary")
 
     def _validate_required_cols(self, required_cols):
         if required_cols is not None and required_cols != [None]:
             clean_cols = [c for c in required_cols if c is not None]
-            if not columns_exist_in_table(
-                    self._source_table, clean_cols, self._schema_madlib):
-                plpy.error("Summary error: Columns {0} does not exist!"
-                        .format(", ".join(clean_cols)))
+            cols_in_tbl_valid(self._source_table, clean_cols, "Summary")
 
     def _validate_ntile_array(self):
         if self._ntile_array is not None:
@@ -100,15 +86,10 @@ class Summarizer:
                         should be in the range [0.0, 1.0]""")
 
     def _adjust_cols(self):
-        if self._target_cols:
-            self._columns = filter(lambda r: r['attname']
-                                        in self._target_cols, self._columns)
-            self._column_names = [col['attname'] for col in self._columns]
         # if #cols == 1, then it should not appear in the grouping_cols
         if len(self._column_names) == 1 and \
                 self._column_names[0] in self._grouping_cols:
             self._grouping_cols.remove(self._column_names[0])
-
 
     def _validate_paras(self):
         """
@@ -122,8 +103,7 @@ class Summarizer:
             plpy.error("""
                 Summary -- Invalid parameter: Number of most frequent values
                 required should be positive""")
-        self._populate_columns()
-        self._adjust_cols()
+
 
 # ----- End of argument validation functions -----------------------------
 
@@ -132,17 +112,19 @@ class Summarizer:
             Returns a subquery of statistics for target columns for a single
             grouping variable
         """
+        # ensure group_var does not suffer from bad input from user
+        group_var = group_var.lower() if group_var and '"' not in group_var else group_var
         args = {'source_table': self._source_table}
         # Exclude the grouping_cols variable from the list of columns to
         #   report statistics on
         cols = filter(lambda x: x['attname'] != group_var, cols)
         if group_var:
-            args['group_value']  = "{schema_madlib}.__to_char(%s)" % group_var
-            args['group_var']  = "'%s'" % group_var
+            args['group_value'] = "{schema_madlib}.__to_char(%s)" % group_var
+            args['group_var'] = "'%s'" % group_var
             args['group_expr'] = "\n       GROUP BY %s" % group_var
         else:
             args['group_value'] = "NULL"
-            args['group_var']  = "NULL"
+            args['group_var'] = "NULL"
             args['group_expr'] = ""
         args['column_names'] = ','.join(["'%s'" % c['attname'] for c in cols])
         args['column_types'] = ','.join(["'%s'" % c['typname'] for c in cols])
@@ -153,14 +135,17 @@ class Summarizer:
             args['distinct_columns'] = ','.join(["count(distinct %s)" % c['attname'] for c in cols])
         else:
             args['distinct_columns'] = ','.join(["NULL" for c in cols])
-        args['missing_columns'] = ','.join(["sum(case when %s is null then 1 else 0 end)"%(
-                                                   c['attname']) for c in cols])
+        args['missing_columns'] = ','.join(["sum(case when %s is null then 1 else 0 end)" % (
+            c['attname']) for c in cols])
         args['blank_columns'] = ','.join(["sum(case when {0} similar to E'\\\\W*' \
-                                           then 1 else 0 end)".format(c['attname']) \
-                                           if c['typname'] in ('varchar','bpchar','text','character varying')
-                                              else 'NULL' for c in cols])
+                                           then 1 else 0 end)".format(c['attname'])
+                                          if c['typname'] in ('varchar', 'bpchar', 'text', 'character varying')
+                                          else 'NULL' for c in cols])
         # ------ Helper sub-functions  ------
-        numeric_types = ('int2','int4','int8','float4','float8','numeric')
+        # types are obtained from pg_attribute (hence different from those
+        # obtained from information_schema.columns)
+        numeric_types = ('int2', 'int4', 'int8', 'float4', 'float8', 'numeric')
+
         def numeric_type(operator, datatype):
             if datatype['typname'] in numeric_types:
                 return '%s(%s)' % (operator, datatype['attname'])
@@ -169,7 +154,7 @@ class Summarizer:
         def minmax_type(minmax, c):
             if c['typname'] in numeric_types:
                 return '%s(%s)' % (minmax, c['attname'])
-            if c['typname'] in ('varchar','bpchar','text'):
+            if c['typname'] in ('varchar', 'bpchar', 'text'):
                 return "%s(length(%s))" % (minmax, c['attname'])
             return "NULL"
 
@@ -184,40 +169,40 @@ class Summarizer:
         def mfv_type(get_count, c):
             slicing = ('0:0', '1:1')[get_count]
             mfv_method = ('mfvsketch_top_histogram',
-                            'mfvsketch_quick_histogram')[self._get_mfv_quick]
-            return  """
+                          'mfvsketch_quick_histogram')[self._get_mfv_quick]
+            return """
                     array_to_string(({schema_madlib}.{mfv_method}(
                                 {column},{topk}))[0:{topk}-1][{slice}],
                                 '{delimiter}')""".format(
-                                            schema_madlib=self._schema_madlib,
-                                            mfv_method=mfv_method,
-                                            column=c['attname'],
-                                            topk=self._how_many_mfv,
-                                            slice=slicing,
-                                            delimiter=self._delimiter)
+                schema_madlib=self._schema_madlib,
+                mfv_method=mfv_method,
+                column=c['attname'],
+                topk=self._how_many_mfv,
+                slice=slicing,
+                delimiter=self._delimiter)
         # ------ End of Helper sub-functions  ------
         args['mean_columns'] = ','.join([numeric_type('avg', c) for c in cols])
-        args['var_columns'] = ','.join([numeric_type('variance',c) for c in cols])
-        args['min_columns'] = ','.join([minmax_type('min',c) for c in cols])
+        args['var_columns'] = ','.join([numeric_type('variance', c) for c in cols])
+        args['min_columns'] = ','.join([minmax_type('min', c) for c in cols])
 
         args['q1_columns'] = ','.join([xtile_type(0.25, c)
-                                        if self._get_quartiles
-                                        else 'NULL' for c in cols])
+                                       if self._get_quartiles
+                                       else 'NULL' for c in cols])
         args['q2_columns'] = ','.join([xtile_type(0.50, c)
-                                        if self._get_quartiles
-                                        else 'NULL' for c in cols])
+                                       if self._get_quartiles
+                                       else 'NULL' for c in cols])
         args['q3_columns'] = ','.join([xtile_type(0.75, c)
-                                        if self._get_quartiles
-                                        else 'NULL' for c in cols])
+                                       if self._get_quartiles
+                                       else 'NULL' for c in cols])
 
-        args['max_columns'] = ','.join([minmax_type('max',c) for c in cols])
+        args['max_columns'] = ','.join([minmax_type('max', c) for c in cols])
 
         args['ntile_columns'] = "array_to_string(array[NULL], ',')"
         if self._ntile_array:
             args['ntile_columns'] = ",".join([
                 "array_to_string(array[" +
-                ",".join([xtile_type(xtile, c) for xtile in self._ntile_array])
-                + "], ',')" for c in cols])
+                ",".join([xtile_type(xtile, c) for xtile in self._ntile_array]) +
+                "], ',')" for c in cols])
         args['mfv_value'] = ','.join([mfv_type(False, c) for c in cols])
         args['mfv_count'] = ','.join([mfv_type(True, c) for c in cols])
         subquery = """
@@ -325,27 +310,27 @@ class Summarizer:
             final_query = 'INSERT INTO {output_table} '
         final_query += """
             SELECT
-                    group_by as group_by,
-                    group_by_value as group_by_value,
-                    target_column as target_column,
-                    colnum as column_number,
-                    datatype as data_type,
-                    rowcount as row_count,
-                    {distinct_values}
-                    missing_values as missing_values,
-                    blank_values as blank_values,
-                    (missing_values::float8 / rowcount) as fraction_missing,
-                    (blank_values::float8 / rowcount) as fraction_blank,
-                    mean,
-                    variance,
-                    min,
-                    max,
-                    {first_quartile}
-                    {median}
-                    {third_quartile}
-                    {ntiles}
-                    mfv_value as most_frequent_values,
-                    mfv_count::bigint[] as mfv_frequencies
+                group_by as group_by,
+                group_by_value as group_by_value,
+                target_column as target_column,
+                colnum as column_number,
+                datatype as data_type,
+                rowcount as row_count,
+                {distinct_values}
+                missing_values as missing_values,
+                blank_values as blank_values,
+                (missing_values::float8 / rowcount) as fraction_missing,
+                (blank_values::float8 / rowcount) as fraction_blank,
+                mean,
+                variance,
+                min,
+                max,
+                {first_quartile}
+                {median}
+                {third_quartile}
+                {ntiles}
+                mfv_value as most_frequent_values,
+                mfv_count::bigint[] as mfv_frequencies
             FROM
             (
                     {query}
@@ -367,9 +352,17 @@ class Summarizer:
 
     def run(self):
         self._validate_paras()
-        plpy.execute('DROP TABLE IF EXISTS {output_table}'.format(
-            output_table=self._output_table))
-        create_table = True
+        self._populate_columns()
+        if not self._columns:
+            plpy.error("Summary error: Invalid column names {0} ".format(self._target_cols))
+        self._adjust_cols()
+        try:
+            plpy.execute('DROP TABLE IF EXISTS {output_table}'.format(
+                output_table=self._output_table))
+            create_table = True
+        except Exception:
+            plpy.error("Summary error: Invalid output table name " + self._output_table)
+
         # set a maximum number of columns to avoid out-of-memory
         #  issues when a lot of columns are computed concurrently
         #  We repeat the query multiple times till computation is complete for
@@ -379,12 +372,13 @@ class Summarizer:
         # ensuring an even spread of columns in each repeated attempt. For eg.
         #  if max_nCols = 15, to simulate 31 cols we break it down as [11, 11, 9]
         #  instead of [15, 15, 1]. This ensures low memory usage in each subquery
-        nSplits = math.ceil(float(actual_nCols)/max_nCols)
-        subset_nCols = int(math.ceil(actual_nCols/nSplits))
-        subset_columns = [self._columns[pos:pos+subset_nCols]
-                          for pos in xrange(0, actual_nCols, subset_nCols)]
+        nSplits = math.ceil(float(actual_nCols) / max_nCols)
+        subset_nCols = int(math.ceil(actual_nCols / nSplits))
+        subset_columns = [self._columns[pos: pos + subset_nCols]
+                          for pos in range(0, actual_nCols, subset_nCols)]
         for cols in subset_columns:
-            # cols = self._columns[i * subset_nCols : (i + 1) * subset_nCols]
             for group_val in self._grouping_cols:
+                # summary treats the comma-separated list of grouping_cols as
+                # "group by each" val in the list
                 plpy.execute(self._build_query(group_val, cols, create_table))
                 create_table = False
