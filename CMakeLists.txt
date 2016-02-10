@@ -174,7 +174,7 @@ endif(NOT M4_BINARY)
 
 # -- Install Read-me files and license directory -------------------------------
 
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/license"
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/licenses"
     DESTINATION .
     COMPONENT core
     PATTERN ".DS_Store" EXCLUDE

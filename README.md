@@ -40,7 +40,7 @@ MADlib incorporates material from the following third-party components
 Licensing
 ==========
 License information regarding MADlib and included third-party libraries can be
-found inside the [`license`](https://github.com/madlib/madlib/blob/master/license) directory.
+found inside the [`license`](https://github.com/madlib/madlib/blob/master/licenses) directory.
 
 Release Notes
 =============

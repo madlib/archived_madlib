@@ -32,7 +32,7 @@ MADlib incorporates material from the following third-party components:
   http://pyyaml.org/wiki/PyYAML
 
 License information regarding MADlib and included third-party libraries can be
-found inside the license directory.
+found inside the 'licenses' directory.
 
 -------------------------------------------------------------------------
 
