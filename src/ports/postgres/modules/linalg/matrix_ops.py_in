@@ -3089,7 +3089,7 @@ def matrix_ones(schema_madlib, row_dim, col_dim, matrix_out, out_args):
 
 
 def matrix_random(schema_madlib, distribution, row_dim, col_dim,
-                 in_args, matrix_out, out_args):
+                  in_args, matrix_out, out_args):
     """ Create a row_dim by col_dim random matrix from distribution.
     """
     _validate_output_table(matrix_out)
@@ -3100,51 +3100,49 @@ def matrix_random(schema_madlib, distribution, row_dim, col_dim,
     out_args = parse_matrix_args(
         out_args, in_default_args={'row': 'row', 'col': 'col', 'val': 'val'})
 
-    distribution = 'uniform' if not distribution else distribution.lower()
-    supported_dist = ['uniform', 'normal']
-    try:
-        distribution = next(x for x in supported_dist
-                           if x.startswith(distribution))
-    except StopIteration:
-        # next() returns a StopIteration if no element found
-        plpy.error("Matrix Error: Invalid distribution: "
-                   "{0}. Supported distribution are ({1})"
-                   .format(distribution, ','.join(sorted(supported_dist))))
+    if distribution:
+        supported_dist = ['uniform', 'normal']
+        try:
+            distribution = next(x for x in supported_dist
+                                if x.startswith(distribution))
+        except StopIteration:
+            # next() returns a StopIteration if no element found
+            plpy.error("Matrix Error: Invalid distribution: "
+                       "{0}. Supported distributions: ({1})"
+                       .format(distribution, ', '.join(sorted(supported_dist))))
+    else:
+        distribution = 'uniform'
 
     in_args_default = {
         'seed': randint(1, 1000),
         'mu': 0,
         'sigma': 1,
-        'min_a': 0,
-        'max_b': 1}
+        'min': 0,
+        'max': 1}
 
     in_args_types = {
         'seed': int,
         'mu': float,
         'sigma': float,
-        'min_a': float,
-        'max_b': float}
+        'min': float,
+        'max': float}
 
-    in_args_vals = extract_keyvalue_params(in_args,
-                                           in_args_types,
-                                           in_args_default)
+    in_args_vals = extract_keyvalue_params(in_args, in_args_types, in_args_default)
 
     if distribution == 'normal':
-        random_row = ('{schema_madlib}.__normal_vector({size},'
-                         '{mu},{sigma},{seed}+row)'
-                         .format(size=col_dim,
-                                 mu=in_args_vals['mu'],
-                                 sigma=in_args_vals['sigma'],
-                                 seed=in_args_vals['seed'],
-                                 schema_madlib=schema_madlib))
-    elif distribution == 'uniform':
-        random_row = ('{schema_madlib}.__uniform_vector({size},'
-                         '{a},{b},{seed}+row)'
-                         .format(size=col_dim,
-                                 a=in_args_vals['min_a'],
-                                 b=in_args_vals['max_b'],
-                                 seed=in_args_vals['seed'],
-                                 schema_madlib=schema_madlib))
+        random_row = ("""{schema_madlib}.__normal_vector(
+                               {col_dim},
+                               {in_args_vals[mu]},
+                               {in_args_vals[sigma]},
+                               {in_args_vals[seed]} + row)
+                      """.format(**locals()))
+    else:
+        random_row = ("""{schema_madlib}.__uniform_vector(
+                               {col_dim},
+                               {in_args_vals[min]},
+                               {in_args_vals[max]},
+                               {in_args_vals[seed]} + row)
+                      """.format(**locals()))
 
     plpy.execute("""
         CREATE TABLE {matrix_out}

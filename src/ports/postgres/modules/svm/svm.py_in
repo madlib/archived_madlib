@@ -2,6 +2,8 @@ from __future__ import division
 
 import plpy
 
+from kernel_approximation import create_kernel, load_kernel
+
 from utilities.control import MinWarning
 from utilities.in_mem_group_control import GroupIterationController
 from utilities.validate_args import explicit_bool_to_text
@@ -20,7 +22,6 @@ from utilities.validate_args import is_var_valid
 from utilities.validate_args import get_expr_type
 
 from validation.internal.cross_validation import CrossValidator
-from .kernel_approximation import createKernel, loadKernel
 
 
 def _compute_svm(args):
@@ -92,7 +93,7 @@ def _verify_table(source_table, model_table, dependent_varname,
     output_tbl_valid(summary_table, 'SVM')
 
 
-def _verify_grouping(schema_madlib, source_table, grouping_col):
+def _get_grouping_col_str(schema_madlib, source_table, grouping_col):
     if grouping_col and grouping_col.lower() != 'null':
         cols_in_tbl_valid(source_table,
                           _string_to_array_with_quotes(grouping_col),
@@ -138,7 +139,7 @@ def _verify_params_dict(params_dict):
     return params_dict
 
 
-def _build_output_tables(n_iters_run, model_table, args, transformer,**kwargs):
+def _build_output_tables(n_iters_run, model_table, args, transformer, **kwargs):
     if transformer is None:
         dependent_varname = args['col_dep_var']
         independent_varname = args['col_ind_var']
@@ -151,7 +152,7 @@ def _build_output_tables(n_iters_run, model_table, args, transformer,**kwargs):
         independent_varname = original_table['independent_varname']
         source_table = original_table['source_table']
         random_table = add_postfix(model_table, "_random")
-        transformer.saveAs(random_table)
+        transformer.save_as(random_table)
         kernel_func = transformer.kernel_func
         kernel_params = transformer.kernel_params
 
@@ -208,9 +209,16 @@ def _build_output_tables(n_iters_run, model_table, args, transformer,**kwargs):
                    dep_type=dep_type, **args)
     plpy.execute(model_table_query)
 
-    args['lambda_str'] = str(args['lambda'])
+    # summary table
+    n_failed_groups = plpy.execute("""
+        SELECT count(*) AS num_failed_groups
+        FROM {0}
+        WHERE coef IS NULL
+        """.format(model_table))[0]['num_failed_groups']
+
     summary_table = add_postfix(model_table, "_summary")
     grouping_text = "NULL" if not grouping_col else grouping_col
+    args.update(locals())
     plpy.execute("""
             CREATE TABLE {summary_table} AS
             SELECT
@@ -227,25 +235,16 @@ def _build_output_tables(n_iters_run, model_table, args, transformer,**kwargs):
                     'decay_factor={decay_factor}, ' ||
                     'max_iter={max_iter}, '         ||
                     'tolerance={tolerance}'::text   AS optim_params,
-                'lambda={lambda_str}, ' ||
-                    'norm={norm}, '     ||
-                    'n_folds={n_folds}'::text       AS reg_params,
+                'lambda={lambda}, norm={norm}, n_folds={n_folds}'::text
+                                                    AS reg_params,
                 count(*)::integer                   AS num_all_groups,
-                0::integer                          AS num_failed_groups,
+                {n_failed_groups}::integer                          AS num_failed_groups,
                 sum(num_rows_processed)::bigint     AS total_rows_processed,
                 sum(num_rows_skipped)::bigint       AS total_rows_skipped,
                 '{epsilon}'::double precision       AS epsilon,
                 '{eps_table}'::text                 AS eps_table
             FROM {model_table};
-            """.format(grouping_text=grouping_text,
-                       summary_table=summary_table,
-                       source_table=source_table,
-                       model_table=model_table,
-                       kernel_func=kernel_func,
-                       kernel_params=kernel_params,
-                       dependent_varname=dependent_varname,
-                       independent_varname=independent_varname,
-                       **args))
+            """.format(**args))
 
 
 def svm_help(schema_madlib, message, is_svc, **kwargs):
@@ -464,12 +463,12 @@ def svm(schema_madlib, source_table, model_table,
                       model_table,
                       dependent_varname,
                       independent_varname)
-        grouping_str, grouping_col = _verify_grouping(schema_madlib,
-                              source_table, grouping_col)
-        kernel_func = _verify_kernel(kernel_func)
+        grouping_str, grouping_col = _get_grouping_col_str(schema_madlib,
+                                                           source_table, grouping_col)
+        kernel_func = _get_kernel_name(kernel_func)
         transformer = _random_feature_map(schema_madlib, source_table,
-                            dependent_varname, independent_varname,
-                            kernel_func, kernel_params, grouping_col)
+                                          dependent_varname, independent_varname,
+                                          kernel_func, kernel_params, grouping_col)
         params_dict = _extract_params(schema_madlib, params)
         args = locals()
         if transformer is not None:
@@ -536,21 +535,23 @@ def _cross_validate_svm(args):
     args.update(dict(transformer=transformer))
 
 
-def _verify_kernel(kernel_func):
-    kernel_func = 'linear' if not kernel_func else kernel_func.lower()
-    # Add non-linear kernels below after implementing them.
-    supported_kernels = ['linear', 'gaussian']
-    try:
-        # allow user to specify a prefix substring of
-        # supported kernel function names. This works because the supported
-        # kernel functions have unique prefixes.
-        kernel_func = next(x for x in supported_kernels
-                           if x.startswith(kernel_func))
-    except StopIteration:
-        # next() returns a StopIteration if no element found
-        plpy.error("SVM Error: Invalid kernel function: "
-                   "{0}. Supported kernel functions are ({1})"
-                   .format(kernel_func, ','.join(sorted(supported_kernels))))
+def _get_kernel_name(kernel_func):
+    if not kernel_func:
+        kernel_func = 'linear'
+    else:
+        # Add non-linear kernels below after implementing them.
+        supported_kernels = ['linear', 'gaussian']
+        try:
+            # allow user to specify a prefix substring of
+            # supported kernels. This works because the supported
+            # kernels have unique prefixes.
+            kernel_func = next(x for x in supported_kernels
+                               if x.startswith(kernel_func))
+        except StopIteration:
+            # next() returns a StopIteration if no element found
+            plpy.error("SVM Error: Invalid kernel function: "
+                       "{0}. Supported kernel functions are ({1})"
+                       .format(kernel_func, ','.join(sorted(supported_kernels))))
     return kernel_func
 
 
@@ -561,8 +562,8 @@ def _random_feature_map(schema_madlib, source_table, dependent_varname,
         return None
 
     n_features = num_features(source_table, independent_varname)
-    transformer = createKernel(schema_madlib, n_features,
-                               kernel_func, kernel_params)
+    transformer = create_kernel(schema_madlib, n_features,
+                                kernel_func, kernel_params)
     return (transformer.fit(n_features)
             .transform(source_table, independent_varname,
                        dependent_varname, grouping_col))
@@ -653,9 +654,9 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
         grouping_col = None if grouping_col == 'NULL' else grouping_col
 
         input_tbl_valid(new_data_table, 'SVM')
-        grouping_str, grouping_col = _verify_grouping(schema_madlib,
-                                                      new_data_table,
-                                                      grouping_col)
+        grouping_str, grouping_col = _get_grouping_col_str(schema_madlib,
+                                                           new_data_table,
+                                                           grouping_col)
         _assert(is_var_valid(new_data_table, independent_varname),
                 "SVM Error: independent_varname ('" + independent_varname +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
@@ -668,14 +669,10 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
         if kernel_func.lower() != 'linear':
             random_table = add_postfix(model_table, '_random')
             input_tbl_valid(random_table, 'SVM')
-            transformer = loadKernel(schema_madlib,
-                                     random_table,
-                                     kernel_func,
-                                     kernel_params)
-            transformer.transform(new_data_table,
-                                  independent_varname,
-                                  grouping_col=grouping_col,
-                                  id_col=id_col_name)
+            transformer = load_kernel(schema_madlib, random_table,
+                                      kernel_func, kernel_params)
+            transformer.transform(new_data_table, independent_varname,
+                                  grouping_col=grouping_col, id_col=id_col_name)
             transformed_table = transformer.transformed_table
             new_data_table = transformed_table['source_table']
             independent_varname = transformed_table['independent_varname']
@@ -820,13 +817,7 @@ def _process_epsilon(is_svc, args):
                     ) q2
                     USING ({col_grp_key})
             );
-            """.format(rel_epsilon=rel_epsilon,
-                       col_grp_key=col_grp_key,
-                       epsilon=epsilon,
-                       grouping_str=grouping_str,
-                       rel_source=rel_source,
-                       grouping_col=grouping_col,
-                       eps_table=eps_table))
+            """.format(**locals()))
 
         select_epsilon = (
             """
@@ -838,9 +829,7 @@ def _process_epsilon(is_svc, args):
                     {rel_epsilon}.{col_grp_key} = {as_rel_source}.{col_grp_key}
             )
             """
-            .format(rel_epsilon=rel_epsilon,
-                    as_rel_source=as_rel_source,
-                    col_grp_key=col_grp_key))
+            .format(**locals()))
 
     return {'select_epsilon': select_epsilon,
             'epsilon': epsilon,

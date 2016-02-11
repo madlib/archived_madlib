@@ -1970,5 +1970,3 @@ General_Array_to_Array(
 
     return pgarray;
 }
-
-/******* internal functions ********/

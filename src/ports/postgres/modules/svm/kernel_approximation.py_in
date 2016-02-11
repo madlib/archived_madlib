@@ -11,7 +11,9 @@ from math import pi
 
 
 class GaussianKernelBase(object):
+
     """docstring for gaussianKernel"""
+
     def __init__(self, schema_madlib, gamma, n_components, random_state,
                  random_weights, random_offset, id_col, val_col,
                  orig_data, **kwargs):
@@ -39,24 +41,26 @@ class GaussianKernelBase(object):
 
     def _random_weights(self, row_dim, col_dim, rd_id, rd_val):
         rd_weights = unique_string(desp='random_weights')
-        sigma = sqrt(2*self.gamma)
+        sigma = sqrt(2 * self.gamma)
         plpy.execute("""
             drop table if exists {rd_weights};
             select {self.schema_madlib}.matrix_random(
-                    'normal',{row_dim},{col_dim},
+                    {row_dim}, {col_dim},
                     'mu=0, sigma={sigma}, seed={self.random_state}',
+                    'normal',
                     '{rd_weights}','row={rd_id}, val={rd_val}');
         """.format(**locals()))
         return rd_weights
 
     def _random_offsets(self, row_dim, col_dim, rd_id, rd_val):
         rd_offset = unique_string(desp='random_offsets')
-        max_b = 2*pi
+        max_ = 2 * pi
         plpy.execute("""
             drop table if exists {rd_offset};
             select {self.schema_madlib}.matrix_random(
-                    'uniform',{row_dim},{col_dim},
-                    'min_a=0, max_b={max_b}, seed={self.random_state}',
+                    {row_dim}, {col_dim},
+                    'min=0, max={max_}, seed={self.random_state}',
+                    'uniform',
                     '{rd_offset}','row={rd_id}, val={rd_val}');
         """.format(**locals()))
         return rd_offset
@@ -75,38 +79,34 @@ class GaussianKernelBase(object):
     def __del__(self):
         self.clear()
 
-    def saveAs(self, name):
+    def save_as(self, name):
         if self.orig_data:
             plpy.warning("Gaussian Kernel Warning: no need to save."
-                         "Original data table exists: {0}"
-                         .format(self.orig_data))
+                         "Original data table exists: {0}".
+                         format(self.orig_data))
             return
 
         run_sql = """
             create table {name} as
                 select
-                        {id} as id, {val} as val,
+                        {self.rd_id} as id, {self.rd_val} as val,
                         'offsets' as desp
-                from {rd_offset}
+                from {self.rd_offset}
                 union
                 select
-                        {id} as id, {val} as val,
+                        {self.rd_id} as id, {self.rd_val} as val,
                         'weights' as desp
-                from {rd_weights}
-        """.format(name=name,
-                   id=self.rd_id,
-                   val=self.rd_val,
-                   rd_offset=self.rd_offset,
-                   rd_weights=self.rd_weights)
+                from {self.rd_weights}
+        """.format(**locals())
         plpy.execute(run_sql)
 
     @classmethod
     def parse_params(cls, kernel_params='', n_features=10):
         params_default = {
             'in_memory': 1,
-            'gamma': 1/n_features,
+            'gamma': 1 / n_features,
             'random_state': 1,
-            'n_components': 2*n_features}
+            'n_components': 2 * n_features}
         params_types = {
             'in_memory': int,
             'gamma': float,
@@ -121,14 +121,14 @@ class GaussianKernelBase(object):
         params = cls.parse_params(kernel_params, n_features)
         in_memory = params.pop('in_memory', True)
         # according to the 1gb limit on each entry of the table
-        nelems = params['n_components']*n_features
-        if in_memory and nelems <= 1e8:
+        n_elems = params['n_components'] * n_features
+        if in_memory and n_elems <= 1e8:
             return GaussianKernelInMemory(schema_madlib, **params)
         else:
             return GaussianKernel(schema_madlib, **params)
 
     @classmethod
-    def loadFrom(cls, schema_madlib, data, kernel_params=''):
+    def load_from(cls, schema_madlib, data, kernel_params=''):
         rd_weights = unique_string(desp='random_weights')
         rd_offset = unique_string(desp='random_offsets')
         rd_val = unique_string(desp='val')
@@ -148,25 +148,28 @@ class GaussianKernelBase(object):
         in_memory = params.pop('in_memory', True)
         if in_memory:
             return GaussianKernelInMemory(schema_madlib,
-                       random_weights=rd_weights,
-                       random_offset=rd_offset,
-                       id_col=rd_id, val_col=rd_val,
-                       orig_data=data, **params)
+                                          random_weights=rd_weights,
+                                          random_offset=rd_offset,
+                                          id_col=rd_id, val_col=rd_val,
+                                          orig_data=data, **params)
         else:
             return GaussianKernel(schema_madlib,
-                       random_weights=rd_weights,
-                       random_offset=rd_offset,
-                       id_col=rd_id, val_col=rd_val,
-                       orig_data=data, **params)
+                                  random_weights=rd_weights,
+                                  random_offset=rd_offset,
+                                  id_col=rd_id, val_col=rd_val,
+                                  orig_data=data, **params)
 
 
 class GaussianKernel(GaussianKernelBase):
+
     """docstring for gaussianKernel"""
+
     def __init__(self, schema_madlib, gamma=1, n_components=100,
                  random_state=1, random_weights=None,
                  random_offset=None, id_col=None, val_col=None,
-                 orig_data=None):
-        params = locals(); params.pop('self')
+                 orig_data=None, **kwargs):
+        params = locals()
+        params.pop('self')
         super(GaussianKernel, self).__init__(**params)
 
     @property
@@ -200,9 +203,12 @@ class GaussianKernel(GaussianKernelBase):
 
         schema_madlib = self.schema_madlib
 
-        _null_str = "NULL::integer"
-        _null_str_as = lambda s: _null_str + " as " + s if s else _null_str
-        _verify = lambda x, s: str(x) if x else _null_str_as(s)
+        def _verify(x, s):
+            null_str = "NULL::integer"
+            if x:
+                return str(x)
+            else:
+                return null_str + " as " + s if s else null_str
 
         grouping_col = _verify(grouping_col, unique_string('grp_col'))
         dependent_varname = _verify(dependent_varname, '')
@@ -284,7 +290,7 @@ class GaussianKernel(GaussianKernelBase):
         """.format(**locals())
         plpy.execute(plpy.prepare(run_sql, ['float[]']), [rd_offset_vals])
         # clear table generated from matrix mult
-        plpy.execute("drop table {0};".format(temp_transformed))
+        plpy.execute("drop table if exists " + temp_transformed)
         self.transformed_table = dict(index_col=index_col,
                                       source_table=transformed,
                                       dependent_varname=dependent_varname,
@@ -293,12 +299,15 @@ class GaussianKernel(GaussianKernelBase):
 
 
 class GaussianKernelInMemory(GaussianKernelBase):
+
     """docstring for gaussianKernel"""
+
     def __init__(self, schema_madlib, gamma=1, n_components=100,
                  random_state=1, random_weights=None,
                  random_offset=None, id_col=None,
-                 val_col=None, orig_data=None):
-        params = locals(); params.pop('self')
+                 val_col=None, orig_data=None, **kwargs):
+        params = locals()
+        params.pop('self')
         super(GaussianKernelInMemory, self).__init__(**params)
 
     @property
@@ -314,7 +323,7 @@ class GaussianKernelInMemory(GaussianKernelBase):
         self.orig_data = None
         self.rd_val = unique_string(desp='val')
         self.rd_id = unique_string(desp='id')
-        self.rd_weights = self._random_weights(1, n_features*self.n_components,
+        self.rd_weights = self._random_weights(1, n_features * self.n_components,
                                                self.rd_id, self.rd_val)
         self.rd_offset = self._random_offsets(1, self.n_components,
                                               self.rd_id, self.rd_val)
@@ -332,9 +341,12 @@ class GaussianKernelInMemory(GaussianKernelBase):
 
         schema_madlib = self.schema_madlib
 
-        _null_str = "NULL::integer"
-        _null_str_as = lambda s: _null_str + " as " + s if s else _null_str
-        _verify = lambda x, s: str(x) if x else _null_str_as(s)
+        def _verify(x, s):
+            null_str = "NULL::integer"
+            if x:
+                return str(x)
+            else:
+                return null_str + " as " + s if s else null_str
 
         grouping_col = _verify(grouping_col, unique_string('grp_col'))
         dependent_varname = _verify(dependent_varname, '')
@@ -383,7 +395,7 @@ class GaussianKernelInMemory(GaussianKernelBase):
         return self
 
 
-def createKernel(schema_madlib, n_features, kernel_func, kernel_params):
+def create_kernel(schema_madlib, n_features, kernel_func, kernel_params):
     if kernel_func == 'linear':
         return None
     elif kernel_func == 'gaussian':
@@ -392,13 +404,8 @@ def createKernel(schema_madlib, n_features, kernel_func, kernel_params):
                                          kernel_params)
 
 
-def loadKernel(schema_madlib, data, kernel_func, kernel_params):
+def load_kernel(schema_madlib, data, kernel_func, kernel_params):
     if kernel_func == 'linear':
         return None
     elif kernel_func == 'gaussian':
-        return GaussianKernelBase.loadFrom(schema_madlib, data, kernel_params)
-
-
-
-
-
+        return GaussianKernelBase.load_from(schema_madlib, data, kernel_params)

@@ -238,15 +238,13 @@ AnyType normal_vector::run(AnyType & args)
     if (dim < 1) {
         throw std::invalid_argument("invalid argument - dim should be positive");
     }
-    MutableArrayHandle<double> r =  madlib_construct_array(
-            NULL, dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
-
+    ColumnVector r(dim);
     boost::minstd_rand generator(seed);
-    boost::normal_distribution<> nd_dist(mu,sigma);
+    boost::normal_distribution<> nd_dist(mu, sigma);
     boost::variate_generator<boost::minstd_rand&, boost::normal_distribution<> > nd(generator, nd_dist);
 
     for (int i = 0; i < dim; i++){
-        *(r.ptr() + i) = (double)nd();
+        r(i) = (double)nd();
     }
     return r;
 }
@@ -261,15 +259,12 @@ AnyType uniform_vector::run(AnyType & args)
     if (dim < 1) {
         throw std::invalid_argument("invalid argument - dim should be positive");
     }
-    MutableArrayHandle<double> r =  madlib_construct_array(
-            NULL, dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
-
+    ColumnVector r(dim);
     boost::minstd_rand generator(seed);
     boost::uniform_real<> uni_dist(min_,max_);
     boost::variate_generator<boost::minstd_rand&, boost::uniform_real<> > uni(generator, uni_dist);
-
     for (int i = 0; i < dim; i++){
-        *(r.ptr() + i) = (double)uni();
+        r(i) = (double)uni();
     }
     return r;
 }
@@ -309,8 +304,7 @@ AnyType matrix_vec_mult_in_mem_1d::run(AnyType & args){
     return v;
 }
 
-AnyType rand_block::run(AnyType & args)
-{
+AnyType rand_block::run(AnyType & args) {
     int row_dim = args[0].getAs<int>();
     int col_dim = args[1].getAs<int>();
     if (row_dim < 1 || col_dim < 1) {
