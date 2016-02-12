@@ -152,7 +152,7 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
     add_custom_target(doc
         COMMAND ${DOXYGEN_EXECUTABLE} user.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/etc"
-        DEPENDS doxysql doxyBinFiles ${_MATHJAX_DEPENDENCY_USER}
+        DEPENDS doxysql ${_MATHJAX_DEPENDENCY_USER}
             "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
         COMMENT "Generating user-level documentation..."
         VERBATIM
@@ -168,7 +168,7 @@ if(FLEX_FOUND AND BISON_FOUND AND DOXYGEN_FOUND)
     add_custom_target(devdoc
         COMMAND ${DOXYGEN_EXECUTABLE} developer.doxyfile | ${_DOXYGEN_UNNEEDED_WARNINGS_FILTER}
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/etc"
-        DEPENDS doxysql doxyBinFiles update_mathjax
+        DEPENDS doxysql update_mathjax
             "${CMAKE_CURRENT_BINARY_DIR}/etc/literature.bib"
         COMMENT "Generating developer documentation..."
         VERBATIM
