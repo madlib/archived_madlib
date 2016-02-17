@@ -40,6 +40,73 @@ actual_lanczos_iterations = 0
 
 # ------------------------------------------------------------------------
 
+def svd(schema_madlib, source_table, output_table_prefix,
+        row_id, k, nIterations, result_summary_table=None):
+    """
+    Compute the Singular Value Decomposition of the matrix in source_table.
+
+    This function is the specific call for dense matrices and creates three
+    tables corresponding to the three decomposition matrices.
+
+    Args:
+        @param schema_madlib Schema where MADlib is installed
+        @param source_table Input table with the matrix to be decomposed
+                                (in sparse or dense format)
+        @param output_table_prefix    Prefix string for the output table names
+        @param row_id Name of the row_id column
+        @param k Number of eigen vectors to output
+        @param nIterations Number of iterations to run Lanczos algorithm
+                    (Higher the number, greater the accuracy, and
+                     greater the run time)
+        @param result_summary_table Name of the table to store summary of results
+    Returns:
+        None
+    """
+
+    if result_summary_table:
+        t0 = time.time()  # measure the starting time
+    old_msg_level = plpy.execute("select setting from pg_settings where \
+                                 name='client_min_messages'")[0]['setting']
+    plpy.execute("set client_min_messages to error")
+
+    _validate_args(schema_madlib, source_table, output_table_prefix,
+               k, row_id, nIterations, col_id=None, val_id=None,
+               result_summary_table=result_summary_table)
+    # Make sure that the input table has row_id and row_vec
+    # if not then make a copy of the source table and change column names
+    source_table_copy = "pg_temp." + unique_string() + "_2"
+    need_new_column_names = cast_dense_input_table_to_correct_columns(
+        schema_madlib, source_table, source_table_copy, row_id)
+
+    if(need_new_column_names):
+        source_table = source_table_copy
+
+    (new_source_table, bd_pref)=_svd_upper_wrap(schema_madlib, source_table,
+        output_table_prefix, row_id,k, nIterations, result_summary_table)
+
+    _svd_lower_wrap(schema_madlib, new_source_table, output_table_prefix,
+        row_id, k, nIterations, bd_pref)
+
+    if result_summary_table:
+
+        t1 = time.time()
+        [row_dim, col_dim] = get_dims(source_table,
+            {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'})
+        arguments = {'schema_madlib': schema_madlib,
+                     'source_table': source_table,
+                     'matrix_u': add_postfix(output_table_prefix, "_u"),
+                     'matrix_v': add_postfix(output_table_prefix, "_v"),
+                     'matrix_s': add_postfix(output_table_prefix, "_s"),
+                     'row_dim': row_dim,
+                     'col_dim': col_dim,
+                     'result_summary_table': result_summary_table,
+                     'temp_prefix': "pg_temp." + unique_string(),
+                     't0': t0, 't1': t1}
+        create_summary_table(**arguments)
+    plpy.execute("DROP TABLE if exists {0}".format(source_table_copy))
+    plpy.execute("set client_min_messages to " + old_msg_level)
+# ------------------------------------------------------------------------
+
 
 def _validate_args(schema_madlib, source_table, output_table_prefix, k,
                    row_id, nIterations, col_id=None, val_id=None,
@@ -116,7 +183,6 @@ def create_summary_table(**args):
     """ Summarize results from SVD in a summary table. """
     global actual_lanczos_iterations
     dt = (args['t1'] - args['t0']) * 1000.
-
     plpy.execute(
         """
         SELECT {schema_madlib}.matrix_mult(
@@ -125,7 +191,6 @@ def create_summary_table(**args):
             '{temp_prefix}_a', 'row=row_id, col=col_id, val=row_vec'
             );
         """.format(**args))
-
     plpy.execute(
         """
         SELECT {schema_madlib}.matrix_mult(
@@ -134,7 +199,6 @@ def create_summary_table(**args):
             '{temp_prefix}_b', 'row=row_id, col=col_id, val=row_vec'
             );
         """.format(**args))
-
     err = plpy.execute(
         """
         SELECT avg(s) / ({col_dim}::float8) as p
@@ -162,7 +226,6 @@ def create_summary_table(**args):
         ) Q1
         """.format(**args))[0]['p']
     relative_err = err / norm
-
     plpy.execute(
         """
         CREATE TABLE {result_summary_table} (rows_used INTEGER,
@@ -205,7 +268,7 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
                                    'val': 'block'},
                                   is_block=True)
     if k > min(row_dim, col_dim):
-        plpy.error("SVD error: k cannot be larger than min(row_dim, col_dim) !")
+        plpy.error("SVD error: k cannot be larger than min(row_dim, col_dim)!")
 
     t0 = time.time()  # measure the starting time
 
@@ -221,7 +284,6 @@ def svd_block(schema_madlib, source_table, output_table_prefix,
             """.format(schema_madlib=schema_madlib,
                        source_table=source_table, x_trans=x_trans))
         _svd(schema_madlib, x_trans, output_table_prefix, k, nIterations, True)
-
         # Switch U and V
         _transpose_UV(schema_madlib,
                       add_postfix(output_table_prefix, "_u"),
@@ -431,50 +493,35 @@ def svd_sparse_native(schema_madlib, source_table, output_table_prefix,
 # ------------------------------------------------------------------------
 
 
-def svd(schema_madlib, source_table, output_table_prefix,
-        row_id, k, nIterations, result_summary_table=None):
+def _svd_upper_wrap(schema_madlib, source_table, output_table_prefix,
+        row_id, k, nIterations, result_summary_table):
     """
-    Compute the Singular Value Decomposition of the matrix in source_table.
+    Compute the Singular Value Decomposition of a sparse matrix
 
-    This function is the specific call for dense matrices and creates three
-    tables corresponding to the three decomposition matrices.
+    This function is the wrapper for the upper half of svd function.
+
+    Returns a tuple (new_source_table,bd_pref). new_source_table is returned
+    to be used in the lower part in case the table is transposed. bd_pref is a
+    tuple containing two table names, created with unique strings and required
+    in the lower half of svd
 
     Args:
         @param schema_madlib Schema where MADlib is installed
         @param source_table Input table with the matrix to be decomposed
-                                (in sparse or dense format)
         @param output_table_prefix    Prefix string for the output table names
         @param row_id Name of the row_id column
+        @param col_id Name of the col_id column
+        @param val    Name of the value column
         @param k Number of eigen vectors to output
         @param nIterations Number of iterations to run Lanczos algorithm
                     (Higher the number, greater the accuracy, and
                      greater the run time)
         @param result_summary_table Name of the table to store summary of results
     Returns:
-        None
+        (source_table,bd_pref)
     """
-    if result_summary_table:
-        t0 = time.time()  # measure the starting time
-
-    old_msg_level = plpy.execute("select setting from pg_settings where \
-                                 name='client_min_messages'")[0]['setting']
-    plpy.execute("set client_min_messages to error")
-
-    _validate_args(schema_madlib, source_table, output_table_prefix,
-                   k, row_id, nIterations, col_id=None, val_id=None,
-                   result_summary_table=result_summary_table)
-
-    # Make sure that the input table has row_id and row_vec
-    # if not then make a copy of the source table and change column names
-    source_table_copy = "pg_temp." + unique_string() + "_2"
-    need_new_column_names = cast_dense_input_table_to_correct_columns(
-        schema_madlib, source_table, source_table_copy, row_id)
-
-    if(need_new_column_names):
-        source_table = source_table_copy
-
     [row_dim, col_dim] = get_dims(source_table,
-                                  {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'})
+        {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'})
     validate_dense(source_table,
                    {'row': 'row_id', 'val': 'row_vec'},
                    check_col=False, row_dim=row_dim)
@@ -486,67 +533,50 @@ def svd(schema_madlib, source_table, output_table_prefix,
     # If the input matrix is a wide dense matrix(i.e. row_dim < col_dim),
     # We need to transpose it into a narrow one
     if col_dim > row_dim:
-        x_trans = "pg_temp." + unique_string() + "_3"
+        x_trans = "pg_temp." + unique_string() + "_xt_3"
         plpy.execute("""
             SELECT {schema_madlib}.matrix_trans(
                 '{source_table}', 'row=row_id, val=row_vec',
                 '{x_trans}', 'row=row_id, val=row_vec')
             """.format(schema_madlib=schema_madlib,
                        source_table=source_table, x_trans=x_trans))
-        _svd(schema_madlib, x_trans, output_table_prefix, k, nIterations, is_block=False)
+        bd_pref = _svd_upper(schema_madlib, x_trans, output_table_prefix, k, nIterations, is_block=False)
 
-        # Switch U and V
-        _transpose_UV(schema_madlib,
-                      add_postfix(output_table_prefix, "_u"),
-                      add_postfix(output_table_prefix, "_v"))
-        plpy.execute("DROP TABLE IF EXISTS {0}".format(x_trans))
+        return (x_trans,bd_pref)
+
     else:
-        _svd(schema_madlib, source_table, output_table_prefix, k, nIterations, is_block=False)
+        bd_pref = _svd_upper(schema_madlib, source_table, output_table_prefix, k, nIterations, is_block=False)
 
-    if result_summary_table:
-        t1 = time.time()
-        [row_dim, col_dim] = get_dims(source_table,
-                                      {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'})
-        arguments = {'schema_madlib': schema_madlib,
-                     'source_table': source_table,
-                     'matrix_u': add_postfix(output_table_prefix, "_u"),
-                     'matrix_v': add_postfix(output_table_prefix, "_v"),
-                     'matrix_s': add_postfix(output_table_prefix, "_s"),
-                     'row_dim': row_dim,
-                     'col_dim': col_dim,
-                     'result_summary_table': result_summary_table,
-                     'temp_prefix': "pg_temp." + unique_string(),
-                     't0': t0, 't1': t1}
-        create_summary_table(**arguments)
-
-    plpy.execute("DROP TABLE if exists {0}".format(source_table_copy))
-    plpy.execute("set client_min_messages to " + old_msg_level)
+    return (source_table, bd_pref)
 # ------------------------------------------------------------------------
 
 
-def _svd(schema_madlib, source_table, output_table_prefix,
+def _svd_upper(schema_madlib, source_table, output_table_prefix,
          k, nIterations, is_block=False,
          row_id=None, col_id=None, val=None):
-    """
-    Compute the SVD of a matrix (sparse or dense) into individual tables
 
-    The function computes SVD (USV') of a matrix using the Lanczos
-    Bidiagonalization method and stores the 'U' and 'V'
-    matrix as dense matrices and the 'S' matrix as a sparse matrix.
+    """
+    Compute the Singular Value Decomposition of a sparse matrix
+
+    This function is the upper half of svd function.
+
+    Returns a tuple (bidiagonal_prefix,svd_bidiagonal). Both of these table
+    names are created with unique strings and required in the lower half of svd
 
     Args:
         @param schema_madlib Schema where MADlib is installed
         @param source_table Input table with the matrix to be decomposed
-                                (in sparse or dense format)
         @param output_table_prefix    Prefix string for the output table names
-        @param k Number of eigen vectors to output
-        @param nIterations Number of iterations to run Lanczos algorithm
-                            (Higher the number, greater the accuracy, and
-                              greater the run time)
-        @param is_block Use block variant of matrix operations if True
         @param row_id Name of the row_id column
         @param col_id Name of the col_id column
-        @param val Name of the value column
+        @param val    Name of the value column
+        @param k Number of eigen vectors to output
+        @param nIterations Number of iterations to run Lanczos algorithm
+                    (Higher the number, greater the accuracy, and
+                     greater the run time)
+        @param result_summary_table Name of the table to store summary of results
+    Returns:
+        (bidiagonal_prefix,svd_bidiagonal)
     """
     nIterations_arg = (nIterations, "NULL")[nIterations is None]
     # Bidiagonalize the input matrix using the Lanczos algorithm
@@ -558,7 +588,6 @@ def _svd(schema_madlib, source_table, output_table_prefix,
         is_sparse = True
     else:
         is_sparse = False
-
     if is_sparse:
         plpy.execute("""
             SELECT {schema_madlib}.__svd_lanczos_bidiagonalize_sparse(
@@ -598,7 +627,8 @@ def _svd(schema_madlib, source_table, output_table_prefix,
         DROP TABLE IF EXISTS {svd_bidiagonal};
         CREATE TABLE {svd_bidiagonal} as
             SELECT {schema_madlib}.__svd_decompose_bidiag(
-                row_id::INTEGER[], col_id::INTEGER[], value::FLOAT8[]) AS svd_output
+                row_id::INTEGER[], col_id::INTEGER[],
+                value::FLOAT8[]) AS svd_output
             FROM {bidiagonal_prefix}_b;
         """.format(schema_madlib=schema_madlib,
                    svd_bidiagonal=svd_bidiagonal,
@@ -620,6 +650,7 @@ def _svd(schema_madlib, source_table, output_table_prefix,
         k = non_zero_svals
 
     # Compute the singular values and output to sparse table
+    # matrix_s_tmp = add_postfix(output_table_prefix, "_stmp")
     matrix_s = add_postfix(output_table_prefix, "_s")
     plpy.execute(
         """
@@ -635,14 +666,80 @@ def _svd(schema_madlib, source_table, output_table_prefix,
             ORDER BY row_id
             LIMIT {k}
         """.format(**locals()))
+    return (bidiagonal_prefix, svd_bidiagonal)
+# ------------------------------------------------------------------------
 
+
+def _svd_lower_wrap(schema_madlib, source_table, output_table_prefix,
+        row_id, k, nIterations, bd_pref, matrix_s=None):
+    """
+    Compute the Singular Value Decomposition of a sparse matrix
+
+    This function is the wrapper for the lower half of svd function.
+
+    Args:
+        @param schema_madlib Schema where MADlib is installed
+        @param source_table Input table with the matrix to be decomposed
+        @param output_table_prefix    Prefix string for the output table names
+        @param row_id Name of the row_id column
+        @param k Number of eigen vectors to output
+        @param nIterations Number of iterations to run Lanczos algorithm
+                    (Higher the number, greater the accuracy, and
+                     greater the run time)
+        @param bd_pref Tuple of table names related to the bidiagonalization
+    Returns:
+        None
+    """
+    _svd_lower(schema_madlib, source_table, output_table_prefix,
+        k, nIterations, bd_pref, False, None,None,None,matrix_s)
+
+    if "_xt_3" in source_table and "pg_temp." in source_table:
+
+        # Switch U and V
+        _transpose_UV(schema_madlib,
+                      add_postfix(output_table_prefix, "_u"),
+                      add_postfix(output_table_prefix, "_v"))
+        plpy.execute(
+            """DROP TABLE IF EXISTS {source_table}""".format(
+            source_table=source_table
+            ))
+    return None
+# ------------------------------------------------------------------------
+
+
+def _svd_lower(schema_madlib, source_table, output_table_prefix,
+         k, nIterations, bd_pref, is_block=False,
+         row_id=None, col_id=None, val=None, matrix_s=None):
+    """
+    Compute the Singular Value Decomposition of a sparse matrix
+
+    This function is the lower half of svd function.
+
+    Args:
+        @param schema_madlib Schema where MADlib is installed
+        @param source_table Input table with the matrix to be decomposed
+        @param output_table_prefix    Prefix string for the output table names
+        @param row_id Name of the row_id column
+        @param k Number of eigen vectors to output
+        @param nIterations Number of iterations to run Lanczos algorithm
+                    (Higher the number, greater the accuracy, and
+                     greater the run time)
+        @param bd_pref Tuple of table names related to the bidiagonalization
+    Returns:
+        None
+    """
+    # Compute the singular values and output to sparse table
+    if matrix_s is None:
+        matrix_s = add_postfix(output_table_prefix, "_s")
+
+    bidiagonal_prefix = bd_pref[0]
+    svd_bidiagonal = bd_pref[1]
     plpy.execute("""
         INSERT INTO {matrix_s}
         SELECT {k}, {k}, NULL
         FROM {svd_bidiagonal}
         LIMIT 1
         """.format(**locals()))
-
     # Compute the left singular matrix and output to table
     plpy.execute("""
         SELECT
@@ -675,6 +772,8 @@ def _svd(schema_madlib, source_table, output_table_prefix,
                    svd_bidiagonal=svd_bidiagonal,
                    k=k))
 
+    #plpy.execute("DROP TABLE if exists {matrix_s_tmp}"
+    #             .format(matrix_s_tmp=matrix_s_tmp))
     plpy.execute("DROP TABLE if exists {svd_bidiagonal}"
                  .format(svd_bidiagonal=svd_bidiagonal))
     plpy.execute("""
@@ -684,6 +783,38 @@ def _svd(schema_madlib, source_table, output_table_prefix,
                  """.format(bidiagonal_prefix=bidiagonal_prefix))
 
     return None
+# ------------------------------------------------------------------------
+
+
+def _svd(schema_madlib, source_table, output_table_prefix,
+         k, nIterations, is_block=False,
+         row_id=None, col_id=None, val=None):
+    """
+    Compute the SVD of a matrix (sparse or dense) into individual tables
+
+    The function computes SVD (USV') of a matrix using the Lanczos
+    Bidiagonalization method and stores the 'U' and 'V'
+    matrix as dense matrices and the 'S' matrix as a sparse matrix.
+
+    Args:
+        @param schema_madlib Schema where MADlib is installed
+        @param source_table Input table with the matrix to be decomposed
+                                (in sparse or dense format)
+        @param output_table_prefix    Prefix string for the output table names
+        @param k Number of eigen vectors to output
+        @param nIterations Number of iterations to run Lanczos algorithm
+                            (Higher the number, greater the accuracy, and
+                              greater the run time)
+        @param is_block Use block variant of matrix operations if True
+        @param row_id Name of the row_id column
+        @param col_id Name of the col_id column
+        @param val Name of the value column
+    """
+    bd_pref = _svd_upper(schema_madlib, source_table, output_table_prefix, k,
+         nIterations, is_block, row_id, col_id, val)
+
+    _svd_lower(schema_madlib, source_table, output_table_prefix, k,
+         nIterations, bd_pref, is_block, row_id, col_id, val)
 # ------------------------------------------------------------------------
 
 
@@ -789,8 +920,6 @@ def _lanczos_bidiagonalize_output_results(schema_madlib, output_table_prefix,
         ) t
         """.format(output_table_prefix=output_table_prefix,
                    pq_table_prefix=pq_table_prefix, k=k))
-
-
 # ------------------------------------------------------------------------
 
 
