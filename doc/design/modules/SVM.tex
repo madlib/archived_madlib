@@ -1,11 +1,14 @@
+% !TEX root = ../design.tex
 \chapter[SVM]{SVM}
 
+\newcommand{\Pcal}{{\cal P}}
+\newcommand{\Ncal}{{\cal N}}
 
 \begin{moduleinfo}
 \item[Authors] {}
 \item[History]
     \begin{modulehistory}
-    
+
         \item[v0.1] Initial version
          \end{modulehistory}
 \end{moduleinfo}
@@ -45,7 +48,7 @@ Thus, we are left with the following convex programming problem:
 \begin{align*}
 \underset{w,b}{\text{Minimize }} \frac{1}{2}||w||^2, w\in \R^d, \\
 \text{subject to } y_i(\langle w, x_i \rangle + b) \geq 1 \text{ for } i=1\ldots n.
-\end{align*} 
+\end{align*}
 
 If the data are not linearly separable, \textit{slack variables} $\xi_i$ are introduced to allow for some points to be classified incorrectly. We do not want to sacrifice too much to capture outliers, so we introduce an extra term in the objective function to control the error. The optimization problem now becomes
 
@@ -61,7 +64,7 @@ The parameter $C$ is free, and should be chosen to optimize the model. One can u
 
 \subsection{Unconstrained optimization}
 
-One can formulate the same problem without constraints: 
+One can formulate the same problem without constraints:
 
 \begin{equation}
 \underset{w}{\text{Minimize }} \lambda ||w||^2 + \frac{1}{n}\sum_{i=1}^n \ell(y_i,f(x_i))
@@ -81,10 +84,10 @@ $$
 
 See \cite{ShSS07} (extended version) for details.
 
- 
- 
+
+
 % \subsection{$\nu$-SVM}
-%Another formulation of the SVM optimization problem is \textit{$\nu$-SVM}. 
+%Another formulation of the SVM optimization problem is \textit{$\nu$-SVM}.
 %
 %\begin{align*}
 %\underset{w,\vec{\xi},\rho,b}{\text{Minimize }} \frac{1}{2} ||w||^2 -\nu\rho + \frac{1}{n}\sum_{i=1}^n \xi_i \\
@@ -151,7 +154,7 @@ One can generalize the above optimization problems using \textit{kernels}. A ker
 
 
 
-Two commonly used kernels are polynomial kernels, of the form $k(x,y) = (\langle x,y\rangle +q)^r$, and Gaussian kernels, $k(x,y) = e^{-\gamma||x-y||^2}$, $\gamma$ a free parameter.\\ 
+Two commonly used kernels are polynomial kernels, of the form $k(x,y) = (\langle x,y\rangle +q)^r$, and Gaussian kernels, $k(x,y) = e^{-\gamma||x-y||^2}$, $\gamma$ a free parameter.\\
 
 The approach we take to learning with these kernels, following \cite{RR07}, is to approximate them with linear kernels and then apply the above gradient descent based algorithm for learning linear kernels. The approximation takes the following form: we embed the data into a finite dimensional feature space, $z:\R^d\to \R^D$, so that the inner product between transformed points approximates the kernel:
 
@@ -180,7 +183,7 @@ z(x)z(y) &= 2\cos(\langle w,x\rangle+b)\cos(\langle w,y\rangle+b)\\
 				& +\sin(\langle w, x\rangle)\sin(\langle w, y\rangle)\sin^2(b) - \sin(\langle w, x\rangle+\langle w, y\rangle)\cos(b)\sin(b)
 \end{align*}
 
-Since $w,b$ are chosen independently, 
+Since $w,b$ are chosen independently,
 
 \begin{align*}
 E[2\cos(\langle w,x\rangle)\cos(\langle w,y\rangle)\cos^2(b)] &= 2E[2\cos(\langle w,x\rangle)\cos(\langle w,y\rangle)]E[\cos^2(b)]\\
@@ -241,11 +244,32 @@ z: \R^d\to \R^D\\
 x\mapsto \frac{1}{\sqrt{D}} (z_1(x), \ldots, z_D(x)).
 \end{align*}
 
-Here, each $z_i:\R^d\to\R$ is defined by
+The idea here is to choose each random features $z_i$ such that it satisfies $E[z_i(x)z_i(y)] = k(x, y)$. Then the concentration of measure phenomenon, e.g., as $D$ goes to infinity, ensures $|k(x, y) - z(x)^Tz(y)|$ to be small with high probability. We describe the process of generating $z_i$ below. Note that it applies to any positive definite kernel $k: (x, y) \mapsto f(\langle x, y \rangle)$, where $f$ admits a Maclaurin expansion, i.e., $f(x) = \sum_{N=0}^{\infty} a_N x^N$, where $a_N = f^{(N)}(0) / N!$. For example, in the case of polynomial kernels $k(x,y)=(\langle x,y\rangle+q)^r$, $f(x)$ will be $(x + q)^r$ and $a_N$ will be the N-th derivative of $(x + q)^r$ divided by $N!$.
 
-\[z_i(x) = \prod_{j=1}^r (\langle \omega^i_{j}, x\rangle+\sqrt{q})\]
+\begin{enumerate}
+	\item Randomly pick a number $N \in \N \cup \{0\}$ with $\Pcal[N] = \frac{1}{p^{N+1}}$. Here $p$ is a positive number larger than 1 and in practice $p=2$ is often a good choice since it establishes a normalized measure over $\N \cup \{0\}$ \cite{KK12}.
+	\item Pick $N$ independent Rademacher vector $w_1, ..., w_N$, i.e., each component of Rademacher vector is chosen independently using a fair coin toss from the set $\{-1, 1\}$.
+	\item Compute $z_i(x)$ as follows,
+	\begin{align}
+	\label{equ:svm-zi}
+		z_i(x) =
+		\begin{cases}
+			\sqrt{a_0p}, &\quad \mbox{ if } N = 0,\\
+			\sqrt{a_Np^{N+1}}\prod_{j=1}^N w_j^Tx, &\quad \mbox{ otherwise. }
+		\end{cases}
+	\end{align}
+\end{enumerate}
 
-where $\{\omega^i_{j}\}^{i=1\ldots D}_{j=1\ldots,r}$ are sequences of length $d$ of entries selected uniformly at random from $\{-1,1\}$.\\
+The reason why we pick $N$ from $\N \cup \{0\}$ with probability $\Pcal[N] = \frac{1}{p^{N+1}}$ becomes obvious in the following simple proof. It establishes that the random feature product $z_i(x)z_i(y)$ approximates the kernel product $k(x, y)$ with high probability for any $x, y \in \R^d$, i.e., $E[z_i(x)z_i(y)] = k(x, y)$:
+\begin{align*}
+    E[z_i(x)z_i(y)]
+    &= E_N [E_{w_1, ..., w_N} [z_i(x)z_i(y)] | N]  \\
+    &= E_N[a_N p^{N+1} E_{w_1, ..., w_N} [\prod_{j=1}^N w_j^T x \prod_{j=1}^N w_j^T y]] \\
+    &= E_N[a_N p^{N+1} (E_{w} [w^Tx \cdot w^Ty])^N] \\
+    &= E_N[a_N p^{N+1} \langle x, y \rangle^N] \\
+    &= \sum_{n=0}^{\infty} \frac{1}{p^{n+1}} \cdot a_n p^{n+1} \langle x, y \rangle^n \\
+    &= f(\langle x, y \rangle) = k(x, y)
+\end{align*}
 
 See the paper of Kar and Karnick \cite{KK12} for more details.
 
@@ -255,23 +279,28 @@ See the paper of Kar and Karnick \cite{KK12} for more details.
 
 \subsubsection{Formal Description}
 
-\begin{algorithm}[Random Features for Polynomial Kernels] 
+\begin{algorithm}[Random Features for Polynomial Kernels]
 \alginput{Training data $X$, an $n\times d$ matrix representing $n$ data points in dimension $d$, \\
 Parameters of a polynomial kernel, i.e. degree $r$, dimension of linear feature space $D$\\}
-\algoutput{$X'$, an $n\times D$ dimension matrix of data in feature space to be sent to linear solver, as well as the $\Omega$ generated by the algorithm, to be used by the predictor.\\
+\algoutput{$X'$, an $n\times D$ dimension matrix of data in feature space to be sent to linear solver \\
+$\Omega, \Ncal$ generated by the algorithm, to be used by the predictor.\\
 }
 \begin{algorithmic}[1]
-	\State $\Omega \set $ matrix of dimensions $d\times r\cdot D$ with random $\{-1,1\}$ entries, chosen with a fair coin flip
-	\State $X'\set X\cdot \Omega,$ now a matrix of dimensions $n\times r\cdot D$
-	\State $X' \set X' + \sqrt{q}$, add $\sqrt{q}$ to each element of $X'$
-	\State $X'\set X''$, where $X''$ is a matrix of dimensions $n\times D$ such that $x^{''}_{i,j} = \prod_{k=1}^r x^{'}_{i,(j-1)r + k}$
-	\State $X'' \set \frac{1}{\sqrt{D}} X''$
-	\State return $X'',\Omega$
+	\State $\Ncal \set $ array of D entries, each generated from the exponential probability distribution $\frac{1}{2^{N+1}}$
+	\State $\Omega \set $ matrix of dimensions $d\times sum(\Ncal) \cdot D$ with $\{-1,1\}$ entries, chosen with a fair coin flip
+	\State $X'\set X\cdot \Omega,$ now a matrix of dimensions $n \times sum(\Ncal)$
+	\label{alg:x-omega}
+	\For {each $row$ in $X'$}\label{alg:x-for}
+		\State $row' \set $ dividing $row$ into D segments, with $i$th segment consisting of $\Ncal_i$ number of entries.
+		\State $row'' \set $ array of D entries aggregating from each segment of $row'$ according to \eqref{equ:svm-zi}
+	\EndFor
+	\State $X'' \set $ the transformed $X'$ divided by $\frac{1}{\sqrt{D}}$
+	\State return $X'',\Omega, \Ncal$
 \end{algorithmic}
 \end{algorithm}
 
 \subsubsection{Parallelization}
-As in the Gaussian kernel case, the coordinates of the feature map can be computed independently.
+In the above algorithm, Step \ref{alg:x-omega} is done by broadcasting the matrix $\Omega$ to each row of $X$, and computing the matrix-vector product locally in parallel for each row; Similarly, Step \ref{alg:x-for} can also be distributed since the computations for each row are independent of the others.
 
 
 
@@ -307,7 +336,7 @@ As in the Gaussian kernel case, the coordinates of the feature map can be comput
 %    \item \emph{optimization\_parameters}: string of parameters for gradient descent, i.e. step-size $\eta$, max\_iterations, etc.
 %    \item \emph{regularization\_parameters}: string of regularization parameters, $\lambda$
 %   % \item \emph{grouping\_cols}: the name of the columns to group by
-%  
+%
 %\end{itemize}
 %
 %\subsection{Prediction}
@@ -324,7 +353,7 @@ As in the Gaussian kernel case, the coordinates of the feature map can be comput
 %\paragraph{Arguments:}
 %
 %\begin{itemize}
-%	
+%
 %	\item \emph{model\_table}: name of table containing model data\\
 %	data to be included: the decision function determined by $(w,b)$, the kernel, kernel parameters, optimization parameters the randomly generated $\omega$'s for the embedding into random feature space.
 %	\item \emph{new\_data}: name of table containing new data points to be estimated
@@ -354,5 +383,5 @@ The Nystr{\"o}m method approximates the kernel matrix $K=(k(x_i,x_j)_{i,j=1\ldot
 
 
 
-  
+
 % section clustered_standard_errors (end)
