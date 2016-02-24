@@ -10,6 +10,9 @@ from linalg.matrix_ops import create_temp_sparse_matrix_table_with_dims
 from linalg.matrix_ops import cast_dense_input_table_to_correct_columns
 from linalg.matrix_ops import validate_dense
 from linalg.matrix_ops import validate_sparse
+from linalg.svd import create_summary_table
+from linalg.svd import _svd_lower_wrap
+from linalg.svd import _svd_upper_wrap
 from utilities.utilities import _array_to_string
 from utilities.utilities import add_postfix
 from utilities.utilities import __mad_version
@@ -17,9 +20,7 @@ from utilities.utilities import unique_string
 from utilities.utilities import _assert
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
-from linalg.svd import create_summary_table
-from linalg.svd import _svd_upper_wrap
-from linalg.svd import _svd_lower_wrap
+
 
 import time
 import plpy
@@ -349,14 +350,16 @@ def _validate_args(schema_madlib,
             "PCA error: Source data table {0} does not exist!".
             format(str(source_table)))
     if not k and not variance:
-        plpy.error("PCA error: components_param must be valid!")
+        plpy.error("""PCA error: components_param must be either
+            a positive integer or a float in the range (0.0,1.0]!""")
     if k:
         if k <= 0:
-            plpy.error("PCA error: k must be a positive integer!")
+            plpy.error("""PCA error: components_param must be either
+                a positive integer or a float in the range (0.0,1.0]!""")
     if variance:
-        if (variance <= 0) or (variance >=1):
-            plpy.error(
-                "PCA error: proportion of variance has to be between 0 and 1")
+        if (variance <= 0) or (variance >1):
+            plpy.error("""PCA error: components_param must be either
+                a positive integer or a float in the range (0.0,1.0]!""")
     # confirm output tables are valid
     if pc_table:
         _assert(not table_exists(pc_table, only_first_schema=True) and
@@ -654,7 +657,32 @@ def pca_sparse_help_message(schema_madlib, message=None, **kwargs):
             relative_recon_error   -- FLOAT     Relative error in the approximation
         """.format(schema_madlib=schema_madlib)
     else:
-        return """
+        if message.lower() in ("example", "examples"):
+            return """
+DROP TABLE IF EXISTS sparse_mat;
+CREATE TABLE sparse_mat (
+    row_id integer,
+    col_id integer,
+    val_id integer
+);
+COPY sparse_mat (row_id, col_id, val_id) FROM stdin delimiter '|';
+1|2|4
+1|5|6
+3|8|4
+5|4|2
+6|6|12
+8|1|2
+8|7|2
+9|3|4
+9|8|2
+\.
+DROP TABLE IF EXISTS result_table;
+DROP TABLE IF EXISTS result_table_mean;
+SELECT pca_sparse_train('sparse_mat', 'result_table',
+'row_id', 'col_id', 'val_id', 10, 10, 10);
+            """
+        else:
+            return """
 Principal component analysis (PCA) is a mathematical procedure that uses an
 orthogonal transformation to convert a set of observations of possibly
 correlated variables into a set of values of linearly uncorrelated variables
@@ -730,7 +758,28 @@ def pca_help_message(schema_madlib, message=None, **kwargs):
             relative_recon_error   -- FLOAT     Relative error in the approximation
         """.format(schema_madlib=schema_madlib)
     else:
-        return """
+        if message.lower() in ("example", "examples"):
+            return """
+DROP TABLE IF EXISTS mat;
+CREATE TABLE mat (
+    row_id integer,
+    row_vec double precision[]
+);
+COPY mat (row_id, row_vec) FROM stdin DELIMITER '|';
+1|{1,2,3}
+2|{2,1,2}
+3|{3,2,1}
+\.
+DROP TABLE IF EXISTS result_table;
+DROP TABLE IF EXISTS result_table_mean;
+SELECT pca_train( 'mat',
+                  'result_table',
+                  'row_id',
+                  3
+    );
+            """
+        else:
+            return """
 Principal component analysis (PCA) is a mathematical procedure that uses an
 orthogonal transformation to convert a set of observations of possibly
 correlated variables into a set of values of linearly uncorrelated variables
@@ -742,4 +791,4 @@ constraint that it be orthogonal to (i.e., uncorrelated with) the preceding
 components.
 
 For an overview on usage, run: SELECT {schema_madlib}.pca_train('usage');
-        """.format(schema_madlib=schema_madlib)
+            """.format(schema_madlib=schema_madlib)
