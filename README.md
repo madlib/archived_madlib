@@ -1,4 +1,4 @@
-![](https://github.com/madlib/madlib/blob/master/doc/imgs/magnetic-icon.png) ![](https://github.com/madlib/madlib/blob/master/doc/imgs/agile-icon.png) ![](https://github.com/madlib/madlib/blob/master/doc/imgs/deep-icon.png)
+![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/magnetic-icon.png) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/agile-icon.png) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/deep-icon.png)
 =================================================
 **MADlib<sup>&reg;</sup>** is an open-source library for scalable in-database analytics.
 It provides data-parallel implementations of mathematical, statistical and
@@ -8,7 +8,7 @@ Installation and Contribution
 ==============================
 See the project webpage  [`MADlib Home`](http://madlib.net) for links to the
 latest binary and source packages. For installation and contribution guides,
-please see [`MADlib Wiki`](https://github.com/madlib/madlib/wiki)
+please see [`MADlib Wiki`](https://github.com/apache/incubator-madlib/wiki)
 
 User and Developer Documentation
 ==================================
@@ -23,7 +23,7 @@ The following block-diagram gives a high-level overview of MADlib's
 architecture.
 
 
-![MADlib Architecture](https://github.com/madlib/madlib/blob/master/doc/imgs/architecture.png)
+![MADlib Architecture](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/architecture.png)
 
 
 Third Party Components
@@ -32,20 +32,19 @@ MADlib incorporates material from the following third-party components
 
 1. [`argparse 1.2.1`](http://code.google.com/p/argparse/) "provides an easy, declarative interface for creating command line tools"
 2. [`Boost 1.47.0 (or newer)`](http://www.boost.org/) "provides peer-reviewed portable C++ source libraries"
-3. [`doxypy 0.4.2`](http://code.foosel.org/doxypy) "is an input filter for Doxygen"
-4. [`Eigen 3.2.2`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
-5. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "is a YAML parser and emitter for Python"
-6. [`PyXB 1.2.4`](http://pyxb.sourceforge.net/) "is a Python library for XML Schema Bindings"
+3. [`Eigen 3.2.2`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
+4. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "is a YAML parser and emitter for Python"
+5. [`PyXB 1.2.4`](http://pyxb.sourceforge.net/) "is a Python library for XML Schema Bindings"
 
 Licensing
 ==========
 License information regarding MADlib and included third-party libraries can be
-found inside the [`license`](https://github.com/madlib/madlib/blob/master/licenses) directory.
+found inside the [`license`](https://github.com/apache/incubator-madlib/blob/master/licenses) directory.
 
 Release Notes
 =============
 Changes between MADlib versions are described in the
-[`ReleaseNotes.txt`](https://github.com/madlib/madlib/blob/master/ReleaseNotes.txt) file.
+[`ReleaseNotes.txt`](https://github.com/apache/incubator-madlib/blob/master/ReleaseNotes.txt) file.
 
 Papers and Talks
 =================
@@ -57,9 +56,9 @@ Papers and Talks
 
 Related Software
 =================
-* [`PivotalR`](https://github.com/madlib-internal/PivotalR) - PivotalR also
+* [`PivotalR`](https://github.com/pivotalsoftware/PivotalR) - PivotalR also
 lets the user run the functions of the open-source big-data machine learning
 package `MADlib` directly from R.
-* [`PyMADlib`](https://github.com/gopivotal/pymadlib) - PyMADlib is a python
+* [`PyMADlib`](https://github.com/pivotalsoftware/pymadlib) - PyMADlib is a python
 wrapper for MADlib, which brings you the power and flexibility of python
 with the number crunching power of `MADlib`.
