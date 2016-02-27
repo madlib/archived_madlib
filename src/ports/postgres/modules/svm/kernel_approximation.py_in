@@ -8,6 +8,295 @@ from utilities.utilities import num_features
 
 from math import sqrt
 from math import pi
+from math import log
+from math import factorial
+
+from random import random
+from random import seed
+
+from operator import mul
+from collections import namedtuple
+
+
+PolyRandOperator = namedtuple('PolyRandOperator',
+                              'weights, coefs, reps, '
+                              'other_features, rd_id, rd_val')
+
+
+class PolyKernel(object):
+    """docstring for PolyKernel"""
+    def __init__(self, schema_madlib, degree=2, coef0=1, n_components=100,
+                 random_state=1, poly_operator=None, orig_data=None):
+        self.schema_madlib = schema_madlib
+        self.kernel_func = 'polynomial'
+        self.degree = degree
+        self.coef0 = coef0
+        self.n_components = n_components
+        self.random_state = random_state
+        # polynomial random mapping operator
+        self.pro = poly_operator
+        self.orig_data = orig_data
+        if self.pro is not None:
+            pro = self.pro
+            self.n_components = num_features(pro.coefs, pro.rd_val)
+            self.n_components += num_features(pro.other_features, pro.rd_val)
+
+    def clear(self):
+        data_type = 'view' if self.orig_data else 'table'
+        if self.pro:
+            run_sql = """
+                drop {data_type} if exists {pro.weights};
+                drop {data_type} if exists {pro.coefs};
+                drop {data_type} if exists {pro.reps};
+                drop {data_type} if exists {pro.other_features};
+            """.format(pro=self.pro, data_type=data_type)
+            plpy.execute(run_sql)
+
+    def __del__(self):
+        self.clear()
+
+    def save_as(self, name):
+        if self.orig_data:
+            plpy.warning("Polynomial Kernel Warning: no need to save."
+                         "Original data table exists: {0}"
+                         .format(self.orig_data))
+            return
+
+        run_sql = """
+            create table {name} as
+                select {pro.rd_id} as id, {pro.rd_val} as val,
+                       'coefs' as desp
+                from {pro.coefs}
+                union
+                select {pro.rd_id} as id, {pro.rd_val} as val,
+                       'weights' as desp
+                from {pro.weights}
+                union
+                select {pro.rd_id} as id, {pro.rd_val} as val,
+                       'reps' as desp
+                from {pro.reps}
+                union
+                select {pro.rd_id} as id, {pro.rd_val} as val,
+                       'other_features' as desp
+                from {pro.other_features}
+        """.format(name=name, pro=self.pro)
+        plpy.execute(run_sql)
+
+    @classmethod
+    def create(cls, schema_madlib, n_features, kernel_params):
+        params = cls.parse_params(kernel_params, n_features)
+        return cls(schema_madlib, **params)
+
+    @classmethod
+    def load_from(cls, schema_madlib, data, kernel_params=''):
+        other_features = unique_string(desp='other_features')
+        rd_weights = unique_string(desp='random_weights')
+        rd_coefs = unique_string(desp='random_coefs')
+        rd_reps = unique_string(desp='random_reps')
+        rd_val = unique_string(desp='val')
+        rd_id = unique_string(desp='id')
+        plpy.execute("""
+                drop view if exists {rd_weights};
+                create temp view {rd_weights} as
+                    select id as {rd_id}, val as {rd_val} from {data}
+                    where desp = 'weights';
+
+                drop view if exists {rd_coefs};
+                create temp view {rd_coefs} as
+                    select id as {rd_id}, val as {rd_val} from {data}
+                    where desp = 'coefs';
+
+                drop view if exists {rd_reps};
+                create temp view {rd_reps} as
+                    select id as {rd_id}, val as {rd_val} from {data}
+                    where desp = 'reps';
+
+                drop view if exists {other_features};
+                create temp view {other_features} as
+                    select id as {rd_id}, val as {rd_val} from {data}
+                    where desp = 'other_features';
+                     """.format(**locals()))
+        params = cls.parse_params(kernel_params)
+        pro = PolyRandOperator(weights=rd_weights, coefs=rd_coefs,
+                               reps=rd_reps, other_features=other_features,
+                               rd_id=rd_id, rd_val=rd_val)
+
+        return cls(schema_madlib, poly_operator=pro, orig_data=data, **params)
+
+    @property
+    def kernel_params(self):
+        return ('degree={degree}, coef0={coef0}, '
+                'n_components={n_components}, '
+                'random_state={random_state}'
+                .format(degree=self.degree, coef0=self.coef0,
+                        n_components=self.n_components,
+                        random_state=self.random_state))
+
+    @classmethod
+    def parse_params(cls, kernel_params='', n_features=10):
+        params_default = {
+            'degree': 3,
+            'n_components': 2*n_features,
+            'coef0': 1,
+            'random_state': 1}
+        params_types = {
+            'degree': int,
+            'n_components': int,
+            'coef0': float,
+            'random_state': int}
+        return extract_keyvalue_params(kernel_params, params_types, params_default)
+
+    def fit(self, n_features):
+        # fast way to compute nCr
+        # combinations and permutations
+        def ncr(n, r):
+            r = min(r, n-r)
+            if r == 0:
+                return 1
+            numer = reduce(mul, range(n, n-r, -1))
+            denom = factorial(r + 1)
+            return numer // denom
+
+        # Maclaurin expansion of f = (q + x)**r
+        def maclaurin_coefs(r, q, k):
+            if q == 0:
+                return 0.
+            return ncr(r, k)*(q**(r-k))
+
+        self.clear()
+        self.orig_data = None
+        coefs_ = [sqrt(maclaurin_coefs(self.degree, self.coef0, k)*(2**(k+1)))
+                  for k in range(self.degree+1)]
+        seed(self.random_state)
+        reps_ = [int(log((1./random()), 2)) for _ in range(self.n_components)]
+        reps_nz_ = [x for x in reps_ if (x > 0) and (x <= self.degree)]
+        rd_val_ = unique_string(desp='val')
+        rd_id_ = unique_string(desp='id')
+        rd_weights_ = unique_string(desp='random_weights')
+        run_sql = """
+            drop table if exists {rd_weights};
+            select {schema_madlib}.matrix_random(
+                        1, {dim},
+                        'pos_val=1, neg_val=-1, seed={seed}, table_type=temp',
+                        'bernoulli', '{rd_weights}',
+                        'row={id}, val={val}')
+        """.format(rd_weights=rd_weights_,
+                   dim=sum(reps_nz_)*n_features,
+                   seed=self.random_state,
+                   schema_madlib=self.schema_madlib,
+                   val=rd_val_, id=rd_id_)
+        plpy.execute(run_sql)
+
+        vals_ = [coefs_[k] for k in reps_nz_]
+        rd_coefs_ = unique_string(desp='rd_coefs')
+        run_sql = """
+            drop table if exists {data};
+            create temp table {data} as
+                select
+                    $1 as {val}, id as {id}
+                from generate_series(1, 1) as id
+        """.format(data=rd_coefs_,
+                   val=rd_val_, id=rd_id_)
+        plpy.execute(plpy.prepare(run_sql, ["float[]"]), [vals_])
+
+        rd_reps_ = unique_string(desp='reps_nz')
+        run_sql = """
+            drop table if exists {data};
+            create temp table {data} as
+                select
+                    $1 as {val}, id as {id}
+                from generate_series(1, 1) as id
+        """.format(data=rd_reps_,
+                   val=rd_val_, id=rd_id_)
+        plpy.execute(plpy.prepare(run_sql, ["float[]"]), [reps_nz_])
+
+        vals_ = ([coefs_[0]]*len([_ for _ in reps_ if _ == 0]) +
+                 [0]*len([_ for _ in reps_ if _ > self.degree]))
+        other_features_ = unique_string(desp='other_features')
+        run_sql = """
+            drop table if exists {data};
+            create temp table {data} as
+                select
+                    $1 as {val}, id as {id}
+                from generate_series(1, 1) as id
+        """.format(data=other_features_,
+                   val=rd_val_, id=rd_id_)
+        plpy.execute(plpy.prepare(run_sql, ["float[]"]), [vals_])
+
+        self.pro = PolyRandOperator(weights=rd_weights_,
+                                    coefs=rd_coefs_, reps=rd_reps_,
+                                    other_features=other_features_,
+                                    rd_id=rd_id_, rd_val=rd_val_)
+        return self
+
+    def transform(self, source_table, independent_varname,
+                  dependent_varname=None, grouping_col=None, id_col=None,
+                  transformed_name='poly_transformed'):
+        if not self.pro:
+            return self
+        self.original_table = dict(source_table=source_table,
+                                   independent_varname=independent_varname,
+                                   dependent_varname=dependent_varname)
+        schema_madlib = self.schema_madlib
+
+        def _cast_if_null(input, alias):
+            null_str = "NULL::integer"
+            if input:
+                return str(input)
+            else:
+                return null_str + " as " + alias if alias else null_str
+
+        grouping_col = _cast_if_null(grouping_col, unique_string('grp_col'))
+        dependent_varname = _cast_if_null(dependent_varname, '')
+        id_col = _cast_if_null(id_col, unique_string('id_col'))
+
+        features_col = unique_string(desp='features_col')
+        target_col = unique_string(desp='target_col')
+        transformed = unique_string(desp=transformed_name)
+
+        # X = a * cos (X*C + b)
+        pro, multiplier = self.pro, sqrt(1. / self.n_components)
+        run_sql = """
+        drop table if exists {transformed};
+        create temp table {transformed} as
+            select
+                {schema_madlib}.array_scalar_mult(
+                    array_cat(
+                        {schema_madlib}.array_mult(
+                            {schema_madlib}.__row_fold(
+                                {schema_madlib}.__matrix_vec_mult_in_mem(
+                                    q.{features_col}::float[],
+                                    weights.{pro.rd_val}::float[]
+                                )::float[],
+                                reps.{pro.rd_val}::integer[]
+                            )::float[],
+                            coefs.{pro.rd_val}::float[]
+                        )::float[],
+                        of.{pro.rd_val}::float[]
+                    )::float[],
+                    {multiplier}::float
+                ) as {features_col},
+                q.{target_col} as {target_col},
+                {id_col},
+                {grouping_col}
+            from (
+                select
+                    {dependent_varname} as {target_col},
+                    {independent_varname} as {features_col},
+                    {id_col},
+                    {grouping_col}
+                from {source_table}
+            ) q cross join (select {pro.rd_val} from {pro.weights}) as weights
+                cross join (select {pro.rd_val} from {pro.coefs}) as coefs
+                cross join (select {pro.rd_val} from {pro.reps}) as reps
+                cross join (select {pro.rd_val} from {pro.other_features}) as of
+        """.format(**locals())
+        plpy.execute(run_sql)
+        # assert(self.n_components == num_features(transformed, features_col))
+        self.transformed_table = dict(source_table=transformed,
+                                      dependent_varname=target_col,
+                                      independent_varname=features_col)
+        return self
 
 
 class GaussianKernelBase(object):
@@ -196,23 +485,21 @@ class GaussianKernel(GaussianKernelBase):
                   transformed_name='gaussian_transformed'):
         if not self.rd_offset or not self.rd_weights:
             return self
-
         self.original_table = dict(source_table=source_table,
                                    independent_varname=independent_varname,
                                    dependent_varname=dependent_varname)
-
         schema_madlib = self.schema_madlib
 
-        def _verify(x, s):
+        def _cast_if_null(input, alias):
             null_str = "NULL::integer"
-            if x:
-                return str(x)
+            if input:
+                return str(input)
             else:
-                return null_str + " as " + s if s else null_str
+                return null_str + " as " + alias if alias else null_str
 
-        grouping_col = _verify(grouping_col, unique_string('grp_col'))
-        dependent_varname = _verify(dependent_varname, '')
-        id_col = _verify(id_col, unique_string('id_col'))
+        grouping_col = _cast_if_null(grouping_col, unique_string('grp_col'))
+        dependent_varname = _cast_if_null(dependent_varname, '')
+        id_col = _cast_if_null(id_col, unique_string('id_col'))
 
         # copy data to the temporary table with id column
         # id_col is different from index_col
@@ -399,9 +686,9 @@ def create_kernel(schema_madlib, n_features, kernel_func, kernel_params):
     if kernel_func == 'linear':
         return None
     elif kernel_func == 'gaussian':
-        return GaussianKernelBase.create(schema_madlib,
-                                         n_features,
-                                         kernel_params)
+        return GaussianKernelBase.create(schema_madlib, n_features, kernel_params)
+    elif kernel_func == 'polynomial':
+        return PolyKernel.create(schema_madlib, n_features, kernel_params)
 
 
 def load_kernel(schema_madlib, data, kernel_func, kernel_params):
@@ -409,3 +696,5 @@ def load_kernel(schema_madlib, data, kernel_func, kernel_params):
         return None
     elif kernel_func == 'gaussian':
         return GaussianKernelBase.load_from(schema_madlib, data, kernel_params)
+    elif kernel_func == 'polynomial':
+        return PolyKernel.load_from(schema_madlib, data, kernel_params)
