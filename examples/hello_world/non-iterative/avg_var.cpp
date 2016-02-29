@@ -36,10 +36,10 @@ namespace hello_world {
 
 template <class Handle>
 class AvgVarTransitionState {
-	template <class OtherHandle>
+    template <class OtherHandle>
     friend class AvgVarTransitionState;
 
-  public:
+public:
     AvgVarTransitionState(const AnyType &inArray)
         : mStorage(inArray.getAs<Handle>()) {
 
@@ -59,17 +59,17 @@ class AvgVarTransitionState {
     /**
      * @brief Update state with a new data point
      */
-    template <class OtherHandle>
-    AvgVarTransitionState &operator+=(const double x){
+    AvgVarTransitionState & operator+=(const double x){
         double diff = (x - avg);
         double normalizer = static_cast<double>(numRows + 1);
         // online update mean
-        this.avg += diff / normalizer;
+        this->avg += diff / normalizer;
 
         // online update variance
         double new_diff = (x - avg);
-        double a = static_cast<double>(state.numRows) / normalizer;
-        this.var = (var * a) + (diff * new_diff) / normalizer;
+        double a = static_cast<double>(this->numRows) / normalizer;
+        this->var = (var * a) + (diff * new_diff) / normalizer;
+    return *this;
     }
 
     /**
@@ -98,8 +98,8 @@ class AvgVarTransitionState {
         double a_ = avg_ - totalAvg;
 
         numRows += numRows_;
-        this.var = (w * var) + (w_ * var_) + (w * a * a) + (w_ * a_ * a_);
-        this.avg = totalAvg;
+        this->var = (w * var) + (w_ * var_) + (w * a * a) + (w_ * a_ * a_);
+        this->avg = totalAvg;
         return *this;
     }
 
