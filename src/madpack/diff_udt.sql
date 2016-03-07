@@ -51,15 +51,11 @@ $$
             (
                 SELECT array_agg(a.attname || pg_catalog.format_type(a.atttypid, a.atttypmod) || a.attnum order by a.attnum) AS old_type
                 FROM pg_catalog.pg_attribute a
-                LEFT OUTER JOIN pg_catalog.pg_attribute_encoding e
-                ON   e.attrelid = a .attrelid AND e.attnum = a.attnum
                 WHERE a.attrelid = '{old_relid}' AND a.attnum > 0 AND NOT a.attisdropped
             ) t1,
             (
                 SELECT array_agg(a.attname || pg_catalog.format_type(a.atttypid, a.atttypmod) || a.attnum order by a.attnum) AS new_type
                 FROM pg_catalog.pg_attribute a
-                LEFT OUTER JOIN pg_catalog.pg_attribute_encoding e
-                ON   e.attrelid = a .attrelid AND e.attnum = a.attnum
                 WHERE a.attrelid = '{new_relid}' AND a.attnum > 0 AND NOT a.attisdropped
             ) t2
             """.format(old_relid=old_relid, new_relid=new_relid))[0]['changed']
@@ -88,14 +84,14 @@ FROM
 WHERE v19.name IS NULL;
 
 --Added
--- SELECT
---     v19.name AS "Added UDTs"
--- FROM
---     types_madlib_v18 AS v18
---     RIGHT JOIN
---     types_madlib AS v19
---     USING (name)
--- WHERE v18.name IS NULL;
+SELECT
+     v19.name AS "Added UDTs"
+FROM
+     types_madlib_v18 AS v18
+     RIGHT JOIN
+     types_madlib AS v19
+     USING (name)
+WHERE v18.name IS NULL;
 
 --Common
 DROP TABLE IF EXISTS types_common;
@@ -105,7 +101,7 @@ SELECT
 FROM
     types_madlib_v18 AS v18
     JOIN
-    types_madlib_v19 AS v19
+    types_madlib AS v19
     USING (name)
 WHERE v18.typrelid <> 0; -- 0 means base type
 

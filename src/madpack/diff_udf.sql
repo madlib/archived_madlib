@@ -139,7 +139,7 @@ $$ LANGUAGE plpythonu;
 DROP TABLE IF EXISTS functions_madlib_old_version;
 DROP TABLE IF EXISTS functions_madlib_new_version;
 
-sELECT get_functions('madlibv18');
+SELECT get_functions('madlibv18');
 
 SELECT
     --'\t-' || name || ':' || '\n\t\t-rettype: ' || retype || '\n\t\t-argument: ' || argtypes
