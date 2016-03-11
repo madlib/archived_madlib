@@ -194,7 +194,7 @@ class PolyKernel(object):
             drop table if exists {rd_weights};
             select {schema_madlib}.matrix_random(
                         1, {dim},
-                        'upper=1, lower=-1, seed={seed}, table_type=temp',
+                        'upper=1, lower=-1, seed={seed}, temp_out=true',
                         'bernoulli', '{rd_weights}',
                         'row={id}, val={val}')
         """.format(rd_weights=rd_weights_,
@@ -303,6 +303,7 @@ class PolyKernel(object):
                     {id_col},
                     {grouping_col}
                 from {source_table}
+                WHERE not {schema_madlib}.array_contains_null({independent_varname})
             ) q cross join (select {pro.rd_val} from {pro.weights}) as weights
                 cross join (select {pro.rd_val} from {pro.coefs}) as coefs
                 cross join (select {pro.rd_val} from {pro.reps}) as reps
@@ -348,26 +349,28 @@ class GaussianKernelBase(object):
     def _random_weights(self, row_dim, col_dim, rd_id, rd_val):
         rd_weights = unique_string(desp='random_weights')
         sigma = sqrt(2 * self.gamma)
+        seed = self.random_state
         plpy.execute("""
             drop table if exists {rd_weights};
             select {self.schema_madlib}.matrix_random(
                     {row_dim}, {col_dim},
-                    'mu=0, sigma={sigma}, seed={self.random_state}',
-                    'normal',
-                    '{rd_weights}','row={rd_id}, val={rd_val}');
+                    'mu=0, sigma={sigma}, seed={seed}, temp_out=true',
+                    'normal', '{rd_weights}',
+                    'row={rd_id}, val={rd_val}');
         """.format(**locals()))
         return rd_weights
 
     def _random_offsets(self, row_dim, col_dim, rd_id, rd_val):
         rd_offset = unique_string(desp='random_offsets')
         max_ = 2 * pi
+        seed = self.random_state
         plpy.execute("""
             drop table if exists {rd_offset};
             select {self.schema_madlib}.matrix_random(
                     {row_dim}, {col_dim},
-                    'min=0, max={max_}, seed={self.random_state}',
-                    'uniform',
-                    '{rd_offset}','row={rd_id}, val={rd_val}');
+                    'min=0, max={max_}, seed={seed}, temp_out=true',
+                    'uniform', '{rd_offset}',
+                    'row={rd_id}, val={rd_val}');
         """.format(**locals()))
         return rd_offset
 
@@ -538,6 +541,7 @@ class GaussianKernel(GaussianKernelBase):
                     {id_col},
                     {grouping_col}
                 from {source_table}
+                WHERE not {schema_madlib}.array_contains_null({independent_varname})
         """.format(**locals())
         plpy.execute(run_sql)
         source_table = source_with_id
@@ -688,6 +692,7 @@ class GaussianKernelInMemory(GaussianKernelBase):
                         {id_col},
                         {grouping_col}
                     from {source_table}
+                    WHERE not {schema_madlib}.array_contains_null({independent_varname})
                 ) q
                 cross join (select {self.rd_val} from {self.rd_weights}) as rw
                 cross join (select {self.rd_val} from {self.rd_offset}) as ro
