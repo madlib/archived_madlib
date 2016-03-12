@@ -375,7 +375,7 @@ array_of_float(PG_FUNCTION_ARGS){
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                  errmsg("invalid array length"),
-                 errdetail("array_of_bigint: Size should be in [1, 1e7], %d given", size)));
+                 errdetail("array_of_float: Size should be in [1, 1e7], %d given", size)));
     }
     Datum* array = palloc (sizeof(Datum)*size);
     for(int i = 0; i < size; ++i) {
