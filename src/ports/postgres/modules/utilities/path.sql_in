@@ -34,22 +34,43 @@ m4_include(`SQLCommon.m4')
 <ul>
 <li><a href="#syntax">Function Syntax</a></li>
 <li><a href="#examples">Examples</a></li>
+<li><a href="#nomenclature">Nomenclature</a></li>
+<li><a href="#literature">Literature</a></li>
 </ul>
 </div>
 
-@brief Path functions
+@brief Path Functions
 @details The goal of the MADlib path function is to perform regular pattern
-matching over a sequence of rows, and to extract useful information about the
-matches.  The useful information could be a simple count of matches or
-something more involved like aggregation.
+matching over a sequence of rows, and to extract useful information about
+the pattern matches.  The useful information could be a simple count of
+matches or something more involved like aggregations or window functions.
 
-There are many use cases where path functions are typically used:
-- Web analytics (clickstream)
-- Marketing revenue attribution
-- Telephone calling patterns
-- Stock market trading sequences
-- Predictive maintenance
-- Genomics sequencing
+Symbols are used to identify particular rows of interest.  Then, standard
+PostgreSQL pattern matching using symbols can be applied to identify
+patterns across the rows of interest.  (This is similar in concept to
+regular expressions which match patterns within strings of text.)
+
+For example, a symbol can be defined for purchase events by on-line
+shoppers.  Then, preceding events that led to the purchase can be
+identified and operated on, perhaps to find the common actions that
+resulted in a purchase.  Or conversely, to find actions that resulted
+in an exit without a purchase having been made.
+
+Steps on how to use path functions:
+
+1.  Partition input rows.
+
+2.  Order the partitions.
+
+3.  Define symbols to match rows of interest.
+
+4.  Define regular expression of symbols and operators to define
+patterns to match in your ordered partitions.
+
+5.  Define an aggregate function to compute for each pattern match.
+
+6.  If desired, output the pattern matches for inspection or to
+operate on them with subsequent queries.
 
 @anchor syntax
 @par Function Syntax
@@ -69,36 +90,53 @@ path(
 \b Arguments
 <dl class="arglist">
     <dt>source_table</dt>
-    <dd>VARCHAR. Name of the source table, containing data for path analysis.</dd>
+    <dd>VARCHAR. Name of the source table, containing data for path
+    analysis.</dd>
 
     <dt>output_table</dt>
-    <dd>VARCHAR. Name of the result table. This table contains columns
-    predicated by the <em>result</em> argument (shown below).</dd>
+    <dd>VARCHAR. Name of the result table.
 
     <dt>partition_expr</dt>
     <dd>VARCHAR. The 'partition_expr' can be a single column or a list of
     comma-separated columns/expressions to divide all rows into groups,
-    or partitions, that share the same values of the partition expression(s).
-    The matching is applied across the rows that fall into the same partition.
-    This can be NULL or '' to indicate the matching is to be applied on the
-    whole table.</dd>
+    or partitions.  Matching is applied across the rows that fall into t
+    he same partition. This can be NULL or '' to indicate the matching is
+    to be applied to the whole table.</dd>
 
     <dt>order_expr</dt>
     <dd>VARCHAR. This expression controls the order in which rows are
-    processed or matched in a partition.
+    processed or matched in a partition.  For example, time is a common way
+    to order partitions.
     </dd>
 
     <dt>symbol</dt>
-    <dd>VARCHAR. A symbol represents a row of a particular type that you’re
-    searching for as part of a row sequence. In the SYMBOLS clause, you write a
-    predicate to define the type of row that matches the symbol.
+    <dd>VARCHAR. Symbols enable you to express patterns of interest in a
+    simple way (see definition of ‘pattern’ argument below).  A symbol
+    identifies a row of a particular type that you’re searching for as
+    part of a pattern match.  Symbol definition uses the standard
+    PostgreSQL assignment statement 'identifier := expression;' [1].
+    A given row can only match one symbol. If a row matches multiple
+    symbols, the symbol that comes first in the symbol definition list
+    will take precedence.
     </dd>
 
     <dt>pattern</dt>
-    <dd>VARCHAR. The PATTERN clause defines the pattern that path searches for.
-        You express the PATTERN using symbols and operators. Symbols defined using more
-        than 1 characters need to be wrapped in parentheses '()'.
-        The following pattern-matching metacharacters are supported:
+    <dd>VARCHAR. The 'pattern' clause defines the pattern that the path
+    algorithm searches for.  You express the pattern using symbols and
+    operators following regular PostgreSQL pattern matching syntax and
+    rules [2].
+
+@anchor note
+@note
+        Symbols defined using more than one (1) character need to be
+        enclosed in parentheses '()' when referenced in the 'pattern'
+        argument.  For example:
+        - a symbol defined as 'a' in the 'symbol' argument can be used directly
+        in the 'pattern' argument
+        - a symbol defined as 'abc' in the 'symbol' argument must be written as
+        '(abc)' in the 'pattern' argument
+
+        The following pattern matching metacharacters are supported:
         <ul>
             <li>| denotes alternation (either of two alternatives). </li>
             <li>? denotes repetition of the previous item zero or one time. </li>
@@ -112,13 +150,20 @@ path(
     </dd>
 
     <dt>aggregate_func</dt>
-    <dd>VARCHAR. A comma-separated list of window functions and aggregates to be
-    applied on the matched window.
+    <dd>VARCHAR. A comma-separated list of aggregates to be
+    applied to the pattern matches [3].  Please note that window functions
+    cannot currently be used in the parameter 'aggregate_func'.  If you want
+    to use a window function [4], output the pattern matches and write a SQL
+    query with a window function over the output tuples (see 'persist_rows'
+    parameter below).
+
+    If you just want to output the pattern matched rows and not compute any
+    aggregates, you can put NULL or '' in the 'aggregate_func' parameter.
     </dd>
 
     <dt>persist_rows</dt>
-    <dd>BOOLEAN. If TRUE the matched rows are persisted in another table.
-    This table is named as <output_table>_tuples (the string
+    <dd>BOOLEAN. If TRUE the matched rows are persisted in a separate output
+    table. This table is named as <output_table>_tuples (the string
     "_tuples" is added as suffix to the value of <em>output_table</em>).
     </dd>
 
@@ -128,62 +173,301 @@ path(
 @anchor examples
 @examp
 
-- Build sample dataset
+The data set describes shopper behavior on a notional web site that sells
+beer and wine. A beacon fires an event to a log file when the shopper
+visits different pages on the site:  landing page, beer selection page,
+wine selection page, and checkout.  Other pages on the site like help
+pages show up in the logs as well. Let’s assume that the log has been
+sessionized.
+
+Create the date table:
+
 <pre class="example">
-CREATE TABLE trades (id integer, sessionid integer, starttime timestamp, topic varchar, portfolio integer);
-COPY trades FROM STDIN DELIMITER AS '|';
-1|1|1/01/00 5:00 AM|Real-time Equity pricing|769
-1|2|1/01/00 5:30 AM|Real-time Index pricing|9898
-1|3|1/01/00 6:00 AM|Real-time Index pricing|9898
-1|4|1/01/00 5:00 AM|Calendar|98977
-1|5|1/01/00 10:00 AM|Real-time Equity pricing|769
-1|6|1/01/00 10:30 AM|Real-time Equity pricing|9898
-1|7|1/01/00 12:00 PM|Calendar|1325
-1|8|1/01/00 12:00 PM|Calendar|6777
-1|9|1/01/00 4:05 PM|Real-time Equity pricing|769
-1|10|1/01/00 4:10 PM|Report Dates and Analyst Recommendations|34346
-1|11|1/01/00 4:15 PM|Real-time Index pricing|9898
-1|12|1/01/00 4:20 PM|Snapshot Futures pricing|5568
-1|13|1/01/00 4:21 PM|Real-time Equity pricing|769
-1|14|1/01/00 4:25 PM|Bond security master|789
-1|15|1/01/00 10:00 PM|Bond pricing|55
-1|16|1/01/00 10:00 PM|Bond pricing|55
-1|17|1/01/00 10:00 PM|Bond pricing|55
-1|18|1/01/00 10:00 PM|Bond Yield Analysis|655
-1|19|1/01/00 10:00 PM|Bond pricing|55
-1|20|1/01/00 10:00 PM|Bond pricing|55
-2|1|1/04/00 12:00 AM|Real-time Equity pricing|769
-2|2|1/04/00 12:00 AM|Real-time Equity pricing|234234
-2|3|1/04/00 12:00 AM|Calendar|1325
-2|4|1/04/00 12:00 AM|Calendar|6777
-2|5|1/04/00 12:00 AM|Real-time Equity pricing|769
-2|6|1/04/00 12:00 AM|Report Dates and Analyst Recommendations|34346
-2|7|1/04/00 12:00 AM|Real-time Index pricing|9898
-2|8|1/04/00 12:00 AM|Snapshot Futures pricing|5568
-2|9|1/04/00 12:00 AM|Real-time Equity pricing|769
-2|10|1/04/00 12:00 AM|Bond security master|789
-2|11|1/04/00 12:00 AM|Bond pricing|55
-2|12|1/04/00 12:00 AM|Bond pricing|55
-2|13|1/04/00 12:00 AM|Bond pricing|55
-2|14|1/04/00 12:00 AM|Bond pricing|55
-\\.
+DROP TABLE IF EXISTS eventlog, path_output, path_output_tuples;
+CREATE TABLE eventlog (event_timestamp TIMESTAMP,
+            user_id INT,
+            session_id INT,
+            page TEXT,
+            revenue FLOAT);
+INSERT INTO eventlog VALUES
+('04/15/2015 01:03:00', 100821, 100, 'LANDING', 0),
+('04/15/2015 01:04:00', 100821, 100, 'WINE', 0),
+('04/15/2015 01:05:00', 100821, 100, 'CHECKOUT', 39),
+('04/15/2015 02:06:00', 100821, 101, 'WINE', 0),
+('04/15/2015 02:09:00', 100821, 101, 'WINE', 0),
+('04/15/2015 01:15:00', 101121, 102, 'LANDING', 0),
+('04/15/2015 01:16:00', 101121, 102, 'WINE', 0),
+('04/15/2015 01:17:00', 101121, 102, 'CHECKOUT', 15),
+('04/15/2015 01:18:00', 101121, 102, 'LANDING', 0),
+('04/15/2015 01:19:00', 101121, 102, 'HELP', 0),
+('04/15/2015 01:21:00', 101121, 102, 'WINE', 0),
+('04/15/2015 01:22:00', 101121, 102, 'CHECKOUT', 23),
+('04/15/2015 02:15:00', 101331, 103, 'LANDING', 0),
+('04/15/2015 02:16:00', 101331, 103, 'WINE', 0),
+('04/15/2015 02:17:00', 101331, 103, 'HELP', 0),
+('04/15/2015 02:18:00', 101331, 103, 'WINE', 0),
+('04/15/2015 02:19:00', 101331, 103, 'CHECKOUT', 16),
+('04/15/2015 02:22:00', 101443, 104, 'BEER', 0),
+('04/15/2015 02:25:00', 101443, 104, 'CHECKOUT', 12),
+('04/15/2015 02:29:00', 101881, 105, 'LANDING', 0),
+('04/15/2015 02:30:00', 101881, 105, 'BEER', 0),
+('04/15/2015 01:05:00', 102201, 106, 'LANDING', 0),
+('04/15/2015 01:06:00', 102201, 106, 'HELP', 0),
+('04/15/2015 01:09:00', 102201, 106, 'LANDING', 0),
+('04/15/2015 02:15:00', 102201, 107, 'WINE', 0),
+('04/15/2015 02:16:00', 102201, 107, 'BEER', 0),
+('04/15/2015 02:17:00', 102201, 107, 'WINE', 0),
+('04/15/2015 02:18:00', 102871, 108, 'BEER', 0),
+('04/15/2015 02:19:00', 102871, 108, 'WINE', 0),
+('04/15/2015 02:22:00', 102871, 108, 'CHECKOUT', 21),
+('04/15/2015 02:25:00', 102871, 108, 'LANDING', 0),
+('04/15/2015 02:17:00', 103711, 109, 'BEER', 0),
+('04/15/2015 02:18:00', 103711, 109, 'LANDING', 0),
+('04/15/2015 02:19:00', 103711, 109, 'WINE', 0);
 </pre>
 
-- Compare within each day for the same Topic/Portfolio across every user
+-# Calculate the revenue by checkout:
 <pre class="example">
-    SELECT madlib.path(
-        'trades',
-        'trades_out',
-        'starttime::date, topic, portfolio',  \-\- each day of activity is looked at independently
-        'starttime',                    \-\- order by time
-        'BEFORE:=starttime::time >= ''0:00:00'' and starttime::time < ''9:30:00''::time,'
-            'MARKET:=starttime::time >= ''9:30:00'' and starttime::time < ''16:00:00''::time,'
-            'CLOSE:= starttime::time <= ''16:00:00'' and starttime::time < ''16:30:00''::time,'
-            'AFTER:= starttime::time <= ''16:30:00'' and starttime::time < ''24:00:00''::time',
-        'BEFORE*.MARKET+.CLOSE+.AFTER*', \-\- at least one event during each of MARKET and CLOSE, but gather up the rest
-        'count(*) as num_matches'
-    )
+ SELECT madlib.path(
+     'eventlog',                -- Name of input table
+     'path_output',             -- Table name to store path results
+     'session_id',              -- Partition input table by session
+     'event_timestamp ASC',     -- Order partitions in input table by time
+     'buy:=page=''CHECKOUT''',  -- Define a symbol for checkout events
+     '(buy)',                   -- Pattern search: purchase
+     'sum(revenue) as checkout_rev',    -- Aggregate:  sum revenue by checkout
+     TRUE                       -- Persist matches
+     );
+SELECT * FROM path_output ORDER BY session_id, match_id;
 </pre>
+Result:
+<pre class="result">
+ session_id | match_id | checkout_rev
+------------+----------+--------------
+        100 |        1 |           39
+        102 |        1 |           15
+        102 |        2 |           23
+        103 |        1 |           16
+        104 |        1 |           12
+        108 |        1 |           21
+(6 rows)
+</pre>
+Note that there are 2 checkouts within session 102, which is apparent
+from the 'match_id' column.  This serves to illustrate that the
+'aggregate_func' operates on a <em>per pattern match</em> basis,
+not on a <em>per partition</em> basis.  If in fact we wanted revenue
+by partition ('session_id' in this example), then we could do:
+<pre class="example">
+SELECT session_id, sum(checkout_rev) FROM path_output GROUP BY session_id ORDER BY session_id;
+</pre>
+Result:
+<pre class="result">
+ session_id | sum
+------------+-----
+        100 |  39
+        102 |  38
+        103 |  16
+        104 |  12
+        108 |  21
+(5 rows)
+</pre>
+Since we set TRUE for 'persist_rows', we can view the associated
+pattern matches:
+<pre class="example">
+SELECT * FROM path_output_tuples ORDER BY session_id ASC, event_timestamp ASC;
+</pre>
+Result:
+<pre class="result">
+   event_timestamp   | user_id | session_id |   page   | revenue | symbol | match_id
+---------------------+---------+------------+----------+---------+--------+----------
+ 2015-04-15 01:05:00 |  100821 |        100 | CHECKOUT |      39 | buy    |        1
+ 2015-04-15 01:17:00 |  101121 |        102 | CHECKOUT |      15 | buy    |        1
+ 2015-04-15 01:22:00 |  101121 |        102 | CHECKOUT |      23 | buy    |        2
+ 2015-04-15 02:19:00 |  101331 |        103 | CHECKOUT |      16 | buy    |        1
+ 2015-04-15 02:25:00 |  101443 |        104 | CHECKOUT |      12 | buy    |        1
+ 2015-04-15 02:22:00 |  102871 |        108 | CHECKOUT |      21 | buy    |        1
+(6 rows)
+</pre>
+Notice that the 'symbol' and 'match_id' columns are added to the
+right of the matched rows.
+
+-# We are interested in sessions with an order placed within 4 pages of
+entering the shopping site via the landing page. We represent this by the
+regular expression: '(land)[^(land)(buy)]{0,2}(buy)'. In other words, visit
+to the landing page followed by from 0 to 2 non-entry, non-sale pages,
+followed by a purchase.  The SQL is as follows:
+<pre class="example">
+SELECT madlib.path(
+     'eventlog',                -- Name of input table
+     'path_output',             -- Table name to store path results
+     'session_id',              -- Partition input table by session
+     'event_timestamp ASC',     -- Order partitions in input table by time
+     'land:=page=''LANDING'',
+        wine:=page=''WINE'',
+        beer:=page=''BEER'',
+        buy:=page=''CHECKOUT'',
+        other:=page<>''LANDING'' AND page<>''WINE'' AND page<>''BEER'' AND  page<>''CHECKOUT''',    -- Symbols for  page types
+      '(land)[^(land)(buy)]{0,2}(buy)', -- Purchase within 4 pages entering site
+     'sum(revenue) as checkout_rev',    -- Aggregate:  sum revenue by checkout
+     TRUE                       -- Persist matches
+     );
+SELECT * FROM path_output ORDER BY session_id, match_id;
+</pre>
+Result:
+<pre class="result">
+ session_id | match_id | session_rev
+------------+----------+-------------
+        100 |        1 |          39
+        102 |        1 |          15
+        102 |        2 |          23
+(3 rows)
+</pre>
+Now view the associated pattern matches:
+<pre class="example">
+SELECT * FROM path_output_tuples ORDER BY session_id ASC, event_timestamp ASC;
+</pre>
+Result:
+<pre class="result">
+   event_timestamp   | user_id | session_id |   page   | revenue | symbol | match_id
+---------------------+---------+------------+----------+---------+--------+----------
+ 2015-04-15 01:03:00 |  100821 |        100 | LANDING  |       0 | land   |        1
+ 2015-04-15 01:04:00 |  100821 |        100 | WINE     |       0 | wine   |        1
+ 2015-04-15 01:05:00 |  100821 |        100 | CHECKOUT |      39 | buy    |        1
+ 2015-04-15 01:15:00 |  101121 |        102 | LANDING  |       0 | land   |        1
+ 2015-04-15 01:16:00 |  101121 |        102 | WINE     |       0 | wine   |        1
+ 2015-04-15 01:17:00 |  101121 |        102 | CHECKOUT |      15 | buy    |        1
+ 2015-04-15 01:18:00 |  101121 |        102 | LANDING  |       0 | land   |        2
+ 2015-04-15 01:19:00 |  101121 |        102 | HELP     |       0 | other  |        2
+ 2015-04-15 01:21:00 |  101121 |        102 | WINE     |       0 | wine   |        2
+ 2015-04-15 01:22:00 |  101121 |        102 | CHECKOUT |      23 | buy    |        2
+(10 rows)
+</pre>
+
+-#  We may want to use a window function instead of an aggregate.
+Currently, only aggregates are supported in the core path function
+in the parameter 'aggregate_func'. However, you can write
+window functions on the output tuples to achieve the desired result.
+&nbsp;
+Continuing the previous example, let’s say we want to compute average
+revenue for checkouts within 4 pages of entering the shopping site
+via the landing page:
+<pre class="example">
+SELECT DATE(event_timestamp), user_id, session_id, revenue,
+    avg(revenue) OVER (PARTITION BY DATE(event_timestamp)) as avg_checkout_rev
+    FROM path_output_tuples
+    WHERE page='CHECKOUT'
+    ORDER BY user_id, session_id;
+</pre>
+Result:
+<pre class="result">
+    date    | user_id | session_id | revenue | avg_checkout_rev
+------------+---------+------------+---------+------------------
+ 2015-04-15 |  100821 |        100 |      39 | 25.6666666666667
+ 2015-04-15 |  101121 |        102 |      15 | 25.6666666666667
+ 2015-04-15 |  101121 |        102 |      23 | 25.6666666666667
+(3 rows)
+</pre>
+Here we are partitioning the window function by day because we want
+daily averages, although our sample data set only has a single day.
+
+-# Now we want to do a golden path analysis to find the most successful
+shopper paths through the site.  Since our data set is small, we decide
+this means the most frequently viewed page just before a checkout is made:
+<pre class="example">
+SELECT madlib.path(
+     'eventlog',                -- Name of input table
+     'path_output',             -- Table name to store path results
+     'session_id',              -- Partition input table by session
+     'event_timestamp ASC',     -- Order partitions in input table by time
+     'land:=page=''LANDING'',
+        wine:=page=''WINE'',
+        beer:=page=''BEER'',
+        buy:=page=''CHECKOUT'',
+        other:=page<>''LANDING'' AND page<>''WINE'' AND page<>''BEER'' AND  page<>''CHECKOUT''',    -- Symbols for  page types
+      '[^(buy)](buy)',          -- Pattern to match
+     'array_agg(page ORDER BY session_id ASC, event_timestamp ASC) as page_path',    -- Build array with shopper paths
+     FALSE                       -- Don't persist matches
+     );
+</pre>
+
+Now count the common paths and print the most frequent:
+
+<pre class="example">
+SELECT count(*), page_path from
+    (SELECT * FROM path_output) q
+GROUP BY page_path
+ORDER BY count(*) DESC
+LIMIT 10;
+</pre>
+
+Result:
+<pre class="result">
+ count |    page_path
+-------+-----------------
+     5 | {WINE,CHECKOUT}
+     1 | {BEER,CHECKOUT}
+(2 rows)
+</pre>
+
+There are only 2 different paths.  The wine page is viewed more frequently
+than the beer page just before checkout.
+
+@anchor note
+@note
+Please note some current limitations of the path algorithm.  These
+limitations will be addressed in subsequent releases.
+- Window functions cannot currently be used in the parameter
+'aggregate_func'.  Instead, output the pattern matches and write
+a SQL query with a window function over the output tuples.
+- Overlapping pattern matches are not supported.  That is,
+a given row can only belong to one pattern match (non-overlapping).
+- A given row can only match one symbol.  If a row matches
+multiple symbols, the symbol that comes <em>first</em> in the symbol
+definition list will take precedence.
+- Maximum number of symbols that can be defined is 35.
+- The columns 'match_id' and 'symbol' are generated by the path
+algorithm.  If coincidently you have columns in your input data
+named 'match_id' or 'symbol', the system generated column names
+will be changed to "__madlib_path_match_id__" and "__madlib_path_symbol__"
+
+@anchor nomenclature
+@par Nomenclature
+
+Partition
+- scope of rows to be searched for pattern match
+- typical examples: user id, session id, portfolio id
+
+Order
+- sort order of input rows in partition
+- typical example: time
+
+Symbol
+- a row of a particular type that you’re searching for, that you want to
+include in a pattern
+
+Pattern
+- regular PostgreSQL pattern match expression of symbols and operators
+that you want to match across rows
+
+Pattern match
+- rows that result from a pattern match expression of symbols
+- can be multiple matches per partition
+
+@anchor literature
+@par Literature
+
+[1]  PostgreSQL basic statements/assignment operator,
+http://www.postgresql.org/docs/8.2/static/plpgsql-statements.html
+
+[2]  PostgreSQL pattern matching,
+http://www.postgresql.org/docs/current/static/functions-matching.html
+
+[3]  PostgreSQL aggregate functions,
+http://www.postgresql.org/docs/8.2/static/tutorial-agg.html
+
+[4]  PostgreSQL window functions,
+http://www.postgresql.org/docs/8.4/static/tutorial-window.html
+
 */
 -------------------------------------------------------------------------
 
@@ -205,6 +489,8 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 -------------------------------------------------------------------------
 -- Overloaded functions for default arguments ---------------
+
+-- Do not output matched rows by default
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     source_table        VARCHAR,
     output_table        VARCHAR,
@@ -214,10 +500,22 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     pattern_expr        VARCHAR,
     agg_func            VARCHAR
 ) RETURNS TEXT AS $$
-    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, $7, FALSE)
+    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, $7, NULL)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
+-- if no agg func provided then output the matched rows only
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
+    source_table        VARCHAR,
+    output_table        VARCHAR,
+    partition_expr      VARCHAR,
+    order_expr          VARCHAR,
+    symbol_expr         VARCHAR,
+    pattern_expr        VARCHAR
+) RETURNS TEXT AS $$
+    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, NULL, NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 -------------------------------------------------------------------------
 -- To Implement -----------------------------------------------------------

@@ -28,22 +28,19 @@ import string
 import re
 
 from control import MinWarning
-from utilities import unique_string
-from utilities import _assert
-from utilities import add_postfix
+from utilities import unique_string, _assert, add_postfix
+from utilities import py_list_to_sql_string
 from validate_args import get_cols
-from validate_args import input_tbl_valid
-from validate_args import output_tbl_valid
+from validate_args import input_tbl_valid, output_tbl_valid, is_var_valid
 from validate_args import quote_ident
 # ------------------------------------------------------------------------
-
 
 m4_changequote(`<!', `!>')
 
 
 def path(schema_madlib, source_table, output_table, partition_expr,
          order_expr, pattern_expr, symbol_expr, agg_func,
-         persist_rows=False, **kwargs):
+         persist_rows=None, **kwargs):
     """
         Perform regular pattern matching over a sequence of rows.
 
@@ -64,18 +61,15 @@ def path(schema_madlib, source_table, output_table, partition_expr,
             as_partition_expr = "1 = 1 as all"
         else:
             as_partition_expr = partition_expr
+        if persist_rows is None:
+            # persist_rows = None implies no preference
+            # persist_rows = False implies do not store the matched rows
+            persist_rows = not bool(agg_func)
+
         _validate(source_table, output_table, partition_expr, order_expr,
                   pattern_expr, symbol_expr, agg_func, persist_rows)
 
-        # replace each occurence of the original symbol with the new
-        # perform this operation in descending order of length to avoid substituting
-        # subset of any symbol
-        sym_mapping, sym_str = _parse_symbol_str(symbol_expr)
-        old_sym_desc = list(reversed(sorted(sym_mapping.keys(), key=len)))
-        replace_pattern = re.compile('|'.join(old_sym_desc), re.IGNORECASE)
-        pattern_expr = replace_pattern.sub(
-            lambda m: sym_mapping[re.escape(string.lower(m.group(0)))],
-            pattern_expr)
+        new_pattern_expr, long_sym_str, short_sym_str = _parse_symbol_str(symbol_expr, pattern_expr)
 
         # build variables for intermediate objects
         input_with_id = unique_string('input_with_id')
@@ -83,8 +77,13 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         id_col_name = unique_string('id_col')
         matched_partitions = unique_string('matched_partitions')
         seq_gen = unique_string('seq_gen')
-        symbol_name_str = unique_string('symbol')
-        all_input_cols_str = ', '.join(get_cols(source_table, schema_madlib))
+        short_sym_name_str = unique_string('short_sym')
+        long_sym_name_str = unique_string('long_sym')
+        match_to_row_id = unique_string('match_to_row_id')
+        match_id = unique_string('match_id')
+
+        all_input_cols = [i.strip() for i in get_cols(source_table, schema_madlib)]
+        all_input_cols_str = ', '.join(all_input_cols)
         if persist_rows:
             matched_rows = add_postfix(output_table, "_tuples")
             table_or_view = 'TABLE'
@@ -100,16 +99,18 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         p_col_name_str = ', '.join(p_col_names)
         distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
                                 <!"DISTRIBUTED BY ({0})".format(p_col_name_str)!>)
-        plpy.execute("CREATE SEQUENCE " + seq_gen)
         plpy.execute("""
                      CREATE TEMP TABLE {input_with_id} AS
                          SELECT
                             {p_col_as_str},
                             *,
-                            nextval('{seq_gen}') AS {id_col_name},
+                            row_number() OVER() AS {id_col_name},
                             CASE
-                                {sym_str}
-                            END AS {symbol_name_str}
+                                {short_sym_str}
+                            END AS {short_sym_name_str},
+                            CASE
+                                {long_sym_str}
+                            END AS {long_sym_name_str}
                          FROM {source_table}
                      {distribution}
                     """.format(**locals()))
@@ -118,140 +119,171 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         #   string produced by concatenating the symbols. The exact rows that
         #   produce the match are identified by correlating the matched string
         #   indices with another array containing row ids.
-        #
-        #   matched_partitions: For each partition (group), concatenate all symbols
-        #       into a single string (sym_str). Keep corresponding ids in an array in the
-        #       same order as the symbols. This is performed only for partitions
-        #       that contain a match.
-        #   build_multiple_matched_rows:
-        #       q1: Split sym_str into an array containing the lengths of the
-        #           strings between the matches.
-        #       q2: Store lengths of matches into an array
-        #       q3: Merge q1 and q2 and unnest the arrays (ensuring same length).
-        #           Also right shift the matches array.
-        #       q4: Compute the cumulative sum of the arrays.
+
+        # matched_partitions: For each partition, concatenate all symbols
+        #       into a single string (sym_str). Keep corresponding ids in an
+        #       array (match_to_row_id) in the same order as the symbols.
+        #       This is performed only for partitions that contain a match.
+        match_id_name = "__madlib_path_match_id__" if "match_id" in all_input_cols else "match_id"
+        symbol_name = "__madlib_path_symbol__" if "symbol" in all_input_cols else "symbol"
         plpy.execute("""
             CREATE TEMP TABLE {matched_partitions} AS
                 SELECT
                     {p_col_name_str},
-                    array_to_string(array_agg({symbol_name_str} ORDER BY {order_expr}), '') as sym_str,
-                    array_agg({id_col_name} ORDER BY {order_expr}) as matched_ids
+                    array_to_string(array_agg({short_sym_name_str} ORDER BY {order_expr}), '') as sym_str,
+                    array_agg({id_col_name} ORDER BY {order_expr}) as {match_to_row_id}
                 FROM {input_with_id}
+                WHERE {short_sym_name_str} is NOT NULL
                 GROUP BY {p_col_name_str}
-                HAVING array_to_string(array_agg({symbol_name_str} ORDER BY {order_expr}), '') ~* '{pattern_expr}'
+                HAVING array_to_string(array_agg({short_sym_name_str} ORDER BY {order_expr}), '')
+                                ~* '{new_pattern_expr}'
             """.format(**locals()))
+
+        # length_of_matches: For each partition in matched_partitions:
+        #       - find all matches and compute the lengths of each match.
+        #       - output these lengths in an array (matches), along with
+        #         an array of corresponding rank of each match (match_indices).
+        length_of_matches = unique_string("match_length_view")
+        plpy.execute("""
+            CREATE VIEW {length_of_matches} AS
+            SELECT
+                {p_col_name_str},
+                {match_to_row_id},
+                array_agg(length(matches) ORDER BY match_index) AS matches,
+                array_agg(match_index ORDER BY match_index) AS match_indices
+            FROM (
+                SELECT
+                    {p_col_name_str},
+                    {match_to_row_id},
+                    generate_series(1, num_matches) AS match_index,
+                    (regexp_matches(
+                           sym_str, '(?i)({new_pattern_expr})', 'g'))[1] AS matches
+                FROM (
+                    SELECT
+                        {p_col_name_str},
+                        {match_to_row_id},
+                        sym_str,
+                        count(matches) AS num_matches
+                    FROM (
+                        SELECT
+                            {p_col_name_str},
+                            {match_to_row_id},
+                            sym_str,
+                            (regexp_matches(
+                                   sym_str, '(?i)({new_pattern_expr})', 'g'))[1] AS matches
+                        FROM
+                           {matched_partitions}
+                        ) t1
+                    GROUP BY {p_col_name_str}, {match_to_row_id}, sym_str
+                    ) t2
+                ) subq2
+            GROUP BY {p_col_name_str}, {match_to_row_id}
+            """.format(**locals()))
+
+        # length_of_between_matches: For each partition in matched_partitions:
+        #       - find all matches and compute the lengths of text between the matches.
+        #       - output these lengths in an array (match_splits)
+        length_of_between_matches = unique_string('match_split_view')
+        plpy.execute("""
+                CREATE VIEW {length_of_between_matches} AS
+                SELECT
+                    {p_col_name_str},
+                    array_agg(length(match_splits) ORDER BY match_index) AS match_splits
+                FROM (
+                    SELECT
+                        {p_col_name_str},
+                        generate_series(1, ARRAY_UPPER(match_splits, 1)) AS match_index,
+                        unnest(match_splits) AS match_splits
+                    FROM (
+                        SELECT
+                            {p_col_name_str},
+                            regexp_split_to_array(sym_str, '(?i){new_pattern_expr}') AS match_splits
+                        FROM
+                            {matched_partitions}
+                        ) ssubq1
+                    ) subq1
+                GROUP BY {p_col_name_str}
+                """.format(**locals()))
+        #   build_multiple_matched_rows:
+        #       q1: Lengths of the strings between the matches (length_of_between_matches)
+        #       q2: Lengths of matches (length_of_matches)
+        #       q3: Merge q1 and q2 and unnest the arrays (ensuring same length).
+        #           Since q2 represents the following match to each split in q1,
+        #           right shifting q2 (prev_matches) gives the preceeding match to each split.
+        #       q4: Compute the cumulative sum of the arrays.
+
         build_multiple_matched_rows = """
             CREATE {table_or_view} {matched_rows} AS
-            SELECT {all_input_cols_str}
+            SELECT {all_input_cols_str},
+                   {long_sym_name_str} AS {symbol_name},
+                   {match_id} AS {match_id_name}
             FROM
                 {input_with_id} as source,
                 (
+                    -- get the actual row ids using the start/end values
                     SELECT
-                        unnest(matched_ids[l:r]) AS matched_ids
+                        unnest({match_to_row_id}[s:e]) AS {match_to_row_id},
+                        match_index AS {match_id}
                     FROM
                     (
+                     -- unnest to get tuples where each tuple gives the start/end of a match
                      SELECT
-                        matched_ids,
-                        unnest(left_range) AS l,
-                        unnest(right_range) AS r
+                        {match_to_row_id},
+                        unnest(match_start) AS s,
+                        unnest(match_end) AS e,
+                        unnest(match_indices) as match_index
                      FROM (
+                        -- use cumulative sum to get the start and end of each match
+                        -- (counting from start of symbol string)
                         SELECT
                             {p_col_name_str},
-                            matched_ids,
-                            {m}.array_cum_sum({m}.array_add(match_splits, prev_matches)) AS left_range,
-                            {m}.array_cum_sum({m}.array_add(match_splits, matches)) AS right_range
+                            {match_to_row_id},
+                            {m}.array_cum_sum({m}.array_add(match_splits, prev_matches)) AS match_start,
+                            {m}.array_cum_sum({m}.array_add(match_splits, matches)) AS match_end,
+                            match_indices
                         FROM (
+                            -- right shift matches to get array of preceeding matches
                             SELECT
-                               {p_col_name_str}, q1.matched_ids,
+                               {p_col_name_str},
+                               {match_to_row_id},
+                               matches,
+                               match_indices,
                                match_splits[1:array_upper(matches, 1)] AS match_splits,
-                               matches AS matches,
                                array_prepend(1, matches[1:array_upper(matches, 1) - 1]) AS prev_matches
-                            FROM (
-                                    -- lengths of text between matches
-                                    SELECT
-                                        {p_col_name_str},
-                                        matched_ids,
-                                        array_agg(length(match_splits) ORDER BY match_index) AS match_splits
-                                    FROM (
-                                        SELECT
-                                            {p_col_name_str},
-                                            matched_ids,
-                                            generate_series(1, array_upper(match_splits, 1)) AS match_index,
-                                            unnest(match_splits) AS match_splits
-                                        FROM (
-                                            SELECT
-                                                {p_col_name_str},
-                                                matched_ids,
-                                                regexp_split_to_array(sym_str, '(?i){pattern_expr}') AS match_splits
-                                            FROM
-                                                {matched_partitions}
-                                            ) ssubq1
-                                        ) subq1
-                                    GROUP BY {p_col_name_str}, matched_ids
-                                ) q1
+                            FROM
+                                {length_of_between_matches} AS q1
                                 JOIN
-                                (
-                                    -- lengths of all matches
-                                    SELECT
-                                        {p_col_name_str},
-                                        matched_ids,
-                                        array_agg(length(matches) ORDER BY match_index) AS matches
-                                    FROM (
-                                        SELECT
-                                            {p_col_name_str},
-                                            matched_ids,
-                                            generate_series(1, num_matches) AS match_index,
-                                            (regexp_matches(
-                                                   sym_str, '(?i)({pattern_expr})', 'g'))[1] AS matches
-                                        FROM (
-                                            SELECT
-                                                {p_col_name_str},
-                                                matched_ids,
-                                                sym_str,
-                                                count(matches) AS num_matches
-                                            FROM (
-                                                SELECT
-                                                    {p_col_name_str},
-                                                    matched_ids,
-                                                    sym_str,
-                                                    (regexp_matches(
-                                                           sym_str, '(?i)({pattern_expr})', 'g'))[1] AS matches
-                                                FROM
-                                                   {matched_partitions}
-                                                ) t1
-                                            GROUP BY {p_col_name_str}, matched_ids, sym_str
-                                            ) t2
-                                        ) subq2
-                                    GROUP BY {p_col_name_str}, matched_ids
-                                ) q2
+                                {length_of_matches} as q2
                                 USING ({p_col_name_str})
-                            GROUP BY {p_col_name_str}, q1.matched_ids, match_splits, matches
                             ) q3
                         ) q4
                     ) q5
                 ) matched_rows
-            WHERE source.{id_col_name} = matched_rows.matched_ids
+            WHERE source.{id_col_name} = matched_rows.{match_to_row_id}
          """.format(m=schema_madlib, **locals())
         plpy.execute(build_multiple_matched_rows)
         quoted_split_p_cols = [quote_ident(i) for i in split_p_cols]
         p_col_orig_name_str = ','.join(
             [i + " AS " + j for i, j in zip(p_col_names, quoted_split_p_cols)])
 
-        plpy.execute("""
-            CREATE TABLE {output_table} AS
-               SELECT
-                    {as_partition_expr},
-                    {agg_func}
-               FROM {matched_rows}
-               GROUP BY {partition_expr}
-            """.format(**locals()))
+        if agg_func:
+            plpy.execute("""
+                CREATE TABLE {output_table} AS
+                   SELECT
+                        {as_partition_expr},
+                        {match_id_name},
+                        {agg_func}
+                   FROM {matched_rows}
+                   GROUP BY {as_partition_expr}, {match_id_name}
+                """.format(**locals()))
+            result = "Aggregation result available in table " + output_table
+        else:
+            result = "No aggregation table created"
         if not persist_rows:
             plpy.execute("DROP VIEW IF EXISTS " + matched_rows)
-            plpy.execute("DROP TABLE IF EXISTS " + input_with_id)
-            plpy.execute("DROP SEQUENCE IF EXISTS " + seq_gen)
-    result = "Result available in table " + output_table
-    if persist_rows:
-        result += "\n Matched tuples can be found in table " + matched_rows
+        else:
+            result += "\n Matched tuples can be found in table " + matched_rows
+        plpy.execute("DROP TABLE IF EXISTS " + input_with_id)
     return result
 # ------------------------------------------------------------------------------
 
@@ -263,65 +295,113 @@ def _validate(source_table, output_table, partition_expr, order_expr,
     if persist_rows:
         output_tbl_valid(add_postfix(output_table, "_tuples"), 'Path')
 
-    plpy.execute("""SELECT {partition_expr}
-                    FROM {source_table}
-                    ORDER BY {order_expr}
-                    LIMIT 0
-                 """.format(**locals()))
     # ensure the expressions are not None or empty strings
     _assert(partition_expr, "Path error: Invalid partition expression")
     _assert(order_expr, "Path error: Invalid order expression")
+    # ensure the partition/order expression can actually be used
+    _assert(is_var_valid(source_table, partition_expr, order_expr),
+            "Path error: invalid partition expression or order expression")
+
     _assert(pattern_expr, "Path error: Invalid pattern expression")
     _assert(symbol_expr, "Path error: Invalid symbol expression")
-    _assert(agg_func, "Path error: Invalid result expression")
 # ----------------------------------------------------------------------
 
 
-def _parse_symbol_str(symbol_expr):
-    """ Parse symbol definition string to build a CASE statement string
+def _parse_symbol_str(symbol_expr, pattern_expr):
+    """ Parse symbol definition to build a CASE statement string
         and return a mapping of the definitions.
 
-        We currently only allow single-character symbols. To allow input for
-        multicharacter symbol, we map the symbols to a single character and
-        return a dictionary that provides the mapping from old symbol to new symbol.
+        Currently only single-character symbols are allowed.
+        Postgresql regular expression match functions will be used on a string
+        of symbols, where each symbol represents a tuple. Only single-length
+        symbols can be used to maintain 1:1 correspondence between symbol and tuple.
 
-        symbol_expr: A comma-separated string containing symbol definitions of the form:
-            <symbol> := <symbol_definition>
+        To allow input for multicharacter symbol for user convenience, inputed
+        symbols are mapped to a single character in the pattern expression.
+        This updated pattern expression is returned back to the caller.
+
+        Further, two case statements are built to mark each tuple in the input table
+        with the corresponding original (user-supplied) symbol and the
+        new (single-character) symbol.
+
+        Args:
+            @param symbol_expr: str, A comma-separated string containing
+                symbol definitions of the form: <symbol> := <symbol_definition>
+            @param sym_mapping_tbl: str, Name of the table to output the
+                correspondence table between symbol
+            @param pattern_expr: str, The pattern expression where the original
+                symbols are used. The original symbols are replaced by the corresponding
+                new symbols.
+
         Example:
             symbol_expr = ('BEFORE:=start >= \'0:00:00\' and start < \'9:30:00\', '
                            'MARKET:=start >= \'9:30:00\' and start < \'16:00:00\'')
-            output = ({'BEFORE': 'a',
-                       'MARKET': 'b'},
-                       "CASE
-                        WHEN BEFORE THEN start >= \'0:00:00\' and start < \'9:30:00\'
-                        WHEN MARKET THEN start >= \'9:30:00\' and start < \'16:00:00\'
-                       END"
-    """
+            pattern_expr = "(BEFORE)*(MARKET)*"
 
+            returns  ("a*b*",
+                      "CASE
+                        WHEN start >= \'0:00:00\' and start < \'9:30:00\' THEN 'BEFORE'
+                        WHEN start >= \'9:30:00\' and start < \'16:00:00\' THEN 'MARKET'
+                       END",
+                      "CASE
+                        WHEN start >= \'0:00:00\' and start < \'9:30:00\' THEN 'a'
+                        WHEN start >= \'9:30:00\' and start < \'16:00:00\' THEN 'b'
+                       END"
+        Returns:
+            (str, str, str)
+    """
+    # all_symbols is all valid single-character symbols
     all_symbols = iter(string.ascii_lowercase + string.digits)
     symbol_expr_parser = shlex.shlex(symbol_expr)
     symbol_expr_parser.wordchars = [i for i in string.printable
                                     if i not in (symbol_expr_parser.quotes + ",")]
     symbol_expr_parser.whitespace = ','
-    symbol_splits = list(symbol_expr_parser)
-    symbol_definitions = {}
-    symbol_mapping = {}
-    for each_sym in symbol_splits:
-        each_sym_splits = each_sym.split(":=")
-        if len(each_sym_splits) == 2:
-            old_sym, sym_def = each_sym_splits
-            old_sym = re.escape(old_sym.strip().lower())
+    # parse symbol expr to get the strings between commas
+    sym_def_parsed = list(symbol_expr_parser)
+
+    orig_symbols_ordered = []
+    orig_sym_definitions = {}
+    new_sym_definitions = {}
+    old_to_new = {}
+    for each_sym_def in sym_def_parsed:
+        # symbols are defined as a pair: <name> := <definition>
+        sym_def_split = each_sym_def.split(":=")
+        if len(sym_def_split) == 2:
+            orig_sym, sym_def = (i.strip() for i in sym_def_split)
+            orig_symbols_ordered.append(orig_sym)
             try:
                 next_sym = all_symbols.next()
             except StopIteration:
-                plpy.error("Path error: Maximum number of symbols reached.")
-            _assert(old_sym not in symbol_mapping,
+                plpy.error("Path error: Total symbols in the symbol expression "
+                           "exceed maximum number of symbols allowed.")
+            # symbols are supposed to be case-insensitive. Use the lower-case
+            # version to maintain a mapping from original to new symbol name
+            orig_sym_lower = re.escape(orig_sym.lower())
+            _assert(orig_sym_lower not in old_to_new,
                     "Path error: Multipe definitions of a symbol")
-            symbol_mapping[old_sym] = next_sym
-            symbol_definitions[next_sym] = sym_def
-    return (symbol_mapping,
-            '\n'.join("WHEN {1} THEN '{0}'::text".format(key, val)
-                      for key, val in symbol_definitions.items()))
+            old_to_new[orig_sym_lower] = next_sym
+            orig_sym_definitions[orig_sym] = sym_def
+            new_sym_definitions[next_sym] = sym_def
+
+    # replace each occurence of the original symbol with the new
+    # perform this operation in descending order of length to avoid substituting
+    # subset of any symbol
+    old_symbols_desc = list(reversed(sorted(old_to_new.keys(), key=len)))
+    replace_pattern = re.compile('|'.join(old_symbols_desc), re.IGNORECASE)
+    new_pattern_expr = replace_pattern.sub(
+        lambda m: old_to_new[re.escape(string.lower(m.group(0)))],
+        pattern_expr)
+
+    # build a case statement to search a tuple for each definition and pick the
+    # appropriate symbol.
+    orig_sym_case_stmt = []
+    new_sym_case_stmt = []
+    case_stmt = "WHEN {d} THEN '{s}'::text"
+    for k in orig_symbols_ordered:
+        orig_sym_case_stmt.append(case_stmt.format(s=k, d=orig_sym_definitions[k]))
+        new_sym_case_stmt.append(case_stmt.format(s=old_to_new[k.lower()],
+                                                  d=orig_sym_definitions[k]))
+    return (new_pattern_expr, '\n'.join(orig_sym_case_stmt), '\n'.join(new_sym_case_stmt))
 # ----------------------------------------------------------------------
 
 
