@@ -12,6 +12,7 @@ from utilities.control import MinWarning
 from utilities.utilities import unique_string, add_postfix
 from utilities.validate_args import get_cols_and_types
 from utilities.validate_args import input_tbl_valid, output_tbl_valid, cols_in_tbl_valid
+from utilities.utilities import py_list_to_sql_string
 
 
 def correlation(schema_madlib, source_table, output_table,
@@ -164,7 +165,8 @@ def _populate_output_table(schema_madlib, source_table, output_table,
     with MinWarning("info" if verbose else "error"):
         start = time()
         col_len = len(col_names)
-        col_names_str = ",".join(col_names)
+        col_names_as_float_array = py_list_to_sql_string(col_names, "float8")
+        col_names_as_text_array = py_list_to_sql_string(col_names, "varchar")
         temp_table = unique_string()
         if get_cov:
             function_name = "Covariance"
@@ -188,7 +190,7 @@ def _populate_output_table(schema_madlib, source_table, output_table,
                 {agg_str} as cor_mat
             FROM
             (
-                SELECT ARRAY[{col_names_str}]::float8[] AS x
+                SELECT {col_names_as_float_array} AS x
                 FROM {source_table}
             ) src1,
             (
@@ -197,7 +199,7 @@ def _populate_output_table(schema_madlib, source_table, output_table,
                     {schema_madlib}.avg(x) AS mean
                 FROM
                 (
-                    SELECT ARRAY[{col_names_str}]::float8[] AS x
+                    SELECT {col_names_as_float_array} AS x
                     FROM {source_table}
                 ) src2
             ) subq
@@ -213,7 +215,7 @@ def _populate_output_table(schema_madlib, source_table, output_table,
                 '{function_name}'::varchar  AS method,
                 '{source_table}'::varchar   AS source,
                 '{output_table}'::varchar   AS output_table,
-                '{col_names_str}'::varchar  AS column_names,
+                {col_names_as_text_array}   AS column_names,
                 mean                        AS mean_vector,
                 non_null_cnt                AS total_rows_processed,
                 tot_cnt - non_null_cnt      AS total_rows_skipped
@@ -223,38 +225,41 @@ def _populate_output_table(schema_madlib, source_table, output_table,
         plpy.execute(q_summary)
 
         # create output table
-        as_list = "deconstructed(column_position integer"
+        variable_list = []
         for k, c in enumerate(col_names):
             if k % 10 == 0:
-                as_list += "\n                "
-            as_list += ", {c} float8".format(c=c)
-        as_list += ")"
+                variable_list.append("\n                ")
+            variable_list.append(str(c) + " float8")
+            variable_list.append(",")
+        variable_list_str = ''.join(variable_list[:-1])  # remove the last comma
 
-        output_plan = plpy.prepare("""
+        plpy.execute("""
             CREATE TABLE {output_table} AS
             SELECT
                 *
-            FROM (
+            FROM
+            (
                 SELECT
                     generate_series(1, {num_cols}) AS column_position,
-                    unnest($1) AS variable
+                    unnest({col_names_as_text_array}) AS variable
             ) variable_subq
-            JOIN (
+            JOIN
+            (
                 SELECT
                     *
-                FROM {schema_madlib}.__deconstruct_lower_triangle(
+                FROM
+                    {schema_madlib}.__deconstruct_lower_triangle(
                         (SELECT cor_mat FROM {temp_table})
-                    ) AS {as_list}
+                    )
+                    AS deconstructed(column_position integer, {variable_list_str})
             ) matrix_subq
             USING (column_position)
-            """.format(num_cols=len(col_names), **locals()), ["varchar[]"])
-
-        plpy.execute(output_plan, [col_names])
+            """.format(num_cols=len(col_names), **locals()))
 
         # clean up and return
         plpy.execute("DROP TABLE {temp_table}".format(**locals()))
         end = time()
-        return end - start
+        return (output_table, len(col_names), end - start)
 # ------------------------------------------------------------------------------
 
 

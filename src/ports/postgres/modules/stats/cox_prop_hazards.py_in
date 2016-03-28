@@ -24,6 +24,7 @@ from utilities.utilities import preprocess_keyvalue_params
 from utilities.utilities import _assert
 from utilities.utilities import get_seg_number
 from utilities.utilities import add_postfix
+from utilities.utilities import py_list_to_sql_string
 from utilities.validate_args import columns_exist_in_table
 from utilities.utilities import __mad_version
 from utilities.control import IterationController2S
@@ -233,24 +234,24 @@ def coxph(
      sample_size) = _extract_params(schema_madlib, optimizer_params)
 
     # Number of features
-    m = plpy.execute(
+    n_features = plpy.execute(
         """
             select array_upper({independent_varname}, 1)
-            as m from {source_table} limit 1
+            as n_features from {source_table} limit 1
             """.format(
             independent_varname=independent_varname,
-            source_table=source_table))[0]['m']
+            source_table=source_table))[0]['n_features']
 
     # Use the quick split to re-distribute the data
     # construct a list of other columns
     other_cols = [right_censoring_status]
     new_source_table, index, dep, indep, status, n_processed, n_skipped, real_distid, std_str = quick_split(
-        schema_madlib, source_table, dependent_varname, m,
+        schema_madlib, source_table, dependent_varname, n_features,
         independent_varname, right_censoring_status, strata,
         array_agg_size, sample_size, True)
     if n_processed > 0:
         compute_coxph(schema_madlib, new_source_table, output_table,
-                      index, dep, indep, m, status, strata, optimizer,
+                      index, dep, indep, n_features, status, strata, optimizer,
                       max_iter, tolerance, real_distid, std_str)
         plpy.execute('drop table if exists ' + new_source_table)
     else:
@@ -306,25 +307,9 @@ def coxph(
 # ------------------------------------------------------------
 
 
-def _list_to_string(lst):
-    return "array[" + ",".join([str(v) for v in lst]) + "]"
-# ------------------------------------------------------------
-
-
-def compute_coxph(
-        schema_madlib,
-        source_table,
-        output_table,
-        index,  # big rows index
-        dep,    # dependent variable
-        indep,  # independent variable
-        m,      # number of features
-        status,
-        strata,
-        optimizer,
-        max_iter,
-        precision,
-        real_distid, std_str):
+def compute_coxph(schema_madlib, source_table, output_table, index, dep,
+                  indep, n_features, status, strata, optimizer, max_iter,
+                  precision, real_distid, std_str):
     """ Use the old sequential algorithm to solve coxph
 
     @brief Run ordered aggregate on the re-distributed data.
@@ -340,7 +325,7 @@ def compute_coxph(
         plpy.error("Unknown optimizer requested. Must be 'newton'")
 
     # FIXME starting from random values or 0 ?
-    coef = [0 for i in range(m)]
+    coef = [0] * n_features
     L = float('-inf')
 
     # $1 - previous coef
@@ -360,7 +345,7 @@ def compute_coxph(
                 from {source_table}
                 group by {real_distid}  -- to avoid gathering data before aggregating
             ) s
-        """
+        """.format(**locals())
     else:
         sql = """
             select
@@ -379,39 +364,32 @@ def compute_coxph(
                     group by {strata}
                 ) t1
             ) t2
-        """
-    sql = sql.format(
-        schema_madlib=schema_madlib,
-        dep=dep,
-        indep=indep,
-        status=status,
-        source_table=source_table,
-        real_distid=real_distid,
-        index=index,
-        strata=strata)
-    sql_plan = plpy.prepare(sql, ["double precision[]", "double precision[]"])
+        """.format(**locals())
 
     old_coef = coef
-    halving = False
     n_iter = 0
-    max_coef = [-1] * m  # limit of coefficients
+    max_coef = [-1] * n_features  # limit of coefficients
+    sql_plan = plpy.prepare(sql, ["double precision[]", "double precision[]"])
     while True:
         n_iter += 1
         # The result contains coef, L, d2L
         result = plpy.execute(sql_plan, [coef, max_coef])[0]
 
-        prev_L = L
-        L = result['l']
+        prev_L, L = L, result['l']
         new_coef = result['coef']
-
         if n_iter == 1:
             max_coef = result['max_coef']
 
-        if (abs(1 - L / prev_L) <= precision or n_iter > max_iter) and not halving:
-            old_coef = coef
-            coef = new_coef
-            # Compute std_err, t_stats, p_value
+        if L < prev_L:
+            # Newton Raphson step
+            coef = [(i + j)/2 for i, j in zip(coef, old_coef)]
+        else:
+            old_coef, coef = coef, new_coef
 
+        if n_iter > max_iter or (L > prev_L and abs(1 - L / prev_L) <= precision):
+            # exiting since max_iter iterations explored or
+            #               very small increase in log_likelihood
+            # Compute std_err, t_stats, p_value
             if hawq_platform:
                 coef_l_d2l = unique_string() + "_coef_l_d2l"
 
@@ -421,9 +399,9 @@ def compute_coxph(
                         {d2l}::float8[] as d2l, {n_iter}::integer as n_iter
                     """.format(
                     coef_l_d2l=coef_l_d2l,
-                    coef=_list_to_string(coef),
+                    coef=py_list_to_sql_string(coef),
                     l=L,
-                    d2l=_list_to_string(result["d2l"]),
+                    d2l=py_list_to_sql_string(result["d2l"]),
                     n_iter=n_iter))
 
                 plpy.execute("""
@@ -458,20 +436,12 @@ def compute_coxph(
                         """.format(
                         output_table=output_table,
                         schema_madlib=schema_madlib,
-                        coef=_list_to_string(coef),
+                        coef=py_list_to_sql_string(coef),
                         L=L,
-                        d2L=_list_to_string(result["d2l"]),
+                        d2L=py_list_to_sql_string(result["d2l"]),
                         std_str=std_str,
                         n_iter=n_iter))
-
             return None
-        if L < prev_L:
-            halving = True
-            coef = map(lambda i: (coef[i] + old_coef[i]) / 2, range(m))
-        else:
-            halving = False
-            old_coef = coef
-            coef = new_coef
 # ------------------------------------------------------------
 
 
@@ -1160,10 +1130,10 @@ def _compute_residual(schema_madlib, source_table, output_table,
         m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!DISTRIBUTED BY ({dep_column})!>)
         """.format(**format_args))
 
-    n_uncensored = plpy.execute("""SELECT count(*)::INTEGER as m
+    n_uncensored = plpy.execute("""SELECT count(*)::INTEGER as n_uncensored
                                    FROM {table}
-                                """.format(table=residual_table))[0]["m"]
-    format_args['m'] = n_uncensored
+                                """.format(table=residual_table))[0]["n_uncensored"]
+    format_args['n_uncensored'] = n_uncensored
 
     # plpy.info("--------- Computing scaled residuals ---------")
     output_residual = add_postfix(output_table, "_residual")
@@ -1173,7 +1143,7 @@ def _compute_residual(schema_madlib, source_table, output_table,
             {dep_column},
             residual as residual,
             {schema_madlib}.__coxph_scale_resid(
-                {m}::INTEGER,
+                {n_uncensored}::INTEGER,
                 (SELECT hessian FROM {cox_output_table}),
                 residual
             ) AS scaled_residual
@@ -1201,13 +1171,13 @@ def _compute_residual(schema_madlib, source_table, output_table,
                                 ({dep_column} - {mean})::DOUBLE PRECISION,
                                 residual,
                                 (SELECT hessian FROM {cox_output_table}),
-                                {m}::INTEGER)
+                                {n_uncensored}::INTEGER)
                     AS f
             FROM
                 {output_residual}
         ) AS q1
         m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!DISTRIBUTED RANDOMLY!>)
-        """.format(mean=mean,output_residual=output_residual,**format_args))
+        """.format(mean=mean, output_residual=output_residual, **format_args))
     # Cleanup
     plpy.execute('DROP TABLE IF EXISTS ' + residual_table)
 
