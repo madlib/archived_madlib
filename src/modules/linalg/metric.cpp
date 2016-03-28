@@ -359,7 +359,7 @@ closest_column::run(AnyType& args) {
 }
 
 AnyType
-closest_column_hawq::run(AnyType& args) {
+closest_column_fixed::run(AnyType& args) {
     MappedMatrix M = args[0].getAs<MappedMatrix>();
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
     string distance_metric_str = args[2].getAs<char *>();
@@ -437,7 +437,7 @@ closest_columns::run(AnyType& args) {
 }
 
 AnyType
-closest_columns_hawq::run(AnyType& args) {
+closest_columns_fixed::run(AnyType& args) {
     MappedMatrix M = args[0].getAs<MappedMatrix>();
     MappedColumnVector x = args[1].getAs<MappedColumnVector>();
     uint32_t num = args[2].getAs<uint32_t>();

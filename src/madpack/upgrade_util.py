@@ -6,10 +6,10 @@ import os
 
 def run_sql(sql, portid, con_args):
     """
-    @brief Wrapper function for ____run_sql_query
+    @brief Wrapper function for run_query
     """
-    from madpack import ____run_sql_query
-    return ____run_sql_query(sql, True, con_args)
+    from madpack import run_query
+    return run_query(sql, True, con_args)
 
 
 def get_signature_for_compare(schema, proname, rettype, argument):
@@ -90,10 +90,11 @@ class ChangeHandler(UpgradeBase):
     @brief This class reads changes from the configuration file and handles
     the dropping of objects
     """
-    def __init__(self, schema, portid, con_args, maddir, mad_dbrev):
+    def __init__(self, schema, portid, con_args, maddir, mad_dbrev, is_hawq2):
         UpgradeBase.__init__(self, schema, portid, con_args)
         self._maddir = maddir
         self._mad_dbrev = mad_dbrev
+        self._is_hawq2 = is_hawq2
         self._newmodule = {}
         self._udt = {}
         self._udf = {}
@@ -191,9 +192,9 @@ class ChangeHandler(UpgradeBase):
         self._udc = config['udc'] if config['udc'] else {}
         self._udf = self._load_config_param(config['udf'])
         self._uda = self._load_config_param(config['uda'])
-        # FIXME remove the following  special handling for HAWQ after svec got
-        #   out from catalog
-        if self._portid != 'hawq':
+        # FIXME remove the following  special handling for HAWQ after svec is
+        # removed from catalog
+        if self._portid != 'hawq' and not self._is_hawq2:
             self._udo = self._load_config_param(config['udo'])
             self._udoc = self._load_config_param(config['udoc'])
 
@@ -314,7 +315,7 @@ class ChangeHandler(UpgradeBase):
         for udt in self._udt:
             if udt in ('svec', 'bytea8'):
                 # because the recv and send functions and the type depends on each other
-                if self._portid != 'hawq':
+                if self._portid != 'hawq' or self._is_hawq2:
                     self._run_sql("DROP TYPE IF EXISTS {0}.{1} CASCADE".format(self._schema, udt))
             else:
                 self._run_sql("DROP TYPE IF EXISTS {0}.{1}".format(self._schema, udt))

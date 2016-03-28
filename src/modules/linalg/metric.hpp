@@ -17,8 +17,8 @@ DECLARE_UDF(linalg, closest_columns)
 /**
  * @brief Special implementations for HAWQ
  */
-DECLARE_UDF(linalg, closest_column_hawq)
-DECLARE_UDF(linalg, closest_columns_hawq)
+DECLARE_UDF(linalg, closest_column_fixed)
+DECLARE_UDF(linalg, closest_columns_fixed)
 
 
 /**
