@@ -35,8 +35,6 @@
 # This package locates pg_config and uses it to determine all other paths. If
 # ${PKG_NAME}_PG_CONFIG is defined, then the search steps will be omitted.
 #
-# Copyright (c) 2011-2012, Florian Schoppmann, <Florian.Schoppmann@emc.com>
-#
 # Distributed under the BSD-License.
 
 # According to
