@@ -1172,7 +1172,6 @@ def main(argv):
         if _get_rev_num(dbrev) >= _get_rev_num(rev):
             _info("Current MADlib version already up to date.", True)
             return
-        # proceed to create objects if nothing installed in DB or for HAWQ < 2.0
         elif dbrev is None or (portid == 'hawq' and not is_hawq2):
             pass
         # error and refer to upgrade if OS > DB
