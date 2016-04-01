@@ -51,15 +51,11 @@ $$
             (
                 SELECT array_agg(a.attname || pg_catalog.format_type(a.atttypid, a.atttypmod) || a.attnum order by a.attnum) AS old_type
                 FROM pg_catalog.pg_attribute a
-                LEFT OUTER JOIN pg_catalog.pg_attribute_encoding e
-                ON   e.attrelid = a .attrelid AND e.attnum = a.attnum
                 WHERE a.attrelid = '{old_relid}' AND a.attnum > 0 AND NOT a.attisdropped
             ) t1,
             (
                 SELECT array_agg(a.attname || pg_catalog.format_type(a.atttypid, a.atttypmod) || a.attnum order by a.attnum) AS new_type
                 FROM pg_catalog.pg_attribute a
-                LEFT OUTER JOIN pg_catalog.pg_attribute_encoding e
-                ON   e.attrelid = a .attrelid AND e.attnum = a.attnum
                 WHERE a.attrelid = '{new_relid}' AND a.attnum > 0 AND NOT a.attisdropped
             ) t2
             """.format(old_relid=old_relid, new_relid=new_relid))[0]['changed']
@@ -69,45 +65,45 @@ $$
 $$ LANGUAGE plpythonu;
 
 -- Get UDTs
-DROP TABLE IF EXISTS types_madlib_v17;
-DROP TABLE IF EXISTS types_madlib_v16;
-SELECT get_types('madlib_v17');
-SELECT get_types('madlib_v16');
+DROP TABLE IF EXISTS types_madlib;
+DROP TABLE IF EXISTS types_madlib_v18;
+SELECT get_types('madlib');
+SELECT get_types('madlib_v18');
 
 --SELECT name FROM types_madlib;
 --SELECT name FROM types_madlib_v15;
 
 --Dropped
 SELECT
-    v16.name AS "Dropped UDTs"
+    v18.name AS "Dropped UDTs"
 FROM
-    types_madlib_v16 AS v16
+    types_madlib_v18 AS v18
     LEFT JOIN
-    types_madlib_v17 AS v17
+    types_madlib AS v19
     USING (name)
-WHERE v17.name IS NULL;
+WHERE v19.name IS NULL;
 
 --Added
--- SELECT
---     v17.name AS "Added UDTs"
--- FROM
---     types_madlib_v16 AS v16
---     RIGHT JOIN
---     types_madlib_v17 AS v17
---     USING (name)
--- WHERE v16.name IS NULL;
+SELECT
+     v19.name AS "Added UDTs"
+FROM
+     types_madlib_v18 AS v18
+     RIGHT JOIN
+     types_madlib AS v19
+     USING (name)
+WHERE v18.name IS NULL;
 
 --Common
 DROP TABLE IF EXISTS types_common;
 CREATE TABLE types_common AS
 SELECT
-    v16.name, v16.typrelid AS old_relid, v17.typrelid AS new_relid
+    v18.name, v18.typrelid AS old_relid, v19.typrelid AS new_relid
 FROM
-    types_madlib_v16 AS v16
+    types_madlib_v18 AS v18
     JOIN
-    types_madlib_v17 AS v17
+    types_madlib AS v19
     USING (name)
-WHERE v16.typrelid <> 0; -- 0 means base type
+WHERE v18.typrelid <> 0; -- 0 means base type
 
 SELECT
     array_upper(detect_changed_types('types_common'), 1) AS N,
