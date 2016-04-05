@@ -30,12 +30,14 @@ AnyType __elastic_net_gaussian_predict::run (AnyType& args)
     }
 
     MappedColumnVector coef = args[0].getAs<MappedColumnVector>();
-    double intercept = args[1].getAs<double>();
     MappedColumnVector x = args[2].getAs<MappedColumnVector>();
+    double intercept = args[1].getAs<double>();
 
     double predict = intercept + sparse_dot(coef, x);
     return predict;
 }
+
+
 
 // ------------------------------------------------------------------------
 

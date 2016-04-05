@@ -130,19 +130,23 @@ AnyType Fista<Model>::fista_transition (AnyType& args, const Allocator& inAlloca
         state.is_active = args[11].getAs<int>();
     }
 
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    double y;
+    try {
+        MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+        double y;
+        Model::get_y(y, args);
 
-    Model::get_y(y, args);
+        if (state.use_active_set == 1 && state.is_active == 1)
+            Model::active_transition(state, x, y);
+        else
+            Model::normal_transition(state, x, y);
 
-    if (state.use_active_set == 1 && state.is_active == 1)
-        Model::active_transition(state, x, y);
-    else
-        Model::normal_transition(state, x, y);
-
-    Model::update_loglikelihood(state, x, y);
-    state.numRows++;
-
+        Model::update_loglikelihood(state, x, y);
+        state.numRows++;
+    } catch(const ArrayWithNullException &e) {
+      //  warning("Input array most likely contains NULL, skipping this array.");
+    } catch(const std::invalid_argument &ia) {
+        //warning("Input array is invalid (with NULL values), skipping this array.");
+    }
     return state;
 }
 

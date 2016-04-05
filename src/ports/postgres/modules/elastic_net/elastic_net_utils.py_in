@@ -212,7 +212,8 @@ def __compute_data_scales(args):
     if args["family"] == "binomial":
         args["y_scale"] = dict(mean=0, std=1)
     else:
-        args["y_scale"] = __utils_dep_var_scale(tbl_data=args["tbl_source"], col_dep_var=args["col_dep_var"])
+        args["y_scale"] = __utils_dep_var_scale(schema_madlib=args["schema_madlib"], tbl_data=args["tbl_source"], 
+            col_ind_var=args["col_ind_var"], col_dep_var=args["col_dep_var"])
 
     args["xmean_str"] = _array_to_string(args["x_scales"]["mean"])
 # ========================================================================
@@ -246,7 +247,7 @@ def __normalize_data(args):
 # ========================================================================
 
 
-def __tbl_dimension_rownum(tbl_source, col_ind_var):
+def __tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var):
     """
     Measure the dimension and row number of source data table
     """
@@ -257,9 +258,16 @@ def __tbl_dimension_rownum(tbl_source, col_ind_var):
                              """.format(tbl_source=tbl_source,
                                         col_ind_var=col_ind_var))[0]["dimension"]
     # total row number of data source table
+    # The WHERE clause here ignores rows in the table that contain one or more NULLs in the
+    # independent variable (x). There is no NULL check made for the dependent variable (y),
+    # since one of the hard requirements/assumptions of the input data to elastic_net is that the
+    # dependent variable cannot be NULL.
     row_num = plpy.execute("""
                            select count(*) from {tbl_source}
-                           """.format(tbl_source=tbl_source))[0]["count"]
+                           WHERE not {schema_madlib}.array_contains_null({col_ind_var})
+                           """.format(tbl_source=tbl_source,
+                           schema_madlib=schema_madlib,
+                           col_ind_var=col_ind_var))[0]["count"]
 
     return (dimension, row_num)
 # ========================================================================

@@ -89,35 +89,41 @@ AnyType Igd<Model>::igd_transition (AnyType& args, const Allocator& inAllocator)
 
     state.stepsize = state.stepsize / exp(state.step_decay);
 
-    MappedColumnVector x = args[1].getAs<MappedColumnVector>();
-    double y;
+    try {
+        MappedColumnVector x = args[1].getAs<MappedColumnVector>();
+        double y;
 
-    Model::get_y(y, args);
+        Model::get_y(y, args);
 
-    ColumnVector gradient(state.dimension); // gradient for coef only, not for intercept
-    Model::compute_gradient(gradient, state, x, y);
+        ColumnVector gradient(state.dimension); // gradient for coef only, not for intercept
+        Model::compute_gradient(gradient, state, x, y);
 
-    double a = state.stepsize / static_cast<double>(state.totalRows);
-    double b = state.stepsize * state.alpha * state.lambda
-        / static_cast<double>(state.totalRows);
-    for (uint32_t i = 0; i < state.dimension; i++)
-    {
-        // step 1
-        state.theta(i) -= a * gradient(i);
-        double step1_sign = sign(state.theta(i));
-        // step 2
-        state.theta(i) -= b * sign(state.theta(i));
-        // set to 0 if the value crossed zero during the two steps
-        if (step1_sign != sign(state.theta(i))) state.theta(i) = 0;
+        double a = state.stepsize / static_cast<double>(state.totalRows);
+        double b = state.stepsize * state.alpha * state.lambda
+            / static_cast<double>(state.totalRows);
+        for (uint32_t i = 0; i < state.dimension; i++)
+        {
+            // step 1
+            state.theta(i) -= a * gradient(i);
+            double step1_sign = sign(state.theta(i));
+            // step 2
+            state.theta(i) -= b * sign(state.theta(i));
+            // set to 0 if the value crossed zero during the two steps
+            if (step1_sign != sign(state.theta(i))) state.theta(i) = 0;
+        }
+
+        link_fn(state.theta, state.coef, state.p);
+
+        Model::update_intercept(state, x, y); // intercept is updated separately
+
+        Model::update_loglikelihood(state, x, y);
+        // state.loss += r * r / 2.;
+        state.numRows ++;
+    } catch(const ArrayWithNullException &e) {
+      //  warning("Input array most likely contains NULL, skipping this array.");
+    } catch(const std::invalid_argument &ia) {
+        //warning("Input array is invalid (with NULL values), skipping this array.");
     }
-
-    link_fn(state.theta, state.coef, state.p);
-
-    Model::update_intercept(state, x, y); // intercept is updated separately
-
-    Model::update_loglikelihood(state, x, y);
-    // state.loss += r * r / 2.;
-    state.numRows ++;
 
     return state;
 }
