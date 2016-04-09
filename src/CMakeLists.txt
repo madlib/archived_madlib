@@ -5,7 +5,7 @@
 # -- Paths and MD5 hashes of third-party downloadable source code (third-party
 #    components needed only by specific ports are downloaded there) ------------
 
-set(MADLIB_REDIRECT_PREFIX "http://madlib.net/redirects/third_party.php?url=")
+set(MADLIB_REDIRECT_PREFIX "")
 
 # For in-house testing, we might want to change the base URLs of code-hosting
 # sites to something local
