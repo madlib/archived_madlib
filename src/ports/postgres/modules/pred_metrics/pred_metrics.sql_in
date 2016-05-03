@@ -1,0 +1,674 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ * @file pred_metrics.sql_in
+ *
+ * @brief A collection of summary statistics to gauge model 
+ * accuracy based on predicted values vs. ground-truth values.
+ * @date April 2016
+ *
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/* ----------------------------------------------------------------------- */
+
+/**
+@addtogroup grp_pred
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#list">List of Prediction Metric Functions</a></li>
+<li><a href="#specs">Function Specific Details</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#related">Related Topics</a></li>
+</ul>
+</div>
+
+@brief Provides various prediction accuracy metrics.
+
+This module provides a set of prediction accuracy metrics. It is a support module for several machine learning algorithms that require metrics to validate their models. A typical function will take a set of "prediction" and "observation" values to calculate the desired metric, unless noted otherwise. Grouping is supported by all of these functions (except confusion matrix). 
+
+@anchor list
+@par Prediction Metrics Functions
+<table class="output">
+<tr><th>mean_abs_error(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td> Mean Absolute Error. </td></tr>
+<tr><th>mean_abs_perc_error(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td> Mean Absolute Percentage Error. </td></tr>
+<tr><th>mean_perc_error(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td>  Mean Percentage Error. </td></tr>
+<tr><th>mean_squared_error(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td> Mean Squared Error.</td></tr>
+<tr><th>r2_score(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td> R-squared. </td></tr>
+<tr><th>adjusted_r2_score(table_in, table_out, prediction_col, observed_col, num_predictors, training_size, grouping_cols)</th><td> Adjusted R-squared. </td></tr>
+<tr><th>binary_classifier(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td> A function calculating a collection of prediction metrics related to binary classification.</td></tr>
+<tr><th>area_under_roc(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td> Area under the ROC curve (in binary classification).</td></tr>
+<tr><th>confusion_matrix(table_in, table_out, prediction_col, observed_col, grouping_cols)</th><td> Confusion matrix for a multi-class classifier. </td></tr>
+</table>
+
+\b Arguments
+<DL class="arglist">
+<DT>table_in</DT>
+<DD>TEXT. Name of the input table.</DD>
+<DT>table_out</DT>
+<DD>TEXT. Name of the output table.</DD>
+<DT>prediction_col</DT>
+<DD>TEXT. Name of the column of predicted values from input table.</DD>
+<DT>observed_col</DT>
+<DD>TEXT. Name of the column of observed values from input table.</DD>
+<DT>num_predictors</DT>
+<DD>INTEGER. The number of parameters in the predicting model, not counting the constant term.</DD>
+<DT>training_size</DT>
+<DD>INTEGER. The number of rows used for training, excluding any NULL rows.</DD>
+<DT>grouping_cols (optional)</DT>
+<DD>TEXT, default: NULL. Name of the column of grouping values from input 
+table.</DD>
+</DL>
+
+
+@anchor specs
+@par Function Specific Details
+
+<b>R-squared Score</b>
+
+This function returns the coefficient of determination (R2) between the predicted and observed values. An R2 of 1 indicates that the regression line perfectly fits the data, while an R2 of 0 indicates that the line does not fit the data at all. Negative values of R2 may occur when fitting non-linear functions to data. Please refer to the reference <a href="#r2">[1]</a> for further details.
+
+<b>Adjusted R-squared Score</b>
+
+This function returns the adjusted R2 score. Adjusted R2 score is used to counter the problem of the R2 automatically increasing when extra explanatory variables are added to the model. It takes additional two integers describing the degrees of freedom of the model and the size of the training set over which it was developed, and returning the adjusted R-squared prediction accuracy metric. Please refer to the reference <a href="#r2">[1]</a> for further details.
+
+Arguments: 
+
+- num_predictors: Indicates the number of parameters the model has other than
+the constant term. For example, if it is set to '3' the model may take the
+following form, 7+5x+39y+0.91z.
+- training_size: Indicates the number of rows in the training set (excluding 
+any NULL rows).
+
+Neither of these arguments can be deduced from the predicted values and the test set data alone.
+
+@anchor bc
+<b>Binary Classification</b>
+
+This function return an output table with a number of metrics commonly used in binary classification.
+
+The definitions of the various metrics are as follows.
+
+- \f$\textit{tp}\f$ is the count of correctly-classified positives.
+- \f$\textit{tn}\f$ is the count of correctly-classified negatives.
+- \f$\textit{fp}\f$ is the count of misclassified negatives.
+- \f$\textit{fn}\f$ is the count of misclassified positives.
+- \f$\textit{tpr}=\textit{tp}/(\textit{tp}+\textit{fn})\f$.
+- \f$\textit{tnr}=\textit{tn}/(\textit{fp}+\textit{tn})\f$.
+- \f$\textit{ppv}=\textit{tp}/(\textit{tp}+\textit{fp})\f$.
+- \f$\textit{npv}=\textit{tn}/(\textit{tn}+\textit{fn})\f$.
+- \f$\textit{fpr}=\textit{fp}/(\textit{fp}+\textit{tn})\f$.
+- \f$\textit{fdr}=1-\textit{ppv}\f$.
+- \f$\textit{fnr}=\textit{fn}/(\textit{fn}+\textit{tp})\f$.
+- \f$\textit{acc}=(\textit{tp}+\textit{tn})/(\textit{tp}+\textit{tn}+\textit{fp}+\textit{fn})\f$.
+- \f$\textit{f1}=2*\textit{tp}/(2*\textit{tp}+\textit{fp}+\textit{fn})\f$.
+
+<b>Area under ROC Curve</b>
+
+This function returns the area under the Receiver Operating Characteristic curve for binary classification (the AUC). The ROC curve is the curve relating the classifier's TPR and FPR metrics. (See <a href="#bc">Binary Classification</a> for a definition of these metrics). Please refer to the reference <a href="#aoc">[2]</a> for further details. Note that the binary classification function can be used to obtain the data (tpr and fpr values) required for drawing the ROC curve. 
+
+<b>Confusion Matrix</b>
+
+This function returns the confusion matrix of a multi-class classification. Each column of the matrix represents the instances in a predicted class while each row represents the instances in an actual class. This allows more detailed analysis than mere proportion of correct guesses (accuracy). Please refer to the reference <a href="#cm">[3]</a> for further details. As noted earlier, grouping is not supported for confusion matrix as returning multiple matrices of varying sizes in a single table defeats the visualization purpose of confusion matrix representation.
+
+
+@anchor examples
+@examp
+
+-# Create the sample data.
+<pre class="example">
+DROP TABLE IF EXISTS test_set;
+CREATE TABLE test_set(
+                  pred FLOAT8,
+                  obs FLOAT8
+                );
+INSERT INTO test_set VALUES
+  (37.5,53.1), (12.3,34.2), (74.2,65.4), (91.1,82.1);
+</pre>
+
+-# Run the Mean Absolute Error function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT mean_abs_error( 'test_set', 'table_out', 'pred', 'obs');
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ mean_abs_error
+&nbsp;----------------
+         13.825
+</pre>
+
+-# Run the Mean Absolute Percentage Error function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT mean_abs_perc_error( 'test_set', 'table_out', 'pred', 'obs');
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ mean_abs_perc_error
+&nbsp;---------------------
+   0.294578793636013
+</pre>
+
+-# Run the Mean Percentage Error function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT mean_perc_error( 'test_set', 'table_out', 'pred', 'obs');
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ mean_perc_error
+&nbsp;-------------------
+   -0.17248930032771
+</pre>
+
+-# Run the Mean Squared Error function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT mean_squared_error( 'test_set', 'table_out', 'pred', 'obs');
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ mean_squared_error
+&nbsp;--------------------
+   5.19435865563717
+</pre>
+
+-# Run the R2 Score function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT r2_score( 'test_set', 'table_out', 'pred', 'obs');
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ r2_score
+&nbsp;------------------------
+   0.27992908844337695865
+</pre>
+
+-# Run the Adjusted R2 Score function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT adjusted_r2_score( 'test_set', 'table_out', 'pred', 'obs', 3, 100);
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ adjusted_r2_score
+&nbsp;------------------------
+   0.25742687245723248861
+</pre>
+
+-# Create the sample data for binary classifier metrics.
+<pre class="example">
+DROP TABLE IF EXISTS test_set;
+CREATE TABLE test_set AS
+	SELECT ((a*8)::integer)/8.0 pred,
+		((a*0.5+random()*0.5)>0.5)::integer obs
+	FROM (select random() as a from generate_series(1,100)) x;
+</pre>
+
+-# Run the Binary Classifier metrics function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT binary_classifier( 'test_set', 'table_out', 'pred', 'obs');
+</pre>
+
+-# View the True Positive Rate and the False Positive Rate.:
+<pre class="example">
+SELECT threshold, tpr, fpr FROM table_out ORDER BY threshold;
+</pre>
+Result
+<pre class="result">
+       threshold        |          tpr           |          fpr
+------------------------+------------------------+------------------------
+ 0.00000000000000000000 | 1.00000000000000000000 | 1.00000000000000000000
+ 0.12500000000000000000 | 1.00000000000000000000 | 0.94915254237288135593
+ 0.25000000000000000000 | 0.92682926829268292683 | 0.64406779661016949153
+ 0.37500000000000000000 | 0.80487804878048780488 | 0.47457627118644067797
+ 0.50000000000000000000 | 0.70731707317073170732 | 0.35593220338983050847
+ 0.62500000000000000000 | 0.63414634146341463415 | 0.25423728813559322034
+ 0.75000000000000000000 | 0.48780487804878048780 | 0.06779661016949152542
+ 0.87500000000000000000 | 0.29268292682926829268 | 0.03389830508474576271
+ 1.00000000000000000000 | 0.12195121951219512195 | 0.00000000000000000000
+</pre>
+
+-# View all metrics at a given threshold value:
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x on
+SELECT * FROM table_out WHERE threshold=0.5;
+</pre>
+Result
+<pre class="result">
+-[ RECORD 1 ]---------------------
+threshold | 0.50000000000000000000
+tp        | 29
+fp        | 21
+fn        | 12
+tn        | 38
+tpr       | 0.70731707317073170732
+tnr       | 0.64406779661016949153
+ppv       | 0.58000000000000000000
+npv       | 0.76000000000000000000
+fpr       | 0.35593220338983050847
+fdr       | 0.42000000000000000000
+fnr       | 0.29268292682926829268
+acc       | 0.67000000000000000000
+f1        | 0.63736263736263736264
+</pre>
+
+-# Run the Area Under ROC curve function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT area_under_roc( 'test_set', 'table_out', 'pred', 'obs');
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ area_under_roc
+&nbsp;---------------------------------------------
+0.77428689541132699462698842496899545266640
+</pre>
+
+-# Create the sample data for confusion matrix.
+<pre class="example">
+DROP TABLE IF EXISTS test_set;
+CREATE TABLE test_set AS
+	SELECT (x+y)%5+1 AS pred,
+    	(x*y)%5 AS obs
+	FROM generate_series(1,5) x,
+    	generate_series(1,5) y;
+</pre>
+-# Run the Confusion Matrix Function:
+<pre class="example">
+DROP TABLE IF EXISTS table_out;
+SELECT confusion_matrix( 'test_set', 'table_out', 'pred', 'obs');
+SELECT * FROM table_out;
+</pre>
+Result
+<pre class="result">
+ class | confusion_arr
+-------+---------------
+     0 | {0,1,2,2,2,2}
+     1 | {0,2,0,1,1,0}
+     2 | {0,0,0,2,2,0}
+     3 | {0,0,2,0,0,2}
+     4 | {0,2,1,0,0,1}
+     5 | {0,0,0,0,0,0}
+</pre>
+
+@anchor related
+@par Related Topics
+
+@anchor r2
+
+[1] https://en.wikipedia.org/wiki/Coefficient_of_determination
+
+@anchor cm
+
+[2] https://en.wikipedia.org/wiki/Confusion_matrix
+
+@anchor aoc
+
+[3] https://en.wikipedia.org/wiki/Receiver_operating_characteristic
+
+File pred_metrics.sql_in for list of functions and usage.
+
+**/
+
+
+/**
+ * @brief Mean Absolute Error
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_abs_error(
+    table_in 		TEXT,
+    table_out 		TEXT,
+    prediction_col 	TEXT, 
+    observed_col 	TEXT,
+    grouping_cols	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.mean_abs_error(schema_madlib,
+    	table_in, table_out, prediction_col, observed_col, grouping_cols)
+    
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_abs_error(
+    table_in 		TEXT,  
+    table_out 		TEXT,
+    prediction_col 	TEXT, 
+    observed_col 	TEXT
+) RETURNS VOID
+AS $$
+    SELECT MADLIB_SCHEMA.mean_abs_error($1,$2,$3,$4,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Mean Absolute Percentage Error
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_abs_perc_error(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT,
+    grouping_cols	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.mean_abs_perc_error(schema_madlib,
+   		table_in, table_out, prediction_col, observed_col, grouping_cols)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_abs_perc_error(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT
+) RETURNS VOID
+AS $$
+    SELECT MADLIB_SCHEMA.mean_abs_perc_error($1,$2,$3,$4,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Mean Percentage Error
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_perc_error(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT,
+    grouping_cols	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.mean_perc_error(schema_madlib,
+   table_in, table_out, prediction_col, observed_col, grouping_cols)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_perc_error(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT
+) RETURNS VOID
+AS $$
+    SELECT MADLIB_SCHEMA.mean_perc_error($1,$2,$3,$4,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Mean Squared Error
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_squared_error(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT,
+    grouping_cols	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.mean_squared_error(schema_madlib,
+   table_in, table_out, prediction_col, observed_col, grouping_cols)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mean_squared_error(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT
+) RETURNS VOID
+AS $$
+    SELECT MADLIB_SCHEMA.mean_squared_error($1,$2,$3,$4,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief R2 Score
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.r2_score(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT,
+    grouping_cols	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.r2_score(schema_madlib,
+   	table_in, table_out, prediction_col, observed_col, grouping_cols)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.r2_score(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT
+) RETURNS VOID
+AS $$
+    SELECT MADLIB_SCHEMA.r2_score($1,$2,$3,$4,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Adjusted R2 Score
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param num_predictors The number of parameters in the predicting model, not counting the constant term.
+ * @param training_size The number of rows used for training, excluding any NULL rows.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.adjusted_r2_score(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+   	observed_col 	TEXT, 
+   	num_predictors 	INTEGER, 
+   	training_size 	INTEGER,
+    grouping_cols	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.adjusted_r2_score(schema_madlib,
+   	table_in, table_out, prediction_col, observed_col,
+   	num_predictors, training_size, grouping_cols)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.adjusted_r2_score(
+    table_in 	    TEXT,
+    table_out		TEXT, 
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT,
+ 	num_predictors 	INTEGER, 
+ 	training_size 	INTEGER
+) RETURNS VOID
+AS $$
+    SELECT MADLIB_SCHEMA.adjusted_r2_score($1,$2,$3,$4,$5,$6,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Binary Classifier
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.binary_classifier(
+    table_in 	    TEXT,
+    table_out 		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT,
+    grouping_cols 	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.binary_classifier(schema_madlib,
+   	table_in, table_out, prediction_col, observed_col, grouping_cols)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.binary_classifier(
+    table_in 	    TEXT,
+    table_out 		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT
+) RETURNS VOID 
+AS $$
+    SELECT MADLIB_SCHEMA.binary_classifier($1,$2,$3,$4,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Area under ROC Curve
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.area_under_roc(
+    table_in 	    TEXT,
+    table_out 		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT,
+    grouping_cols 	TEXT
+) RETURNS VOID
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.area_under_roc(schema_madlib,
+   	table_in, table_out, prediction_col, observed_col, grouping_cols)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.area_under_roc(
+    table_in 	    TEXT,
+    table_out		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT
+) RETURNS VOID 
+AS $$
+    SELECT MADLIB_SCHEMA.area_under_roc($1,$2,$3,$4,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Confusion Matrix
+ *
+ * @param table_in Name of the input table.
+ * @param table_out Name of the output table.
+ * @param prediction_col Name of the column of predicted values from input table.
+ * @param observed_col Name of the column of observed values from input table.
+ * @param grouping_cols Name of the column of grouping values from input table.
+ *
+ */
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.confusion_matrix(
+    table_in 	    TEXT,
+ 	table_out 		TEXT,
+    prediction_col 	TEXT, 
+ 	observed_col 	TEXT
+) RETURNS VOID 
+AS $$
+    PythonFunctionBodyOnly(`pred_metrics', `pred_metrics')
+    return pred_metrics.confusion_matrix(schema_madlib,
+   	table_in, table_out, prediction_col, observed_col)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+/* ----------------------------------------------------------------------- */
+

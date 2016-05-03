@@ -1,0 +1,391 @@
+# coding=utf-8
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+from utilities.utilities import unique_string
+import plpy
+
+def mean_abs_error(
+    schema_madlib, table_in, table_out, prediction_col, observed_col,
+    grouping_cols=None):
+    sql_st1 = """
+        CREATE TABLE {table_out} AS
+        SELECT
+            SUM(ABS({prediction_col}- {observed_col}))
+            /COUNT(*) AS mean_abs_error """.format(**locals())
+    sql_st2= ""
+    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st4= ""
+    if grouping_cols:
+        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
+    sql_st = sql_st1+sql_st2+sql_st3+sql_st4
+    plpy.execute(sql_st)
+
+def mean_abs_perc_error(
+    schema_madlib, table_in, table_out, prediction_col, observed_col,
+    grouping_cols=None):
+    sql_st1 = """
+        CREATE TABLE {table_out} AS
+        SELECT
+            SUM(ABS({prediction_col}- {observed_col})/{observed_col})
+            /COUNT(*) AS mean_abs_perc_error """.format(**locals())
+    sql_st2= ""
+    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st4= ""
+    if grouping_cols:
+        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
+    sql_st = sql_st1+sql_st2+sql_st3+sql_st4
+    plpy.execute(sql_st)
+
+def mean_perc_error(
+	schema_madlib, table_in, table_out, prediction_col, observed_col,
+    grouping_cols=None):
+    sql_st1 = """
+        CREATE TABLE {table_out} AS
+        SELECT
+            SUM(({prediction_col}- {observed_col})/{observed_col})
+            /COUNT(*) AS mean_perc_error """.format(**locals())
+    sql_st2= ""
+    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st4= ""
+    if grouping_cols:
+        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
+    sql_st = sql_st1+sql_st2+sql_st3+sql_st4
+    plpy.execute(sql_st)
+
+def mean_squared_error(
+	schema_madlib, table_in, table_out, prediction_col, observed_col,
+    grouping_cols=None):
+    sql_st1 = """
+        CREATE TABLE {table_out} AS
+        SELECT
+            SUM(({prediction_col}- {observed_col})^2)
+            /COUNT(*) AS mean_squared_error """.format(**locals())
+    sql_st2= ""
+    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st4= ""
+    if grouping_cols:
+        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
+    sql_st = sql_st1+sql_st2+sql_st3+sql_st4
+    plpy.execute(sql_st)
+
+
+def __r2_score(
+	schema_madlib, table_in, table_out, prediction_col, observed_col):
+
+    sql_st = """
+        SELECT
+            SUM({observed_col})/COUNT(*) AS mean
+        FROM {table_in}
+        """.format(**locals())
+    mean = plpy.execute(sql_st)[0]['mean']
+
+    sql_st = """
+        SELECT
+            SUM(({prediction_col}- {observed_col})^2) AS ssres
+        FROM {table_in}
+        """.format(**locals())
+    ssres = plpy.execute(sql_st)[0]['ssres']
+
+    sql_st = """
+        SELECT
+            SUM(({observed_col}- {mean})^2) AS sstot
+        FROM {table_in}
+        """.format(**locals())
+    sstot = plpy.execute(sql_st)[0]['sstot']
+
+    sql_st = """
+        CREATE TABLE {table_out} AS
+        SELECT 1-({ssres}/{sstot}) AS r2_score
+        """.format(**locals())
+    plpy.execute(sql_st)
+
+def r2_score(
+	schema_madlib, table_in, table_out, prediction_col, observed_col,
+    grouping_cols):
+
+    if grouping_cols is None:
+        __r2_score(schema_madlib, table_in, table_out, prediction_col
+            , observed_col)
+        return
+    ## temp table naming
+    mean_tmp_table = "pg_temp." + unique_string() + "_mean"
+    ssres_tmp_table = "pg_temp." + unique_string() + "_ssres"
+    sstot_tmp_table = "pg_temp." + unique_string() + "_sstot"
+    sql_st = """
+        CREATE TABLE {mean_tmp_table} AS
+        SELECT
+            SUM({observed_col})/COUNT(*) AS mean, {grouping_cols}
+        FROM {table_in}
+        GROUP BY {grouping_cols}
+        """.format(**locals())
+    plpy.execute(sql_st)
+
+    sql_st = """
+        CREATE TABLE {ssres_tmp_table} AS
+        SELECT
+            SUM(({prediction_col}- {observed_col})^2) AS ssres, {grouping_cols}
+        FROM {table_in}
+        GROUP BY {grouping_cols}
+        """.format(**locals())
+    plpy.execute(sql_st)
+
+    sql_st = """
+        CREATE TABLE {sstot_tmp_table} AS
+        SELECT
+            SUM(({observed_col}- mean)^2) AS sstot, table_in.{grouping_cols}
+        FROM {table_in} table_in, {mean_tmp_table} mean_tmp_table
+        WHERE table_in.{grouping_cols} = mean_tmp_table.{grouping_cols}
+        GROUP BY table_in.{grouping_cols}
+        """.format(**locals())
+    plpy.execute(sql_st)
+
+    sql_st = """
+        CREATE TABLE {table_out} AS
+        SELECT 1-(ssres/sstot) AS r2_score, ssrest.{grouping_cols}
+        FROM {ssres_tmp_table} AS ssrest, {sstot_tmp_table} AS sstott
+        WHERE ssrest.{grouping_cols} = sstott.{grouping_cols}
+        """.format(**locals())
+    plpy.execute(sql_st)
+
+def __adjusted_r2_score(
+	schema_madlib, table_in, table_out, prediction_col, observed_col,
+    num_predictors, training_size):
+
+    ar2_tmp_table = "pg_temp." + unique_string() + "_ar2"
+    __r2_score(schema_madlib, table_in, ar2_tmp_table, prediction_col,
+        observed_col)
+    sql_st = """ SELECT * FROM {ar2_tmp_table}
+        """.format(**locals())
+    r2 = plpy.execute(sql_st)[0]['r2_score']
+    sql_st = """
+        CREATE TABLE {table_out} AS
+        SELECT 1-(((1- {r2})*({training_size}-1)) /
+            ({training_size}- {num_predictors}-1)) AS adjusted_r2_score
+        """.format(**locals())
+    plpy.execute(sql_st)
+
+
+def adjusted_r2_score(
+	schema_madlib, table_in, table_out, prediction_col, observed_col,
+    num_predictors, training_size, grouping_cols):
+
+    if grouping_cols is None:
+        __adjusted_r2_score( schema_madlib, table_in, table_out, prediction_col,
+            observed_col, num_predictors, training_size)
+        return
+
+    ar2_tmp_table = "pg_temp." + unique_string() + "_ar2"
+    r2_score(schema_madlib, table_in, ar2_tmp_table, prediction_col,
+        observed_col, grouping_cols)
+    sql_st = """
+        CREATE TABLE {table_out} AS
+        SELECT 1-(((1- r2_score )*({training_size} -1)) /
+            ({training_size} - {num_predictors}-1)) AS adjusted_r2_score,
+            {ar2_tmp_table}.{grouping_cols}
+        FROM {ar2_tmp_table}
+        """.format(**locals())
+    plpy.execute(sql_st)
+
+def __binary_classifier(
+	schema_madlib, table_in, table_out, prediction_col, observed_col):
+
+    sql_st = """
+    CREATE TABLE {table_out} AS SELECT *,
+      tp*1.0/NULLIF(tp+fn,0) AS tpr,
+      tn*1.0/NULLIF(fp+tn,0) AS tnr,
+      tp*1.0/NULLIF(tp+fp,0) AS ppv,
+      tn*1.0/NULLIF(tn+fn,0) AS npv,
+      fp*1.0/NULLIF(fp+tn,0) AS fpr,
+      fp*1.0/NULLIF(fp+tp,0) AS fdr,
+      fn*1.0/NULLIF(fn+tp,0) AS fnr,
+      (tp+tn)*1.0/NULLIF(tp+tn+fp+fn,0) AS acc,
+      2.0*tp/NULLIF(2*tp+fp+fn,0) AS f1
+    FROM (
+      SELECT threshold,
+             sum(t) OVER (ORDER BY threshold DESC) AS tp,
+             sum(f) OVER (ORDER BY threshold DESC) AS fp,
+             sum(t) OVER () - sum(t) OVER (ORDER BY threshold DESC) AS fn,
+             sum(f) OVER () - sum(f) OVER (ORDER BY threshold DESC) AS tn
+        FROM (
+          SELECT {prediction_col} AS threshold,sum({observed_col}) AS t,
+                 count(*)-sum({observed_col}) AS f
+            FROM {table_in}
+          GROUP BY (threshold)
+        ) x
+    ) y
+    ORDER BY threshold
+    """.format(**locals())
+    plpy.execute(sql_st)
+
+
+def binary_classifier(
+	schema_madlib, table_in, table_out, prediction_col, observed_col,
+    grouping_cols):
+
+    if grouping_cols is None:
+        __binary_classifier(
+        	schema_madlib, table_in, table_out, prediction_col, observed_col)
+        return
+
+    sql_st = """
+    CREATE TABLE {table_out} AS SELECT *,
+        tp*1.0/NULLIF(tp+fn,0) AS tpr,
+        tn*1.0/NULLIF(fp+tn,0) AS tnr,
+        tp*1.0/NULLIF(tp+fp,0) AS ppv,
+        tn*1.0/NULLIF(tn+fn,0) AS npv,
+        fp*1.0/NULLIF(fp+tn,0) AS fpr,
+        fp*1.0/NULLIF(fp+tp,0) AS fdr,
+        fn*1.0/NULLIF(fn+tp,0) AS fnr,
+        (tp+tn)*1.0/NULLIF(tp+tn+fp+fn,0) AS acc,
+        2.0*tp/NULLIF(2*tp+fp+fn,0) AS f1
+    FROM (
+        SELECT {grouping_cols},threshold,
+             sum(t) OVER (PARTITION BY {grouping_cols}
+                          ORDER BY threshold DESC) AS tp,
+             sum(f) OVER (PARTITION BY {grouping_cols}
+                          ORDER BY threshold DESC) AS fp,
+             sum(t) OVER (PARTITION BY {grouping_cols})
+               - sum(t) OVER (PARTITION BY {grouping_cols}
+                              ORDER BY threshold DESC) AS fn,
+             sum(f) OVER (PARTITION BY {grouping_cols})
+               - sum(f) OVER (PARTITION BY {grouping_cols}
+                              ORDER BY threshold DESC) AS tn
+        FROM (
+          SELECT {grouping_cols},
+                 {prediction_col} AS threshold,
+                 sum({observed_col}) AS t,
+                 count(*)- sum({observed_col}) AS f
+            FROM {table_in}
+          GROUP BY {grouping_cols}, threshold
+        ) x
+    ) y
+    """.format(**locals())
+    plpy.execute(sql_st)
+
+def __area_under_roc (
+    schema_madlib, table_in, table_out, prediction_col, observed_col):
+
+    sql_st = """
+    CREATE TABLE {table_out} AS
+    SELECT sum((tpr+prev_tpr)*(fpr-prev_fpr)*0.5) AS area_under_roc
+    FROM (
+      SELECT tpr, fpr,
+             coalesce(lag(tpr) OVER (ORDER BY threshold DESC),0) AS prev_tpr,
+             coalesce(lag(fpr) OVER (ORDER BY threshold DESC),0) AS prev_fpr
+      FROM(
+        SELECT threshold,
+               sum(t) OVER (ORDER BY threshold DESC)
+                 *1.0/NULLIF(sum(t) OVER (),0) AS tpr,
+               sum(f) OVER (ORDER BY threshold DESC)
+                 *1.0/NULLIF(sum(f) OVER (),0) AS fpr
+        FROM (
+          SELECT {prediction_col} AS threshold,sum({observed_col}) AS t,
+                 count(*)-sum({observed_col}) AS f
+          FROM {table_in}
+          GROUP BY (threshold)
+        ) x
+      ) y
+    ) z;
+    """.format(**locals())
+    plpy.execute(sql_st)
+
+def area_under_roc (
+    schema_madlib, table_in, table_out, prediction_col, observed_col,
+    grouping_cols):
+
+    if grouping_cols is None:
+        __area_under_roc(
+        	schema_madlib, table_in, table_out, prediction_col, observed_col)
+        return
+
+    sql_st = """
+    CREATE TABLE {table_out} AS
+    SELECT {grouping_cols}, sum((tpr+prev_tpr)*(fpr-prev_fpr)*0.5) AS area_under_roc
+    FROM (
+      SELECT {grouping_cols}, tpr, fpr,
+             coalesce(lag(tpr) OVER (PARTITION BY {grouping_cols}
+                                     ORDER BY threshold DESC),0) AS prev_tpr,
+             coalesce(lag(fpr) OVER (PARTITION BY {grouping_cols}
+                                     ORDER BY threshold DESC),0) AS prev_fpr
+      FROM(
+        SELECT {grouping_cols}, threshold,
+               sum(t) OVER (PARTITION BY {grouping_cols} ORDER BY threshold DESC)
+                    *1.0/NULLIF(sum(t) OVER (PARTITION BY {grouping_cols}),0)
+                    AS tpr,
+               sum(f) OVER (PARTITION BY {grouping_cols} ORDER BY threshold DESC)
+                    *1.0/NULLIF(sum(f) OVER (PARTITION BY {grouping_cols}),0)
+                    AS fpr
+        FROM (
+          SELECT {grouping_cols},
+                 {prediction_col} AS threshold,sum({observed_col}) AS t,
+                 count(*)-sum({observed_col}) AS f
+          FROM {table_in}
+          GROUP BY {grouping_cols},threshold
+        ) x
+      ) y
+    ) z
+    GROUP BY {grouping_cols}
+    """.format(**locals())
+    plpy.execute(sql_st)
+
+def confusion_matrix(
+    schema_madlib, table_in, table_out, prediction_col, observed_col):
+    sql_st = """
+    CREATE TABLE {table_out} AS
+      SELECT class,
+             array_agg(cnt ORDER BY pred) AS confusion_arr
+      FROM (
+            SELECT class,
+                   pred,
+                   sum(cnt) AS cnt
+            FROM (
+                  SELECT {observed_col} AS class,
+                         {prediction_col} AS pred,
+                         count(*) AS cnt
+                  FROM {table_in}
+                  GROUP BY class, pred
+                  UNION
+                  SELECT a, b, 0
+                  FROM (
+                        SELECT {observed_col} AS a
+                        FROM {table_in}
+                        GROUP BY a
+                        UNION
+                        SELECT {prediction_col}
+                        FROM {table_in}
+                        GROUP BY ({prediction_col})
+                  ) r,
+                  ( SELECT {observed_col} AS b
+                    FROM {table_in}
+                    GROUP BY b
+                    UNION
+                    SELECT {prediction_col}
+                    FROM {table_in}
+                    GROUP BY ({prediction_col})
+                  ) s
+            ) y
+            GROUP BY class, pred
+      ) x
+      GROUP BY class
+    """.format(**locals())
+    plpy.execute(sql_st)
