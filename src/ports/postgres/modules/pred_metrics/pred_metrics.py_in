@@ -26,13 +26,13 @@ def mean_abs_error(
     sql_st1 = """
         CREATE TABLE {table_out} AS
         SELECT
-            SUM(ABS({prediction_col}- {observed_col}))
-            /COUNT(*) AS mean_abs_error """.format(**locals())
+             """.format(**locals())
     sql_st2= ""
-    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st3= """ AVG(ABS({prediction_col}- {observed_col})) AS mean_abs_error
+        FROM {table_in} """.format(**locals())
     sql_st4= ""
     if grouping_cols:
-        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st2= """{grouping_cols}, """.format(**locals())
         sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
     sql_st = sql_st1+sql_st2+sql_st3+sql_st4
     plpy.execute(sql_st)
@@ -43,13 +43,14 @@ def mean_abs_perc_error(
     sql_st1 = """
         CREATE TABLE {table_out} AS
         SELECT
-            SUM(ABS({prediction_col}- {observed_col})/{observed_col})
-            /COUNT(*) AS mean_abs_perc_error """.format(**locals())
+             """.format(**locals())
     sql_st2= ""
-    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st3= """ AVG(ABS({prediction_col}- {observed_col}) /
+        NULLIF({observed_col},0)) AS mean_abs_perc_error
+        FROM {table_in} """.format(**locals())
     sql_st4= ""
     if grouping_cols:
-        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st2= """{grouping_cols}, """.format(**locals())
         sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
     sql_st = sql_st1+sql_st2+sql_st3+sql_st4
     plpy.execute(sql_st)
@@ -60,13 +61,14 @@ def mean_perc_error(
     sql_st1 = """
         CREATE TABLE {table_out} AS
         SELECT
-            SUM(({prediction_col}- {observed_col})/{observed_col})
-            /COUNT(*) AS mean_perc_error """.format(**locals())
+             """.format(**locals())
     sql_st2= ""
-    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st3= """ AVG(({prediction_col}- {observed_col}) /
+        NULLIF({observed_col},0)) AS mean_perc_error
+        FROM {table_in} """.format(**locals())
     sql_st4= ""
     if grouping_cols:
-        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st2= """{grouping_cols}, """.format(**locals())
         sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
     sql_st = sql_st1+sql_st2+sql_st3+sql_st4
     plpy.execute(sql_st)
@@ -77,13 +79,13 @@ def mean_squared_error(
     sql_st1 = """
         CREATE TABLE {table_out} AS
         SELECT
-            SUM(({prediction_col}- {observed_col})^2)
-            /COUNT(*) AS mean_squared_error """.format(**locals())
+             """.format(**locals())
     sql_st2= ""
-    sql_st3= """ FROM {table_in} """.format(**locals())
+    sql_st3= """ AVG(({prediction_col}- {observed_col})^2) AS mean_squared_error
+     FROM {table_in} """.format(**locals())
     sql_st4= ""
     if grouping_cols:
-        sql_st2= """ , {grouping_cols} """.format(**locals())
+        sql_st2= """ {grouping_cols}, """.format(**locals())
         sql_st4= """ GROUP BY {grouping_cols}""".format(**locals())
     sql_st = sql_st1+sql_st2+sql_st3+sql_st4
     plpy.execute(sql_st)
@@ -92,30 +94,16 @@ def mean_squared_error(
 def __r2_score(
 	schema_madlib, table_in, table_out, prediction_col, observed_col):
 
-    sql_st = """
-        SELECT
-            SUM({observed_col})/COUNT(*) AS mean
-        FROM {table_in}
-        """.format(**locals())
-    mean = plpy.execute(sql_st)[0]['mean']
-
-    sql_st = """
-        SELECT
-            SUM(({prediction_col}- {observed_col})^2) AS ssres
-        FROM {table_in}
-        """.format(**locals())
-    ssres = plpy.execute(sql_st)[0]['ssres']
-
-    sql_st = """
-        SELECT
-            SUM(({observed_col}- {mean})^2) AS sstot
-        FROM {table_in}
-        """.format(**locals())
-    sstot = plpy.execute(sql_st)[0]['sstot']
 
     sql_st = """
         CREATE TABLE {table_out} AS
-        SELECT 1-({ssres}/{sstot}) AS r2_score
+            SELECT 1 - ssres/sstot AS r2_score FROM (
+                SELECT sum(({prediction_col} - {observed_col})^2) AS ssres,
+                sum(( {observed_col} - (
+                    SELECT SUM({observed_col})/count(*) AS mean
+                    FROM {table_in}))^2
+                ) AS sstot FROM {table_in}
+            ) x
         """.format(**locals())
     plpy.execute(sql_st)
 
@@ -127,43 +115,20 @@ def r2_score(
         __r2_score(schema_madlib, table_in, table_out, prediction_col
             , observed_col)
         return
-    ## temp table naming
-    mean_tmp_table = "pg_temp." + unique_string() + "_mean"
-    ssres_tmp_table = "pg_temp." + unique_string() + "_ssres"
-    sstot_tmp_table = "pg_temp." + unique_string() + "_sstot"
-    sql_st = """
-        CREATE TABLE {mean_tmp_table} AS
-        SELECT
-            SUM({observed_col})/COUNT(*) AS mean, {grouping_cols}
-        FROM {table_in}
-        GROUP BY {grouping_cols}
-        """.format(**locals())
-    plpy.execute(sql_st)
 
     sql_st = """
-        CREATE TABLE {ssres_tmp_table} AS
-        SELECT
-            SUM(({prediction_col}- {observed_col})^2) AS ssres, {grouping_cols}
-        FROM {table_in}
-        GROUP BY {grouping_cols}
-        """.format(**locals())
-    plpy.execute(sql_st)
 
-    sql_st = """
-        CREATE TABLE {sstot_tmp_table} AS
-        SELECT
-            SUM(({observed_col}- mean)^2) AS sstot, table_in.{grouping_cols}
-        FROM {table_in} table_in, {mean_tmp_table} mean_tmp_table
-        WHERE table_in.{grouping_cols} = mean_tmp_table.{grouping_cols}
-        GROUP BY table_in.{grouping_cols}
-        """.format(**locals())
-    plpy.execute(sql_st)
-
-    sql_st = """
         CREATE TABLE {table_out} AS
-        SELECT 1-(ssres/sstot) AS r2_score, ssrest.{grouping_cols}
-        FROM {ssres_tmp_table} AS ssrest, {sstot_tmp_table} AS sstott
-        WHERE ssrest.{grouping_cols} = sstott.{grouping_cols}
+            SELECT {grouping_cols}, 1 - ssres/sstot AS r2_score FROM (
+                SELECT {grouping_cols}, sum ( ({observed_col}- mean)^2) as sstot
+                    , sum(({prediction_col} - {observed_col})^2) AS ssres
+                FROM(
+                    SELECT {grouping_cols}, {prediction_col}, {observed_col},
+                        avg({observed_col}) OVER (PARTITION BY {grouping_cols})
+                            as mean
+                    FROM {table_in}
+                ) x GROUP BY {grouping_cols}
+            ) y
         """.format(**locals())
     plpy.execute(sql_st)
 
@@ -171,16 +136,19 @@ def __adjusted_r2_score(
 	schema_madlib, table_in, table_out, prediction_col, observed_col,
     num_predictors, training_size):
 
-    ar2_tmp_table = "pg_temp." + unique_string() + "_ar2"
-    __r2_score(schema_madlib, table_in, ar2_tmp_table, prediction_col,
-        observed_col)
-    sql_st = """ SELECT * FROM {ar2_tmp_table}
-        """.format(**locals())
-    r2 = plpy.execute(sql_st)[0]['r2_score']
     sql_st = """
         CREATE TABLE {table_out} AS
-        SELECT 1-(((1- {r2})*({training_size}-1)) /
-            ({training_size}- {num_predictors}-1)) AS adjusted_r2_score
+            SELECT 1-(((1- r2_score)*({training_size}-1)) /
+                ({training_size}- {num_predictors}-1)) AS adjusted_r2_score
+            FROM (
+                SELECT 1 - ssres/sstot AS r2_score FROM (
+                  SELECT sum(({prediction_col} - {observed_col})^2) AS ssres,
+                    sum(( {observed_col} - (
+                        SELECT AVG({observed_col}) AS mean
+                        FROM {table_in}))^2
+                    ) AS sstot FROM {table_in}
+                ) x
+            )y
         """.format(**locals())
     plpy.execute(sql_st)
 
@@ -194,15 +162,22 @@ def adjusted_r2_score(
             observed_col, num_predictors, training_size)
         return
 
-    ar2_tmp_table = "pg_temp." + unique_string() + "_ar2"
-    r2_score(schema_madlib, table_in, ar2_tmp_table, prediction_col,
-        observed_col, grouping_cols)
     sql_st = """
         CREATE TABLE {table_out} AS
-        SELECT 1-(((1- r2_score )*({training_size} -1)) /
-            ({training_size} - {num_predictors}-1)) AS adjusted_r2_score,
-            {ar2_tmp_table}.{grouping_cols}
-        FROM {ar2_tmp_table}
+        SELECT {grouping_cols}, 1-(((1- r2_score )*({training_size} -1)) /
+            ({training_size} - {num_predictors}-1)) AS adjusted_r2_score
+        FROM(
+            SELECT {grouping_cols}, 1 - ssres/sstot AS r2_score FROM (
+              SELECT {grouping_cols}, sum ( ({observed_col}- mean)^2) as sstot
+                  , sum(({prediction_col} - {observed_col})^2) AS ssres
+              FROM(
+                  SELECT {grouping_cols}, {prediction_col}, {observed_col},
+                      avg({observed_col}) OVER (PARTITION BY {grouping_cols})
+                          as mean
+                  FROM {table_in}
+              ) x GROUP BY {grouping_cols}
+          ) y
+        )z
         """.format(**locals())
     plpy.execute(sql_st)
 
