@@ -1,0 +1,279 @@
+/* ----------------------------------------------------------------------- */
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ * @file sessionize.sql_in
+ *
+ * @brief SQL functions for sessionization functions
+ * @date May 2016
+ *
+ */
+/* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_sessionize
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#syntax">Function Syntax</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#literature">Literature</a></li>
+</ul>
+</div>
+
+@brief Sessionize Functions
+@details The goal of the MADlib sessionize function is to perform session reconstruction
+on a data set, so that it can be prepared for input into other algorithms such as path functions,
+or predictive analytics algorithms. Sessions for instance, can be defined based on time,
+as a sequence of events by a particular user where no more than n-seconds have elapsed between
+successive events. That is, if we don't see an event from a user for n seconds, a new session
+is started.
+
+@anchor syntax
+@par Function Syntax
+<pre class="syntax">
+sessionize(
+   source_table,
+   output_table,
+   partition_expr,
+   time_stamp,
+   max_time
+)
+</pre>
+
+\b Arguments
+<dl class="arglist">
+    <dt>source_table</dt>
+    <dd>VARCHAR. Name of the source table, containing data for sessionization
+    analysis.</dd>
+
+    <dt>output_table</dt>
+    <dd>VARCHAR. Name of the result table, that contains 2 new columns apart from
+    the columns in the source_table: session_id and new_session.
+    <ul>
+        <li>session_id=1,2, ...n where n is the number of sessions in the partition.</li>
+        <li>new_session=1 for start of new session, 0 otherwise.</li>
+    </ul>
+    </dd>
+
+    <dt>partition_expr</dt>
+    <dd>VARCHAR. The 'partition_expr' can be a single column or a list of
+    comma-separated columns/expressions to divide all rows into groups,
+    or partitions. Sessionization is applied across the rows that fall into
+    the same partition.</dd>
+
+    <dt>time_stamp</dt>
+    <dd>VARCHAR. Column name with time used for sessionization calculation.</dd>
+
+    <dt>max_time</dt>
+    <dd>INTERVAL.  Delta time between subsequent events to define a sessions.
+    User should make sure this is in the same unit as the time_stamp parameter
+    (e.g., 'hour:minute:seconds', when time_stamp is of type TIMESTAMP).</dd>
+</dl>
+
+@anchor examples
+@examp
+
+The data set describes shopper behavior on a notional web site that sells
+beer and wine. A beacon fires an event to a log file when the shopper
+visits different pages on the site:  landing page, beer selection page,
+wine selection page, and checkout.
+
+Create the date table:
+<pre class="example">
+DROP TABLE IF EXISTS eventlog;
+CREATE TABLE eventlog (event_timestamp TIMESTAMP,
+            user_id INT,
+            page TEXT,
+            revenue FLOAT);
+INSERT INTO eventlog VALUES
+('04/15/2015 01:03:00', 100821, 'LANDING', 0),
+('04/15/2015 01:04:00', 100821, 'WINE', 0),
+('04/15/2015 01:05:00', 100821, 'CHECKOUT', 39),
+('04/15/2015 02:06:00', 100821, 'WINE', 0),
+('04/15/2015 02:09:00', 100821, 'WINE', 0),
+('04/15/2015 01:15:00', 101121, 'LANDING', 0),
+('04/15/2015 01:16:00', 101121, 'WINE', 0),
+('04/15/2015 01:17:00', 101121, 'CHECKOUT', 15),
+('04/15/2015 01:18:00', 101121, 'LANDING', 0),
+('04/15/2015 01:19:00', 101121, 'HELP', 0),
+('04/15/2015 01:21:00', 101121, 'WINE', 0),
+('04/15/2015 01:22:00', 101121, 'CHECKOUT', 23),
+('04/15/2015 02:15:00', 101331, 'LANDING', 0),
+('04/15/2015 02:16:00', 101331, 'WINE', 0),
+('04/15/2015 02:17:00', 101331, 'HELP', 0),
+('04/15/2015 02:18:00', 101331, 'WINE', 0),
+('04/15/2015 02:19:00', 101331, 'CHECKOUT', 16),
+('04/15/2015 02:22:00', 101443, 'BEER', 0),
+('04/15/2015 02:25:00', 101443, 'CHECKOUT', 12),
+('04/15/2015 02:29:00', 101881, 'LANDING', 0),
+('04/15/2015 02:30:00', 101881, 'BEER', 0),
+('04/15/2015 01:05:00', 102201, 'LANDING', 0),
+('04/15/2015 01:06:00', 102201, 'HELP', 0),
+('04/15/2015 01:09:00', 102201, 'LANDING', 0),
+('04/15/2015 02:15:00', 102201, 'WINE', 0),
+('04/15/2015 02:16:00', 102201, 'BEER', 0),
+('04/15/2015 02:17:00', 102201, 'WINE', 0),
+('04/15/2015 02:18:00', 102871, 'BEER', 0),
+('04/15/2015 02:19:00', 102871, 'WINE', 0),
+('04/15/2015 02:22:00', 102871, 'CHECKOUT', 21),
+('04/15/2015 02:25:00', 102871, 'LANDING', 0),
+('04/15/2015 02:17:00', 103711, 'BEER', 0),
+('04/15/2015 02:18:00', 103711, 'LANDING', 0),
+('04/15/2015 02:19:00', 103711, 'WINE', 0);
+</pre>
+
+-# Sessionize the table for each user_id:
+<pre class="example">
+ DROP TABLE IF EXISTS sessionize_output;
+ SELECT madlib.sessionize(
+     'eventlog',                -- Name of input table
+     'sessionize_output',             -- Table name to store sessionized results
+     'user_id',              -- Partition input table by session
+     'event_timestamp ASC',     -- Order partitions in input table by time
+     '0:3:0'    -- Events within a window of this time unit (3 minutes) must be in the same session
+     );
+SELECT * FROM sessionize_output;
+</pre>
+Result:
+<pre class="result">
+   event_timestamp   | user_id |   page   | revenue | session_id
+---------------------+---------+----------+---------+------------
+ 2015-04-15 01:03:00 |  100821 | LANDING  |       0 |          1
+ 2015-04-15 01:04:00 |  100821 | WINE     |       0 |          1
+ 2015-04-15 01:05:00 |  100821 | CHECKOUT |      39 |          1
+ 2015-04-15 02:06:00 |  100821 | WINE     |       0 |          2
+ 2015-04-15 02:09:00 |  100821 | WINE     |       0 |          2
+ 2015-04-15 01:15:00 |  101121 | LANDING  |       0 |          1
+ 2015-04-15 01:16:00 |  101121 | WINE     |       0 |          1
+ 2015-04-15 01:17:00 |  101121 | CHECKOUT |      15 |          1
+ 2015-04-15 01:18:00 |  101121 | LANDING  |       0 |          1
+ 2015-04-15 01:19:00 |  101121 | HELP     |       0 |          1
+ 2015-04-15 01:21:00 |  101121 | WINE     |       0 |          1
+ 2015-04-15 01:22:00 |  101121 | CHECKOUT |      23 |          1
+ 2015-04-15 02:15:00 |  101331 | LANDING  |       0 |          1
+ 2015-04-15 02:16:00 |  101331 | WINE     |       0 |          1
+ 2015-04-15 02:17:00 |  101331 | HELP     |       0 |          1
+ 2015-04-15 02:18:00 |  101331 | WINE     |       0 |          1
+ 2015-04-15 02:19:00 |  101331 | CHECKOUT |      16 |          1
+ 2015-04-15 02:22:00 |  101443 | BEER     |       0 |          1
+ 2015-04-15 02:25:00 |  101443 | CHECKOUT |      12 |          1
+ 2015-04-15 02:29:00 |  101881 | LANDING  |       0 |          1
+ 2015-04-15 02:30:00 |  101881 | BEER     |       0 |          1
+ 2015-04-15 01:05:00 |  102201 | LANDING  |       0 |          1
+ 2015-04-15 01:06:00 |  102201 | HELP     |       0 |          1
+ 2015-04-15 01:09:00 |  102201 | LANDING  |       0 |          1
+ 2015-04-15 02:15:00 |  102201 | WINE     |       0 |          2
+ 2015-04-15 02:16:00 |  102201 | BEER     |       0 |          2
+ 2015-04-15 02:17:00 |  102201 | WINE     |       0 |          2
+ 2015-04-15 02:18:00 |  102871 | BEER     |       0 |          1
+ 2015-04-15 02:19:00 |  102871 | WINE     |       0 |          1
+ 2015-04-15 02:22:00 |  102871 | CHECKOUT |      21 |          1
+ 2015-04-15 02:25:00 |  102871 | LANDING  |       0 |          1
+ 2015-04-15 02:17:00 |  103711 | BEER     |       0 |          1
+ 2015-04-15 02:18:00 |  103711 | LANDING  |       0 |          1
+ 2015-04-15 02:19:00 |  103711 | WINE     |       0 |          1
+</pre>
+
+-# Sessionize the table based on a partition expression:
+<pre class="example">
+DROP TABLE IF EXISTS sessionize_output;
+SELECT madlib.sessionize(
+     'eventlog',                -- Name of input table
+     'sessionize_output',             -- Table name to store sessionized results
+     'user_id < 101500',              -- Partition input table by session
+     'event_timestamp ASC',     -- Order partitions in input table by time
+     '180'    -- Events within a window of this time unit (180 seconds) must be in the same session
+              -- Note that this is the same as '0:3:0'
+     );
+SELECT * FROM sessionize_output;
+</pre>
+Result:
+<pre class="result">
+   event_timestamp   | user_id |   page   | revenue | session_id
+---------------------+---------+----------+---------+------------
+ 2015-04-15 01:05:00 |  102201 | LANDING  |       0 |          1
+ 2015-04-15 01:06:00 |  102201 | HELP     |       0 |          1
+ 2015-04-15 01:09:00 |  102201 | LANDING  |       0 |          1
+ 2015-04-15 02:15:00 |  102201 | WINE     |       0 |          2
+ 2015-04-15 02:16:00 |  102201 | BEER     |       0 |          2
+ 2015-04-15 02:17:00 |  103711 | BEER     |       0 |          2
+ 2015-04-15 02:17:00 |  102201 | WINE     |       0 |          2
+ 2015-04-15 02:18:00 |  103711 | LANDING  |       0 |          2
+ 2015-04-15 02:18:00 |  102871 | BEER     |       0 |          2
+ 2015-04-15 02:19:00 |  102871 | WINE     |       0 |          2
+ 2015-04-15 02:19:00 |  103711 | WINE     |       0 |          2
+ 2015-04-15 02:22:00 |  102871 | CHECKOUT |      21 |          2
+ 2015-04-15 02:25:00 |  102871 | LANDING  |       0 |          2
+ 2015-04-15 02:29:00 |  101881 | LANDING  |       0 |          3
+ 2015-04-15 02:30:00 |  101881 | BEER     |       0 |          3
+ 2015-04-15 01:03:00 |  100821 | LANDING  |       0 |          1
+ 2015-04-15 01:04:00 |  100821 | WINE     |       0 |          1
+ 2015-04-15 01:05:00 |  100821 | CHECKOUT |      39 |          1
+ 2015-04-15 01:15:00 |  101121 | LANDING  |       0 |          2
+ 2015-04-15 01:16:00 |  101121 | WINE     |       0 |          2
+ 2015-04-15 01:17:00 |  101121 | CHECKOUT |      15 |          2
+ 2015-04-15 01:18:00 |  101121 | LANDING  |       0 |          2
+ 2015-04-15 01:19:00 |  101121 | HELP     |       0 |          2
+ 2015-04-15 01:21:00 |  101121 | WINE     |       0 |          2
+ 2015-04-15 01:22:00 |  101121 | CHECKOUT |      23 |          2
+ 2015-04-15 02:06:00 |  100821 | WINE     |       0 |          3
+ 2015-04-15 02:09:00 |  100821 | WINE     |       0 |          3
+ 2015-04-15 02:15:00 |  101331 | LANDING  |       0 |          4
+ 2015-04-15 02:16:00 |  101331 | WINE     |       0 |          4
+ 2015-04-15 02:17:00 |  101331 | HELP     |       0 |          4
+ 2015-04-15 02:18:00 |  101331 | WINE     |       0 |          4
+ 2015-04-15 02:19:00 |  101331 | CHECKOUT |      16 |          4
+ 2015-04-15 02:22:00 |  101443 | BEER     |       0 |          4
+ 2015-04-15 02:25:00 |  101443 | CHECKOUT |      12 |          4
+</pre>
+
+@anchor literature
+@par Literature
+
+[1]  PostgreSQL window functions,
+http://www.postgresql.org/docs/8.4/static/tutorial-window.html
+
+*/
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.sessionize(
+    source_table        VARCHAR,
+    output_table        VARCHAR,
+    partition_expr      VARCHAR,
+    time_stamp  VARCHAR,
+    max_time    INTERVAL
+) RETURNS TEXT AS $$
+PythonFunction(utilities, sessionize, sessionize)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.sessionize(message TEXT)
+RETURNS text AS $$
+PythonFunction(utilities, sessionize, sessionize_help_message)
+$$ language plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.sessionize()
+RETURNS text AS $$
+    SELECT MADLIB_SCHEMA.sessionize('');
+$$ language SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');

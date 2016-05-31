@@ -1,0 +1,189 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+import plpy
+import string
+
+from control import MinWarning
+from utilities import unique_string, _assert
+from validate_args import get_cols
+from validate_args import input_tbl_valid, output_tbl_valid, is_var_valid
+
+m4_changequote(`<!', `!>')
+
+def sessionize(schema_madlib, source_table, output_table, partition_expr,
+                time_stamp, max_time, **kwargs):
+    """
+        Perform sessionization over a sequence of rows.
+
+        Args:
+        @param schema_madlib: str, Name of the MADlib schema
+        @param source_table: str, Name of the input table/view
+        @param output_table: str, Name of the table to store result
+        @param partition_expr: str, Expression to partition (group) the input data
+        @param time_stamp: str, Column name with time used for sessionization calculation
+        @param max_time: interval, Delta time between subsequent events to define a session
+
+    """
+    with MinWarning("error"):
+        _validate(source_table, output_table, partition_expr, time_stamp, max_time)
+
+        all_input_cols_str = ', '.join([i.strip() for i in get_cols(source_table, schema_madlib)])
+        session_id = 'session_id' if not is_var_valid(source_table, 'session_id') else unique_string('session_id')
+
+        # Create temp column names for intermediate columns.
+        new_partition = unique_string('new_partition')
+        new_session = unique_string('new_session')
+
+        plpy.execute("""
+                CREATE TABLE {output_table} AS
+                    SELECT
+                        {all_input_cols_str},
+                        CASE WHEN {time_stamp} IS NOT NULL
+                             THEN SUM(CASE WHEN {new_partition} OR {new_session} THEN 1 END)
+                                  OVER (PARTITION BY {partition_expr}
+                                  ORDER BY {time_stamp})
+                        END AS {session_id}
+                    FROM (
+                        SELECT *,
+                            ROW_NUMBER() OVER (w) = 1
+                                AND {time_stamp} IS NOT NULL AS {new_partition},
+                            ({time_stamp} - LAG({time_stamp}, 1)
+                                OVER (w)) > '{max_time}'::INTERVAL AS {new_session}
+                        FROM {source_table}
+                        WINDOW w AS (PARTITION BY {partition_expr}
+                                     ORDER BY {time_stamp})
+                        ) a
+            """.format(**locals()))
+
+
+def _validate(source_table, output_table, partition_expr, time_stamp, max_time):
+    input_tbl_valid(source_table, 'Sessionization')
+    output_tbl_valid(output_table, 'Sessionization')
+    # ensure the expressions are not None or empty strings
+    _assert(partition_expr, "Sessionization error: Invalid partition expression")
+    _assert(time_stamp, "Sessionization error: Invalid time stamp column")
+    _assert(max_time, "Sessionization error: Invalid max time value")
+    # ensure the partition/order expression can actually be used
+    _assert(is_var_valid(source_table, partition_expr, time_stamp),
+            "Sessionization error: invalid partition expression or time stamp column name")
+
+
+def sessionize_help_message(schema_madlib, message, **kwargs):
+    """
+    Help message for sessionize function
+    """
+    help_string = """
+        ------------------------------------------------------------
+                                SUMMARY
+        ------------------------------------------------------------
+        Functionality: Sessionize
+
+        The goal of the MADlib sessionize function is to perform sessionization over
+        a time-series based data.
+
+        ------------------------------------------------------------
+                                USAGE
+        ------------------------------------------------------------
+        SELECT {schema_madlib}.sessionize(
+            'source_table',    -- str, Name of the table
+            'output_table',    -- str, Table name to store the Sessionization results
+            'partition_expr',  -- str, Partition expression to group the data table
+            'time_stamp'    -- str, Column name with time used for sessionization calculation
+            'max_time'  -- str, Delta time between subsequent events to define a session
+        );
+
+        ------------------------------------------------------------
+                                EXAMPLE
+        ------------------------------------------------------------
+        - Create an input data set
+
+        DROP TABLE IF EXISTS ecommerce_sessionize;
+        CREATE TABLE eventlog (event_timestamp TIMESTAMP,
+                    user_id INT,
+                    old_session_id INT,
+                    page TEXT,
+                    revenue FLOAT,
+                    row INT);
+        COPY ecommerce_sessionize (event_timestamp, user_id, old_session_id,
+                                   page, revenue, row) FROM stdin delimiter '|';
+        '04/15/2015 01:03:0.5'|100821|100|'LANDING'|0|1
+        '04/15/2015 01:03:50'|100821|100|'WINE'|0|1
+        '04/15/2015 01:04:10'|100821|100|'CHECKOUT'|39|1
+        '04/15/2015 01:04:15'|100821|101|'WINE'|0|1
+        '04/15/2015 01:05:00'|100821|100|'WINE'|0|1
+        '04/15/2015 01:07:00'|100821|100|'CHECKOUT'|39|1
+        '04/15/2015 02:06:00'|100821|101|'WINE'|0|1
+        '04/15/2015 02:06:10'|100821|101|'WINE'|0|1
+        '04/15/2015 02:06:20'|100821|101|'WINE'|0|1
+        '04/15/2015 02:06:30'|100821|101|'WINE'|0|1
+        '04/15/2015 02:07:00'|100821|101|'WINE'|0|1
+        '04/15/2015 01:15:00'|101121|102|'LANDING'|0|1
+        '04/15/2015 01:16:00'|101121|102|'WINE'|0|1
+        '04/15/2015 01:18:00'|101121|102|'CHECKOUT'|15|1
+        '04/15/2015 01:19:00'|101121|102|'LANDING'|0|1
+        '04/15/2015 01:21:00'|101121|102|'HELP'|0|1
+        NULL|101121|102|'LANDING'|0|1
+        NULL|101121|102|'HELP'|0|1
+        '04/15/2015 01:24:00'|101121|102|'WINE'|0|1
+        '04/15/2015 01:26:00'|101121|102|'CHECKOUT'|23|1
+        '04/15/2015 02:21:00'|101121|102|'HELP'|0|1
+        '04/15/2015 02:24:00'|101121|102|'WINE'|0|1
+        '04/15/2015 02:26:00'|101121|102|'CHECKOUT'|23|1
+        '04/15/2015 02:15:00'|101331|103|'LANDING'|0|1
+        '04/15/2015 02:16:00'|101331|103|'WINE'|0|1
+        '04/15/2015 02:18:00'|101331|103|'HELP'|0|1
+        '04/15/2015 02:20:00'|101331|103|'WINE'|0|1
+        '04/15/2015 02:21:00'|101331|103|'CHECKOUT'|16|1
+        '04/15/2015 02:22:00'|101443|104|'BEER'|0|1
+        '04/15/2015 02:25:00'|101443|104|'CHECKOUT'|12|1
+        '04/15/2015 02:29:00'|101881|105|'LANDING'|0|1
+        '04/15/2015 02:30:00'|101881|105|'BEER'|0|1
+        '04/15/2015 01:05:00'|102201|106|'LANDING'|0|1
+        '04/15/2015 01:06:00'|102201|106|'HELP'|0|1
+        '04/15/2015 01:09:00'|102201|106|'LANDING'|0|1
+        '04/15/2015 02:15:00'|102201|107|'WINE'|0|1
+        '04/15/2015 02:16:00'|102201|107|'BEER'|0|1
+        '04/15/2015 02:17:00'|102201|107|'WINE'|0|1
+        '04/15/2015 02:18:00'|102871|108|'BEER'|0|1
+        '04/15/2015 02:19:00'|102871|108|'WINE'|0|1
+        '04/15/2015 02:22:00'|102871|108|'CHECKOUT'|21|1
+        '04/15/2015 02:25:00'|102871|108|'LANDING'|0|1
+        NULL|103711|109|'BEER'|0|1
+        NULL|103711|109|'LANDING'|0|1
+        NULL|103711|109|'WINE'|0|1
+        '04/15/2016 02:17:00'|103711|109|'BEER'|0|1
+        '04/15/2016 02:18:00'|103711|109|'LANDING'|0|1
+        '04/15/2016 02:19:00'|103711|109|'WINE'|0|1
+        \.
+
+        - Sessionize the table for each user_id:
+
+        SELECT {schema_madlib}.sessionize(
+         'eventlog',                -- Name of input table
+         'sessionize_output',             -- Table name to store sessionized results
+         'user_id',              -- Partition input table by session
+         'event_timestamp',     -- Order partitions in input table by time
+         '0:3:0'    -- Events within a window of this time unit (180 seconds) must be in the same session
+         );
+
+        - View the output table containing the session IDs:
+
+        SELECT * FROM sessionize_output;
+    """
+
+    return help_string.format(schema_madlib=schema_madlib)
