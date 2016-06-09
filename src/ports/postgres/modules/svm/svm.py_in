@@ -1,6 +1,8 @@
-from __future__ import division
+from __future__ import division, print_function
 
 import plpy
+
+from collections import defaultdict
 
 from kernel_approximation import create_kernel, load_kernel
 
@@ -9,11 +11,12 @@ from utilities.in_mem_group_control import GroupIterationController
 from utilities.validate_args import explicit_bool_to_text
 from utilities.utilities import unique_string
 from utilities.utilities import extract_keyvalue_params
+from utilities.utilities import preprocess_keyvalue_params
 from utilities.utilities import add_postfix
 from utilities.utilities import _string_to_array_with_quotes
 from utilities.utilities import _string_to_array
 from utilities.utilities import _assert
-from utilities.utilities import num_features
+from utilities.utilities import num_features, num_samples
 
 from utilities.validate_args import cols_in_tbl_valid
 from utilities.validate_args import input_tbl_valid
@@ -49,7 +52,8 @@ def _compute_svm(args):
                     {is_l2}::BOOLEAN,
                     {col_n_tuples},
                     ({select_epsilon})::FLOAT8,
-                    {is_svc}::BOOLEAN
+                    {is_svc}::BOOLEAN,
+                    {class_weight_sql}::FLOAT8
                     )
                 """)
             it.info()
@@ -123,7 +127,7 @@ def _get_grouping_col_str(schema_madlib, source_table, grouping_col):
     return grouping_str, grouping_col
 
 
-def _verify_params_dict(params_dict):
+def _verify_get_params_dict(params_dict):
     _assert(not hasattr(params_dict['lambda'], '__len__'),
             "SVM Error: lambda should not be a list after cross validation!")
     _assert(not hasattr(params_dict['epsilon'], '__len__'),
@@ -231,12 +235,14 @@ def _build_output_tables(n_iters_run, model_table, args, transformer, **kwargs):
                 '{kernel_func}'::text               AS kernel_func,
                 '{kernel_params}'::text             AS kernel_params,
                 '{grouping_text}'::text             AS grouping_col,
-                'init_stepsize={init_stepsize}, '   ||
-                    'decay_factor={decay_factor}, ' ||
-                    'max_iter={max_iter}, '         ||
-                    'tolerance={tolerance}, '       ||
-                    'epsilon={epsilon}, '           ||
-                    'eps_table={eps_table}'::text   AS optim_params,
+                $$ init_stepsize={init_stepsize},
+                   decay_factor={decay_factor},
+                   max_iter={max_iter},
+                   tolerance={tolerance},
+                   epsilon={epsilon},
+                   eps_table={eps_table},
+                   class_weight={class_weight}
+                $$::text   AS optim_params,
                 'lambda={lambda}, norm={norm}, n_folds={n_folds}'::text
                                                     AS reg_params,
                 count(*)::integer                   AS num_all_groups,
@@ -532,6 +538,13 @@ def svm_help(schema_madlib, message, is_svc, **kwargs):
                            their averaged error values.
     n_folds             -- Default: 0. Number of folds.
                            Must be at least 2 to activate cross validation.
+    class_weight        -- Default: 1 for each class
+                            The weights for each class.
+                            If 'balanced', values of y are automatically adjusted
+                                as inversely proportional to class frequencies.
+                            Alternatively, can be a mapping giving the weight
+                            for each class. Eg. For dependent variable values
+                            'a' and 'b', the class_weight can be {a: 2, b: 3}.
     """
 
     gaussian_usage = """
@@ -663,19 +676,17 @@ def svm_help(schema_madlib, message, is_svc, **kwargs):
 def svm(schema_madlib, source_table, model_table,
         dependent_varname, independent_varname, kernel_func,
         kernel_params, grouping_col, params, is_svc,
-        verbose, **kwargs):
+        verbose, detect_novelty=False, **kwargs):
     """
     Executes the linear support vector classification algorithm.
     """
     # verbosing
     verbosity_level = "info" if verbose else "error"
     with MinWarning(verbosity_level):
-        _verify_table(source_table,
-                      model_table,
-                      dependent_varname,
-                      independent_varname)
-        grouping_str, grouping_col = _get_grouping_col_str(schema_madlib,
-                                                           source_table, grouping_col)
+        _verify_table(source_table, model_table,
+                      dependent_varname, independent_varname)
+        grouping_str, grouping_col = \
+            _get_grouping_col_str(schema_madlib, source_table, grouping_col)
         kernel_func = _get_kernel_name(kernel_func)
         transformer = _random_feature_map(schema_madlib, source_table,
                                           dependent_varname, independent_varname,
@@ -781,6 +792,45 @@ def _random_feature_map(schema_madlib, source_table, dependent_varname,
                        dependent_varname, grouping_col))
 
 
+def _compute_class_weight_sql(source_table, dependent_varname,
+                              is_svc, class_weight_str):
+    """
+    Args:
+        @param is_svc: Boolean, indicates if classification or regression
+
+    Returns:
+        str. String when executed in SQL computes the class weight for each tuple
+    """
+    if not is_svc or not class_weight_str:
+        return "1"
+
+    dep_to_weight = defaultdict(float)
+    if class_weight_str == "balanced":
+        # use half of n_samples since only doing binary classification
+        # Change the '2' to n_classes for multinomial
+        n_samples_per_class = num_samples(source_table) / 2
+        bin_count = plpy.execute("""SELECT {dep} as k, count(*) as v
+                                    FROM {src}
+                                    GROUP BY {dep}
+                                 """.format(dep=dependent_varname,
+                                            src=source_table))
+        for each_count in bin_count:
+            dep_to_weight[each_count['k']] = n_samples_per_class / each_count['v']
+    else:
+        class_weight_splits = preprocess_keyvalue_params(class_weight_str,
+                                                         split_char=':')
+        for each_pair in class_weight_splits:
+            k, v = each_pair.split(":")
+            dep_to_weight[k.strip()] = float(v.strip())
+
+    class_weight_sql = "CASE "
+    for k, v in dep_to_weight.items():
+        class_weight_sql += ("WHEN {dep} = {k} THEN {v}::FLOAT8 \n".
+                             format(dep=dependent_varname, k=k, v=v))
+    class_weight_sql += "ELSE 1.0 END"
+    return class_weight_sql
+
+
 def _svm_parsed_params(schema_madlib, source_table, model_table,
                        dependent_varname, independent_varname, transformer,
                        grouping_str, grouping_col, params_dict, is_svc,
@@ -790,6 +840,10 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
     """
     n_features = num_features(source_table, independent_varname)
 
+    class_weight_sql = _compute_class_weight_sql(source_table,
+                                                 dependent_varname,
+                                                 is_svc,
+                                                 params_dict['class_weight'])
     args = {
         'rel_args': unique_string(desp='rel_args'),
         'rel_state': unique_string(desp='rel_state'),
@@ -806,19 +860,19 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
         'grouping_col': grouping_col,
         'rel_source': source_table,
         'col_ind_var': independent_varname,
-        'col_dep_var': dependent_varname}
+        'col_dep_var': dependent_varname,
+        'class_weight_sql': class_weight_sql
+    }
 
-    args.update(_verify_params_dict(params_dict))
+    args.update(_verify_get_params_dict(params_dict))
     args.update(_process_epsilon(is_svc, args))
     args.update(_svc_or_svr(is_svc, source_table, dependent_varname))
 
     # place holder for compatibility
-    plpy.execute("CREATE TABLE pg_temp.{0} AS SELECT 1"
-                 .format(args['rel_args']))
+    plpy.execute("CREATE TABLE pg_temp.{0} AS SELECT 1".format(args['rel_args']))
     # actual iterative algorithm computation
     n_iters_run = _compute_svm(args)
-    _build_output_tables(n_iters_run, model_table,
-                         args, transformer, **kwargs)
+    _build_output_tables(n_iters_run, model_table, args, transformer, **kwargs)
 
 
 def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
@@ -1062,7 +1116,8 @@ def _extract_params(schema_madlib, params, module='SVM'):
         'n_folds': 0,
         'validation_result': '',
         'epsilon': [0.01],
-        'eps_table': ''}
+        'eps_table': '',
+        'class_weight': ''}
 
     params_types = {
         'init_stepsize': list,
@@ -1074,7 +1129,8 @@ def _extract_params(schema_madlib, params, module='SVM'):
         'n_folds': int,
         'validation_result': str,
         'epsilon': list,
-        'eps_table': str}
+        'eps_table': str,
+        'class_weight': str}
 
     params_vals = extract_keyvalue_params(params,
                                           params_types,
@@ -1112,3 +1168,36 @@ def _extract_params(schema_madlib, params, module='SVM'):
 
     params_vals['is_l2'] = True if params_vals['norm'] == 'l2' else False
     return params_vals
+# -------------------------------------------------------------------------
+
+import unittest
+
+
+class SVMTestCase(unittest.TestCase):
+    """
+        Comment "import plpy" and replace plpy.error calls with appropriate
+        Python Exceptions to successfully run the test cases
+    """
+    def setUp(self):
+        self.optimizer_params1 = 'max_iter=10, optimizer="irls", precision=1e-4'
+        self.optimizer_params2 = 'max_iter=2.01, optimizer=newton-irls, precision=1e-5'
+        self.optimizer_params3 = 'max_iter=10, 10, optimizer=, lambda={1,2,3,4}'
+        self.optimizer_params4 = ('max_iter=10, optimizer="irls",'
+                                  'precision=0.02.01, lambda={1,2,3,4}')
+        self.optimizer_types = {'max_iter': int, 'optimizer': str,
+                                'lambda': list, 'precision': float}
+
+    def test_preprocess_optimizer(self):
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params1),
+                         ['max_iter=10', 'optimizer="irls"', 'precision=1e-4'])
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params2),
+                         ['max_iter=2.01', 'optimizer=newton-irls', 'precision=1e-5'])
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params3),
+                         ['max_iter=10', 'lambda={1,2,3,4}'])
+        self.assertEqual(preprocess_keyvalue_params(self.optimizer_params4),
+                         ['max_iter=10', 'optimizer="irls"', 'precision=0.02', 'lambda={1,2,3,4}'])
+
+
+
+if __name__ == '__main__':
+    unittest.main()

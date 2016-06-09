@@ -43,6 +43,17 @@ def get_seg_number():
     !>)
 # ------------------------------------------------------------
 
+
+def is_orca():
+    m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!
+    optimizer = plpy.execute("show optimizer")[0]["optimizer"]
+    return True if optimizer == 'on' else False
+    !>, <!
+    return False
+    !>)
+# -------------------------------------------------------------------------
+
+
 def num_features(source_table, independent_varname):
     return plpy.execute("SELECT array_upper({0}, 1) AS dim "
                         "FROM {1} LIMIT 1"
@@ -50,10 +61,12 @@ def num_features(source_table, independent_varname):
                                 source_table))[0]['dim']
 # ------------------------------------------------------------
 
+
 def num_samples(source_table):
     return plpy.execute("SELECT count(*) AS n FROM {0}"
                         .format(source_table))[0]['n']
 # ------------------------------------------------------------
+
 
 def unique_string(desp='', **kwargs):
     """
@@ -84,16 +97,6 @@ def add_postfix(quoted_string, postfix):
     else:
         output_str = quoted_string + postfix
     return output_str
-# -------------------------------------------------------------------------
-
-
-def is_orca():
-    m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!
-    optimizer = plpy.execute("show optimizer")[0]["optimizer"]
-    return True if optimizer == 'on' else False
-    !>, <!
-    return False
-    !>)
 # -------------------------------------------------------------------------
 
 
@@ -416,52 +419,60 @@ def madlib_version(schema_madlib):
 # ------------------------------------------------------------------------
 
 
-def preprocess_keyvalue_params(input_params):
+def preprocess_keyvalue_params(input_params, split_char='='):
     """
-    Parse the input_params string and split it
+    Parse the input_params string and split it using the split_char
 
-    @param input_params: string, Comma-separated list of parameters
+    @param input_params: str, Comma-separated list of parameters
         The parameter can be any key = value, where
             key is a string of alphanumeric character
             value is either and
+    @param split_char: str, character that splits the key and value elements.
+                        Default set to '='
 
 
     """
-    pattern = re.compile(r"""
-                (\w+\s*                # key is any alphanumeric character string
-                 =                     # key and value are separated by =
-                 \s*([\(\{\[]          # value can be string or array
-                     [^\[\]\(\)\{\}]*  #  if value is array then accept anything inside array
-                     [\)\}\]]          #  and then match closing braces of array
+    re_str = (r"(\w+\s*" +       # key is any alphanumeric character string
+              split_char +       # key and value are separated by char
+              r"""
+                \s*([\(\{\[]      # value can be string or array
+                [^\[\]\(\)\{\}]*  #  if value is array then accept anything inside
+                [\)\}\]]          #  and then match closing braces of array
 
-                    |                  # either array (above) or string (below)
+                   |              # either array (above) or string (below)
 
-                    (?P<quote>\"?)[\w\s\-\%]+\.?[\w\s\-\%]*(?P=quote)
-                                       #  if value is string, it can be alphanumeric
-                                       #    character string with a decimal dot,
-                                       #    optionally quoted by double quotes
-                    )
-                )""", re.VERBOSE)
+                (?P<quote>\"?)[\w\s\-\%]+\.?[\w\s\-\%]*(?P=quote)
+                                 #  if value is string, it can be alphanumeric
+                                 #    character string with a decimal dot,
+                                 #    optionally quoted by double quotes
+                  )
+               )"""
+              )
+    pattern = re.compile(re_str, re.VERBOSE)
     return [m.group(1).strip() for m in pattern.finditer(input_params)]
 # ------------------------------------------------------------------------
 
 
 def extract_keyvalue_params(input_params,
                             input_param_types,
-                            default_values=None):
+                            default_values=None,
+                            split_char='='):
     """ Extract key value pairs from input parameters or set the default values
 
     Args:
         @param input_params: string, Format of
-                    'key1=value1, key2=value2,...'. The order
-                    does not matter. If a parameter is missing, then the default
-                    value is used. If input_params is None or '',
-                    then all default values are returned.
-                    This function also validates the values of these parameters.
+                    'key1=value1, key2=value2,...', assuming default split_char.
+                    The order does not matter. If a parameter is missing, then
+                    the default value is used. If input_params is None or '',
+                    then all default values are returned. This function also
+                    validates the values of these parameters.
+
         @param input_param_types: dict, The type of each allowed parameter
                                             name. Currently supports one of
                                             (int, float, str, list)
         @param default_values: dict, Default values for each allowed parameter.
+        @param split_char: str, The character used to split key and value.
+                            Default set to '='
 
     Returns:
         Dict. Dictionary of input parameter values with key as parameter name
@@ -478,8 +489,8 @@ def extract_keyvalue_params(input_params,
         parameter_dict = default_values
     else:
         parameter_dict = {}
-    for s in preprocess_keyvalue_params(input_params):
-        items = s.split("=")
+    for s in preprocess_keyvalue_params(input_params, split_char=split_char):
+        items = s.split(split_char)
         if (len(items) != 2):
             raise KeyError("Input parameter list has incorrect format")
 
@@ -577,8 +588,8 @@ class UtilitiesTestCase(unittest.TestCase):
         self.optimizer_params1 = 'max_iter=10, optimizer="irls", precision=1e-4'
         self.optimizer_params2 = 'max_iter=2.01, optimizer=newton-irls, precision=1e-5'
         self.optimizer_params3 = 'max_iter=10, 10, optimizer=, lambda={1,2,3,4}'
-        self.optimizer_params4 = 'max_iter=10, optimizer="irls", \
-                                    precision=0.02.01, lambda={1,2,3,4}'
+        self.optimizer_params4 = ('max_iter=10, optimizer="irls",'
+                                  'precision=0.02.01, lambda={1,2,3,4}')
         self.optimizer_types = {'max_iter': int, 'optimizer': str,
                                 'lambda': list, 'precision': float}
 
@@ -593,11 +604,11 @@ class UtilitiesTestCase(unittest.TestCase):
                          ['max_iter=10', 'optimizer="irls"', 'precision=0.02', 'lambda={1,2,3,4}'])
 
     def test_extract_optimizers(self):
-        self.assertEqual({'max_iter': 10, 'optimizer': "irls", 'precision': 0.0001},
+        self.assertEqual({'max_iter': 10, 'optimizer': '"irls"', 'precision': 0.0001},
                          extract_keyvalue_params(self.optimizer_params1, self.optimizer_types))
         self.assertEqual({'max_iter': 10, 'lambda': ['1', '2', '3', '4']},
                          extract_keyvalue_params(self.optimizer_params3, self.optimizer_types))
-        self.assertEqual({'max_iter': 10, 'optimizer': "irls", 'precision': 0.02,
+        self.assertEqual({'max_iter': 10, 'optimizer': '"irls"', 'precision': 0.02,
                           'lambda': ['1', '2', '3', '4']},
                          extract_keyvalue_params(self.optimizer_params4, self.optimizer_types))
         self.assertRaises(ValueError,
