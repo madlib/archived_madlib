@@ -283,7 +283,6 @@ endfunction(add_${PORT_LC}_library)
 # Add the current version as a target. This is a macro because it calls
 # find_package, and we want the side effects (the defined variables) to be
 # visible after the invocation
-#
 macro(add_current_${PORT_LC}_version)
     get_filename_component(_VERSION "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
     string(REPLACE "." "_" _VERSION_UNDERSCORES ${_VERSION})
