@@ -490,7 +490,7 @@ def extract_keyvalue_params(input_params,
     else:
         parameter_dict = {}
     for s in preprocess_keyvalue_params(input_params, split_char=split_char):
-        items = s.split(split_char)
+        items = split_quoted_delimited_str(s, delimiter=split_char)
         if (len(items) != 2):
             raise KeyError("Input parameter list has incorrect format")
 
@@ -507,7 +507,8 @@ def extract_keyvalue_params(input_params,
             if param_type in (int, str, float):
                 parameter_dict[param_name] = param_type(param_value)
             elif param_type == list:
-                parameter_dict[param_name] = param_value.strip('[](){} ').split(',')
+                parameter_dict[param_name] = split_quoted_delimited_str(
+                    param_value.strip('[](){} '))
             elif param_type == bool:
                 #  True values are y, yes, t, true, on and 1;
                 #  False values are n, no, f, false, off and 0.
@@ -523,7 +524,7 @@ def extract_keyvalue_params(input_params,
 # -------------------------------------------------------------------------
 
 
-def split_quoted_delimited_str(input_str, delimiter=',', quote=None):
+def split_quoted_delimited_str(input_str, delimiter=',', quote='"'):
     """ Parse a delimited-string to return a list of individual tokens taking
         quotes into account.
 
@@ -538,10 +539,7 @@ def split_quoted_delimited_str(input_str, delimiter=',', quote=None):
     Returns:
         List. List of delimited strings.
     """
-    if not quote:
-        quote = '"'
-
-    if not input_str or not delimiter:
+    if not input_str or not delimiter or not quote:
         return []
     try:
         delimiter_reg = re.compile('((?:[^\{d}\{q}]|\{q}[^\{q}]*\{q})+)'.
@@ -587,7 +585,7 @@ class UtilitiesTestCase(unittest.TestCase):
     def setUp(self):
         self.optimizer_params1 = 'max_iter=10, optimizer="irls", precision=1e-4'
         self.optimizer_params2 = 'max_iter=2.01, optimizer=newton-irls, precision=1e-5'
-        self.optimizer_params3 = 'max_iter=10, 10, optimizer=, lambda={1,2,3,4}'
+        self.optimizer_params3 = 'max_iter=10, 10, optimizer=, lambda={1,"2,2",3,4}'
         self.optimizer_params4 = ('max_iter=10, optimizer="irls",'
                                   'precision=0.02.01, lambda={1,2,3,4}')
         self.optimizer_types = {'max_iter': int, 'optimizer': str,
@@ -599,14 +597,14 @@ class UtilitiesTestCase(unittest.TestCase):
         self.assertEqual(preprocess_keyvalue_params(self.optimizer_params2),
                          ['max_iter=2.01', 'optimizer=newton-irls', 'precision=1e-5'])
         self.assertEqual(preprocess_keyvalue_params(self.optimizer_params3),
-                         ['max_iter=10', 'lambda={1,2,3,4}'])
+                         ['max_iter=10', 'lambda={1,"2,2",3,4}'])
         self.assertEqual(preprocess_keyvalue_params(self.optimizer_params4),
                          ['max_iter=10', 'optimizer="irls"', 'precision=0.02', 'lambda={1,2,3,4}'])
 
     def test_extract_optimizers(self):
         self.assertEqual({'max_iter': 10, 'optimizer': '"irls"', 'precision': 0.0001},
                          extract_keyvalue_params(self.optimizer_params1, self.optimizer_types))
-        self.assertEqual({'max_iter': 10, 'lambda': ['1', '2', '3', '4']},
+        self.assertEqual({'max_iter': 10, 'lambda': ['1', '"2,2"', '3', '4']},
                          extract_keyvalue_params(self.optimizer_params3, self.optimizer_types))
         self.assertEqual({'max_iter': 10, 'optimizer': '"irls"', 'precision': 0.02,
                           'lambda': ['1', '2', '3', '4']},
