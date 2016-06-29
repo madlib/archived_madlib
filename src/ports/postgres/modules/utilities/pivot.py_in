@@ -1,0 +1,219 @@
+# coding=utf-8
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Pivoting
+# The goal of the MADlib pivot function is to provide a data summarization tool
+# that can do basic OLAP type operations on data stored in one table and output
+# the summarized data to a second table.  Typical operations are count, average,
+# min, max and standard deviation, however user defined aggregates (UDAs) are
+# also be allowed.
+
+# Please refer to the pivot.sql_in file for the documentation
+
+"""
+@file pivot.py_in
+
+"""
+import plpy
+from control import MinWarning
+from utilities import _assert
+from utilities import split_quoted_delimited_str
+from utilities import strip_end_quotes
+from validate_args import table_exists
+from validate_args import columns_exist_in_table
+from validate_args import table_is_empty
+from validate_args import _get_table_schema_names
+from validate_args import get_first_schema
+
+m4_changequote(`<!', `!>')
+
+def pivot(schema_madlib, source_table, out_table,
+                 index, pivot_cols, pivot_values,
+                 aggregate_func, **kwargs):
+    """
+    Helper function that can be used to pivot tables
+    Args:
+        @param source_table     The original data table
+        @param out_table        The output table that contains the dummy
+                                variable columns
+        @param index            The index columns to group by the records by
+        @param pivot_cols       The columns to pivot the table
+        @param pivot_values     The value columns to be summarized in the
+                                pivoted table
+        @param aggregate_func   The aggregate function to be applied to the
+                                values
+    """
+
+    """
+    Assume we have the following table
+        pivset( id INTEGER, piv FLOAT8, val FLOAT8 )
+    where the piv column has 3 distinct values (10.0, 20.0 and 30.0).
+    If the pivot function call is :
+        SELECT madlib.pivot('pivset', 'pivout', 'id', 'piv', 'val');
+    We want to construct the following sql code to pivot the table.
+        CREATE TABLE pivout AS (SELECT id,
+        sum(CASE WHEN "piv" = '10.0' THEN val ELSE NULL END ) as "piv_10.0",
+        sum(CASE WHEN "piv" = '20.0' THEN val ELSE NULL END ) as "piv_20.0",
+        sum(CASE WHEN "piv" = '30.0' THEN val ELSE NULL END ) as "piv_30.0"
+        FROM pivset GROUP BY id ORDER BY id)
+
+    """
+    indices = split_quoted_delimited_str(index)
+    pcol = split_quoted_delimited_str(pivot_cols)
+    pval = split_quoted_delimited_str(pivot_values)
+    validate_pivot_coding(source_table, out_table, indices, pcol, pval)
+    new_col_names =[]
+    sql_list = ["CREATE TABLE " + out_table + " AS (SELECT " + index]
+
+    pcol_no_quotes = strip_end_quotes(pcol[0].strip())
+    pval_no_quotes = strip_end_quotes(pval[0].strip())
+
+    # Find the distinct values of pivot_cols
+    distinct_values = plpy.execute(
+        "SELECT array_agg(DISTINCT {pcol} ORDER BY {pcol}) AS value "
+        "FROM {source_table}".
+        format(pcol=pcol[0], source_table=source_table))
+
+    distinct_values = [strip_end_quotes(item)
+                        for item in distinct_values[0]['value']]
+    # The aggregate collects pivot_values values for a given pivot_cols value
+    case_str = ("{agg}("
+                "CASE WHEN \"{{pcol}}\" = '{{value}}' THEN {pval} ELSE NULL END"
+                ")".
+                format(agg=aggregate_func,
+                       pval=pval_no_quotes))
+    sql_list.append(
+        ", " +
+        # Assign the name of the new column
+        ', '.join("{case_str} as \"{{pcol}}_{{value}}\"".
+                  format(case_str=case_str).
+                  format(pcol=pcol_no_quotes, value=str(value))
+                  for value in distinct_values if value is not None))
+    sql_list.append(" FROM " + source_table +
+                    " GROUP BY " + index + " ORDER BY " + index + ") ")
+    try:
+        plpy.execute(''.join(sql_list))
+    except plpy.SPIError:
+        # Warn user if the number of columns is over 1000 for the output table
+        with MinWarning("warning"):
+            if (len(distinct_values) + len(indices)) > 1000:
+                plpy.warning("Too many distinct values for pivoting! The "
+                    "execution may fail due to too many columns in the output "
+                    "table.")
+
+        raise
+    return None
+#------------------------------------------------------------------------------
+
+def validate_pivot_coding(source_table, out_table, indices, pivs, vals):
+    """
+    Args:
+        @param source_table The original data table
+        @param out_table    The output table that will contain dummy columns
+        @param indices      An array of index column names
+        @param cols         An array of categorical column names
+    """
+    _assert(out_table and
+            out_table.strip().lower() not in ('null', ''),
+            "Invalid output table name!")
+    _assert(not table_exists(out_table),
+            "Output table already exists!")
+    _assert(source_table and source_table.strip().lower() not in ('null', ''),
+            "Invalid data table name!")
+    _assert(table_exists(source_table),
+            "Data table ({0}) is missing!". format(source_table))
+    _assert(not table_is_empty(source_table),
+            "Data table ({0}) is empty!". format(source_table))
+
+    _assert(indices and indices not in ('null', ''),
+            "Invalid index column!")
+    _assert(pivs and pivs not in ('null', ''),
+            "Invalid pivot column!")
+    _assert(vals and vals not in ('null', ''),
+            "Invalid value column!")
+
+    _assert(len(indices) is 1, "Multiple index columns are not supported!")
+    _assert(len(pivs) is 1, "Multiple pivot columns are not supported!")
+    _assert(len(vals) is 1, "Multiple value columns are not supported!")
+
+    _assert(columns_exist_in_table(source_table, indices),
+            "Not all columns from {0} present in source table ({1})"
+            .format(indices, source_table))
+    _assert(columns_exist_in_table(source_table, pivs),
+            "Not all columns from {0} present in source table ({1})"
+            .format(pivs, source_table))
+    _assert(columns_exist_in_table(source_table, vals),
+            "Not all columns from {0} present in source table ({1})"
+            .format(vals, source_table))
+#------------------------------------------------------------------------------
+
+def pivot_help(schema_madlib, message, **kwargs):
+    """
+    Help function for pivot
+
+    Args:
+        @param schema_madlib
+        @param message: string, Help message string
+        @param kwargs
+
+    Returns:
+        String. Help/usage information
+    """
+    if not message:
+        help_string = """
+-----------------------------------------------------------------------
+                            SUMMARY
+-----------------------------------------------------------------------
+Provide a data summarization tool that can do basic OLAP type operations on
+data stored in one table and output the summarized data to a second table.
+Typical operations are count, average, min, max and standard deviation, however
+user defined aggregates (UDAs) are also be allowed.
+
+For more details on function usage:
+    SELECT {schema_madlib}.pivot('usage')
+            """
+    elif message in ['usage', 'help', '?']:
+        help_string = """
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+ SELECT {schema_madlib}.pivot(
+    source_table,       -- Name of source table containing data for pivoting
+    out_table,          -- Name of output table taht contains pivoted data
+    index,              -- Comma-separated columns that will form the index of
+                        -- the output pivot table
+    pivot_cols,         -- Comma-separated columns that will form the columns
+                        -- of the output pivot table
+    pivot_values       -- Comma-separated columns that contain the values to
+                        -- be summarized in the output pivot table
+ );
+
+-----------------------------------------------------------------------
+                            OUTPUT
+-----------------------------------------------------------------------
+The output table ('output_table' above) has all the columns present in index
+column list, plus additional columns for each distinct value in pivot_cols.
+The column name for the pivot is
+set as '<pivot name>_<pivot value>'.
+"""
+    else:
+        help_string = "No such option. Use {schema_madlib}.pivot()"
+
+    return help_string.format(schema_madlib=schema_madlib)
+# ---------------------------------------------------------------------

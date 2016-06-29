@@ -1,0 +1,202 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ *
+ * @file pivot.sql_in
+ *
+ * @brief SQL functions for pivoting
+ * @date June 2014
+ *
+ * @sa Creates a pivot table for data summarization.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_pivot
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#categorical">Pivoting</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#examples">Examples</a></li>
+</ul>
+</div>
+
+@brief Provides pivoting functions helpful for data preparation before modeling
+
+@anchor categorical
+The goal of the MADlib pivot function is to provide a data summarization tool 
+that can do basic OLAP type operations on data stored in one table and output 
+the summarized data to a second table.  
+
+
+<pre class="syntax">
+pivot(
+	source_table,
+    out_table,
+    index,
+    pivot_cols,
+    pivot_values
+    )
+</pre>
+\b Arguments
+<dl class="arglist">
+    <dt>source_table</dt>
+    <dd>VARCHAR. Name of the source table, containing data for pivoting.</dd>
+    <dt>output_table</dt>
+    <dd>VARCHAR. Name of output table taht contains pivoted data. 
+    The output table ('output_table' above) has all the columns present in 
+    index column list, plus additional columns for each distinct value in 
+    pivot_cols.	The column name for the pivot is set as 
+    <em>'pivot name'</em>_<em>'pivot value'</em>.
+    </dd>
+    <dt>index </dt>
+    <dd>VARCHAR. Comma-separated columns that will form the index of the output 
+    pivot table.</dd>
+    <dt>pivot_cols </dt>
+    <dd>VARCHAR. Comma-separated columns that will form the columns of the 
+    output pivot table.</dd>
+    <dt>pivot_values </dt>
+    <dd>VARCHAR. Comma-separated columns that contain the values to be 
+    summarized in the output pivot table.</dd>
+
+</dl>
+
+@anchor notes
+@par Notes
+
+The default aggregate function is "sum". 
+
+NULL values in the index column are treated as any other value. 
+
+NULL values in the pivot column are ignored.
+
+NULL values in the value column are handled by the aggregate function.
+
+The following features are planned but not yet implemented.
+
+- Multiple index columns.
+- Multiple pivot columns.
+- Multiple value columns.
+- Aggregate functions as input.
+- NULL values in the pivot.
+
+
+@anchor examples
+@examp
+
+-#  Create a toy dataset.
+<pre class="example">
+CREATE TABLE pivset(
+                  id INTEGER,
+                  piv FLOAT8,
+                  val FLOAT8
+                );
+INSERT INTO pivset VALUES
+	(0, 10, 1),
+	(0, 10, 2),
+	(0, 20, 3),
+	(1, 20, 4),
+	(1, 30, 5),
+	(1, 30, 6),
+	(1, 10, 7),
+	(NULL, 10, 8),
+	(1, NULL, 9),
+	(1, 10, NULL);
+</pre>
+
+-# Pivot the table
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset', 'pivout', 'id', 'piv', 'val');
+SELECT * FROM pivout;
+</pre>
+<pre class="result">
+ id | piv_10.0 | piv_20.0 | piv_30.0
+------+------------+------------+------------
+  0 |        3 |        3 |        
+  1 |        7 |        4 |       11
+    |        8 |        0 |        0
+</pre>
+*/
+
+-------------------------------------------------------------------------
+
+
+/**
+ * @brief Helper function that can be used to pivot tables
+ *
+ * @param source_table     The original data table
+ * @param out_table        The output table that contains the dummy
+ *                         variable columns
+ * @param index            The index columns to group by the records by
+ * @param pivot_cols       The columns to pivot the table
+ * @param pivot_values     The value columns to be summarized in the
+ *                         pivoted table
+ * @param aggregate_func   The aggregate function to be applied to the
+ *                         values
+ *
+ * @return Void
+ *
+ */
+ 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    source_table        TEXT,
+    out_table           TEXT,
+    index               TEXT,
+    pivot_cols          TEXT,
+    pivot_values        TEXT,
+    aggregate_func      TEXT
+
+) RETURNS VOID AS $$
+    PythonFunction(utilities, pivot, pivot)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    source_table        TEXT,
+    out_table           TEXT,
+    index               TEXT,
+    pivot_cols          TEXT,
+    pivot_values        TEXT
+
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, 'sum'::VARCHAR)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+-- Online help
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(utilities, pivot, pivot_help)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+--------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.pivot('');
+$$ LANGUAGE sql IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+--------------------------------------------------------------------------------
+
