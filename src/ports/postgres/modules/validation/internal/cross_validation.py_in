@@ -5,9 +5,9 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
+#
 #   http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -24,10 +24,8 @@ from utilities.utilities import num_samples
 
 from math import sqrt
 from collections import namedtuple
-from functools import partial
 from operator import itemgetter
-from operator import attrgetter
-from itertools import product, repeat, imap, chain
+from itertools import product, repeat, chain
 
 version_wrapper = __mad_version()
 mad_vec = version_wrapper.select_vecfunc()
@@ -154,8 +152,8 @@ class ValidationResult(object):
 
         data = []
         for h in cv_history_f:
-           values = ','.join([str(h[k]) for k in header])
-           data.append("({0})".format(values))
+            values = ','.join([str(h[k]) for k in header])
+            data.append("({0})".format(values))
         data = ','.join(data)
 
         plpy.execute("""
@@ -174,6 +172,7 @@ class _ValidationArgs(object):
     def grid(cls, sub_args):
         def comb_dict(dicts):
             return dict(chain.from_iterable(d.iteritems() for d in dicts))
+
         def make_dicts(k, vs):
             return [dict([t]) for t in zip(repeat(k), vs)]
 
@@ -223,7 +222,7 @@ def _cv_copy_data(rel_origin, dependent_varname,
                independent_varname=independent_varname,
                target_col=target_col, features_col=features_col))
     return target_col, features_col
-## ========================================================================
+# -------------------------------------------------------------------------
 
 
 def _cv_split_data(rel_source, col_data, col_id, row_num,
@@ -241,20 +240,20 @@ def _cv_split_data(rel_source, col_data, col_id, row_num,
     # which corresponds to rows outside of [start_row, end_row).
     # Extract the validation part of data,
     # which corresponds to rows inside of [start_row, end_row).
-    sql = """
+    plpy.execute("""
         drop view if exists {rel_train};
         create temp view {rel_train} as
             select {col_id}, {col_string} from {rel_source}
             where {col_id} < {start_row}
-                 or {col_id} >= {end_row};
-
+                 or {col_id} >= {end_row}
+        """.format(**kwargs))
+    plpy.execute("""
         drop view if exists {rel_valid};
         create temp view {rel_valid} as
             select {col_id}, {col_string} from {rel_source}
             where {col_id} >= {start_row}
                  and {col_id} < {end_row}
-    """.format(**kwargs)
-    plpy.execute(sql)
+    """.format(**kwargs))
     return None
 # ------------------------------------------------------------------------------
 
@@ -287,7 +286,7 @@ class CrossValidator(object):
                 - independent_varname: the column for features
                 - dependent_varname: the column for target
                 - schema_madlib: the schema where madlib is installed
-              - model_table: table created for the trained model
+                - model_table: table created for the trained model
 
     """
     def __init__(self, estimator, predictor, scorer, args):
@@ -319,8 +318,8 @@ class CrossValidator(object):
         row_num = self._row_num
         SplitData = namedtuple('SplitData', 'rel_train, rel_valid')
         for k in range(n_folds):
-            rel_train = unique_string(desp='cv_train_{0}'.format(k))
-            rel_valid = unique_string(desp='cv_valid_{0}'.format(k))
+            rel_train = unique_string(desp='cv_train_{0}_'.format(k))
+            rel_valid = unique_string(desp='cv_valid_{0}_'.format(k))
             _cv_split_data(rel_copied, col_data, col_id, row_num,
                            rel_train, rel_valid, n_folds, k+1)
             yield SplitData(rel_train=rel_train, rel_valid=rel_valid)
@@ -345,6 +344,7 @@ class CrossValidator(object):
 
         predictor(schema_madlib, model_table,
                   rel_valid, col_id, output_table)
+
         score = self._score(output_table, rel_valid, scorer)
         plpy.execute("""
                      DROP TABLE IF EXISTS {model_table}, {model_table}_summary;
@@ -359,32 +359,32 @@ class CrossValidator(object):
         col_id = self._col_id
         if method == 'regression':
             return plpy.execute(
-                    """
-                    SELECT
-                        -avg(({target}-prediction)^2) AS accuracy
-                    FROM {pred} JOIN {orig}
-                    ON {pred}.{id} = {orig}.{id}
-                    """.format(pred=pred,
-                               orig=orig,
-                               id=col_id,
-                               target=target))[0]['accuracy']
+                """
+                SELECT
+                    -avg(({target}-prediction)^2) AS accuracy
+                FROM {pred} JOIN {orig}
+                ON {pred}.{id} = {orig}.{id}
+                """.format(pred=pred,
+                           orig=orig,
+                           id=col_id,
+                           target=target))[0]['accuracy']
         elif method == 'classification':
             return plpy.execute(
-                    """
-                    SELECT (1 - miss / total) AS accuracy
-                    FROM
-                    (
-                      SELECT count(*)::float8 AS miss
-                      FROM {pred} JOIN {orig}
-                      ON {pred}.{id} = {orig}.{id}
-                      WHERE prediction <> {target}) s,
-                    (
-                      SELECT count(*)::float8 AS total
-                      FROM {orig}) r;
-                    """.format(pred=pred,
-                               orig=orig,
-                               id=col_id,
-                               target=target))[0]['accuracy']
+                """
+                SELECT (1 - miss / total) AS accuracy
+                FROM
+                (
+                  SELECT count(*)::float8 AS miss
+                  FROM {pred} JOIN {orig}
+                  ON {pred}.{id} = {orig}.{id}
+                  WHERE prediction <> {target}) s,
+                (
+                  SELECT count(*)::float8 AS total
+                  FROM {orig}) r;
+                """.format(pred=pred,
+                           orig=orig,
+                           id=col_id,
+                           target=target))[0]['accuracy']
         else:
             plpy.error("Cross Validation Error: invalid method value ({0})! "
                        "Need to be either classification "
@@ -420,18 +420,18 @@ class CrossValidator(object):
             n = len(nums)
             # no need to check against 0 division
             # because n_folds is larger than 1
-            a = sum(nums) / n
-            s = sqrt(sum([(x - a)**2 for x in nums]) / (n - 1))
-            return a, s
+            mean = sum(nums) / n
+            std_dev = sqrt(sum((x - mean)**2 for x in nums) / (n - 1))
+            return mean, std_dev
 
         if not sub_args:
             return []
 
         cv_history = ValidationResult()
-        split_data = list(self._gen_split_data(n_folds))
+        all_split_data = list(self._gen_split_data(n_folds))
+        tof = self._test_one_fold
         for sa in _ValidationArgs.grid(sub_args):
-            _test = partial(self._test_one_fold, sub_args=sa)
-            scores = map(_test, split_data)
+            scores = [tof(i, sub_args=sa) for i in all_split_data]
             a, s = _stats(scores)
             cv_history.add_one(mean=a, std=s, sub_args=sa)
         return cv_history

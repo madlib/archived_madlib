@@ -21,7 +21,7 @@ namespace convex {
 
 // use Eigen
 using namespace madlib::dbal::eigen_integration;
-    
+
 // The reason for using ConstState instead of const State to reduce the
 // template type list: flexibility to high-level for mutability control
 // More: cast<ConstState>(MutableState) may not always work
@@ -53,7 +53,7 @@ IGD<State, ConstState, Task>::transition(state_type &state,
             state.algo.incrModel,
             tuple.indVar,
             tuple.depVar,
-            state.task.stepsize);
+            state.task.stepsize * tuple.weight);
 }
 
 template <class State, class ConstState, class Task>

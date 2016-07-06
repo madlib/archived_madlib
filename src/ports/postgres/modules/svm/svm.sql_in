@@ -19,6 +19,7 @@ m4_include(`SQLCommon.m4')
 <div class="toc"><b>Contents</b><ul>
 <li class="level1"><a href="#svm_classification">Classification Function</a></li>
 <li class="level1"><a href="#svm_regression">Regression Function</a></li>
+<li class="level1"><a href="#novelty_detection">Novelty Detection</a></li>
 <li class="level1"><a href="#kernel_params">Kernel Parameters</a></li>
 <li class="level1"><a href="#parameters">Other Parameters</a></li>
 <li class="level1"><a href="#predict">Prediction Functions</a></li>
@@ -76,10 +77,11 @@ svm_classification(
 
   <DT>independent_varname</DT>
   <DD>TEXT. Expression list to evaluate for the
-    independent variables. An intercept variable is not assumed. It is common to
-    provide an explicit intercept term by including a single constant \c 1 term
-    in the independent variable list. Expression should be able to be cast
-    into DOUBLE PRECISION [].
+    independent variables. An intercept variable should not be included as part
+    of this expression. See 'fit_intercept' in the kernel params for info on
+    intercepts.
+
+    @note Expression should be able to be cast into DOUBLE PRECISION[].
     </DD>
 
   <DT>kernel_func (optional)</DT>
@@ -92,19 +94,24 @@ svm_classification(
   <DT>kernel_params (optional)</DT>
   <DD>TEXT, defaults: NULL.
     Parameters for non-linear kernel in a comma-separated string of key-value pairs.
-    The actual parameters differ depending on the value of \e kernel_func. See the description below for details.
+    The actual parameters differ depending on the value of \e kernel_func.
+    See the description below for details.
   </DD>
 
   <DT>grouping_col (optional)</DT>
   <DD>TEXT, default: NULL. An expression list used to group
     the input dataset into discrete groups, which results in running one model per group.
     Similar to the SQL "GROUP BY" clause. When this value is NULL, no
-    grouping is used and a single model is generated.  Please note that cross validation is not supported if grouping is used.</DD>
+    grouping is used and a single model is generated.  Please note that
+    cross validation is not supported if grouping is used.</DD>
 
   <DT>params (optional)</DT>
   <DD>TEXT, default: NULL.
-    Parameters for optimization and regularization in a comma-separated string of key-value pairs. If a list of values is provided, then cross-validation will be performed to select the \e best value from the list.
-    See the description below for details. </DD>
+    Parameters for optimization and regularization in a comma-separated string
+    of key-value pairs. If a list of values is provided, then cross-validation
+    will be performed to select the \e best value from the list. See the
+    description below for details.
+  </DD>
 
   <DT>verbose (optional)</DT>
   <DD>BOOLEAN default: FALSE.
@@ -152,7 +159,10 @@ svm_classification(
       </tr>
     </table>
 
-    An auxiliary table named \<model_table\>_random is created if the kernel is not linear. It contains data needed to embed test data into a random feature space (see references [2,3]). This data is used internally by svm_predict and not meaningful on its own to the user, so you can ignore it.
+    An auxiliary table named \<model_table\>_random is created if the kernel is
+    not linear. It contains data needed to embed test data into a random feature
+    space (see references [2,3]). This data is used internally by svm_predict
+    and not meaningful on its own to the user, so you can ignore it.
 
 A summary table named \<model_table\>_summary is also created, which has the following columns:
     <table class="output">
@@ -251,10 +261,31 @@ arguments have specifications which differ from svm_classification:
 
 <DT>params (optional)</DT>
 <DD>TEXT, default: NULL.
-The parameters \e epsilon and \e eps_table are only meaningful for regression. See description below for more details.
+The parameters \e epsilon and \e eps_table are only meaningful for regression.
+See description below for more details.
 </DD>
 </DL>
 
+@anchor novelty_detection
+@par Novelty Detection Training Function
+The novelty detection function is a one-class SVM classifier, and has the following format:
+<pre class="syntax">
+svm_one_class(
+    source_table,
+    model_table,
+    independent_varname,
+    kernel_func,
+    kernel_params,
+    grouping_col,
+    params,
+    verbose
+    )
+</pre>
+\b Arguments
+
+Specifications for novelty detection are largely the same as for classification,
+except the dependent variable name is not specified. The model table is the same
+as that for classification.
 
 @anchor kernel_params
 @par Kernel Parameters
@@ -263,47 +294,42 @@ list of name-value pairs. All of these named parameters are optional, and
 their order does not matter. You must use the format "<param_name> = <value>"
 to specify the value of a parameter, otherwise the parameter is ignored.
 
-When the \ref svm_classification() \e kernel_func argument value is 'gaussian', the \e kernel_params argument is a string containing name-value pairs with the following format. (Line breaks are inserted for readability.)
-<pre class="syntax">
-  'gamma = &lt;value>,
-   n_components = &lt;value>,
-   random_state = &lt;value>'
-</pre>
-\b Parameters
 <DL class="arglist">
-<DT>gamma</dt>
-<DD>Default: 1/num_features. The parameter \f$\gamma\f$ in the Radius Basis Function kernel, i.e., \f$\exp(-\gamma||x-y||^2)\f$. Choosing a proper value for \e gamma is critical to the performance of kernel machine; e.g., while a large \e gamma tends to cause overfitting, a small \e gamma will make the model too constrained to capture the complexity of the data.
+<DT><i>Parameters common to all kernels</i></dt><dd></dd>
+<DT>fit_intercept</dt>
+<DD>Default: True. The parameter \e fit_intercept is an indicator to add an
+intercept to the \e independent_varname array expression. The intercept is added
+to the end of the feature list - thus the last element of the coefficient list
+is the intercept.
 </DD>
-
 <DT>n_components</DT>
-<DD>Default: 2*num_features. The dimensionality of the transformed feature space. A larger value lowers the variance of the estimate of the kernel but requires more memory and takes longer to train.</DD>
-
+<DD>Default: 2*num_features. The dimensionality of the transformed feature space.
+A larger value lowers the variance of the estimate of the kernel but requires
+more memory and takes longer to train.</DD>
 <DT>random_state</DT>
-<DD>Default: 1. Seed used by the random number generator. </DD>
+<DD>Default: 1. Seed used by a random number generator. </DD>
 </DL>
 
-When the \ref svm_classification() \e kernel_func argument value is 'polynomial’, the \e kernel_params argument is a string containing name-value pairs with the following format. (Line breaks are inserted for readability.)
-<pre class="syntax">
-  'coef0 = &lt;value>,
-   degree = &lt;value>,
-   n_components = &lt;value>,
-   random_state = &lt;value>'
-</pre>
-\b Parameters
 <DL class="arglist">
-<DT>coef0</dt>
-<DD>Default: 1.0. The independent term \f$q\f$ in \f$ (\langle x,y\rangle + q)^r \f$. Must be larger than or equal to 0. When it is 0, the polynomial kernel is in homogeneous form.
+<DT><i>Parameters for 'gaussian' kernel</i></dt><dd></dd>
+<DT>gamma</dt>
+<DD> Default: 1/num_features. The parameter \f$\gamma\f$ in the Radius Basis Function
+kernel, i.e., \f$\exp(-\gamma||x-y||^2)\f$. Choosing a proper value for \e gamma
+is critical to the performance of kernel machine; e.g., while a large \e gamma
+tends to cause overfitting, a small \e gamma will make the model too constrained
+to capture the complexity of the data.
 </DD>
+</DL>
 
+<DL class="arglist">
+<DT><i>Parameters for 'polynomial' kernel</i></dt><dd></dd>
+<DT>coef0</dt>
+<DD>Default: 1.0. The independent term \f$q\f$ in \f$ (\langle x,y\rangle + q)^r \f$.
+Must be larger than or equal to 0. When it is 0, the polynomial kernel is in homogeneous form.
+</DD>
 <DT>degree</dt>
 <DD>Default: 3. The parameter \f$r\f$ in \f$ (\langle x,y\rangle + q)^r \f$.
 </DD>
-
-<DT>n_components</DT>
-<DD>Default: 2*num_features. The dimensionality of the transformed feature space. A larger value lowers the variance of the estimate of kernel but requires more memory and takes longer to train.</DD>
-
-<DT>random_state</DT>
-<DD>Default: 1. Seed used by the random number generator. </DD>
 </DL>
 
 
@@ -373,7 +399,7 @@ resulting \e init_stepsize can be run on the whole dataset.
 </DD>
 
 <DT>lambda</dt>
-<DD>Default: [0.01]. Regularization parameter.  Must be positive, can’t be 0.
+<DD>Default: [0.01]. Regularization parameter.  Must be non-negative.
 </DD>
 
 <DT>norm</dt>
@@ -390,19 +416,29 @@ Generally, it has been suggested that epsilon should increase with noisier
 data, and decrease with the number of samples. See [5].
 </DD>
 
-<DT>eps_tabl</dt>
+<DT>eps_table</dt>
 <DD>Default: NULL.
-Name of the input table that contains values of epsilon for different groups. Ignored when \e grouping_col is NULL.  Define this input table if you want different epsilon values for different groups.  The table consists of a column named \e epsilon which specifies the epsilon values, and one or more columns for \e grouping_col. Extra groups are ignored, and groups not present in this table will use the epsilon value specified in parameter \e epsilon.
+Name of the input table that contains values of epsilon for different groups.
+Ignored when \e grouping_col is NULL.  Define this input table if you want
+different epsilon values for different groups.  The table consists of a column
+named \e epsilon which specifies the epsilon values, and one or more columns for
+\e grouping_col. Extra groups are ignored, and groups not present in this table
+will use the epsilon value specified in parameter \e epsilon.
 </DD>
 
 <DT>validation_result</dt>
 <DD>Default: NULL.
-Name of the table to store the cross validation results including the values of parameters and their averaged error values. For now, simple metric like 0-1 loss is used for classification and mean square error is used for regression. The table is only created if the name is not NULL.
+Name of the table to store the cross validation results including the values of
+parameters and their averaged error values. For now, simple metric like 0-1 loss
+is used for classification and mean square error is used for regression. The
+table is only created if the name is not NULL.
 </DD>
 
 <DT>n_folds</dt>
 <DD>Default: 0.
-Number of folds (k). Must be at least 2 to activate cross validation. If a value of k > 2 is specified, each fold is then used as a validation set once, while the other k - 1 folds form the training set.
+Number of folds (k). Must be at least 2 to activate cross validation.
+If a value of k > 2 is specified, each fold is then used as a validation set once,
+while the other k - 1 folds form the training set.
 </DD>
 
 <DT>class_weight</dt>
@@ -486,7 +522,13 @@ SELECT madlib.svm_classification('houses',
                                  'ARRAY[1, tax, bath, size]'
                            );
 </pre>
--# Next generate a nonlinear model using a Gaussian kernel. This time we specify the initial step size and maximum number of iterations to run. As part of the kernel parameter, we choose 10 as the dimension of the space where we train SVM. A larger number will lead to a more powerful model but run the risk of overfitting. As a result, the model will be a 10 dimensional vector, instead of 4 as in the case of linear model, which we will verify when we examine the models.
+-# Next generate a nonlinear model using a Gaussian kernel. This time we specify
+the initial step size and maximum number of iterations to run. As part of the
+kernel parameter, we choose 10 as the dimension of the space where we train
+SVM. A larger number will lead to a more powerful model but run the risk of
+overfitting. As a result, the model will be a 10 dimensional vector, instead
+of 4 as in the case of linear model, which we will verify when we examine the
+models.
 <pre class="example">
 SELECT madlib.svm_classification( 'houses',
                                   'houses_svm_gaussian',
@@ -498,7 +540,38 @@ SELECT madlib.svm_classification( 'houses',
                                   'init_stepsize=1, max_iter=200'
                            );
 </pre>
--# View the result for the linear model.
+-#  Now train a regression model. First, use a linear model.
+<pre class="example">
+SELECT madlib.svm_regression('houses',
+                             'houses_svm_regression',
+                             'price',
+                             'ARRAY[1, tax, bath, size]'
+                           );
+</pre>
+-#  Next train a non-linear regression model using a Gaussian kernel.
+<pre class="example">
+SELECT madlib.svm_regression( 'houses',
+                              'houses_svm_gaussian_regression',
+                              'price',
+                              'ARRAY[1, tax, bath, size]',
+                              'gaussian',
+                              'n_components=10',
+                              '',
+                              'init_stepsize=1, max_iter=200'
+                           );
+</pre>
+-#  Now train a non-linear one-class SVM for novelty detection, using a Gaussian kernel.
+<pre class="example">
+select madlib.svm_one_class('houses',
+                            'houses_one_class_gaussian',
+                            'ARRAY[1,tax,bedroom,bath,size,lot,price]',
+                            'gaussian',
+                            'gamma=0.01,n_components=10',
+                            NULL,
+                            'max_iter=250, init_stepsize=100,lambda=0.9'
+                            );
+</pre>
+-# View the result for the linear classification model.
 <pre class="example">
 -- Set extended display on for easier reading of output
 \\x ON
@@ -515,8 +588,7 @@ num_rows_processed | 15
 num_rows_skipped   | 0
 dep_var_mapping    | [False, True]
 </pre>
-
--# View the results from kernel SVM.
+-# View the results from kernel SVM for classification.
 <pre class="example">
 -- Set extended display on for easier reading of output
 \\x ON
@@ -533,7 +605,57 @@ num_rows_processed | 15
 num_rows_skipped   | 0
 dep_var_mapping    | [False, True]
 </pre>
-
+-# View the result for the linear regression model.
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x ON
+SELECT * FROM houses_svm_regression;
+</pre>
+Result:
+<pre class="result">
+-[ RECORD 1 ]------+-----------------------------------------------------------
+coef               | {0.108331895548,38.7056695139,0.40444087325,43.3271927438}
+loss               | 342988.843452
+norm_of_gradient   | 1659.20424823876
+num_iterations     | 183
+num_rows_processed | 15
+num_rows_skipped   | 0
+dep_var_mapping    | {NULL}
+</pre>
+-# View the results from kernel SVM for regression.
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x ON
+SELECT * FROM houses_svm_gaussian_regression;
+</pre>
+Result:
+<pre class="result">
+-[ RECORD 1 ]------+----------------------------------------------------------------------------------------------------------------------------------------------------
+coef               | {12.6287285299,-12.9733002831,0.848080861156,5.94293328578,-6.34552545847,-19.7726249109,5.50362313774,-10.3908022228,-3.36031145266,16.0655950574}
+loss               | 1831979.57085
+norm_of_gradient   | 3.29486194349202
+num_iterations     | 107
+num_rows_processed | 15
+num_rows_skipped   | 0
+dep_var_mapping    | {NULL}
+</pre>
+-# View the result for the Gaussian novelty detection model.
+<pre class="example">
+-- Set extended display on for easier reading of output
+\\x ON
+SELECT * FROM houses_one_class_gaussian;
+</pre>
+Result:
+<pre class="result">
+-[ RECORD 1 ]------+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+coef               | {0.653884911436,-0.963113029604,-0.49030220733,-0.352594122599,-1.29858359915,0.821120203574,-0.0657750847612,0.563678190211,0.822382924741,1.08544389673}
+loss               | 7.29444919305
+norm_of_gradient   | 0.76407243171229
+num_iterations     | 208
+num_rows_processed | 15
+num_rows_skipped   | 0
+dep_var_mapping    | {1,-1}
+</pre>
 -# Use the prediction function to evaluate the models. The predicted results are in the \e prediction column and the actual data is in the \e target column.
 For the linear model:
 <pre class="example">
@@ -545,7 +667,45 @@ For the Gaussian model:
 SELECT madlib.svm_predict('houses_svm_gaussian', 'houses', 'id', 'houses_pred_gaussian');
 SELECT *, price < 100000 AS target FROM houses JOIN houses_pred_gaussian USING (id) ORDER BY id;
 </pre>
-Result for the Gaussian model:
+For the linear regression model:
+<pre class="example">'m1','houses','id','regre'
+SELECT madlib.svm_predict('houses_svm_regression', 'houses', 'id', 'houses_regr');
+SELECT * FROM houses JOIN houses_regr USING (id) ORDER BY id;
+</pre>
+For the non-linear Gaussian regression model:
+<pre class="example">'m1','houses','id','regre'
+SELECT madlib.svm_predict('houses_svm_gaussian_regression', 'houses', 'id', 'houses_gaussian_regr');
+SELECT * FROM houses JOIN houses_gaussian_regr USING (id) ORDER BY id;
+</pre>
+-#  Create test data set for novelty detection.
+<pre class="example">
+DROP TABLE IF EXISTS houses_novelty_test;
+CREATE TABLE houses_novelty_test (id INT, tax INT, bedroom INT, bath FLOAT, price INT,
+            size INT, lot INT);
+COPY houses_novelty_test FROM STDIN WITH DELIMITER '|';
+  1 |  33590 |       12 |    11 |  5000000 |  12770 | 221100
+  2 | 1050 |       31 |    21 |  85000000 | 141210 | 120010
+  3 |   233330 |     13 |    11 |  22500000 | 112060 |  351100
+  4 |  833370 |       12 |    12 |  9000000 | 130120 | 1751100
+  5 | 132330 |       31 |    12 | 133000000 | 150120 | 30011100
+  6 | 135330 |       21 |    11 |  90500000 |  8212120 | 25711100
+  7 | 279330 |       31 |  21.5 | 260000000 | 213012 | 25011100
+  8 | 6803333 |       12 |    11 | 142500000 | 117012 | 22111000
+  9 | 33331840 |       31 |    12 | 160000000 | 150120 | 19011100
+ 10 | 3780 |       4 |    2 | 220000 | 2790 | 21000
+ 11 | 1760 |       3 |    1 |  77000 | 1030 | 18500
+ 12 | 1520 |       3 |    2 | 128600 | 1250 | 21000
+ 13 | 3000 |       3 |    2 | 130000 | 1760 | 37000
+ 14 | 2170 |       2 |    3 | 138000 | 1550 | 13000
+ 15 |  750 |       3 |  1.5 |  75000 | 1450 | 13000
+\\.
+</pre>
+Evaluate the Gaussian one-class novelty detection model with the prediction function:
+<pre class="example">
+SELECT madlib.svm_predict('houses_one_class_gaussian', 'houses_novelty_test', 'id', 'houses_novelty_predict');
+SELECT * FROM houses_novelty_test JOIN houses_novelty_predict USING (id) ORDER BY id;
+</pre>
+Result for the Gaussian classification model:
 <pre class="result">
  id | tax  | bedroom | bath | price  | size |  lot  | prediction | target
 ----+------+---------+------+--------+------+-------+------------+--------
@@ -564,6 +724,46 @@ Result for the Gaussian model:
  13 | 3100 |       3 |    2 | 140000 | 1760 | 38000 | f          | f
  14 | 2070 |       2 |    3 | 148000 | 1550 | 14000 | f          | f
  15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000 | t          | t
+</pre>
+Result for the linear regression model:
+<pre class="result">
+ id | tax  | bedroom | bath | price  | size |  lot  |    prediction
+----+------+---------+------+--------+------+-------+------------------
+  1 |  590 |       2 |    1 |  50000 |  770 | 22100 | 56191.8809366501
+  2 | 1050 |       3 |    2 |  85000 | 1410 | 12000 | 101723.720832136
+  3 |   20 |       3 |    1 |  22500 | 1060 |  3500 | 46774.6724252011
+  4 |  870 |       2 |    2 |  90000 | 1300 | 17500 | 90001.6946038879
+  5 | 1320 |       3 |    2 | 133000 | 1500 | 30000 | 116051.892408163
+  6 | 1350 |       2 |    1 |  90500 |  820 | 25700 | 87698.7223915241
+  7 | 2790 |       3 |  2.5 | 260000 | 2130 | 25000 | 200136.782523288
+  8 |  680 |       2 |    1 | 142500 | 1170 | 22000 | 77025.2857759612
+  9 | 1840 |       3 |    2 | 160000 | 1500 | 19000 | 136124.528457551
+ 10 | 3680 |       4 |    2 | 240000 | 2790 | 20000 | 263134.504674981
+ 11 | 1660 |       3 |    1 |  87000 | 1030 | 17500 | 108778.731320579
+ 12 | 1620 |       3 |    2 | 118600 | 1250 | 20000 | 116782.700138583
+ 13 | 3100 |       3 |    2 | 140000 | 1760 | 38000 | 196045.611244141
+ 14 | 2070 |       2 |    3 | 148000 | 1550 | 14000 | 147173.127261586
+ 15 |  650 |       3 |  1.5 |  65000 | 1450 | 12000 |  88018.958223626
+</pre>
+Result for the Gaussian one-class novelty detection model:
+<pre class="result">
+ id |   tax    | bedroom | bath |   price   |  size   |   lot    | prediction
+----+----------+---------+------+-----------+---------+----------+------------
+  1 |    33590 |      12 |   11 |   5000000 |   12770 |   221100 |          1
+  2 |     1050 |      31 |   21 |  85000000 |  141210 |   120010 |         -1
+  3 |   233330 |      13 |   11 |  22500000 |  112060 |   351100 |          1
+  4 |   833370 |      12 |   12 |   9000000 |  130120 |  1751100 |         -1
+  5 |   132330 |      31 |   12 | 133000000 |  150120 | 30011100 |         -1
+  6 |   135330 |      21 |   11 |  90500000 | 8212120 | 25711100 |         -1
+  7 |   279330 |      31 | 21.5 | 260000000 |  213012 | 25011100 |         -1
+  8 |  6803333 |      12 |   11 | 142500000 |  117012 | 22111000 |         -1
+  9 | 33331840 |      31 |   12 | 160000000 |  150120 | 19011100 |         -1
+ 10 |     3780 |       4 |    2 |    220000 |    2790 |    21000 |          1
+ 11 |     1760 |       3 |    1 |     77000 |    1030 |    18500 |         -1
+ 12 |     1520 |       3 |    2 |    128600 |    1250 |    21000 |          1
+ 13 |     3000 |       3 |    2 |    130000 |    1760 |    37000 |          1
+ 14 |     2170 |       2 |    3 |    138000 |    1550 |    13000 |          1
+ 15 |      750 |       3 |  1.5 |     75000 |    1450 |    13000 |         -1
 </pre>
 Note the result may vary somewhat with the platform configuration you are using.
 -# Create a model for an unbalanced class-size dataset.
@@ -912,6 +1112,82 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification(
     SELECT MADLIB_SCHEMA.svm_classification($1, $2, $3, $4, NULL);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+-----------------------------------------------------------------
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class(
+    source_table text,
+    model_table text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text,
+    grouping_col text,
+    params text,
+    verbose bool)
+RETURNS void AS $$
+    PythonFunction(svm, svm, svm_one_class)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+-- all default value handling implemented in Python
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class(
+    source_table text,
+    model_table text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text,
+    grouping_col text,
+    params text)
+RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_one_class($1, $2, $3, $4, $5, $6, $7, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class(
+    source_table text,
+    model_table text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text,
+    grouping_col text)
+RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_one_class($1, $2, $3, $4, $5, $6, ''::text, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class(
+    source_table text,
+    model_table text,
+    independent_varname text,
+    kernel_func text,
+    kernel_params text)
+  RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_one_class($1, $2, $3, $4, $5, ''::text, ''::text, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class(
+    source_table text,
+    model_table text,
+    independent_varname text,
+    kernel_func text)
+  RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_one_class($1, $2, $3, $4, ''::text, ''::text, ''::text, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class(
+    source_table text,
+    model_table text,
+    independent_varname text)
+  RETURNS void AS $$
+    SELECT MADLIB_SCHEMA.svm_one_class($1, $2, $3, ''::text,
+                                       ''::text, ''::text, ''::text, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
 
 ------ Prediction -------------------------------------------------------------
 /**
@@ -968,9 +1244,8 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_classification (
     message  TEXT
 ) RETURNS TEXT AS $$
-    global is_svc
-    is_svc = True
-    PythonFunction(svm, svm, svm_help)
+    PythonFunctionBodyOnly(svm, svm)
+    return svm.svm_help(schema_madlib, message, True)
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
@@ -980,17 +1255,30 @@ RETURNS TEXT AS $$
 $$ LANGUAGE SQL IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class (
+    message  TEXT
+) RETURNS TEXT AS $$
+    PythonFunctionBodyOnly(svm, svm)
+    return svm.svm_one_class_help(schema_madlib, message, True)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_one_class ()
+RETURNS TEXT AS $$
+  SELECT MADLIB_SCHEMA.svm_one_class(NULL::TEXT)
+$$ LANGUAGE SQL IMMUTABLE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_regression (
     message  TEXT
 ) RETURNS TEXT AS $$
-    global is_svc
-    is_svc = False
-    PythonFunction(svm, svm, svm_help)
+    PythonFunctionBodyOnly(svm, svm)
+    return svm.svm_help(schema_madlib, message, False)
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.svm_regression ()
 RETURNS TEXT AS $$
-  SELECT MADLIB_SCHEMA.svm_regression(NULL::TEXT)
+  SELECT MADLIB_SCHEMA.svm_regression(''::TEXT)
 $$ LANGUAGE SQL IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');

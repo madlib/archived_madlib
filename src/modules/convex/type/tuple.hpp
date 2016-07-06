@@ -31,18 +31,21 @@ struct ExampleTuple {
     int id;
     independent_variables_type indVar;
     dependent_variable_type depVar;
+    double weight;
 
-    ExampleTuple() { id = 0; }
+    ExampleTuple() { id = 0; weight = 1;}
     ExampleTuple(const ExampleTuple &rhs) {
         id = rhs.id;
         indVar = rhs.indVar;
         depVar = rhs.depVar;
+        weight = rhs.weight;
     }
     ExampleTuple& operator=(const ExampleTuple &rhs) {
         if (this != &rhs) {
             id = rhs.id;
             indVar = rhs.indVar;
             depVar = rhs.depVar;
+            weight = rhs.weight;
         }
         return *this;
     }

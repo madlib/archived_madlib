@@ -41,7 +41,6 @@ DECLARE
     temp_table text;
 BEGIN
     temp_table := 'madlib_temp_' || output_table;
-    EXECUTE 'DROP TABLE IF EXISTS ' || temp_table;
     EXECUTE '
         CREATE TABLE ' || temp_table || ' AS
             SELECT
@@ -63,7 +62,6 @@ DECLARE
     temp_table text;
 BEGIN
     temp_table := 'madlib_temp_' || output_table;
-    EXECUTE 'DROP TABLE IF EXISTS ' || temp_table;
     EXECUTE '
         CREATE TABLE ' || temp_table || ' AS
             SELECT
@@ -78,17 +76,12 @@ BEGIN
 END
 $$ LANGUAGE plpgsql;
 
-DROP TABLE IF EXISTS svm_train_data;
 SELECT svm_generate_cls_data('svm_train_data', 1000, 4);
-DROP TABLE IF EXISTS svm_test_data;
 SELECT svm_generate_cls_data('svm_test_data', 1000, 4);
-DROP TABLE IF EXISTS svr_train_data;
 SELECT svr_generate_cls_data('svr_train_data', 1000, 4);
-DROP TABLE IF EXISTS svr_test_data;
 SELECT svr_generate_cls_data('svr_test_data', 1000, 4);
 
 -- check the default values
-DROP TABLE IF EXISTS svr_model, svr_model_summary;
 SELECT svm_regression(
      'svr_train_data',
      'svr_model',
@@ -105,10 +98,9 @@ SELECT
 FROM svr_model;
 
 -- check the use of l1 norm
-DROP TABLE IF EXISTS svr_model, svr_model_summary;
 SELECT svm_regression(
      'svr_train_data',
-     'svr_model',
+     'svr_model2',
      'label',
      'ind',
      NULL,
@@ -116,7 +108,6 @@ SELECT svm_regression(
      NULL,
      'init_stepsize=0.01, max_iter=50, lambda=2, norm=l2, epsilon=0.01',
      false);
-DROP TABLE IF EXISTS svr_test_result;
 SELECT svm_predict('svr_model', 'svr_train_data', 'id', 'svr_test_result');
 \x on
 SELECT * FROM svr_model;
@@ -148,11 +139,9 @@ SELECT svm_classification(
 SELECT * FROM lclss;
 SELECT * FROM lclss_summary;
 
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
 SELECT svm_predict('lclss', 'svm_test_data', 'id', 'svm_test_predict');
 
 -- checking correctness with pre-conditioning
-DROP TABLE IF EXISTS svm_normalized CASCADE;
 CREATE TABLE svm_normalized AS
 SELECT
     id,
@@ -171,7 +160,6 @@ FROM svm_train_data,
     ) AS svm_ind_stddev
 ORDER BY random();
 
-DROP TABLE IF EXISTS svm_test_normalized CASCADE;
 CREATE TABLE svm_test_normalized AS
 SELECT
     id,
@@ -192,8 +180,6 @@ FROM svm_test_data,
 ----------------------------------------------------------------
 -- serial
 -- learning
-DROP TABLE IF EXISTS svm_model CASCADE;
-DROP TABLE IF EXISTS svm_model_summary CASCADE;
 SELECT svm_classification(
     'svm_normalized',
     'svm_model',
@@ -203,7 +189,7 @@ SELECT svm_classification(
     NULL, -- kernel_pararms
     NULL, -- grouping_col
     'init_stepsize=0.03, decay_factor=1, max_iter=5, tolerance=0, lambda=0',
-    true -- verbose
+    false -- verbose
     );
 \x on
 SELECT * FROM svm_model;
@@ -211,8 +197,6 @@ SELECT * FROM svm_model_summary;
 \x off
 
 -- l2
-DROP TABLE IF EXISTS svm_model_small_norm2 CASCADE;
-DROP TABLE IF EXISTS svm_model_small_norm2_summary CASCADE;
 SELECT svm_classification(
     'svm_normalized',
     'svm_model_small_norm2',
@@ -235,8 +219,6 @@ FROM svm_model AS noreg, svm_model_small_norm2 AS l2;
 
 
 -- l1 makes sprase models
-DROP TABLE IF EXISTS svm_model_very_sparse CASCADE;
-DROP TABLE IF EXISTS svm_model_very_sparse_summary CASCADE;
 SELECT svm_classification(
     'svm_normalized',
     'svm_model_very_sparse',
@@ -261,53 +243,48 @@ FROM
 WHERE w_i != 0;
 
 -- predicting
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('svm_model','svm_test_normalized', 'id', 'svm_test_predict');
+SELECT svm_predict('svm_model','svm_test_normalized', 'id', 'svm_test_predict2');
 
 -- calculating accuracy
 -- the accuracy is not guaranteed to be high because the stepsize & decay_factor
 -- depend on the actual number of segments
 SELECT
     count(*) AS misclassification_count
-FROM svm_test_predict NATURAL JOIN svm_test_normalized
+FROM svm_test_predict2 NATURAL JOIN svm_test_normalized
 WHERE prediction <> label;
 
 ----------------------------------------------------------------
 -- decay factor non-zero
 -- learning
-DROP TABLE IF EXISTS svm_model CASCADE;
-DROP TABLE IF EXISTS svm_model_summary CASCADE;
 SELECT svm_classification(
     'svm_normalized',
-    'svm_model',
+    'svm_model_decay_factor_non_zero',
     'label',
     'ind',
     NULL, -- kernel_func
     NULL, -- kernel_pararms
     NULL, --grouping_col
     'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0, lambda={0.001}',
-    true -- verbose
+    false -- verbose
     );
-SELECT norm_of_gradient FROM svm_model;
+SELECT norm_of_gradient FROM svm_model_decay_factor_non_zero;
 
 -- predicting
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-CREATE TABLE svm_test_predict AS
+CREATE TABLE svm_test_predict_decay_factor_nonzero AS
 SELECT
     svm_test_normalized.id,
     CASE WHEN array_dot(coef, ind) >= 0 THEN 1 ELSE -1 END AS prediction,
     label
-FROM svm_test_normalized, svm_model;
+FROM svm_test_normalized, svm_model_decay_factor_non_zero;
 
 -- stats for info
 SELECT count(*) AS misclassification_count
-FROM svm_test_predict
+FROM svm_test_predict_decay_factor_nonzero
 WHERE prediction <> label;
 
 
 -----------------------------------------------------------------
 -- labels that are not just 1,-1
-DROP TABLE IF EXISTS svm_normalized_fancy_label CASCADE;
 CREATE TABLE svm_normalized_fancy_label AS
 SELECT
     id,
@@ -333,7 +310,6 @@ INSERT INTO svm_normalized_fancy_label VALUES
 (1002, ARRAY[5,1,1,1,1]::float8[], NULL, 1002 % 4),
 (1003, ARRAY[5,1,NULL,1,1]::float8[], NULL, 1003 % 4);
 
-DROP TABLE IF EXISTS svm_test_normalized_fancy_label CASCADE;
 CREATE TABLE svm_test_normalized_fancy_label AS
 SELECT
     id,
@@ -357,8 +333,6 @@ INSERT INTO svm_test_normalized_fancy_label VALUES
 (1001, ARRAY[NULL,1,1,1,1]::float8[], 'YES', 1001 % 4);
 
 -- training
-DROP TABLE IF EXISTS svm_model_fancy_label CASCADE;
-DROP TABLE IF EXISTS svm_model_fancy_label_summary CASCADE;
 SELECT svm_classification(
     'svm_normalized_fancy_label',
     'svm_model_fancy_label',
@@ -378,8 +352,7 @@ SELECT assert(count(*)=4, '4 group exist') FROM svm_model_fancy_label;
 -- SELECT assert(total_rows_skipped=3, 'total_rows_skipped is wrong')
 -- FROM svm_model_fancy_label_summary;
 
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('svm_model_fancy_label', 'svm_test_normalized_fancy_label', 'id', 'svm_test_predict');
+SELECT svm_predict('svm_model_fancy_label', 'svm_test_normalized_fancy_label', 'id', 'svm_test_fancy_label');
 SELECT o.id, label, prediction, o.gid FROM svm_test_predict p, svm_test_normalized_fancy_label o where o.id = p.id;
 
 -- calculating accuracy
@@ -391,8 +364,6 @@ SELECT o.id, label, prediction, o.gid FROM svm_test_predict p, svm_test_normaliz
 -- WHERE prediction <> label;
 
 -- tests for depend varname being expression
-DROP TABLE IF EXISTS svm_model_expression CASCADE;
-DROP TABLE IF EXISTS svm_model_expression_summary CASCADE;
 SELECT svm_classification(
     'svm_normalized',
     'svm_model_expression',
@@ -402,18 +373,43 @@ SELECT svm_classification(
     NULL, -- kernel_pararms
     NULL, --grouping_col
     'init_stepsize=0.03, decay_factor=0.9, max_iter=5, tolerance=0, lambda=0.001',
-    true -- verbose
+    false -- verbose
     );
 \x on
 SELECT * FROM svm_model_expression;
 SELECT * FROM svm_model_expression_summary;
 \x off
 
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('svm_model_expression', 'svm_test_normalized', 'id', 'svm_test_predict');
-SELECT * FROM svm_test_predict;
 
-DROP TABLE IF EXISTS abalone_train_small_tmp;
+SELECT svm_one_class(
+    'svm_normalized',
+    'svm_model_expression1',
+    'ind',
+    'gaussian'
+    );
+\x on
+SELECT * FROM svm_model_expression1;
+SELECT * FROM svm_model_expression1_summary;
+\x off
+
+SELECT svm_one_class(
+    'svm_normalized',
+    'svm_model_expression2',
+    'ind',
+    'gaussian',
+    NULL,
+    NULL,
+    'init_stepsize=0.01, max_iter=3, lambda=[0.0002, 0.2], '
+    'n_folds=3, epsilon = [0.003, 0.2]'
+    );
+\x on
+SELECT * FROM svm_model_expression2;
+SELECT * FROM svm_model_expression2_summary;
+\x off
+
+SELECT svm_predict('svm_model_expression2', 'svm_test_normalized', 'id', 'svm_test_model_expression2');
+SELECT * FROM svm_test_model_expression2;
+
 CREATE TABLE abalone_train_small_tmp (
     sex TEXT,
     id SERIAL NOT NULL,
@@ -527,52 +523,47 @@ INSERT INTO abalone_train_small_tmp(id,sex,length,diameter,height,whole,shucked,
 (831,'M',0.415,0.305,0.1,0.325,0.156,0.0505,0.091,6),
 (3359,'M',0.285,0.215,0.075,0.106,0.0415,0.023,0.035,5);
 
-DROP TABLE IF EXISTS abalone_train_small;
 CREATE TABLE abalone_train_small AS (
     SELECT * FROM abalone_train_small_tmp
 );
 
 -- create epsilon input table
-
-DROP TABLE IF EXISTS abalone_eps;
 CREATE TABLE abalone_eps (
     sex TEXT,
     epsilon DOUBLE PRECISION);
-
 INSERT INTO abalone_eps(sex, epsilon) VALUES
 ('I', 0.2),
 ('M', 0.05);
 
-DROP TABLE IF EXISTS m1, m1_summary;
 SELECT svm_regression(
      'svr_train_data',
      'm1',
      'label',
      'ind',
-     NULL,NULL,NULL,
+     'poly',
+      NULL,
+      NULL,
      'init_stepsize=0.01, max_iter=3, lambda=[0.0002, 0.2], '
      'n_folds=3, epsilon = [0.003, 0.2]',
      true);
 
-DROP TABLE IF EXISTS m1, m1_summary;
 SELECT svm_regression(
      'svr_train_data',
-     'm1',
+     'm2',
      'label',
      'ind',
      NULL,NULL,NULL,
      'init_stepsize=0.01, max_iter=2, lambda=[0.0002, 0.2], n_folds=3',
      false);
 -- check which lambda is selected
-SELECT reg_params FROM m1_summary;
+SELECT reg_params FROM m2_summary;
 
 -- epsilon values are ignored
 -- the validation table only contains
 -- init_stepsize and lambda
-DROP TABLE IF EXISTS m1, m1_summary, val_res;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'm3',
      'label',
      'ind',
      NULL,NULL,NULL,
@@ -580,65 +571,53 @@ SELECT svm_classification(
      'n_folds=3, epsilon=[0.1, 1], validation_result=val_res');
 SELECT * FROM val_res;
 
-DROP TABLE IF EXISTS m1, m1_summary, val_res;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'm4',
      'label',
      'ind',
      NULL,NULL,NULL,
      'init_stepsize=0.01, max_iter=20, lambda=[20, 0.0002, 0.02], '
-     'n_folds=3, validation_result=val_res');
+     'n_folds=3, validation_result=val_res2');
 SELECT * FROM val_res;
 -- check which lambda is selected
 SELECT reg_params FROM m1_summary;
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
--- accuracy with cv
-SELECT
-    count(*) AS misclassification_count
-FROM svm_test_predict NATURAL JOIN svm_test_data
-WHERE prediction <> label;
+SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_reg_params');
 
-DROP TABLE IF EXISTS m1, m1_summary;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'm5',
      'label',
      'ind',
      NULL,NULL,NULL,
      'init_stepsize=0.01, max_iter=20, lambda=0.000002');
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT svm_predict('m5','svm_test_data', 'id', 'svm_test_5');
 -- accuracy without cv
 SELECT
     count(*) AS misclassification_count
-FROM svm_test_predict NATURAL JOIN svm_test_data
+FROM svm_test_5 NATURAL JOIN svm_test_data
 WHERE prediction <> label;
 
 -- SVM with kernels -----------------------------------------------------------
 -- verify guassian kernel mapping dimensions
-DROP TABLE IF EXISTS m1, m1_summary, m1_random;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'm6',
      'label',
      'ind',
      'gaussian',
-     'n_components=3',
+     'n_components=3, fit_intercept=false',
      NULL,
      'max_iter=2');
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT svm_predict('m6','svm_test_data', 'id', 'svm_test_6');
 SELECT
     assert(
         array_upper(coef, 1) = 3,
         'The dimension of the coefficients must be equal to n_components (3)!')
-FROM m1;
+FROM m6;
 
 -- verify gaussian kernel with grouping
 -- verify partial string support in kernel specification
-DROP TABLE IF EXISTS svr_mdl_m, svr_mdl_m_summary, svr_mdl_m_random;
 SELECT svm_regression(
         'abalone_train_small',
         'svr_mdl_m',
@@ -649,8 +628,7 @@ SELECT svm_regression(
         'sex',
         'max_iter=2, init_stepsize=1, decay_factor=0.9, tolerance=1e-16, epsilon = 0.05',
         false);
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('svr_mdl_m','abalone_train_small', 'id', 'svm_test_predict');
+SELECT svm_predict('svr_mdl_m','abalone_train_small', 'id', 'svm_test_mdl_m');
 SELECT
     assert(
         array_upper(coef, 1) = 10,
@@ -658,44 +636,40 @@ SELECT
 FROM svr_mdl_m;
 
 -- verify guassian kernel with cross validation
-DROP TABLE IF EXISTS m1, m1_summary, m1_random CASCADE;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'm7',
      'label',
      'ind',
      'gaussian',
-     'n_components=3',
+     'n_components=3, fit_intercept=true',
      NULL,
      'max_iter=2, n_folds=3, lambda=[0.01, 0.1, 0.5]');
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+
+SELECT svm_predict('m7','svm_test_data', 'id', 'svm_test_7');
 SELECT
     assert(
-        array_upper(coef, 1) = 3,
-        'The dimension of the coefficients must be equal to n_components (3)!')
-FROM m1;
+        array_upper(coef, 1) = 4,
+        'The dimension of the coefficients must be equal to n_components + 1 (4)!')
+FROM m7;
 
 -- verify guassian kernel with out-of-memory support
-DROP TABLE IF EXISTS m1, m1_summary, m1_random CASCADE;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'm8',
      'label',
      'ind',
      'gaussian',
-     'n_components=3, in_memory=0',
+     'n_components=3, fit_in_memory=False',
      NULL,
      'max_iter=2, n_folds=3, lambda=[0.01, 0.1, 0.5]');
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_8');
 SELECT
     assert(
         array_upper(coef, 1) = 3,
         'The dimension of the coefficients must be equal to n_components (3)!')
-FROM m1;
+FROM m8;
 
-DROP TABLE IF EXISTS kernel_data;
 CREATE TABLE kernel_data (
     index bigint,
     x1 double precision,
@@ -720,75 +694,68 @@ INSERT INTO kernel_data (index, x1, x2, y) VALUES (14, 0, -2.70000000000000018, 
 INSERT INTO kernel_data (index, x1, x2, y) VALUES (15, 1.30000000000000004, 2.10000000000000009, 1);
 
 -- verify poly kernel mapping dimensions
-DROP TABLE IF EXISTS m1, m1_summary, m1_random CASCADE;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'poly_mapping',
      'label',
      'ind',
      'poly',
-     'n_components=3',
+     'n_components=3, fit_intercept=true',
      NULL,
      'max_iter=2');
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT svm_predict('poly_mapping','svm_test_data', 'id', 'svm_test_poly_mapping');
 SELECT
     assert(
-        array_upper(coef, 1) = 3,
-        'The dimension of the coefficients must be equal to n_components (3)!')
-FROM m1;
+        array_upper(coef, 1) = 4,
+        'The dimension of the coefficients must be equal to n_components + 1 (4)!')
+FROM poly_mapping;
 
 -- verify poly kernel with grouping
 -- verify partial string support in kernel specification
-DROP TABLE IF EXISTS svr_mdl_m, svr_mdl_m_summary, svr_mdl_m_random CASCADE;
 SELECT svm_regression(
         'abalone_train_small',
-        'svr_mdl_m',
+        'svr_mdl_poly',
         'rings',
         'ARRAY[1,diameter,shell,shucked,length]',
         'po',
-        'degree=2, n_components=10',
+        'degree=2, n_components=10, fit_intercept=true',
         'sex',
         'max_iter=2, init_stepsize=1, decay_factor=0.9, tolerance=1e-16, epsilon = 0.05',
         false);
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('svr_mdl_m','abalone_train_small', 'id', 'svm_test_predict');
+SELECT svm_predict('svr_mdl_poly','abalone_train_small', 'id', 'svm_test_poly');
 SELECT
     assert(
-        array_upper(coef, 1) = 10,
-        'The dimension of the coefficients must be equal to n_components (10)!')
-FROM svr_mdl_m;
+        array_upper(coef, 1) = 11,
+        'The dimension of the coefficients must be equal to n_components + 1 (11)!')
+FROM svr_mdl_poly;
 
 -- verify poly kernel with cross validation
-DROP TABLE IF EXISTS m1, m1_summary, m1_random CASCADE;
 SELECT svm_classification(
      'svm_train_data',
-     'm1',
+     'm9',
      'label',
      'ind',
      'poly',
      'n_components=3',
      NULL,
      'max_iter=2, n_folds=3, lambda=[0.01, 0.1, 0.5]');
-DROP TABLE IF EXISTS svm_test_predict CASCADE;
-SELECT svm_predict('m1','svm_test_data', 'id', 'svm_test_predict');
+SELECT svm_predict('m9','svm_test_data', 'id', 'svm_test_9');
 SELECT
     assert(
         array_upper(coef, 1) = 3,
         'The dimension of the coefficients must be equal to n_components (3)!')
-FROM m1;
+FROM m9;
 
-DROP TABLE IF EXISTS m1, m1_summary, m1_random;
 SELECT svm_classification(
      'kernel_data',
-     'm1',
+     'm10',
      'y',
      'array[x1, x2]',
      'gaussian',
      'gamma=1, n_components=20, random_state=2',
      NULL,
      'init_stepsize=1, max_iter=10');
-SELECT * FROM m1;
+SELECT * FROM m10;
 
 -- Test for class weight
 CREATE TABLE svm_unbalanced (

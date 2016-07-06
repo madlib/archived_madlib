@@ -92,19 +92,18 @@ linear_svm_igd_transition::run(AnyType &args) {
 
     // tuple
     using madlib::dbal::eigen_integration::MappedColumnVector;
-    GLMTuple tuple;
 
     // each tuple can be weighted - this can be combination of the sample weight
     // and the class weight. Calling function is responsible for combining the two
-    // into a single tuple weight. The default value for this parameter should be 1.
-    const double tuple_weight = args[11].getAs<double>();
-
+    // into a single tuple weight. The default value for this parameter is 1, set
+    // into the definition of "tuple".
+    // The weight is used to increase the value of a particular tuple for the online
+    // learning. The weight is not used for the loss computation.
+    GLMTuple tuple;
     tuple.indVar.rebind(args[1].getAs<MappedColumnVector>().memoryHandle(),
                         state.task.dimension);
-
-    // tuple weight is multiplied to the gradient update. That is equivalent to
-    // multiplying with the dependent variable
-    tuple.depVar = args[2].getAs<double>() * tuple_weight;
+    tuple.depVar = args[2].getAs<double>();
+    tuple.weight = args[11].getAs<double>();
 
     // Now do the transition step
     // apply IGD with regularization
