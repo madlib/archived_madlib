@@ -75,7 +75,7 @@ add_sql_files(
 )
 # FIXME: Check legacy code for compliance with new architecture
 # BEGIN Legacy Code
-    
+
     file(GLOB_RECURSE LEGACY_SQL_FILES RELATIVE
         "${CMAKE_SOURCE_DIR}/methods"
         "${CMAKE_SOURCE_DIR}/methods/*.sql_in")
@@ -92,7 +92,7 @@ add_sql_files(
         )
         list(APPEND SQL_TARGET_FILES ${OUTFILE})
     endforeach(CURRENT_FILE ${LEGACY_SQL_FILES})
-    
+
 # END Legacy Code
 add_custom_target(sqlFiles_${PORT_LC} ALL DEPENDS ${SQL_TARGET_FILES})
 
@@ -140,7 +140,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
 
     # FIXME: Convert legacy source code written in C
     # BEGIN Legacy Code
-        
+
         # From the CMake documentation:
         # "Source file properties are visible only to targets added in the same
         # directory (CMakeLists.txt)." We therefore have to set them for each
@@ -162,15 +162,15 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         set_source_files_properties(${LEGACY_C_FILES} PROPERTIES
             COMPILE_DEFINITIONS "NO_PG_MODULE_MAGIC;errOmitLocation=(int)"
         )
-    
+
     # END Legacy Code
 
 
 # -- 4.2. Preprocess all Python files ------------------------------------------
-    
+
     define_postgresql_features(${IN_PORT_VERSION} DBMS_FEATURES)
     define_m4_macros(M4_DEFINES_CMD_LINE M4_DEFINES_CODE ${DBMS_FEATURES})
-    
+
     add_python_files(
         PYTHON_TARGET_FILES
         "${PORT_SOURCE_DIR}/modules"
@@ -179,7 +179,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
     )
     # FIXME: Check legacy code for compliance with new architecture
     # BEGIN Legacy Code
-        
+
         file(GLOB_RECURSE LEGACY_PYTHON_FILES RELATIVE
             "${CMAKE_SOURCE_DIR}/methods"
             "${CMAKE_SOURCE_DIR}/methods/*.py_in")
@@ -198,14 +198,14 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
             )
             list(APPEND PYTHON_TARGET_FILES ${OUTFILE})
         endforeach(CURRENT_FILE ${LEGACY_PYTHON_FILES})
-        
+
     # END Legacy Code
-    
+
     configure_file("${PORT_SOURCE_DIR}/madpack/SQLCommon.m4_in"
         "${CMAKE_CURRENT_BINARY_DIR}/madpack/SQLCommon.m4"
         @ONLY
     )
-    
+
     add_custom_target(pythonFiles_${DBMS} ALL
         DEPENDS ${PYTHON_TARGET_FILES})
 
@@ -226,6 +226,8 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
         DESTINATION ports/${PORT_DIR_NAME}/${IN_PORT_VERSION}/madpack
         COMPONENT ${DBMS}
     )
+
+
 endfunction(add_${PORT_LC}_library)
 
 
@@ -235,11 +237,11 @@ endfunction(add_${PORT_LC}_library)
 # Add the current version as a target. This is a macro because it calls
 # find_package, and we want the side effects (the defined variables) to be
 # visible after the invocation
-# 
+#
 macro(add_current_${PORT_LC}_version)
     get_filename_component(_VERSION "${CMAKE_CURRENT_SOURCE_DIR}" NAME)
     string(REPLACE "." "_" _VERSION_UNDERSCORES ${_VERSION})
-    
+
     find_package(${PORT}_${_VERSION_UNDERSCORES})
     if(${PORT_UC}_${_VERSION_UNDERSCORES}_FOUND)
         add_postgresql_library(${_VERSION})

@@ -91,6 +91,7 @@ def path(schema_madlib, source_table, output_table, partition_expr,
             matched_rows = unique_string('matched_rows')
             table_or_view = 'VIEW'
 
+
         # build a new input temp table that contains a sequence and partition columns
         split_p_cols = [i.strip() for i in partition_expr.split(',')]
         p_col_names = [unique_string() for i in split_p_cols]
@@ -120,99 +121,10 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         #   produce the match are identified by correlating the matched string
         #   indices with another array containing row ids.
 
-        # matched_partitions: For each partition, concatenate all symbols
-        #       into a single string (sym_str). Keep corresponding ids in an
-        #       array (match_to_row_id) in the same order as the symbols.
-        #       This is performed only for partitions that contain a match.
         match_id_name = "__madlib_path_match_id__" if "match_id" in all_input_cols else "match_id"
         symbol_name = "__madlib_path_symbol__" if "symbol" in all_input_cols else "symbol"
-        plpy.execute("""
-            CREATE TEMP TABLE {matched_partitions} AS
-                SELECT
-                    {p_col_name_str},
-                    array_to_string(array_agg({short_sym_name_str} ORDER BY {order_expr}), '') as sym_str,
-                    array_agg({id_col_name} ORDER BY {order_expr}) as {match_to_row_id}
-                FROM {input_with_id}
-                WHERE {short_sym_name_str} is NOT NULL
-                GROUP BY {p_col_name_str}
-                HAVING array_to_string(array_agg({short_sym_name_str} ORDER BY {order_expr}), '')
-                                ~* '{new_pattern_expr}'
-            """.format(**locals()))
 
-        # length_of_matches: For each partition in matched_partitions:
-        #       - find all matches and compute the lengths of each match.
-        #       - output these lengths in an array (matches), along with
-        #         an array of corresponding rank of each match (match_indices).
-        length_of_matches = unique_string("match_length_view")
         plpy.execute("""
-            CREATE VIEW {length_of_matches} AS
-            SELECT
-                {p_col_name_str},
-                {match_to_row_id},
-                array_agg(length(matches) ORDER BY match_index) AS matches,
-                array_agg(match_index ORDER BY match_index) AS match_indices
-            FROM (
-                SELECT
-                    {p_col_name_str},
-                    {match_to_row_id},
-                    generate_series(1, num_matches) AS match_index,
-                    (regexp_matches(
-                           sym_str, '(?i)({new_pattern_expr})', 'g'))[1] AS matches
-                FROM (
-                    SELECT
-                        {p_col_name_str},
-                        {match_to_row_id},
-                        sym_str,
-                        count(matches) AS num_matches
-                    FROM (
-                        SELECT
-                            {p_col_name_str},
-                            {match_to_row_id},
-                            sym_str,
-                            (regexp_matches(
-                                   sym_str, '(?i)({new_pattern_expr})', 'g'))[1] AS matches
-                        FROM
-                           {matched_partitions}
-                        ) t1
-                    GROUP BY {p_col_name_str}, {match_to_row_id}, sym_str
-                    ) t2
-                ) subq2
-            GROUP BY {p_col_name_str}, {match_to_row_id}
-            """.format(**locals()))
-
-        # length_of_between_matches: For each partition in matched_partitions:
-        #       - find all matches and compute the lengths of text between the matches.
-        #       - output these lengths in an array (match_splits)
-        length_of_between_matches = unique_string('match_split_view')
-        plpy.execute("""
-                CREATE VIEW {length_of_between_matches} AS
-                SELECT
-                    {p_col_name_str},
-                    array_agg(length(match_splits) ORDER BY match_index) AS match_splits
-                FROM (
-                    SELECT
-                        {p_col_name_str},
-                        generate_series(1, ARRAY_UPPER(match_splits, 1)) AS match_index,
-                        unnest(match_splits) AS match_splits
-                    FROM (
-                        SELECT
-                            {p_col_name_str},
-                            regexp_split_to_array(sym_str, '(?i){new_pattern_expr}') AS match_splits
-                        FROM
-                            {matched_partitions}
-                        ) ssubq1
-                    ) subq1
-                GROUP BY {p_col_name_str}
-                """.format(**locals()))
-        #   build_multiple_matched_rows:
-        #       q1: Lengths of the strings between the matches (length_of_between_matches)
-        #       q2: Lengths of matches (length_of_matches)
-        #       q3: Merge q1 and q2 and unnest the arrays (ensuring same length).
-        #           Since q2 represents the following match to each split in q1,
-        #           right shifting q2 (prev_matches) gives the preceeding match to each split.
-        #       q4: Compute the cumulative sum of the arrays.
-
-        build_multiple_matched_rows = """
             CREATE {table_or_view} {matched_rows} AS
             SELECT {all_input_cols_str},
                    {long_sym_name_str} AS {symbol_name},
@@ -220,51 +132,24 @@ def path(schema_madlib, source_table, output_table, partition_expr,
             FROM
                 {input_with_id} as source,
                 (
-                    -- get the actual row ids using the start/end values
                     SELECT
-                        unnest({match_to_row_id}[s:e]) AS {match_to_row_id},
-                        match_index AS {match_id}
+                        unnest((matched).id) as {match_id},
+                        unnest((matched).row_id) as {match_to_row_id}
                     FROM
                     (
-                     -- unnest to get tuples where each tuple gives the start/end of a match
-                     SELECT
-                        {match_to_row_id},
-                        unnest(match_start) AS s,
-                        unnest(match_end) AS e,
-                        unnest(match_indices) as match_index
-                     FROM (
-                        -- use cumulative sum to get the start and end of each match
-                        -- (counting from start of symbol string)
                         SELECT
-                            {p_col_name_str},
-                            {match_to_row_id},
-                            {m}.array_cum_sum({m}.array_add(match_splits, prev_matches)) AS match_start,
-                            {m}.array_cum_sum({m}.array_add(match_splits, matches)) AS match_end,
-                            match_indices
-                        FROM (
-                            -- right shift matches to get array of preceeding matches
-                            SELECT
-                               {p_col_name_str},
-                               {match_to_row_id},
-                               matches,
-                               match_indices,
-                               match_splits[1:array_upper(matches, 1)] AS match_splits,
-                               array_prepend(1, matches[1:array_upper(matches, 1) - 1]) AS prev_matches
-                            FROM
-                                {length_of_between_matches} AS q1
-                                JOIN
-                                {length_of_matches} as q2
-                                USING ({p_col_name_str})
-                            ) q3
-                        ) q4
-                    ) q5
-                ) matched_rows
+                            {m}.path_pattern_match(
+                                array_to_string(array_agg({short_sym_name_str} ORDER BY {order_expr}), '')::text,
+                                '{new_pattern_expr}'::text,
+                                array_agg({id_col_name} ORDER BY {order_expr})::float8[]
+                            ) as matched
+                        FROM {input_with_id}
+                        WHERE {short_sym_name_str} is NOT NULL
+                        GROUP BY {p_col_name_str}
+                    ) q
+                ) as matched_rows
             WHERE source.{id_col_name} = matched_rows.{match_to_row_id}
-         """.format(m=schema_madlib, **locals())
-        plpy.execute(build_multiple_matched_rows)
-        quoted_split_p_cols = [quote_ident(i) for i in split_p_cols]
-        p_col_orig_name_str = ','.join(
-            [i + " AS " + j for i, j in zip(p_col_names, quoted_split_p_cols)])
+            """.format(m=schema_madlib, **locals()))
 
         if agg_func:
             plpy.execute("""
