@@ -40,7 +40,7 @@ m4_changequote(`<!', `!>')
 
 def path(schema_madlib, source_table, output_table, partition_expr,
          order_expr, pattern_expr, symbol_expr, agg_func,
-         persist_rows=None, **kwargs):
+         persist_rows, overlapping_patterns, **kwargs):
     """
         Perform regular pattern matching over a sequence of rows.
 
@@ -56,15 +56,15 @@ def path(schema_madlib, source_table, output_table, partition_expr,
 
     """
     with MinWarning("error"):
+        # check for both false and None
         if not partition_expr:
             partition_expr = "1 = 1"
-            as_partition_expr = "1 = 1 as all"
-        else:
-            as_partition_expr = partition_expr
-        if persist_rows is None:
+        if not persist_rows:
             # persist_rows = None implies no preference
             # persist_rows = False implies do not store the matched rows
             persist_rows = not bool(agg_func)
+        if not overlapping_patterns:
+            overlapping_patterns = False
 
         _validate(source_table, output_table, partition_expr, order_expr,
                   pattern_expr, symbol_expr, agg_func, persist_rows)
@@ -141,7 +141,8 @@ def path(schema_madlib, source_table, output_table, partition_expr,
                             {m}.path_pattern_match(
                                 array_to_string(array_agg({short_sym_name_str} ORDER BY {order_expr}), '')::text,
                                 '{new_pattern_expr}'::text,
-                                array_agg({id_col_name} ORDER BY {order_expr})::float8[]
+                                array_agg({id_col_name} ORDER BY {order_expr})::float8[],
+                                {overlapping_patterns}::boolean
                             ) as matched
                         FROM {input_with_id}
                         WHERE {short_sym_name_str} is NOT NULL
@@ -155,15 +156,26 @@ def path(schema_madlib, source_table, output_table, partition_expr,
         p_col_orig_name_str = ','.join(
             [i + " AS " + j for i, j in zip(split_p_cols, quoted_split_p_cols)])
         if agg_func:
-            plpy.execute("""
-                CREATE TABLE {output_table} AS
-                   SELECT
-                        {p_col_orig_name_str},
-                        {match_id_name},
-                        {agg_func}
-                   FROM {matched_rows}
-                   GROUP BY {as_partition_expr}, {match_id_name}
-                """.format(**locals()))
+            if partition_expr == '1 = 1':
+                # no partition
+                plpy.execute("""
+                    CREATE TABLE {output_table} AS
+                       SELECT
+                            {match_id_name},
+                            {agg_func}
+                       FROM {matched_rows}
+                       GROUP BY {match_id_name}
+                    """.format(**locals()))
+            else:
+                plpy.execute("""
+                    CREATE TABLE {output_table} AS
+                       SELECT
+                            {p_col_orig_name_str},
+                            {match_id_name},
+                            {agg_func}
+                       FROM {matched_rows}
+                       GROUP BY {partition_expr}, {match_id_name}
+                    """.format(**locals()))
             result = "Aggregation result available in table " + output_table
         else:
             result = "No aggregation table created"

@@ -27,6 +27,7 @@ AnyType path_pattern_match::run(AnyType & args)
     std::string sym_str = args[0].getAs<char *>();
     std::string reg_str = args[1].getAs<char *>();
     MappedColumnVector row_id = args[2].getAs<MappedColumnVector>();
+    bool overlapping_patterns = args[3].getAs<bool>();
 
     if (sym_str.size() != row_id.size()) {
         std::stringstream errorMsg;
@@ -50,12 +51,23 @@ AnyType path_pattern_match::run(AnyType & args)
     smatch matches;
     // prefer regex_search over sregex_iterator so that match_results<> object
     // caches dynamically allocated memory across regex searches
-    while (regex_search(start, end, matches, reg)) {
-        size_t i0 = matches[0].first - sym_start;
-        size_t i1 = matches[0].second - sym_start;
-        _match_row_id.insert(_match_row_id.end(), row_start+i0, row_start+i1);
-        _match_id.insert(_match_id.end(), matches[0].length(), match_count++);
-        start = matches[0].second;
+    if (overlapping_patterns) {
+        while (regex_search(start, end, matches, reg)) {
+            size_t i0 = matches[0].first - sym_start;
+            size_t i1 = matches[0].second - sym_start;
+            _match_row_id.insert(_match_row_id.end(), row_start+i0, row_start+i1);
+            _match_id.insert(_match_id.end(), matches[0].length(), match_count++);
+            start = matches[0].first+1;
+        }
+    }
+    else {
+        while (regex_search(start, end, matches, reg)) {
+            size_t i0 = matches[0].first - sym_start;
+            size_t i1 = matches[0].second - sym_start;
+            _match_row_id.insert(_match_row_id.end(), row_start+i0, row_start+i1);
+            _match_id.insert(_match_id.end(), matches[0].length(), match_count++);
+            start = matches[0].second;
+        }
     }
 
     MappedColumnVector match_id(_match_id.data(), _match_id.size());

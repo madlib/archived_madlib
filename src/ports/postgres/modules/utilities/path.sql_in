@@ -83,7 +83,8 @@ path(
     symbol,
     pattern,
     aggregate_func,
-    persist_rows
+    persist_rows,
+    overlapping_patterns
 )
 </pre>
 
@@ -149,8 +150,8 @@ path(
         </ul>
     </dd>
 
-    <dt>aggregate_func</dt>
-    <dd>VARCHAR. A comma-separated list of aggregates to be
+    <dt>aggregate_func (optional)</dt>
+    <dd>VARCHAR, default NULL. A comma-separated list of aggregates to be
     applied to the pattern matches [3].  Please note that window functions
     cannot currently be used in the parameter 'aggregate_func'.  If you want
     to use a window function [4], output the pattern matches and write a SQL
@@ -161,10 +162,14 @@ path(
     aggregates, you can put NULL or '' in the 'aggregate_func' parameter.
     </dd>
 
-    <dt>persist_rows</dt>
-    <dd>BOOLEAN. If TRUE the matched rows are persisted in a separate output
+    <dt>persist_rows (optional)</dt>
+    <dd>BOOLEAN, default FALSE. If TRUE the matched rows are persisted in a separate output
     table. This table is named as <output_table>_tuples (the string
     "_tuples" is added as suffix to the value of <em>output_table</em>).
+    </dd>
+
+    <dt>overlapping_patterns (optional)</dt>
+    <dd>BOOLEAN, default FALSE. If TRUE find every occurrence of the pattern in the partition, regardless of whether it might have been part of a previously found match.
     </dd>
 
 </dl>
@@ -414,13 +419,10 @@ than the beer page just before checkout.
 
 @anchor note
 @note
-Please note some current limitations of the path algorithm.  These
-limitations will be addressed in subsequent releases.
+Please note some current limitations of the path algorithm.
 - Window functions cannot currently be used in the parameter
 'aggregate_func'.  Instead, output the pattern matches and write
 a SQL query with a window function over the output tuples.
-- Overlapping pattern matches are not supported.  That is,
-a given row can only belong to one pattern match (non-overlapping).
 - A given row can only match one symbol.  If a row matches
 multiple symbols, the symbol that comes <em>first</em> in the symbol
 definition list will take precedence.
@@ -481,15 +483,36 @@ CREATE TYPE MADLIB_SCHEMA.path_match_result AS (
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path_pattern_match
 (
-    symbols    TEXT,
-    pattern    TEXT,
-    row_id    FLOAT8[]
+    symbols                   TEXT,
+    pattern                   TEXT,
+    row_id                    FLOAT8[],
+    overlapping_patterns      BOOLEAN
 ) RETURNS MADLIB_SCHEMA.path_match_result
 AS 'MODULE_PATHNAME', 'path_pattern_match'
 LANGUAGE C STRICT
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `NO SQL', `');
 
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
+    source_table          VARCHAR,
+    output_table          VARCHAR,
+    partition_expr        VARCHAR,
+    order_expr            VARCHAR,
+    symbol_expr           VARCHAR,
+    pattern_expr          VARCHAR,
+    agg_func              VARCHAR,
+    persist_rows          BOOLEAN,
+    overlapping_patterns  BOOLEAN
+) RETURNS TEXT AS $$
+PythonFunction(utilities, path, path)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+-------------------------------------------------------------------------
+-- Overloaded functions for default arguments ---------------
+
+-- Do not allow overlapping by default
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     source_table        VARCHAR,
     output_table        VARCHAR,
@@ -500,13 +523,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     agg_func            VARCHAR,
     persist_rows        BOOLEAN
 ) RETURNS TEXT AS $$
-PythonFunction(utilities, path, path)
-$$ LANGUAGE plpythonu
+    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, $7, $8, False)
+$$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
-
--------------------------------------------------------------------------
--- Overloaded functions for default arguments ---------------
 
 -- Do not output matched rows by default
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
@@ -518,7 +537,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     pattern_expr        VARCHAR,
     agg_func            VARCHAR
 ) RETURNS TEXT AS $$
-    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, $7, NULL)
+    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, $7, False, False)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -531,7 +550,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.path(
     symbol_expr         VARCHAR,
     pattern_expr        VARCHAR
 ) RETURNS TEXT AS $$
-    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, NULL, NULL)
+    SELECT MADLIB_SCHEMA.path($1, $2, $3, $4, $5, $6, NULL, False, False)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
