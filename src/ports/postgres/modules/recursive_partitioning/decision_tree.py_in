@@ -790,34 +790,34 @@ def _get_bins(schema_madlib, training_table_name, cat_features,
                 "AVG({dependent_variable})".format(dependent_variable=dependent_variable)
 
         sql_cat_levels = """
+            SELECT
+                '{{col_name}}'::text AS colname,
+                levels
+            FROM (
                 SELECT
-                    '{{col}}' AS colname,
-                    levels
+                    '{{col_name}}'::text AS colname,
+                    array_agg(levels ORDER BY dep_avg) AS levels
                 FROM (
                     SELECT
-                        '{{col}}' AS colname,
-                        array_agg(levels ORDER BY dep_avg) AS levels
-                    FROM (
-                        SELECT
-                            ({{col}})::text AS levels,
-                            {order_fun} AS dep_avg
-                        FROM {training_table_name}
-                        WHERE {filter_null}
-                            AND {{col}} is not NULL
-                        GROUP BY {{col}}
-                    ) s
-                ) s1
-                where array_upper(levels, 1) > 1
-                """.format(training_table_name=training_table_name,
-                           order_fun=order_fun, filter_null=filter_null)
+                        ({{col}})::text AS levels,
+                        {order_fun} AS dep_avg
+                    FROM {training_table_name}
+                    WHERE {filter_null}
+                        AND {{col}} is not NULL
+                    GROUP BY {{col}}
+                ) s
+            ) s1
+            WHERE array_upper(levels, 1) > 1
+            """.format(training_table_name=training_table_name,
+                       order_fun=order_fun, filter_null=filter_null)
 
         # Try to obtain all the levels in one scan of the table.
         # () are needed when casting the categorical variables because
         # they can be expressions.
         sql_all_cats = ' UNION ALL '.join(
             sql_cat_levels.format(col="(CASE WHEN " + col + " THEN 'True' ELSE 'False' END)"
-                                  if col in boolean_cats else col) for col in cat_features)
-
+                                  if col in boolean_cats else col,
+                                  col_name=plpy.quote_ident(col)) for col in cat_features)
         all_levels = plpy.execute(sql_all_cats)
 
         if len(all_levels) != len(cat_features):
@@ -1005,7 +1005,7 @@ def _get_bins_grps(
                 from (
                     SELECT
                         grp_key,
-                        '{{col}}' as colname,
+                        '{{col_name}}' as colname,
                         array_agg(levels order by dep_avg) as levels
                     from (
                         SELECT
@@ -1025,7 +1025,8 @@ def _get_bins_grps(
         sql_all_cats = ' UNION ALL '.join(
             sql_cat_levels.format(
                 col=("(CASE WHEN " + col + " THEN 'True' ELSE 'False' END)"
-                     if col in boolean_cats else col))
+                     if col in boolean_cats else col),
+                col_name=plpy.quote_ident(col))
             for col in cat_features)
 
         all_levels = list(plpy.execute(sql_all_cats))
