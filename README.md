@@ -6,15 +6,14 @@ machine learning methods for structured and unstructured data.
 
 Installation and Contribution
 ==============================
-See the project webpage  [`MADlib Home`](http://madlib.net) for links to the
+See the project webpage  [`MADlib Home`](http://madlib.incubator.apache.org/) for links to the
 latest binary and source packages. For installation and contribution guides,
-please see [`MADlib Wiki`](https://github.com/apache/incubator-madlib/wiki)
+please see [`MADlib Wiki`](https://cwiki.apache.org/confluence/display/MADLIB/)
 
 User and Developer Documentation
 ==================================
 The latest documentation of MADlib modules can be found at [`MADlib
-Docs`](http://doc.madlib.net) or can be accessed directly from the MADlib
-installation directory by opening `doc/user/html/index.html`.
+Docs`](http://madlib.incubator.apache.org/docs/latest/index.html).
 
 
 Architecture
@@ -44,12 +43,12 @@ found inside the [`license`](https://github.com/apache/incubator-madlib/blob/mas
 Release Notes
 =============
 Changes between MADlib versions are described in the
-[`ReleaseNotes.txt`](https://github.com/apache/incubator-madlib/blob/master/ReleaseNotes.txt) file.
+[`ReleaseNotes.txt`](https://github.com/apache/incubator-madlib/blob/master/RELEASE_NOTES) file.
 
 Papers and Talks
 =================
 * [`MAD Skills : New Analysis Practices for Big Data (VLDB 2009)`](http://db.cs.berkeley.edu/papers/vldb09-madskills.pdf)
-* [`Hybrid In-Database Inference for Declarative Information Extraction (SIGMOD 2011)`](http://www.cise.ufl.edu/~daisyw/sigmod11.pdf)
+* [`Hybrid In-Database Inference for Declarative Information Extraction (SIGMOD 2011)`](https://amplab.cs.berkeley.edu/publication/hybrid-in-database-inference-for-declarative-information-extraction/)
 * [`Towards a Unified Architecture for In-Database Analytics (SIGMOD 2012)`](http://www.cs.stanford.edu/~chrismre/papers/bismarck-full.pdf)
 * [`The MADlib Analytics Library or MAD Skills, the SQL (VLDB 2012)`](http://www.eecs.berkeley.edu/Pubs/TechRpts/2012/EECS-2012-38.html)
 
