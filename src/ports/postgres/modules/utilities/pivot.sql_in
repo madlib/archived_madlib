@@ -43,9 +43,9 @@ m4_include(`SQLCommon.m4')
 @brief Provides pivoting functions helpful for data preparation before modeling
 
 @anchor categorical
-The goal of the MADlib pivot function is to provide a data summarization tool 
-that can do basic OLAP type operations on data stored in one table and output 
-the summarized data to a second table.  
+The goal of the MADlib pivot function is to provide a data summarization tool
+that can do basic OLAP type operations on data stored in one table and output
+the summarized data to a second table.
 
 
 <pre class="syntax">
@@ -54,60 +54,95 @@ pivot(
     out_table,
     index,
     pivot_cols,
-    pivot_values
+    pivot_values,
+    aggregate_func,
+    fill_value,
+    keep_null,
+    output_col_dictionary
     )
 </pre>
 \b Arguments
 <dl class="arglist">
     <dt>source_table</dt>
-    <dd>VARCHAR. Name of the source table, containing data for pivoting.</dd>
+    <dd>VARCHAR. Name of the source table (or view), containing data for
+    pivoting.</dd>
     <dt>output_table</dt>
-    <dd>VARCHAR. Name of output table taht contains pivoted data. 
-    The output table ('output_table' above) has all the columns present in 
-    index column list, plus additional columns for each distinct value in 
-    pivot_cols.	The column name for the pivot is set as 
-    <em>'pivot name'</em>_<em>'pivot value'</em>.
+    <dd>VARCHAR. Name of output table that contains the pivoted data.
+    The output table ('output_table' above) has all the columns present in
+    index column list, plus additional columns for each distinct value in
+    pivot_cols.	The column name for the pivot is set as
+    <em>'value column'</em>_<em>'aggregate function'</em> +
+    _<em>'pivot column'</em>_<em>'pivot value'</em> for every pivot column.
     </dd>
     <dt>index </dt>
-    <dd>VARCHAR. Comma-separated columns that will form the index of the output 
+    <dd>VARCHAR. Comma-separated columns that will form the index of the output
     pivot table.</dd>
     <dt>pivot_cols </dt>
-    <dd>VARCHAR. Comma-separated columns that will form the columns of the 
+    <dd>VARCHAR. Comma-separated columns that will form the columns of the
     output pivot table.</dd>
     <dt>pivot_values </dt>
-    <dd>VARCHAR. Comma-separated columns that contain the values to be 
+    <dd>VARCHAR. Comma-separated columns that contain the values to be
     summarized in the output pivot table.</dd>
+    <dt>aggregate_func (optional)</dt>
+    <dd>VARCHAR. default: 'AVG'. A comma-separated list of aggregates to be
+    applied to values. These can be PostgreSQL aggregates or UDAs. It is
+    possible to assign a set of aggregate per value column. Please refer to the
+     examples 12\-14 for syntax details.</dd>
+    <dt>fill_value (optional)</dt>
+    <dd>VARCHAR. default: NULL. If specified, determines how to fill NULL
+    values resulting from pivot operation. This is a global parameter (not
+    applied per aggregate) and is applied post-aggregation to the output
+    table.</dd>
+    <dt>keep_null (optional)</dt>
+    <dd>BOOLEAN. default: FALSE. If TRUE, then pivot columns are created
+    corresponding to NULL categories. If FALSE, then no pivot columns will be
+    created for NULL categories.</dd>
+    <dt>output_col_dictionary (optional)</dt>
+    <dd>BOOLEAN. default: FALSE. This parameter is used to handle
+    auto-generated column names that exceed the PostgreSQL limit of 63 bytes
+    (could be a common occurrence). If TRUE, column names will be set as
+    numerical IDs and will create a dictionary table called output_table
+    appended with _dictionary. If FALSE, will auto-generate column names in
+    the usual way unless the limit of 63 bytes will be exceeded. In this case,
+    a dictionary output file will be created and a message given to the user.
+    </dd>
+
 
 </dl>
 
 @anchor notes
-@par Notes
+@note
 
-The default aggregate function is "sum". 
+NULL values in the index column are treated as any other value.
 
-NULL values in the index column are treated as any other value. 
-
-NULL values in the pivot column are ignored.
+NULL values in the pivot column are ignored unless keep_null is TRUE.
 
 NULL values in the value column are handled by the aggregate function.
 
-The following features are planned but not yet implemented.
+It is not allowed to set the fill_value parameter without setting the
+aggregate_func parameter due to the possible ambiguity. Set
+aggregate_func to NULL for the default behavior and use fill_value as desired.
 
-- Multiple index columns.
-- Multiple pivot columns.
-- Multiple value columns.
-- Aggregate functions as input.
-- NULL values in the pivot.
+It is not allowed to set the output_col_dictionary parameter without setting
+the keep_null parameter due to the possible ambiguity. Set
+keep_null to NULL for the default behavior and use output_col_dictionary as
+desired.
 
+Expressions (instead of column names) are not supported. Create a view with the
+desired expressions and pass it as the input table (see Example 3).
+
+It is allowed to pass a partial mapping for the aggregate_func parameter. The
+missing value columns will be aggregated using the default function (average).
 
 @anchor examples
 @examp
 
--#  Create a toy dataset.
+-# Create a toy dataset
 <pre class="example">
+DROP TABLE IF EXISTS pivset;
 CREATE TABLE pivset(
                   id INTEGER,
-                  piv FLOAT8,
+                  piv INTEGER,
                   val FLOAT8
                 );
 INSERT INTO pivset VALUES
@@ -127,15 +162,417 @@ INSERT INTO pivset VALUES
 <pre class="example">
 DROP TABLE IF EXISTS pivout;
 SELECT madlib.pivot('pivset', 'pivout', 'id', 'piv', 'val');
-SELECT * FROM pivout;
+SELECT * FROM pivout ORDER BY id;
 </pre>
 <pre class="result">
- id | piv_10.0 | piv_20.0 | piv_30.0
-------+------------+------------+------------
-  0 |        3 |        3 |        
-  1 |        7 |        4 |       11
-    |        8 |        0 |        0
+ id | val_avg_piv_10 | val_avg_piv_20 | val_avg_piv_30
+----+----------------+----------------+----------------
+  0 |            1.5 |              3 |
+  1 |              7 |              4 |            5.5
+    |              8 |                |
 </pre>
+
+-# Create a view to tailor the columns as required
+<pre class="example">
+DROP VIEW IF EXISTS pivset_ext;
+CREATE VIEW pivset_ext AS
+    SELECT *,
+    COALESCE(id + (val / 3)::integer, 0) AS id2,
+    COALESCE(100*(val / 3)::integer, 0) AS piv2,
+    COALESCE(val + 10, 0) AS val2
+   FROM pivset;
+SELECT id,id2,piv,piv2,val,val2 FROM pivset_ext
+ORDER BY id,id2,piv,piv2,val,val2;
+</pre>
+<pre class="result">
+ id | id2 | piv | piv2 | val | val2
+----+-----+-----+------+-----+------
+  0 |   0 |  10 |    0 |   1 |   11
+  0 |   0 |  10 |    0 |     |    0
+  0 |   1 |  10 |  100 |   2 |   12
+  0 |   1 |  20 |  100 |   3 |   13
+  0 |   3 |     |  300 |   9 |   19
+  1 |   2 |  20 |  100 |   4 |   14
+  1 |   3 |  10 |  200 |   7 |   17
+  1 |   3 |  30 |  200 |   5 |   15
+  1 |   3 |  30 |  200 |   6 |   16
+    |   0 |  10 |  300 |   8 |   18
+</pre>
+
+-# Specify the aggregate function:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'sum');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+ id | val_sum_piv_10 | val_sum_piv_20 | val_sum_piv_30
+----+----------------+----------------+----------------
+  0 |              3 |              3 |
+  1 |              7 |              4 |             11
+    |              8 |                |
+</pre>
+
+-# Create a custom aggregate:
+<pre class="example">
+DROP AGGREGATE IF EXISTS array_accum (anyelement);
+CREATE AGGREGATE array_accum (anyelement)
+(
+    sfunc = array_append,
+    stype = anyarray,
+    initcond = '{}'
+);
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'array_accum');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+ id |    val_array_accum_piv_10    |    val_array_accum_piv_20    |  val_array_accum_piv_30
+----+------------------------------+------------------------------+---------------------------
+  0 | {1,2,NULL}                   | {NULL,NULL,3}                | {NULL,NULL,NULL}
+  1 | {NULL,NULL,NULL,7,NULL,NULL} | {4,NULL,NULL,NULL,NULL,NULL} | {NULL,5,6,NULL,NULL,NULL}
+    | {8}                          | {NULL}                       | {NULL}
+</pre>
+
+-# Keep null values in the pivot column:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'sum', True);
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+ id | val_sum_piv_10 | val_sum_piv_20 | val_sum_piv_30 | val_sum_piv_null
+----+----------------+----------------+----------------+------------------
+  0 |              3 |              3 |                |
+  1 |              7 |              4 |             11 |                9
+    |              8 |                |                |
+</pre>
+
+-# Fill null results:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'sum', '111');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+ id | val_sum_piv_10 | val_sum_piv_20 | val_sum_piv_30
+----+----------------+----------------+----------------
+  0 |              3 |              3 |            111
+  1 |              7 |              4 |             11
+    |              8 |            111 |            111
+</pre>
+
+-# Use multiple index columns:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id,id2', 'piv', 'val');
+SELECT * FROM pivout ORDER BY id,id2;
+</pre>
+<pre class="result">
+ id | id2 | val_avg_piv_10 | val_avg_piv_20 | val_avg_piv_30
+----+-----+----------------+----------------+----------------
+  0 |   0 |              1 |                |
+  0 |   1 |              2 |              3 |
+  1 |   0 |                |                |
+  1 |   2 |                |              4 |
+  1 |   3 |              7 |                |            5.5
+  1 |   4 |                |                |
+    |   0 |              8 |                |
+</pre>
+
+-# Turn on the extended view for readability:
+<pre class="example">
+\\x on
+</pre>
+
+-# Use multiple pivot columns:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv, piv2', 'val');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]-----------+----
+id                      | 0
+val_avg_piv_10_piv2_100 | 2
+val_avg_piv_10_piv2_200 |
+val_avg_piv_10_piv2_300 |
+val_avg_piv_20_piv2_100 | 3
+val_avg_piv_20_piv2_200 |
+val_avg_piv_20_piv2_300 |
+val_avg_piv_30_piv2_100 |
+val_avg_piv_30_piv2_200 |
+val_avg_piv_30_piv2_300 |
+-[ RECORD 2 ]-----------+----
+id                      | 1
+val_avg_piv_10_piv2_100 |
+val_avg_piv_10_piv2_200 | 7
+val_avg_piv_10_piv2_300 |
+val_avg_piv_20_piv2_100 | 4
+val_avg_piv_20_piv2_200 |
+val_avg_piv_20_piv2_300 |
+val_avg_piv_30_piv2_100 |
+val_avg_piv_30_piv2_200 | 5.5
+val_avg_piv_30_piv2_300 |
+...
+</pre>
+
+-# Use multiple value columns:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val, val2');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]---+-----
+id              | 0
+val_avg_piv_10  | 1.5
+val_avg_piv_20  | 3
+val_avg_piv_30  |
+val2_avg_piv_10 | 11.5
+val2_avg_piv_20 | 13
+val2_avg_piv_30 |
+-[ RECORD 2 ]---+-----
+id              | 1
+val_avg_piv_10  | 7
+val_avg_piv_20  | 4
+val_avg_piv_30  | 5.5
+val2_avg_piv_10 | 8.5
+val2_avg_piv_20 | 14
+val2_avg_piv_30 | 15.5
+...
+</pre>
+
+
+-# Use multiple aggregate functions (cross product):
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'avg, sum');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]--+----
+id             | 0
+val_avg_piv_10 | 1.5
+val_avg_piv_20 | 3
+val_avg_piv_30 |
+val_sum_piv_10 | 3
+val_sum_piv_20 | 3
+val_sum_piv_30 |
+-[ RECORD 2 ]--+----
+id             | 1
+val_avg_piv_10 | 7
+val_avg_piv_20 | 4
+val_avg_piv_30 | 5.5
+val_sum_piv_10 | 7
+val_sum_piv_20 | 4
+val_sum_piv_30 | 11
+...
+</pre>
+
+-# Use value columnn specific aggregate functions:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val, val2',
+    'val=avg, val2=sum');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]---+----
+id              | 0
+val_avg_piv_10  | 1.5
+val_avg_piv_20  | 3
+val_avg_piv_30  |
+val2_sum_piv_10 | 23
+val2_sum_piv_20 | 13
+val2_sum_piv_30 |
+-[ RECORD 2 ]---+----
+id              | 1
+val_avg_piv_10  | 7
+val_avg_piv_20  | 4
+val_avg_piv_30  | 5.5
+val2_sum_piv_10 | 17
+val2_sum_piv_20 | 14
+val2_sum_piv_30 | 31
+...
+</pre>
+
+-# Use multiple value columnn specific aggregate functions:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val, val2',
+    'val=avg, val2=[avg,sum]');
+SELECT * FROM pivout ORDER BY id;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]---+-----
+id              | 0
+val_avg_piv_10  | 1.5
+val_avg_piv_20  | 3
+val_avg_piv_30  |
+val2_avg_piv_10 | 11.5
+val2_avg_piv_20 | 13
+val2_avg_piv_30 |
+val2_sum_piv_10 | 23
+val2_sum_piv_20 | 13
+val2_sum_piv_30 |
+-[ RECORD 2 ]---+-----
+id              | 1
+val_avg_piv_10  | 7
+val_avg_piv_20  | 4
+val_avg_piv_30  | 5.5
+val2_avg_piv_10 | 8.5
+val2_avg_piv_20 | 14
+val2_avg_piv_30 | 15.5
+val2_sum_piv_10 | 17
+val2_sum_piv_20 | 14
+val2_sum_piv_30 | 31
+...
+</pre>
+
+-# Combine all of the options:
+<pre class="example">
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id, id2', 'piv, piv2', 'val, val2',
+    'val=avg, val2=[avg,sum]', '111', True);
+SELECT * FROM pivout ORDER BY id,id2;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]--------------+-----
+id                         | 0
+id2                        | 0
+val_avg_piv_10_piv2_0      | 1
+val_avg_piv_10_piv2_100    | 111
+val_avg_piv_10_piv2_200    | 111
+val_avg_piv_10_piv2_300    | 111
+val_avg_piv_20_piv2_0      | 111
+val_avg_piv_20_piv2_100    | 111
+val_avg_piv_20_piv2_200    | 111
+val_avg_piv_20_piv2_300    | 111
+val_avg_piv_30_piv2_0      | 111
+val_avg_piv_30_piv2_100    | 111
+val_avg_piv_30_piv2_200    | 111
+val_avg_piv_30_piv2_300    | 111
+val_avg_piv_null_piv2_0    | 111
+val_avg_piv_null_piv2_100  | 111
+val_avg_piv_null_piv2_200  | 111
+val_avg_piv_null_piv2_300  | 111
+val2_avg_piv_10_piv2_0     | 11
+val2_avg_piv_10_piv2_100   | 111
+val2_avg_piv_10_piv2_200   | 111
+val2_avg_piv_10_piv2_300   | 111
+val2_avg_piv_20_piv2_0     | 111
+val2_avg_piv_20_piv2_100   | 111
+val2_avg_piv_20_piv2_200   | 111
+val2_avg_piv_20_piv2_300   | 111
+val2_avg_piv_30_piv2_0     | 111
+val2_avg_piv_30_piv2_100   | 111
+val2_avg_piv_30_piv2_200   | 111
+val2_avg_piv_30_piv2_300   | 111
+val2_avg_piv_null_piv2_0   | 111
+val2_avg_piv_null_piv2_100 | 111
+val2_avg_piv_null_piv2_200 | 111
+val2_avg_piv_null_piv2_300 | 111
+val2_sum_piv_10_piv2_0     | 11
+val2_sum_piv_10_piv2_100   | 111
+val2_sum_piv_10_piv2_200   | 111
+val2_sum_piv_10_piv2_300   | 111
+val2_sum_piv_20_piv2_0     | 111
+val2_sum_piv_20_piv2_100   | 111
+val2_sum_piv_20_piv2_200   | 111
+val2_sum_piv_20_piv2_300   | 111
+val2_sum_piv_30_piv2_0     | 111
+val2_sum_piv_30_piv2_100   | 111
+val2_sum_piv_30_piv2_200   | 111
+val2_sum_piv_30_piv2_300   | 111
+val2_sum_piv_null_piv2_0   | 111
+val2_sum_piv_null_piv2_100 | 111
+val2_sum_piv_null_piv2_200 | 111
+val2_sum_piv_null_piv2_300 | 111
+...
+</pre>
+
+-# Create a dictionary for output column names:
+<pre class="example">
+DROP TABLE IF EXISTS pivout_dictionary;
+DROP TABLE IF EXISTS pivout;
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id, id2', 'piv, piv2', 'val, val2',
+    'val=avg, val2=[avg,sum]', '111', True, True);
+SELECT * FROM pivout_dictionary;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]-+-----------------------------
+\_\_pivot_cid\_\_ | \_\_p_0\_\_
+pval          | val
+agg           | avg
+piv           | 10
+piv2          | 0
+col_name      | "val_avg_piv_10_piv2_0"
+-[ RECORD 2 ]-+-----------------------------
+\_\_pivot_cid\_\_ | \_\_p_1\_\_
+pval          | val
+agg           | avg
+piv           | 10
+piv2          | 100
+col_name      | "val_avg_piv_10_piv2_100"
+...
+</pre>
+<pre class="example">
+SELECT * FROM pivout ORDER BY id,id2;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]--
+id       | 0
+id2      | 0
+\_\_p_0\_\_  | 1
+\_\_p_1\_\_  | 111
+\_\_p_2\_\_  | 111
+\_\_p_3\_\_  | 111
+\_\_p_4\_\_  | 111
+\_\_p_5\_\_  | 111
+\_\_p_6\_\_  | 111
+\_\_p_7\_\_  | 111
+\_\_p_8\_\_  | 111
+\_\_p_9\_\_  | 111
+\_\_p_10\_\_ | 111
+\_\_p_11\_\_ | 111
+\_\_p_12\_\_ | 111
+\_\_p_13\_\_ | 111
+\_\_p_14\_\_ | 111
+\_\_p_15\_\_ | 111
+\_\_p_16\_\_ | 5.5
+\_\_p_17\_\_ | 111
+\_\_p_18\_\_ | 111
+\_\_p_19\_\_ | 111
+\_\_p_20\_\_ | 111
+\_\_p_21\_\_ | 111
+\_\_p_22\_\_ | 111
+\_\_p_23\_\_ | 111
+\_\_p_24\_\_ | 111
+\_\_p_25\_\_ | 111
+\_\_p_26\_\_ | 111
+\_\_p_27\_\_ | 111
+\_\_p_28\_\_ | 111
+\_\_p_29\_\_ | 111
+\_\_p_30\_\_ | 111
+\_\_p_31\_\_ | 111
+\_\_p_32\_\_ | 11
+\_\_p_33\_\_ | 111
+\_\_p_34\_\_ | 111
+\_\_p_35\_\_ | 111
+\_\_p_36\_\_ | 111
+\_\_p_37\_\_ | 111
+\_\_p_38\_\_ | 111
+\_\_p_39\_\_ | 111
+\_\_p_40\_\_ | 111
+\_\_p_41\_\_ | 111
+\_\_p_42\_\_ | 111
+\_\_p_43\_\_ | 111
+\_\_p_44\_\_ | 111
+\_\_p_45\_\_ | 111
+\_\_p_46\_\_ | 111
+\_\_p_47\_\_ | 111
+...
 */
 
 -------------------------------------------------------------------------
@@ -144,20 +581,85 @@ SELECT * FROM pivout;
 /**
  * @brief Helper function that can be used to pivot tables
  *
- * @param source_table     The original data table
- * @param out_table        The output table that contains the dummy
- *                         variable columns
- * @param index            The index columns to group by the records by
- * @param pivot_cols       The columns to pivot the table
- * @param pivot_values     The value columns to be summarized in the
- *                         pivoted table
- * @param aggregate_func   The aggregate function to be applied to the
- *                         values
- *
+ * @param source_table          The original data table
+ * @param out_table             The output table that contains the dummy
+ *                              variable columns
+ * @param index                 The index columns to group by the records by
+ * @param pivot_cols            The columns to pivot the table
+ * @param pivot_values          The value columns to be summarized in the
+ *                              pivoted table
+ * @param aggregate_func        The aggregate function to be applied to the
+ *                              values
+ * @param fill_value            If specified, determines how to fill NULL
+ *                              values resulting from pivot operation
+ * @param keep_null             The flag for determining how to handle NULL
+ *                              values in pivot columns
+ * @param output_col_dictionary The flag for enabling the creation of the
+ *                              output dictionary for shorter column names
  * @return Void
  *
  */
- 
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    source_table            TEXT,
+    out_table               TEXT,
+    index                   TEXT,
+    pivot_cols              TEXT,
+    pivot_values            TEXT,
+    aggregate_func          TEXT,
+    fill_value              TEXT,
+    keep_null               BOOLEAN,
+    output_col_dictionary   BOOLEAN
+
+) RETURNS VOID AS $$
+    PythonFunction(utilities, pivot, pivot)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    source_table        TEXT,
+    out_table           TEXT,
+    index               TEXT,
+    pivot_cols          TEXT,
+    pivot_values        TEXT,
+    aggregate_func      TEXT,
+    fill_value          TEXT,
+    keep_null           BOOLEAN
+
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    source_table        TEXT,
+    out_table           TEXT,
+    index               TEXT,
+    pivot_cols          TEXT,
+    pivot_values        TEXT,
+    aggregate_func      TEXT,
+    fill_value          TEXT
+
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, $6, $7, FALSE, FALSE)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    source_table        TEXT,
+    out_table           TEXT,
+    index               TEXT,
+    pivot_cols          TEXT,
+    pivot_values        TEXT,
+    aggregate_func      TEXT,
+    keep_null           BOOLEAN
+
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, $6, NULL, $7, FALSE)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
     source_table        TEXT,
     out_table           TEXT,
@@ -167,9 +669,22 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
     aggregate_func      TEXT
 
 ) RETURNS VOID AS $$
-    PythonFunction(utilities, pivot, pivot)
-$$ LANGUAGE plpythonu VOLATILE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, $6, NULL, FALSE, FALSE)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
+    source_table        TEXT,
+    out_table           TEXT,
+    index               TEXT,
+    pivot_cols          TEXT,
+    pivot_values        TEXT,
+    keep_null           BOOLEAN
+
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, NULL, NULL, $6, FALSE)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
     source_table        TEXT,
@@ -179,9 +694,9 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
     pivot_values        TEXT
 
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, 'sum'::VARCHAR)
+    SELECT MADLIB_SCHEMA.pivot($1, $2, $3, $4, $5, NULL, NULL, FALSE, FALSE)
 $$ LANGUAGE sql VOLATILE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 
 -- Online help
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
@@ -189,7 +704,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot(
 ) RETURNS VARCHAR AS $$
     PythonFunction(utilities, pivot, pivot_help)
 $$ LANGUAGE plpythonu IMMUTABLE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 
 --------------------------------------------------------------------------------
 
@@ -197,6 +712,6 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pivot()
 RETURNS VARCHAR AS $$
     SELECT MADLIB_SCHEMA.pivot('');
 $$ LANGUAGE sql IMMUTABLE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 --------------------------------------------------------------------------------
 
