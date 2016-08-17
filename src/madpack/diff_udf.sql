@@ -139,7 +139,7 @@ $$ LANGUAGE plpythonu;
 DROP TABLE IF EXISTS functions_madlib_old_version;
 DROP TABLE IF EXISTS functions_madlib_new_version;
 
-SELECT get_functions('madlib_v18');
+SELECT get_functions('madlib_v19');
 
 SELECT
     --'\t-' || name || ':' || '\n\t\t-rettype: ' || retype || '\n\t\t-argument: ' || argtypes
@@ -196,4 +196,3 @@ FROM
 WHERE old_version.argtypes SIMILAR TO 'NOT-A-TYPE' -- '%(__logregr_result|summary_result|linregr_result|mlogregr_result|marginal_logregr_result|marginal_mlogregr_result|intermediate_cox_prop_hazards_result|__utils_scaled_data)%'
 ) q
 ORDER by type, "Suspected UDFs";
-
