@@ -183,7 +183,8 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
         # Counter for the new output column names
         dict_counter = 0
 
-    pivot_out_list = []
+    pivot_str_sel_list = []
+    pivot_str_from_list = []
     # Prepare the wrapper for fill value
     if fill_value is not None:
         fill_str_begin = " COALESCE("
@@ -203,8 +204,7 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
                     # Prepare the entry for the dictionary
                     insert_str.append("(\'__p_{dict_counter}__\', \'{pval}\', "
                                       "\'{agg}\' ".format(dict_counter=dict_counter,
-                                                          pval=pval,
-                                                          agg=agg))
+                                                          pval=pval, agg=agg))
 
                 # For every pivot column in a given combination
                 for counter, pcol in enumerate(pcols):
@@ -234,30 +234,42 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
                     dict_counter += 1
                 # Collecting the whole sql query
                 # Please refer to the earlier comment for a sample output
-                pivot_str = ("{fill_str_begin}"
-                             "{agg} (CASE WHEN {pivot_begin} THEN {pval} END) "
-                             "{fill_str_end} AS {pivot_end}".
-                             format(fill_str_begin=fill_str_begin,
-                                    fill_str_end=fill_str_end,
-                                    pval=pval, agg=agg,
+
+                # Create the masked set
+                pivot_str_from = ("(CASE WHEN {pivot_begin} THEN {pval} END) "
+                            "AS {pivot_end}".
+                            format(pval=pval,
                                     pivot_begin=' AND '.join(pivot_str_begin),
                                     pivot_end=''.join(pivot_str_end)))
-                pivot_out_list.append("," + pivot_str)
+                pivot_str_from_list.append(pivot_str_from)
+                # Apply the aggregate and filtering
+                pivot_str_sel = ("{fill_str_begin}"
+                            "{agg} ({pivot_end}) FILTER ("
+                            "WHERE {pivot_end} IS NOT NULL) "
+                            "{fill_str_end} AS {pivot_end}".
+                            format(agg=agg, fill_str_begin=fill_str_begin,
+                                    fill_str_end=fill_str_end,
+                                    pivot_end=''.join(pivot_str_end)))
+                pivot_str_sel_list.append(pivot_str_sel)
 
     try:
         plpy.execute("""
             CREATE TABLE {out_table} AS
-                SELECT {index} {pivot_output}
-                FROM {source_table}
+                SELECT {index}, {pivot_str_sel_list}
+                FROM ( SELECT {index}, {pivot_str_from_list}
+                    FROM {source_table}) x
                 GROUP BY {index}
             """.format(out_table=out_table,
-                       index=index,
-                       source_table=source_table,
-                       pivot_output=''.join(pivot_out_list)))
+                        index=index,
+                        source_table=source_table,
+                        pivot_str_from_list=', '.join(pivot_str_from_list),
+                        pivot_str_sel_list=', '.join(pivot_str_sel_list)))
+
         if output_col_dictionary:
             plpy.execute("INSERT INTO {out_dict} VALUES {insert_sql}".
                          format(out_dict=out_dict,
                                 insert_sql=', '.join(insert_str)))
+
     except plpy.SPIError:
         # Warn user if the number of columns is over the limit
         with MinWarning("warning"):
@@ -269,6 +281,10 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
                     "Pivot: Too many distinct values for pivoting! "
                     "The execution may fail due to too many columns in the "
                     "output table.")
+            else:
+                plpy.warning(
+                    "Pivot: Pivoting is only supported over aggregates with "
+                    "transition functions defined as STRICT.")
         raise
 
     return None
