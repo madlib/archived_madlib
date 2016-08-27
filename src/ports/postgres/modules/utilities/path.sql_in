@@ -100,8 +100,8 @@ path(
     <dt>partition_expr</dt>
     <dd>VARCHAR. The 'partition_expr' can be a single column or a list of
     comma-separated columns/expressions to divide all rows into groups,
-    or partitions.  Matching is applied across the rows that fall into t
-    he same partition. This can be NULL or '' to indicate the matching is
+    or partitions.  Matching is applied across the rows that fall into
+    the same partition. This can be NULL or '' to indicate the matching is
     to be applied to the whole table.</dd>
 
     <dt>order_expr</dt>
@@ -188,7 +188,7 @@ sessionized.
 Create the date table:
 
 <pre class="example">
-DROP TABLE IF EXISTS eventlog, path_output, path_output_tuples;
+DROP TABLE IF EXISTS eventlog;
 CREATE TABLE eventlog (event_timestamp TIMESTAMP,
             user_id INT,
             session_id INT,
@@ -233,7 +233,8 @@ INSERT INTO eventlog VALUES
 
 -# Calculate the revenue by checkout:
 <pre class="example">
- SELECT madlib.path(
+DROP TABLE IF EXISTS path_output, path_output_tuples;
+SELECT madlib.path(
      'eventlog',                -- Name of input table
      'path_output',             -- Table name to store path results
      'session_id',              -- Partition input table by session
@@ -302,6 +303,7 @@ regular expression: '(land)[^(land)(buy)]{0,2}(buy)'. In other words, visit
 to the landing page followed by from 0 to 2 non-entry, non-sale pages,
 followed by a purchase.  The SQL is as follows:
 <pre class="example">
+DROP TABLE IF EXISTS path_output, path_output_tuples;
 SELECT madlib.path(
      'eventlog',                -- Name of input table
      'path_output',             -- Table name to store path results
@@ -379,6 +381,7 @@ daily averages, although our sample data set only has a single day.
 shopper paths through the site.  Since our data set is small, we decide
 this means the most frequently viewed page just before a checkout is made:
 <pre class="example">
+DROP TABLE IF EXISTS path_output, path_output_tuples;
 SELECT madlib.path(
      'eventlog',                -- Name of input table
      'path_output',             -- Table name to store path results
@@ -394,9 +397,7 @@ SELECT madlib.path(
      FALSE                       -- Don't persist matches
      );
 </pre>
-
 Now count the common paths and print the most frequent:
-
 <pre class="example">
 SELECT count(*), page_path from
     (SELECT * FROM path_output) q
@@ -404,7 +405,6 @@ GROUP BY page_path
 ORDER BY count(*) DESC
 LIMIT 10;
 </pre>
-
 Result:
 <pre class="result">
  count |    page_path
@@ -413,9 +413,60 @@ Result:
      1 | {BEER,CHECKOUT}
 (2 rows)
 </pre>
-
 There are only 2 different paths.  The wine page is viewed more frequently
 than the beer page just before checkout.
+
+-# To demonstrate the use of 'overlapping_patterns', consider 
+a pattern with at least one page followed by and ending with a checkout: 
+<pre class="example">
+DROP TABLE IF EXISTS path_output, path_output_tuples;
+SELECT madlib.path(                                                                   
+     'eventlog',                    -- Name of the table                                           
+     'path_output',                 -- Table name to store the path results                         
+     'session_id',                  -- Partition by session                 
+     'event_timestamp ASC',         -- Order partitions in input table by time       
+     $$ nobuy:=page<>'CHECKOUT',
+        buy:=page='CHECKOUT'
+     $$,  -- Definition of symbols used in the pattern definition 
+     '(nobuy)+(buy)',         -- At least one page followed by and ending with a CHECKOUT.
+     'array_agg(page ORDER BY session_id ASC, event_timestamp ASC) as page_path',  
+     FALSE,                        -- Don't persist matches
+     TRUE                          -- Turn on overlapping patterns
+     );
+SELECT * FROM path_output ORDER BY session_id, match_id;
+</pre>
+Result with overlap turned on:
+<pre class="result">
+ session_id | match_id |             page_path             
+------------+----------+-----------------------------------
+        100 |        1 | {LANDING,WINE,CHECKOUT}
+        100 |        2 | {WINE,CHECKOUT}
+        102 |        1 | {LANDING,WINE,CHECKOUT}
+        102 |        2 | {WINE,CHECKOUT}
+        102 |        3 | {LANDING,HELP,WINE,CHECKOUT}
+        102 |        4 | {HELP,WINE,CHECKOUT}
+        102 |        5 | {WINE,CHECKOUT}
+        103 |        1 | {LANDING,WINE,HELP,WINE,CHECKOUT}
+        103 |        2 | {WINE,HELP,WINE,CHECKOUT}
+        103 |        3 | {HELP,WINE,CHECKOUT}
+        103 |        4 | {WINE,CHECKOUT}
+        104 |        1 | {BEER,CHECKOUT}
+        108 |        1 | {BEER,WINE,CHECKOUT}
+        108 |        2 | {WINE,CHECKOUT}
+(14 rows)
+</pre>
+With overlap turned off, the result would be:
+<pre class="result">
+ session_id | match_id |             page_path             
+------------+----------+-----------------------------------
+        100 |        1 | {LANDING,WINE,CHECKOUT}
+        102 |        1 | {LANDING,WINE,CHECKOUT}
+        102 |        2 | {LANDING,HELP,WINE,CHECKOUT}
+        103 |        1 | {LANDING,WINE,HELP,WINE,CHECKOUT}
+        104 |        1 | {BEER,CHECKOUT}
+        108 |        1 | {BEER,WINE,CHECKOUT}
+(6 rows)
+</pre>
 
 @anchor note
 @note

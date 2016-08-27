@@ -37,6 +37,7 @@ m4_include(`SQLCommon.m4')
 <li><a href="#categorical">Pivoting</a></li>
 <li><a href="#notes">Notes</a></li>
 <li><a href="#examples">Examples</a></li>
+<li><a href="#literature">Literature</a></li>
 </ul>
 </div>
 
@@ -51,7 +52,7 @@ the summarized data to a second table.
 <pre class="syntax">
 pivot(
 	source_table,
-    out_table,
+    output_table,
     index,
     pivot_cols,
     pivot_values,
@@ -64,19 +65,28 @@ pivot(
 \b Arguments
 <dl class="arglist">
     <dt>source_table</dt>
-    <dd>VARCHAR. Name of the source table (or view), containing data for
-    pivoting.</dd>
+    <dd>VARCHAR. Name of the source table (or view) containing data to
+    pivot.</dd>
     <dt>output_table</dt>
     <dd>VARCHAR. Name of output table that contains the pivoted data.
-    The output table ('output_table' above) has all the columns present in
-    index column list, plus additional columns for each distinct value in
-    pivot_cols.	The column name for the pivot is set as
-    <em>'value column'</em>_<em>'aggregate function'</em> +
-    _<em>'pivot column'</em>_<em>'pivot value'</em> for every pivot column.
+    The output table contains all the columns present in
+    the <em>'index'</em> column list, plus additional columns for each 
+    distinct value in <em>'pivot_cols'</em>.	
+
+    @note The names of the columns in the output table are auto-generated.
+    Please see the examples section below to see how this works in practice.
+    The convention used is to concatenate the following strings and separate 
+    each by an underscore '_' :
+    - name of the value column <em>'pivot_values'</em>
+    - aggregate function
+    - name of the pivot column <em>'pivot_cols'</em>
+    - values in the pivot column
+    
     </dd>
     <dt>index </dt>
     <dd>VARCHAR. Comma-separated columns that will form the index of the output
-    pivot table.</dd>
+    pivot table.  By index we mean the values to group by; these are the rows 
+    in the output pivot table.</dd>
     <dt>pivot_cols </dt>
     <dd>VARCHAR. Comma-separated columns that will form the columns of the
     output pivot table.</dd>
@@ -85,9 +95,19 @@ pivot(
     summarized in the output pivot table.</dd>
     <dt>aggregate_func (optional)</dt>
     <dd>VARCHAR. default: 'AVG'. A comma-separated list of aggregates to be
-    applied to values. These can be PostgreSQL aggregates or UDAs. It is
-    possible to assign a set of aggregate per value column. Please refer to the
-     examples 12\-14 for syntax details.</dd>
+    applied to values. These can be PostgreSQL built-in aggregates [1] or UDAs. It is
+    possible to assign a set of aggregates per value column. Please refer to the
+     examples 12\-14 below for syntax details.</dd>
+
+     @note  Only aggregates with 
+     strict transition functions are permitted here.
+     A strict transition function means rows with null values are ignored; 
+     the function is not called and the previous state value is retained.  
+     If you need some other behavior for null inputs, this should
+     be done prior to calling the pivot function.
+     Aggregates with strict transition 
+     functions are described in [2,3].
+
     <dt>fill_value (optional)</dt>
     <dd>VARCHAR. default: NULL. If specified, determines how to fill NULL
     values resulting from pivot operation. This is a global parameter (not
@@ -107,39 +127,32 @@ pivot(
     a dictionary output file will be created and a message given to the user.
     </dd>
 
-
 </dl>
 
 @anchor notes
 @note
-
-NULL values in the index column are treated as any other value.
-
-NULL values in the pivot column are ignored unless keep_null is TRUE.
-
-NULL values in the value column are handled by the aggregate function.
-
-It is not allowed to set the fill_value parameter without setting the
-aggregate_func parameter due to the possible ambiguity. Set
+- NULLs in the index column are treated like any other value.
+- NULLs in the pivot column are ignored unless keep_null is TRUE.
+- Only strict transition functions are 
+allowed so NULLs are ignored.
+- It is not allowed to set the fill_value parameter without setting the
+aggregate_func parameter due to possible ambiguity. Set
 aggregate_func to NULL for the default behavior and use fill_value as desired.
-
-It is not allowed to set the output_col_dictionary parameter without setting
-the keep_null parameter due to the possible ambiguity. Set
+- It is not allowed to set the output_col_dictionary parameter without setting
+the keep_null parameter due to possible ambiguity. Set
 keep_null to NULL for the default behavior and use output_col_dictionary as
 desired.
-
-Expressions (instead of column names) are not supported. Create a view with the
-desired expressions and pass it as the input table (see Example 3).
-
-It is allowed to pass a partial mapping for the aggregate_func parameter. The
+- Expressions (instead of column names) are not supported. Create a view with the
+desired expressions and pass it as the input table (see example 3 below).
+- It is allowed to pass a partial mapping for the aggregate_func parameter. The
 missing value columns will be aggregated using the default function (average).
 
 @anchor examples
 @examp
 
--# Create a toy dataset
+-# Create a simple dataset to demonstrate a basic pivot:
 <pre class="example">
-DROP TABLE IF EXISTS pivset;
+DROP TABLE IF EXISTS pivset CASCADE; -- View below may depend on table so use CASCADE
 CREATE TABLE pivset(
                   id INTEGER,
                   piv INTEGER,
@@ -158,7 +171,7 @@ INSERT INTO pivset VALUES
 	(1, 10, NULL);
 </pre>
 
--# Pivot the table
+-# Pivot the table:
 <pre class="example">
 DROP TABLE IF EXISTS pivout;
 SELECT madlib.pivot('pivset', 'pivout', 'id', 'piv', 'val');
@@ -171,8 +184,9 @@ SELECT * FROM pivout ORDER BY id;
   1 |              7 |              4 |            5.5
     |              8 |                |
 </pre>
+Here NULL is showing as an empty cell in the output.
 
--# Create a view to tailor the columns as required
+-# Now let's add some more columns to our data set and create a view:
 <pre class="example">
 DROP VIEW IF EXISTS pivset_ext;
 CREATE VIEW pivset_ext AS
@@ -185,21 +199,23 @@ SELECT id,id2,piv,piv2,val,val2 FROM pivset_ext
 ORDER BY id,id2,piv,piv2,val,val2;
 </pre>
 <pre class="result">
- id | id2 | piv | piv2 | val | val2
+ id | id2 | piv | piv2 | val | val2 
 ----+-----+-----+------+-----+------
   0 |   0 |  10 |    0 |   1 |   11
-  0 |   0 |  10 |    0 |     |    0
   0 |   1 |  10 |  100 |   2 |   12
   0 |   1 |  20 |  100 |   3 |   13
-  0 |   3 |     |  300 |   9 |   19
+  1 |   0 |  10 |    0 |     |    0
   1 |   2 |  20 |  100 |   4 |   14
   1 |   3 |  10 |  200 |   7 |   17
   1 |   3 |  30 |  200 |   5 |   15
   1 |   3 |  30 |  200 |   6 |   16
+  1 |   4 |     |  300 |   9 |   19
     |   0 |  10 |  300 |   8 |   18
+(10 rows)
 </pre>
 
--# Specify the aggregate function:
+-# Let's use a different aggregate function on the view we
+just created:
 <pre class="example">
 DROP TABLE IF EXISTS pivout;
 SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'sum');
@@ -213,25 +229,29 @@ SELECT * FROM pivout ORDER BY id;
     |              8 |                |
 </pre>
 
--# Create a custom aggregate:
+-# Now create a custom aggregate.  Note that the aggregate
+must have a strict transition function:
 <pre class="example">
-DROP AGGREGATE IF EXISTS array_accum (anyelement);
-CREATE AGGREGATE array_accum (anyelement)
-(
-    sfunc = array_append,
+DROP FUNCTION IF EXISTS array_add1 (ANYARRAY, ANYELEMENT) CASCADE;
+CREATE FUNCTION array_add1(ANYARRAY, ANYELEMENT) RETURNS ANYARRAY AS $$
+  SELECT $1 || $2
+$$ LANGUAGE sql STRICT;
+DROP AGGREGATE IF EXISTS array_accum1 (anyelement);
+CREATE AGGREGATE array_accum1 (anyelement) (
+    sfunc = array_add1,
     stype = anyarray,
-    initcond = '{}'
+    initcond = '{}'                                                                                                                                           
 );
 DROP TABLE IF EXISTS pivout;
-SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'array_accum');
+SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'array_accum1');
 SELECT * FROM pivout ORDER BY id;
 </pre>
 <pre class="result">
- id |    val_array_accum_piv_10    |    val_array_accum_piv_20    |  val_array_accum_piv_30
-----+------------------------------+------------------------------+---------------------------
-  0 | {1,2,NULL}                   | {NULL,NULL,3}                | {NULL,NULL,NULL}
-  1 | {NULL,NULL,NULL,7,NULL,NULL} | {4,NULL,NULL,NULL,NULL,NULL} | {NULL,5,6,NULL,NULL,NULL}
-    | {8}                          | {NULL}                       | {NULL}
+  id | val_array_accum1_piv_10 | val_array_accum1_piv_20 | val_array_accum1_piv_30 
+----+-------------------------+-------------------------+-------------------------
+  0 | {1,2}                   | {3}                     | {}
+  1 | {7}                     | {4}                     | {5,6}
+    | {8}                     | {}                      | {}
 </pre>
 
 -# Keep null values in the pivot column:
@@ -248,7 +268,7 @@ SELECT * FROM pivout ORDER BY id;
     |              8 |                |                |
 </pre>
 
--# Fill null results:
+-# Fill null results with a value of interest:
 <pre class="example">
 DROP TABLE IF EXISTS pivout;
 SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'sum', '111');
@@ -294,26 +314,32 @@ SELECT * FROM pivout ORDER BY id;
 <pre class="result">
 -[ RECORD 1 ]-----------+----
 id                      | 0
+val_avg_piv_10_piv2_0   | 1
 val_avg_piv_10_piv2_100 | 2
-val_avg_piv_10_piv2_200 |
-val_avg_piv_10_piv2_300 |
+val_avg_piv_10_piv2_200 | 
+val_avg_piv_10_piv2_300 | 
+val_avg_piv_20_piv2_0   | 
 val_avg_piv_20_piv2_100 | 3
-val_avg_piv_20_piv2_200 |
-val_avg_piv_20_piv2_300 |
-val_avg_piv_30_piv2_100 |
-val_avg_piv_30_piv2_200 |
-val_avg_piv_30_piv2_300 |
+val_avg_piv_20_piv2_200 | 
+val_avg_piv_20_piv2_300 | 
+val_avg_piv_30_piv2_0   | 
+val_avg_piv_30_piv2_100 | 
+val_avg_piv_30_piv2_200 | 
+val_avg_piv_30_piv2_300 | 
 -[ RECORD 2 ]-----------+----
 id                      | 1
-val_avg_piv_10_piv2_100 |
+val_avg_piv_10_piv2_0   | 
+val_avg_piv_10_piv2_100 | 
 val_avg_piv_10_piv2_200 | 7
-val_avg_piv_10_piv2_300 |
+val_avg_piv_10_piv2_300 | 
+val_avg_piv_20_piv2_0   | 
 val_avg_piv_20_piv2_100 | 4
-val_avg_piv_20_piv2_200 |
-val_avg_piv_20_piv2_300 |
-val_avg_piv_30_piv2_100 |
+val_avg_piv_20_piv2_200 | 
+val_avg_piv_20_piv2_300 | 
+val_avg_piv_30_piv2_0   | 
+val_avg_piv_30_piv2_100 | 
 val_avg_piv_30_piv2_200 | 5.5
-val_avg_piv_30_piv2_300 |
+val_avg_piv_30_piv2_300 | 
 ...
 </pre>
 
@@ -328,10 +354,10 @@ SELECT * FROM pivout ORDER BY id;
 id              | 0
 val_avg_piv_10  | 1.5
 val_avg_piv_20  | 3
-val_avg_piv_30  |
+val_avg_piv_30  | 
 val2_avg_piv_10 | 11.5
 val2_avg_piv_20 | 13
-val2_avg_piv_30 |
+val2_avg_piv_30 | 
 -[ RECORD 2 ]---+-----
 id              | 1
 val_avg_piv_10  | 7
@@ -344,7 +370,7 @@ val2_avg_piv_30 | 15.5
 </pre>
 
 
--# Use multiple aggregate functions (cross product):
+-# Use multiple aggregate functions on the same value column (cross product):
 <pre class="example">
 DROP TABLE IF EXISTS pivout;
 SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val', 'avg, sum');
@@ -355,10 +381,10 @@ SELECT * FROM pivout ORDER BY id;
 id             | 0
 val_avg_piv_10 | 1.5
 val_avg_piv_20 | 3
-val_avg_piv_30 |
+val_avg_piv_30 | 
 val_sum_piv_10 | 3
 val_sum_piv_20 | 3
-val_sum_piv_30 |
+val_sum_piv_30 | 
 -[ RECORD 2 ]--+----
 id             | 1
 val_avg_piv_10 | 7
@@ -370,7 +396,7 @@ val_sum_piv_30 | 11
 ...
 </pre>
 
--# Use value columnn specific aggregate functions:
+-# Use different aggregate functions for different value columns:
 <pre class="example">
 DROP TABLE IF EXISTS pivout;
 SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val, val2',
@@ -397,7 +423,7 @@ val2_sum_piv_30 | 31
 ...
 </pre>
 
--# Use multiple value columnn specific aggregate functions:
+-# Use multiple aggregate functions for different value columns:
 <pre class="example">
 DROP TABLE IF EXISTS pivout;
 SELECT madlib.pivot('pivset_ext', 'pivout', 'id', 'piv', 'val, val2',
@@ -409,13 +435,13 @@ SELECT * FROM pivout ORDER BY id;
 id              | 0
 val_avg_piv_10  | 1.5
 val_avg_piv_20  | 3
-val_avg_piv_30  |
+val_avg_piv_30  | 
 val2_avg_piv_10 | 11.5
 val2_avg_piv_20 | 13
-val2_avg_piv_30 |
+val2_avg_piv_30 | 
 val2_sum_piv_10 | 23
 val2_sum_piv_20 | 13
-val2_sum_piv_30 |
+val2_sum_piv_30 | 
 -[ RECORD 2 ]---+-----
 id              | 1
 val_avg_piv_10  | 7
@@ -441,6 +467,10 @@ SELECT * FROM pivout ORDER BY id,id2;
 -[ RECORD 1 ]--------------+-----
 id                         | 0
 id2                        | 0
+val_avg_piv_null_piv2_0    | 111
+val_avg_piv_null_piv2_100  | 111
+val_avg_piv_null_piv2_200  | 111
+val_avg_piv_null_piv2_300  | 111
 val_avg_piv_10_piv2_0      | 1
 val_avg_piv_10_piv2_100    | 111
 val_avg_piv_10_piv2_200    | 111
@@ -453,10 +483,10 @@ val_avg_piv_30_piv2_0      | 111
 val_avg_piv_30_piv2_100    | 111
 val_avg_piv_30_piv2_200    | 111
 val_avg_piv_30_piv2_300    | 111
-val_avg_piv_null_piv2_0    | 111
-val_avg_piv_null_piv2_100  | 111
-val_avg_piv_null_piv2_200  | 111
-val_avg_piv_null_piv2_300  | 111
+val2_avg_piv_null_piv2_0   | 111
+val2_avg_piv_null_piv2_100 | 111
+val2_avg_piv_null_piv2_200 | 111
+val2_avg_piv_null_piv2_300 | 111
 val2_avg_piv_10_piv2_0     | 11
 val2_avg_piv_10_piv2_100   | 111
 val2_avg_piv_10_piv2_200   | 111
@@ -469,10 +499,10 @@ val2_avg_piv_30_piv2_0     | 111
 val2_avg_piv_30_piv2_100   | 111
 val2_avg_piv_30_piv2_200   | 111
 val2_avg_piv_30_piv2_300   | 111
-val2_avg_piv_null_piv2_0   | 111
-val2_avg_piv_null_piv2_100 | 111
-val2_avg_piv_null_piv2_200 | 111
-val2_avg_piv_null_piv2_300 | 111
+val2_sum_piv_null_piv2_0   | 111
+val2_sum_piv_null_piv2_100 | 111
+val2_sum_piv_null_piv2_200 | 111
+val2_sum_piv_null_piv2_300 | 111
 val2_sum_piv_10_piv2_0     | 11
 val2_sum_piv_10_piv2_100   | 111
 val2_sum_piv_10_piv2_200   | 111
@@ -485,37 +515,119 @@ val2_sum_piv_30_piv2_0     | 111
 val2_sum_piv_30_piv2_100   | 111
 val2_sum_piv_30_piv2_200   | 111
 val2_sum_piv_30_piv2_300   | 111
+-[ RECORD 2 ]--------------+-----
+id                         | 0
+id2                        | 1
+val_avg_piv_null_piv2_0    | 111
+val_avg_piv_null_piv2_100  | 111
+val_avg_piv_null_piv2_200  | 111
+val_avg_piv_null_piv2_300  | 111
+val_avg_piv_10_piv2_0      | 111
+val_avg_piv_10_piv2_100    | 2
+val_avg_piv_10_piv2_200    | 111
+val_avg_piv_10_piv2_300    | 111
+val_avg_piv_20_piv2_0      | 111
+val_avg_piv_20_piv2_100    | 3
+val_avg_piv_20_piv2_200    | 111
+val_avg_piv_20_piv2_300    | 111
+val_avg_piv_30_piv2_0      | 111
+val_avg_piv_30_piv2_100    | 111
+val_avg_piv_30_piv2_200    | 111
+val_avg_piv_30_piv2_300    | 111
+val2_avg_piv_null_piv2_0   | 111
+val2_avg_piv_null_piv2_100 | 111
+val2_avg_piv_null_piv2_200 | 111
+val2_avg_piv_null_piv2_300 | 111
+val2_avg_piv_10_piv2_0     | 111
+val2_avg_piv_10_piv2_100   | 12
+val2_avg_piv_10_piv2_200   | 111
+val2_avg_piv_10_piv2_300   | 111
+val2_avg_piv_20_piv2_0     | 111
+val2_avg_piv_20_piv2_100   | 13
+val2_avg_piv_20_piv2_200   | 111
+val2_avg_piv_20_piv2_300   | 111
+val2_avg_piv_30_piv2_0     | 111
+val2_avg_piv_30_piv2_100   | 111
+val2_avg_piv_30_piv2_200   | 111
+val2_avg_piv_30_piv2_300   | 111
 val2_sum_piv_null_piv2_0   | 111
 val2_sum_piv_null_piv2_100 | 111
 val2_sum_piv_null_piv2_200 | 111
 val2_sum_piv_null_piv2_300 | 111
+val2_sum_piv_10_piv2_0     | 111
+val2_sum_piv_10_piv2_100   | 12
+val2_sum_piv_10_piv2_200   | 111
+val2_sum_piv_10_piv2_300   | 111
+val2_sum_piv_20_piv2_0     | 111
+val2_sum_piv_20_piv2_100   | 13
+val2_sum_piv_20_piv2_200   | 111
+val2_sum_piv_20_piv2_300   | 111
+val2_sum_piv_30_piv2_0     | 111
+val2_sum_piv_30_piv2_100   | 111
+val2_sum_piv_30_piv2_200   | 111
+val2_sum_piv_30_piv2_300   | 111
 ...
 </pre>
 
 -# Create a dictionary for output column names:
 <pre class="example">
-DROP TABLE IF EXISTS pivout_dictionary;
-DROP TABLE IF EXISTS pivout;
+DROP TABLE IF EXISTS pivout, pivout_dictionary;
 SELECT madlib.pivot('pivset_ext', 'pivout', 'id, id2', 'piv, piv2', 'val, val2',
     'val=avg, val2=[avg,sum]', '111', True, True);
 SELECT * FROM pivout_dictionary;
 </pre>
 <pre class="result">
--[ RECORD 1 ]-+-----------------------------
-\_\_pivot_cid\_\_ | \_\_p_0\_\_
-pval          | val
-agg           | avg
-piv           | 10
-piv2          | 0
-col_name      | "val_avg_piv_10_piv2_0"
--[ RECORD 2 ]-+-----------------------------
-\_\_pivot_cid\_\_ | \_\_p_1\_\_
-pval          | val
-agg           | avg
-piv           | 10
-piv2          | 100
-col_name      | "val_avg_piv_10_piv2_100"
-...
+  __pivot_cid__ | pval | agg | piv | piv2 |           col_name           
+---------------+------+-----+-----+------+------------------------------
+ __p_1__       | val  | avg |     |  100 | "val_avg_piv_null_piv2_100"
+ __p_5__       | val  | avg |  10 |  100 | "val_avg_piv_10_piv2_100"
+ __p_9__       | val  | avg |  20 |  100 | "val_avg_piv_20_piv2_100"
+ __p_12__      | val  | avg |  30 |    0 | "val_avg_piv_30_piv2_0"
+ __p_16__      | val2 | avg |     |    0 | "val2_avg_piv_null_piv2_0"
+ __p_23__      | val2 | avg |  10 |  300 | "val2_avg_piv_10_piv2_300"
+ __p_27__      | val2 | avg |  20 |  300 | "val2_avg_piv_20_piv2_300"
+ __p_30__      | val2 | avg |  30 |  200 | "val2_avg_piv_30_piv2_200"
+ __p_34__      | val2 | sum |     |  200 | "val2_sum_piv_null_piv2_200"
+ __p_38__      | val2 | sum |  10 |  200 | "val2_sum_piv_10_piv2_200"
+ __p_41__      | val2 | sum |  20 |  100 | "val2_sum_piv_20_piv2_100"
+ __p_45__      | val2 | sum |  30 |  100 | "val2_sum_piv_30_piv2_100"
+ __p_2__       | val  | avg |     |  200 | "val_avg_piv_null_piv2_200"
+ __p_6__       | val  | avg |  10 |  200 | "val_avg_piv_10_piv2_200"
+ __p_11__      | val  | avg |  20 |  300 | "val_avg_piv_20_piv2_300"
+ __p_15__      | val  | avg |  30 |  300 | "val_avg_piv_30_piv2_300"
+ __p_19__      | val2 | avg |     |  300 | "val2_avg_piv_null_piv2_300"
+ __p_20__      | val2 | avg |  10 |    0 | "val2_avg_piv_10_piv2_0"
+ __p_24__      | val2 | avg |  20 |    0 | "val2_avg_piv_20_piv2_0"
+ __p_28__      | val2 | avg |  30 |    0 | "val2_avg_piv_30_piv2_0"
+ __p_33__      | val2 | sum |     |  100 | "val2_sum_piv_null_piv2_100"
+ __p_37__      | val2 | sum |  10 |  100 | "val2_sum_piv_10_piv2_100"
+ __p_42__      | val2 | sum |  20 |  200 | "val2_sum_piv_20_piv2_200"
+ __p_46__      | val2 | sum |  30 |  200 | "val2_sum_piv_30_piv2_200"
+ __p_3__       | val  | avg |     |  300 | "val_avg_piv_null_piv2_300"
+ __p_7__       | val  | avg |  10 |  300 | "val_avg_piv_10_piv2_300"
+ __p_10__      | val  | avg |  20 |  200 | "val_avg_piv_20_piv2_200"
+ __p_14__      | val  | avg |  30 |  200 | "val_avg_piv_30_piv2_200"
+ __p_18__      | val2 | avg |     |  200 | "val2_avg_piv_null_piv2_200"
+ __p_21__      | val2 | avg |  10 |  100 | "val2_avg_piv_10_piv2_100"
+ __p_25__      | val2 | avg |  20 |  100 | "val2_avg_piv_20_piv2_100"
+ __p_29__      | val2 | avg |  30 |  100 | "val2_avg_piv_30_piv2_100"
+ __p_32__      | val2 | sum |     |    0 | "val2_sum_piv_null_piv2_0"
+ __p_36__      | val2 | sum |  10 |    0 | "val2_sum_piv_10_piv2_0"
+ __p_43__      | val2 | sum |  20 |  300 | "val2_sum_piv_20_piv2_300"
+ __p_47__      | val2 | sum |  30 |  300 | "val2_sum_piv_30_piv2_300"
+ __p_0__       | val  | avg |     |    0 | "val_avg_piv_null_piv2_0"
+ __p_4__       | val  | avg |  10 |    0 | "val_avg_piv_10_piv2_0"
+ __p_8__       | val  | avg |  20 |    0 | "val_avg_piv_20_piv2_0"
+ __p_13__      | val  | avg |  30 |  100 | "val_avg_piv_30_piv2_100"
+ __p_17__      | val2 | avg |     |  100 | "val2_avg_piv_null_piv2_100"
+ __p_22__      | val2 | avg |  10 |  200 | "val2_avg_piv_10_piv2_200"
+ __p_26__      | val2 | avg |  20 |  200 | "val2_avg_piv_20_piv2_200"
+ __p_31__      | val2 | avg |  30 |  300 | "val2_avg_piv_30_piv2_300"
+ __p_35__      | val2 | sum |     |  300 | "val2_sum_piv_null_piv2_300"
+ __p_39__      | val2 | sum |  10 |  300 | "val2_sum_piv_10_piv2_300"
+ __p_40__      | val2 | sum |  20 |    0 | "val2_sum_piv_20_piv2_0"
+ __p_44__      | val2 | sum |  30 |    0 | "val2_sum_piv_30_piv2_0"
+(48 rows)
 </pre>
 <pre class="example">
 SELECT * FROM pivout ORDER BY id,id2;
@@ -524,55 +636,117 @@ SELECT * FROM pivout ORDER BY id,id2;
 -[ RECORD 1 ]--
 id       | 0
 id2      | 0
-\_\_p_0\_\_  | 1
-\_\_p_1\_\_  | 111
-\_\_p_2\_\_  | 111
-\_\_p_3\_\_  | 111
-\_\_p_4\_\_  | 111
-\_\_p_5\_\_  | 111
-\_\_p_6\_\_  | 111
-\_\_p_7\_\_  | 111
-\_\_p_8\_\_  | 111
-\_\_p_9\_\_  | 111
-\_\_p_10\_\_ | 111
-\_\_p_11\_\_ | 111
-\_\_p_12\_\_ | 111
-\_\_p_13\_\_ | 111
-\_\_p_14\_\_ | 111
-\_\_p_15\_\_ | 111
-\_\_p_16\_\_ | 5.5
-\_\_p_17\_\_ | 111
-\_\_p_18\_\_ | 111
-\_\_p_19\_\_ | 111
-\_\_p_20\_\_ | 111
-\_\_p_21\_\_ | 111
-\_\_p_22\_\_ | 111
-\_\_p_23\_\_ | 111
-\_\_p_24\_\_ | 111
-\_\_p_25\_\_ | 111
-\_\_p_26\_\_ | 111
-\_\_p_27\_\_ | 111
-\_\_p_28\_\_ | 111
-\_\_p_29\_\_ | 111
-\_\_p_30\_\_ | 111
-\_\_p_31\_\_ | 111
-\_\_p_32\_\_ | 11
-\_\_p_33\_\_ | 111
-\_\_p_34\_\_ | 111
-\_\_p_35\_\_ | 111
-\_\_p_36\_\_ | 111
-\_\_p_37\_\_ | 111
-\_\_p_38\_\_ | 111
-\_\_p_39\_\_ | 111
-\_\_p_40\_\_ | 111
-\_\_p_41\_\_ | 111
-\_\_p_42\_\_ | 111
-\_\_p_43\_\_ | 111
-\_\_p_44\_\_ | 111
-\_\_p_45\_\_ | 111
-\_\_p_46\_\_ | 111
-\_\_p_47\_\_ | 111
+__p_0__  | 111
+__p_1__  | 111
+__p_2__  | 111
+__p_3__  | 111
+__p_4__  | 1
+__p_5__  | 111
+__p_6__  | 111
+__p_7__  | 111
+__p_8__  | 111
+__p_9__  | 111
+__p_10__ | 111
+__p_11__ | 111
+__p_12__ | 111
+__p_13__ | 111
+__p_14__ | 111
+__p_15__ | 111
+__p_16__ | 111
+__p_17__ | 111
+__p_18__ | 111
+__p_19__ | 111
+__p_20__ | 11
+__p_21__ | 111
+__p_22__ | 111
+__p_23__ | 111
+__p_24__ | 111
+__p_25__ | 111
+__p_26__ | 111
+__p_27__ | 111
+__p_28__ | 111
+__p_29__ | 111
+__p_30__ | 111
+__p_31__ | 111
+__p_32__ | 111
+__p_33__ | 111
+__p_34__ | 111
+__p_35__ | 111
+__p_36__ | 11
+__p_37__ | 111
+__p_38__ | 111
+__p_39__ | 111
+__p_40__ | 111
+__p_41__ | 111
+__p_42__ | 111
+__p_43__ | 111
+__p_44__ | 111
+__p_45__ | 111
+__p_46__ | 111
+__p_47__ | 111
+-[ RECORD 2 ]--
+id       | 0
+id2      | 1
+__p_0__  | 111
+__p_1__  | 111
+__p_2__  | 111
+__p_3__  | 111
+__p_4__  | 111
+__p_5__  | 2
+__p_6__  | 111
+__p_7__  | 111
+__p_8__  | 111
+__p_9__  | 3
+__p_10__ | 111
+__p_11__ | 111
+__p_12__ | 111
+__p_13__ | 111
+__p_14__ | 111
+__p_15__ | 111
+__p_16__ | 111
+__p_17__ | 111
+__p_18__ | 111
+__p_19__ | 111
+__p_20__ | 111
+__p_21__ | 12
+__p_22__ | 111
+__p_23__ | 111
+__p_24__ | 111
+__p_25__ | 13
+__p_26__ | 111
+__p_27__ | 111
+__p_28__ | 111
+__p_29__ | 111
+__p_30__ | 111
+__p_31__ | 111
+__p_32__ | 111
+__p_33__ | 111
+__p_34__ | 111
+__p_35__ | 111
+__p_36__ | 111
+__p_37__ | 12
+__p_38__ | 111
+__p_39__ | 111
+__p_40__ | 111
+__p_41__ | 13
+__p_42__ | 111
+__p_43__ | 111
+__p_44__ | 111
+__p_45__ | 111
+__p_46__ | 111
+__p_47__ | 111
 ...
+</pre>
+
+@anchor literature
+@literature
+
+@anchor svm-lit-1
+[1] https://www.postgresql.org/docs/8.2/static/functions-aggregate.html
+
+[2] https://www.postgresql.org/docs/8.2/static/sql-createaggregate.html
+
+[3] https://www.postgresql.org/docs/8.2/static/xaggr.html
 */
 
 -------------------------------------------------------------------------
