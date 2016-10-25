@@ -20,7 +20,7 @@ m4_include(`SQLCommon.m4')
 <li class="level1"><a href="#project">Projection Function</a></li>
 <li class="level1"><a href="#examples">Examples</a></li>
 <li class="level1"><a href="#notes">Notes</a></li>
-<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#background_project">Technical Background</a></li>
 <li class="level1"><a href="#related">Related Topics</a></li>
 </ul>
 </div>
@@ -33,14 +33,16 @@ procedure.
 Principal component projection is a mathematical procedure that projects high
 dimensional data onto a lower dimensional space.  This lower dimensional space
 is defined by the \f$ k  \f$  principal components with the highest variance in
-the training data.  More details on the mathematics of PCA can be found in  \ref
-pca_train and some details about the principal component projection calculations
-can be found in the \ref background "Technical Background".
+the training data.  
+
+More details on the mathematics of PCA can be found in \ref
+grp_pca_train and some details about principal component projection calculations
+can be found in the \ref background_project "Technical Background".
 
 
 @anchor project
 @par Projection Function
-The projection functions have the following formats:
+The projection functions are slightly different for dense and sparse matrices. For dense matrices:
 <pre class="syntax">
 madlib.pca_project( source_table,
                     pc_table,
@@ -50,23 +52,23 @@ madlib.pca_project( source_table,
                     result_summary_table
                   )
 </pre>
-and
+For sparse matrices:
 <pre class="syntax">
 madlib.pca_sparse_project( source_table,
                            pc_table,
                            out_table,
                            row_id,
-                           col_id,
-                           val_id,
-                           row_dim,
-                           col_dim,
+                           col_id,              -- Sparse matrices only
+                           val_id,              -- Sparse matrices only
+                           row_dim,             -- Sparse matrices only
+                           col_dim,             -- Sparse matrices only
                            residual_table,
                            result_summary_table
                          )
 </pre>
 
 
-@par Arguments
+\b Arguments
 <DL class="arglist">
 <DT>source_table</DT>
 <DD>TEXT.  Source table name.
@@ -75,9 +77,9 @@ and \f$ M \f$ columns, where \f$ N \f$ is the number of data points, and \f$ M
 \f$ is the number of features for each data point.
 
 The input table for <em> pca_project </em> is expected to be in the one of the
-two standard  MADlib dense matrix formats, and the sparse input table for  <em>
-pca_sparse_project </em>  should be in the standard MADlib sparse matrix format.
-These formats are described in the documentation for \ref pca_train.</DD>
+two standard MADlib dense matrix formats, and the sparse input table for  <em>
+pca_sparse_project </em> should be in the standard MADlib sparse matrix format.
+These formats are described in the documentation for \ref grp_pca_train.</DD>
 
 <DT>pc_table</DT>
 <DD>TEXT.  Table name for the table containing principal components. </DD>
@@ -98,26 +100,41 @@ principal components. The table has the following columns:
         <td>A vector containing elements in the row of the matrix.</td>
     </tr>
 </table>
-
 </DD>
+
 <DT>row_id</DT>
 <DD>TEXT. Column name containing the row IDs in the input source table. The column
-needs to be of type that can be cast to INT and should only contain values between 1 and
-<em>N</em>. For dense matrix format, it should contain all continguous integers from 1 to <em>N</em>.</DD>
+should be of type INT (or a type that can be cast to INT) and should only contain values between 1 and
+<em>N</em>. For dense matrix format, it should contain all continguous integers from 1 to <em>N</em>
+describing the full matrix.</DD>
 
 <DT>col_id</DT>
-<DD>TEXT.  Column name of containing the col IDS in sparse matrix representation
-(sparse matrices only). The column should be of type that can be cast to INT and
-contain values between 1 and <em>M</em>.</DD>
+<DD>TEXT.  Column name containing the column IDs in sparse matrix representation. 
+The column should be of type INT (or a type that can be cast to INT) 
+and should only contain values between 1 and <em>M</em>.  <em>This parameter applies to 
+sparse matrices only.</em></DD>
 
 <DT>val_id</DT>
-<DD>TEXT.  Name of 'val_id' column in sparse matrix representation (sparse matrices only). </DD>
+<DD>TEXT.  Name of 'val_id' column in sparse matrix representation defining the values of the nonzero entries. 
+<em>This parameter applies to sparse matrices only.</em></DD>
 
 <DT>row_dim</DT>
-<DD>INTEGER.  The number of rows in the sparse matrix (sparse matrices only). </DD>
+<DD>INTEGER.  The actual number of rows in the matrix.  That is,
+if the matrix was transformed into dense format, this is the number of rows
+it would have.
+<em>This parameter applies to sparse matrices only.</em></DD>
 
 <DT>col_dim</DT>
-<DD>INTEGER.  The number of columns in the sparse matrix (sparse matrices only). </DD>
+<DD>INTEGER.  The actual number of columns in the matrix.  That is,
+if the matrix was transformed into dense format, this is the number of columns
+it would have. 
+<em>This parameter applies to sparse matrices only.</em></DD>
+
+@note The parameters 'row_dim' and 'col_dim' could actually be inferred from the 
+sparse matrix representation, so they will be removed in the future.
+For now they are maintained for backward compatability so you must enter them.
+Making 'row_dim' or 'col_dim' larger than the actual matrix has the effect of padding it with 
+zeros, which is probably not useful.
 
 <DT>residual_table (optional)</DT>
 <DD>TEXT, default: NULL.  Name of the optional residual table.
@@ -143,7 +160,7 @@ The <em>result_summary_table</em> contains information about the performance tim
 <table class="output">
     <tr>
         <th>exec_time</th>
-        <td>Wall clock time (ms) of the function.</td>
+        <td>Elapsed time (ms) for execution of the function.</td>
     </tr>
     <tr>
         <th>residual_norm</th>
@@ -158,12 +175,12 @@ The <em>result_summary_table</em> contains information about the performance tim
 
 @anchor examples
 @examp
--# View online help for the PCA projection function.
+-# View online help for the PCA projection function:
 <pre class="example">
 SELECT madlib.pca_project();
 </pre>
 
--# Create the sample data.
+-# Create the sample data:
 <pre class="example">
 DROP TABLE IF EXISTS mat;
 CREATE TABLE mat (
@@ -178,35 +195,69 @@ INSERT INTO mat VALUES
 (5, ARRAY[8,5,7]),
 (6, ARRAY[0,5,5]);
 </pre>
--# Run the PCA function and keep only the top two PCs:
+-# Run the PCA function and keep only the top two principle components:
 <pre class="example">
-DROP TABLE IF EXISTS result_table;
-SELECT pca_train ( 'mat',
-                   'result_table',
-                   'row_id',
-                   2
-                 );
+DROP TABLE IF EXISTS result_table, result_table_mean;
+SELECT madlib.pca_train ( 'mat',
+                        'result_table',
+                        'row_id',
+                        2
+                        );
+SELECT * FROM result_table;
 </pre>
--# Project the original data into a low-dimensional representation.
+<pre class="result">
+ row_id |                    principal_components                     |     std_dev      |    proportion     
+--------+-------------------------------------------------------------+------------------+-------------------
+      1 | {-0.995725178022077,0.0921925100100751,0.00564897786728818} |  3.7757341932744 | 0.745095924995985
+      2 | {0.0900421470942019,0.955231794466691,0.281823758023718}    | 1.97776947254051 | 0.204437565497132
+</pre>
+-# Project the original data into a low-dimensional representation:
 <pre class="example">
 DROP TABLE IF EXISTS residual_table, result_summary_table, out_table;
-SELECT pca_project( 'mat',
-                    'result_table',
-                    'out_table'
-                    'row_id',
-                    'residual_table',
-                    'result_summary_table'
-                  );
+SELECT madlib.pca_project( 'mat',
+                            'result_table',
+                            'out_table',
+                            'row_id',
+                            'residual_table',
+                            'result_summary_table'
+                            );
 </pre>
--# Check the error in the projection.
+-# View dense matrix with the projection onto the principal components:
+<pre class="example">
+SELECT * FROM out_table ORDER BY row_id;
+</pre>
+<pre class="result">
+ row_id |                row_vec                
+--------+---------------------------------------
+      1 | {1.09098309337665,-2.63145496174091}
+      2 | {3.61719607739251,2.41483045187516}
+      3 | {-2.17841894858709,0.24593773840028}
+      4 | {-4.3542543246514,1.97631703314526}
+      5 | {-3.06500468299723,-1.64480747723177}
+      6 | {4.88949878544481,-0.360822784430716}
+</pre>
+-# Check the error in the projection:
 <pre class="example">
 SELECT * FROM result_summary_table;
 </pre>
-Result:
 <pre class="result">
-   exec_time   | residual_norm | relative_residual_norm
+   exec_time   | residual_norm | relative_residual_norm 
 ---------------+---------------+------------------------
- 5685.40501595 | 2.19726255664 |         0.099262204234
+ 56.8881034851 | 2.19726255664 |         0.099262204234
+</pre>
+-# Check the residuals:
+<pre class="example">
+SELECT * FROM residual_table ORDER BY row_id;
+</pre>
+<pre class="result">
+ row_id |                          row_vec                           
+--------+------------------------------------------------------------
+      1 | {0.0160441468047001,0.219103418411008,-0.747769465736052}
+      2 | {-0.0141636064722857,-0.193422226365899,0.660123132354738}
+      3 | {0.0197048332985021,0.269094791232932,-0.918383061897929}
+      4 | {0.00897783310632772,0.122603834748268,-0.418429820364218}
+      5 | {-0.0333376637524658,-0.455268589780183,1.55376831915842}
+      6 | {0.00277445701511336,0.037888771752409,-0.129309103509956}
 </pre>
 
 @anchor notes
@@ -232,7 +283,7 @@ If mixed-case or multi-byte characters are desired for entity names then the
 string should be double-quoted; in this case the input would be '"MyTable"').
 
 
-@anchor background
+@anchor background_project
 @par Technical Background
 
 Given a table containing some principal components \f$ \boldsymbol P \f$ and
