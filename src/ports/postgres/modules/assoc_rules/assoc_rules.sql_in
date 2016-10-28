@@ -30,6 +30,7 @@ m4_include(`SQLCommon.m4')
 <li><a href="#syntax">Function Syntax</a></li>
 <li><a href="#examples">Examples</a></li>
 <li><a href="#notes">Notes</a></li>
+<li><a href="#literature">Literature</a></li>
 <li><a href="#related">Related Topics</a></li>
 </ul>
 </div>
@@ -45,7 +46,7 @@ Association rule mining is a widely used technique for discovering relationships
 between variables in a large data set (e.g items in a store that are commonly
 purchased together). The classic market basket analysis example using
 association rules is the "beer and diapers" rule. According to data mining urban
-legend, a study of customers' purchase behavior in a supermarket found that men
+legend, a study of customer purchase behavior in a supermarket found that men
 often purchased beer and diapers together. After making this discovery, the
 managers strategically placed beer and diapers closer together on the shelves
 and saw a dramatic increase in sales. In addition to market basket analysis,
@@ -80,8 +81,8 @@ Transactions with multiple items will span multiple rows with one row per item.
 @par Rules
 
 Association rules take the form "If X, then Y", where X and Y are non-empty
-itemsets. X and Y are called the antecedent and consequent, or the left-hand-
-side and right-hand-side, of the rule respectively. Using our previous example,
+itemsets. X and Y are called the antecedent and consequent, or the left-hand-side 
+and right-hand-side, of the rule respectively. Using our previous example,
 the association rule may state "If {diapers}, then {beer}" with .2 support and
 .85 confidence.
 
@@ -123,8 +124,8 @@ Conv (X \Rightarrow Y) = \frac{1 - S(Y)}{1 - C(X \Rightarrow Y)}
 @par Apriori Algorithm
 
 Although there are many algorithms that generate association rules, the classic
-algorithm used is called Apriori (which we implemented in this module). It is a
-breadth-first search, as opposed to depth-first searches like eclat. Frequent
+algorithm used is called Apriori [1] which we have implemented in this module. It is a
+breadth-first search, as opposed to depth-first searches like Eclat. Frequent
 itemsets of order \f$ n \f$ are generated from sets of order \f$ n - 1 \f$.
 Using the downward closure property, all sets must have frequent subsets. There
 are two steps in this algorithm; generating frequent itemsets, and using these
@@ -133,16 +134,16 @@ algorithm is as follows, and assumes a minimum level of support and confidence
 is provided:
 
 \e Initial \e step
--# Generate all itemsets of order 1
--# Eliminate itemsets that have support is less than minimum support
+-# Generate all itemsets of order 1.
+-# Eliminate itemsets that have support less than minimum support.
 
 \e Main \e algorithm
 -# For \f$ n \ge 2 \f$, generate itemsets of order \f$ n \f$ by combining the
 itemsets of order \f$ n - 1 \f$.
 This is done by doing the union of two itemsets that have identical items except one.
--# Eliminate itemsets that have (n-1) order subsets with insufficient support
--# Eliminate itemsets with insufficient support
--# Repeat until itemsets cannot be generated
+-# Eliminate itemsets that have (n-1) order subsets with insufficient support.
+-# Eliminate itemsets with insufficient support.
+-# Repeat until itemsets cannot be generated.
 
 \e Association \e rule \e generation
 
@@ -153,7 +154,7 @@ meets minimum confidence requirements.
 
 @anchor syntax
 @par Function Syntax
-Association rules can be called with the following syntax.
+Association rules has the following syntax:
 <pre class="syntax">
 assoc_rules( support,
              confidence,
@@ -195,8 +196,8 @@ This generates all association rules that satisfy the specified minimum
 
   <dt>output_schema</dt>
   <dd>The name of the schema where the final results will be stored.
-  It is expected to be created before calling the function, or using
-  <tt>NULL</tt> suggests the current schema will be used.
+  The schema must be created before calling the function.  Alternatively, use
+  <tt>NULL</tt> to output to the current schema.
 
   The results containing the rules, support, confidence, lift, and
   conviction are stored in the table \c assoc_rules in the schema
@@ -234,15 +235,16 @@ This generates all association rules that satisfy the specified minimum
       </tr>
     </table>
 
-  On Greenplum Database the table is distributed by the ruleid column.
+  On Greenplum Database or Apache HAWQ, the table is distributed by the \c ruleid column.
   
   The \c pre and \c post columns are the itemsets of left and right hand sides of the
   association rule respectively. The \c support, \c confidence, \c lift, and
-  \c conviction columns are calculated as mentioned in the about section.
+  \c conviction columns are calculated as described earlier.
   </dd>
 
   <dt>verbose</dt>
-  <dd>BOOLEAN, default FALSE. Determines if the output contains comments.</dd>
+  <dd>BOOLEAN, default FALSE. Determines if details are printed for each iteration
+  as the algorithm progresses.</dd>
 </dl>
 
 
@@ -251,7 +253,7 @@ This generates all association rules that satisfy the specified minimum
 
 Let us take a look at some sample transactional data and generate association rules.
 
--# Create an input dataset.
+-# Create an input dataset:
 <pre class="example">
 DROP TABLE IF EXISTS test_data;
 CREATE TABLE test_data (
@@ -276,8 +278,9 @@ INSERT INTO test_data VALUES (7, 'diapers');
 </pre>
 
 -# Let \f$ min(support) = .25 \f$ and \f$ min(confidence) = .5 \f$, and the
-output schema be 'myschema'. For this example, we set verbose to
-TRUE so that we have some insight into the progress of the function. We
+output schema is set to \c NULL indicating output to the current schema. 
+In this example we set verbose to
+TRUE so that we have some insight into progress of the function. We
 can now generate association rules as follows:
 <pre class="example">
 SELECT * FROM madlib.assoc_rules( .25,
@@ -285,36 +288,50 @@ SELECT * FROM madlib.assoc_rules( .25,
                                   'trans_id',
                                   'product',
                                   'test_data',
-                                  'myschema',
+                                  NULL,
                                   TRUE
                                 );
 </pre>
-Result:
+Result (iteration details not shown):
 <pre class="result">
- output_schema | output_table | total_rules | total_time
+ output_schema | output_table | total_rules |   total_time    
 ---------------+--------------+-------------+-----------------
- myschema      | assoc_rules  |           7 | 00:00:03.162094
+ public        | assoc_rules  |           7 | 00:00:00.028534
 (1 row)
 </pre>
-The association rules are stored in the myschema.assoc_rules table:
+The association rules are stored in the assoc_rules table:
 <pre class="example">
-SELECT * FROM myschema.assoc_rules
-ORDER BY support DESC;
+SELECT * FROM assoc_rules
+ORDER BY support DESC, confidence DESC;
 </pre>
 Result:
 <pre class="result">
- ruleid |       pre       |      post      |      support      |    confidence     |       lift        |    conviction
+ ruleid |       pre       |      post      |      support      |    confidence     |       lift        |    conviction     
 --------+-----------------+----------------+-------------------+-------------------+-------------------+-------------------
       4 | {diapers}       | {beer}         | 0.714285714285714 |                 1 |                 1 |                 0
-      2 | {beer}          | {diapers}      | 0.714285714285714 | 0.714285714285714 |                 1 |                 1
+      3 | {beer}          | {diapers}      | 0.714285714285714 | 0.714285714285714 |                 1 |                 1
       1 | {chips}         | {beer}         | 0.428571428571429 |                 1 |                 1 |                 0
+      7 | {diapers,chips} | {beer}         | 0.285714285714286 |                 1 |                 1 |                 0
+      2 | {chips}         | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
       5 | {chips}         | {beer,diapers} | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
-      6 | {chips,beer}    | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
-      7 | {chips,diapers} | {beer}         | 0.285714285714286 |                 1 |                 1 |                 0
-      3 | {chips}         | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+      6 | {beer,chips}    | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
 (7 rows)
 </pre>
 
+-# Post-processing can now be done on the output table in the case that
+you want to filter the results.  For example, if you want any single item on the left hand side 
+and a particular item on the right hand side:
+<pre class="example">
+SELECT * FROM assoc_rules WHERE array_upper(pre,1) = 1 AND post = array['beer'];
+</pre>
+Result:
+<pre class="result">
+ ruleid |    pre    |  post  |      support      | confidence | lift | conviction 
+--------+-----------+--------+-------------------+------------+------+------------
+      1 | {chips}   | {beer} | 0.428571428571429 |          1 |    1 |          0
+      4 | {diapers} | {beer} | 0.714285714285714 |          1 |    1 |          0
+(2 rows)
+</pre>
 
 @anchor notes
 @par Notes
@@ -322,6 +339,11 @@ Result:
 The association rules function always creates a table named \c assoc_rules.
 Make a copy of this table before running the function again if you would
 like to keep multiple association rule tables.
+
+@anchor literature
+@literature
+
+[1] https://en.wikipedia.org/wiki/Apriori_algorithm
 
 @anchor related
 @par Related Topics
