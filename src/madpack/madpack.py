@@ -12,11 +12,14 @@ import subprocess
 import datetime
 import tempfile
 import shutil
+import unittest
 
 from upgrade_util import ChangeHandler
 from upgrade_util import ViewDependency
 from upgrade_util import TableDependency
 from upgrade_util import ScriptCleaner
+
+from itertools import izip_longest
 
 # Required Python version
 py_min_ver = [2, 6]
@@ -291,8 +294,8 @@ def _get_madlib_dbrev(schema):
     """
     try:
         row = _internal_run_query("SELECT count(*) AS cnt FROM pg_tables " +
-                             "WHERE schemaname='" + schema + "' AND " +
-                             "tablename='migrationhistory'", True)
+                                  "WHERE schemaname='" + schema + "' AND " +
+                                  "tablename='migrationhistory'", True)
         if int(row[0]['cnt']) > 0:
             row = _internal_run_query("""SELECT version FROM %s.migrationhistory
                 ORDER BY applied DESC LIMIT 1""" % schema, True)
@@ -308,8 +311,7 @@ def _get_madlib_dbrev(schema):
 def _get_dbver():
     """ Read version number from database (of form X.Y) """
     try:
-        versionStr = _internal_run_query("""SELECT pg_catalog.version()""",
-                                    True)[0]['version']
+        versionStr = _internal_run_query("SELECT pg_catalog.version()", True)[0]['version']
         if portid == 'postgres':
             match = re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         elif portid == 'greenplum':
@@ -318,7 +320,7 @@ def _get_dbver():
             # MADlib treat 4.3.5+ as DB version 4.3V2 that is different from 4.3
             if match and match.group(1) == '4.3':
                 match_details = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+.\d+)", versionStr)
-                if _get_rev_num(match_details.group(1)) >= _get_rev_num('4.3.5'):
+                if _is_rev_gte(_get_rev_num(match_details.group(1)), _get_rev_num('4.3.5')):
                     return '4.3ORCA'
         elif portid == 'hawq':
             match = re.search("HAWQ[a-zA-Z\s]*(\d+\.\d+)", versionStr)
@@ -351,19 +353,88 @@ def _check_db_port(portid):
 # ------------------------------------------------------------------------------
 
 
+def _is_rev_gte(left, right):
+    """ Return if left >= right
+
+    Args:
+        @param left: list. Revision numbers in a list form (as returned by
+                           _get_rev_num).
+        @param right: list. Revision numbers in a list form (as returned by
+                           _get_rev_num).
+
+    Returns:
+        Boolean
+
+    If left and right are all numeric then regular list comparison occurs.
+    If either one contains a string, then comparison occurs till both have int.
+        First list to have a string is considered smaller
+        (including if the other does not have an element in corresponding index)
+
+    Examples:
+        [1, 9, 0] >= [1, 9, 0]
+        [1, 9, 1] >= [1, 9, 0]
+        [1, 9, 1] >= [1, 9]
+        [1, 10] >= [1, 9, 1]
+        [1, 9, 0] >= [1, 9, 0, 'dev']
+        [1, 9, 1] >= [1, 9, 0, 'dev']
+        [1, 9, 0] >= [1, 9, 'dev']
+        [1, 9, 'rc'] >= [1, 9, 'dev']
+        [1, 9, 'rc', 0] >= [1, 9, 'dev', 1]
+        [1, 9, 'rc', '1'] >= [1, 9, 'rc', '1']
+    """
+    def all_numeric(l):
+        return not l or all(isinstance(i, int) for i in l)
+
+    if all_numeric(left) and all_numeric(right):
+        return left >= right
+    else:
+        for i, (l_e, r_e) in enumerate(izip_longest(left, right)):
+            if isinstance(l_e, int) and isinstance(r_e, int):
+                if l_e == r_e:
+                    continue
+                else:
+                    return l_e > r_e
+            elif isinstance(l_e, int) or isinstance(r_e, int):
+                #  [1, 9, 0] > [1, 9, 'dev']
+                #  [1, 9, 0] > [1, 9]
+                return isinstance(l_e, int)
+            else:
+                # both are not int
+                if r_e is None:
+                    # [1, 9, 'dev'] < [1, 9]
+                    return False
+                else:
+                    return l_e is None or left[i:] >= right[i:]
+        return True
+# ----------------------------------------------------------------------
+
+
 def _get_rev_num(rev):
     """
     Convert version string into number for comparison
         @param rev version text
+                It is expected to follow Semantic Versioning (semver.org)
+                Valid inputs:
+                    1.9.0, 1.10.0, 2.5.0
+                    1.0.0-alpha, 1.0.0-alpha.1, 1.0.0-0.3.7, 1.0.0-x.7.z.92
+
     """
     try:
-        num = re.findall('[0-9]', rev)
+        rev_parts = rev.split('-')  # text to the right of - is treated as single str
+        # get numeric part of the version string
+        num = [int(i) for i in rev_parts[0].split('.')]
+        num += [0] * (3 - len(num))  # normalize num to be of length 3
+        # get identifier part of the version string
+        if len(rev_parts) > 1:
+            num.append(str(rev_parts[1]))
+
         if num:
             return num
         else:
-            return ['0']
+            return [0]
     except:
-        return ['0']
+        # invalid revision
+        return [0]
 # ------------------------------------------------------------------------------
 
 
@@ -375,7 +446,7 @@ def _print_revs(rev, dbrev, con_args, schema):
         @param con_args database connection arguments
         @param schema MADlib schema name
     """
-    _info("MADlib tools version    = %s (%s)" % (rev, sys.argv[0]), True)
+    _info("MADlib tools version    = %s (%s)" % (str(rev), sys.argv[0]), True)
     if con_args:
         try:
             _info("MADlib database version = %s (host=%s, db=%s, schema=%s)"
@@ -397,7 +468,7 @@ def _plpy_check(py_min_ver):
 
     # Check PL/Python existence
     rv = _internal_run_query("SELECT count(*) AS CNT FROM pg_language "
-                        "WHERE lanname = 'plpythonu'", True)
+                             "WHERE lanname = 'plpythonu'", True)
     if int(rv[0]['cnt']) > 0:
         _info("> PL/Python already installed", verbose)
     else:
@@ -444,8 +515,7 @@ def _db_install(schema, dbrev, testcase):
     """
     _info("Installing MADlib into %s schema..." % schema.upper(), True)
 
-    temp_schema = schema + '_v' + ''.join(_get_rev_num(dbrev))
-
+    temp_schema = schema + '_v' + ''.join(map(str, _get_rev_num(dbrev)))
     # Check the status of MADlib objects in database
     madlib_exists = False if dbrev is None else True
 
@@ -538,7 +608,7 @@ def _db_install(schema, dbrev, testcase):
         except:
             _db_rollback(schema, None)
 
-    _info("MADlib %s installed successfully in %s schema." % (rev, schema.upper()), True)
+    _info("MADlib %s installed successfully in %s schema." % (str(rev), schema.upper()), True)
 # ------------------------------------------------------------------------------
 
 
@@ -548,7 +618,7 @@ def _db_upgrade(schema, dbrev):
         @param schema MADlib schema name
         @param dbrev DB-level MADlib version
     """
-    if _get_rev_num(dbrev) >= _get_rev_num(rev):
+    if _is_rev_gte(_get_rev_num(dbrev), _get_rev_num(rev)):
         _info("Current MADlib version already up to date.", True)
         return
 
@@ -661,7 +731,7 @@ def _db_upgrade(schema, dbrev):
     ch.drop_traininginfo_4dt()  # used types: oid, text, integer, float
     _db_create_objects(schema, None, True, sc)
 
-    _info("MADlib %s upgraded successfully in %s schema." % (rev, schema.upper()), True)
+    _info("MADlib %s upgraded successfully in %s schema." % (str(rev), schema.upper()), True)
 # ------------------------------------------------------------------------------
 
 
@@ -736,7 +806,7 @@ def _db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
     try:
         _info("> Writing version info in MigrationHistory table", True)
         _internal_run_query("INSERT INTO %s.migrationhistory(version) "
-                       "VALUES('%s')" % (schema, rev), True)
+                            "VALUES('%s')" % (schema, str(rev)), True)
     except:
         _error("Cannot insert data into %s.migrationhistory table" % schema, False)
         raise Exception
@@ -893,7 +963,7 @@ def main(argv):
 
     parser = argparse.ArgumentParser(
         prog="madpack",
-        description='MADlib package manager (' + rev + ')',
+        description='MADlib package manager (' + str(rev) + ')',
         argument_default=False,
         formatter_class=argparse.RawTextHelpFormatter,
         epilog="""Example:
@@ -1027,7 +1097,7 @@ def main(argv):
         # Get DB version
         dbver = _get_dbver()
         portdir = os.path.join(maddir, "ports", portid)
-        if portid == "hawq" and _get_rev_num(dbver) >= _get_rev_num('2.0'):
+        if portid == "hawq" and _is_rev_gte(_get_rev_num(dbver), _get_rev_num('2.0')):
             is_hawq2 = True
         else:
             is_hawq2 = False
@@ -1098,7 +1168,7 @@ def main(argv):
         _error("madpack uninstall is currently not available for HAWQ", True)
 
     if args.command[0] in ('uninstall', 'reinstall') and (portid != 'hawq' or is_hawq2):
-        if _get_rev_num(dbrev) == ['0']:
+        if _get_rev_num(dbrev) == [0]:
             _info("Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
             return
 
@@ -1169,7 +1239,7 @@ def main(argv):
         # 1) Compare OS and DB versions.
         # noop if OS <= DB.
         _print_revs(rev, dbrev, con_args, schema)
-        if _get_rev_num(dbrev) >= _get_rev_num(rev):
+        if _is_rev_gte(_get_rev_num(dbrev), _get_rev_num(rev)):
             _info("Current MADlib version already up to date.", True)
             return
         # proceed to create objects if nothing installed in DB or for HAWQ < 2.0
@@ -1204,7 +1274,7 @@ def main(argv):
 
         # 2) Compare OS and DB versions. Continue if OS > DB.
         _print_revs(rev, dbrev, con_args, schema)
-        if _get_rev_num(dbrev) >= _get_rev_num(rev):
+        if _is_rev_gte(_get_rev_num(dbrev), _get_rev_num(rev)):
             _info("Current MADlib version is already up-to-date.", True)
             return
 
@@ -1234,7 +1304,9 @@ def main(argv):
             return
 
         # Create install-check user
-        test_user = 'madlib_' + rev.replace('.', '') + '_installcheck'
+        test_user = ('madlib_' +
+                     rev.replace('.', '').replace('-', '_') +
+                     '_installcheck')
         try:
             _internal_run_query("DROP USER IF EXISTS %s;" % (test_user), False)
         except:
@@ -1242,8 +1314,7 @@ def main(argv):
             _internal_run_query("DROP USER IF EXISTS %s;" % (test_user), True)
         _internal_run_query("CREATE USER %s;" % (test_user), True)
 
-        _internal_run_query("GRANT USAGE ON SCHEMA %s TO %s;"
-                       % (schema, test_user), True)
+        _internal_run_query("GRANT USAGE ON SCHEMA %s TO %s;" % (schema, test_user), True)
 
         # 2) Run test SQLs
         _info("> Running test scripts for:", verbose)
@@ -1291,10 +1362,10 @@ def main(argv):
 
             # Prepare test schema
             test_schema = "madlib_installcheck_%s" % (module)
-            _internal_run_query("DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s;"
-                           % (test_schema, test_schema), True)
-            _internal_run_query("GRANT ALL ON SCHEMA %s TO %s;"
-                           % (test_schema, test_user), True)
+            _internal_run_query("DROP SCHEMA IF EXISTS %s CASCADE; CREATE SCHEMA %s;" %
+                                (test_schema, test_schema), True)
+            _internal_run_query("GRANT ALL ON SCHEMA %s TO %s;" %
+                                (test_schema, test_user), True)
 
             # Switch to test user and prepare the search_path
             pre_sql = '-- Switch to test user:\n' \
@@ -1356,17 +1427,67 @@ def main(argv):
         _internal_run_query("DROP USER %s;" % (test_user), True)
 
 
+# -----------------------------------------------------------------------
+# Unit tests
+# -----------------------------------------------------------------------
+class RevTest(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def tearDown(self):
+        pass
+
+    def test_get_rev_num(self):
+        # not using assertGreaterEqual to keep Python 2.6 compatibility
+        self.assertTrue(_get_rev_num('4.3.10') >= _get_rev_num('4.3.5'))
+        self.assertTrue(_get_rev_num('1.9.10-dev') >= _get_rev_num('1.9.9'))
+        self.assertNotEqual(_get_rev_num('1.9.10-dev'), _get_rev_num('1.9.10'))
+        self.assertEqual(_get_rev_num('1.9.10'), _get_rev_num('1.9.10'))
+
+    def test_is_rev_gte(self):
+        # 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta <
+        #       1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
+        self.assertTrue(_is_rev_gte([], []))
+        self.assertTrue(_is_rev_gte([1, 9], [1, None]))
+        self.assertFalse(_is_rev_gte([1, None], [1, 9]))
+
+        self.assertTrue(_is_rev_gte(_get_rev_num('4.3.10'), _get_rev_num('4.3.5')))
+        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0'), _get_rev_num('1.9.0')))
+        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9.0')))
+        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9')))
+        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0'), _get_rev_num('1.9.0-dev')))
+        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9.0-dev')))
+        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0-dev'), _get_rev_num('1.9.0-dev')))
+        self.assertTrue(_is_rev_gte([1, 9, 'rc', 1], [1, 9, 'dev', 0]))
+
+        self.assertFalse(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.10')))
+        self.assertFalse(_is_rev_gte([1, 9, 'dev', 1], [1, 9, 'rc', 0]))
+        self.assertFalse(_is_rev_gte([1, 9, 'alpha'], [1, 9, 'alpha', 0]))
+        self.assertFalse(_is_rev_gte([1, 9, 'alpha', 1], [1, 9, 'alpha', 'beta']))
+        self.assertFalse(_is_rev_gte([1, 9, 'alpha.1'], [1, 9, 'alpha.beta']))
+        self.assertFalse(_is_rev_gte([1, 9, 'beta', 2], [1, 9, 'beta', 4]))
+        self.assertFalse(_is_rev_gte([1, 9, 'beta', '1'], [1, 9, 'rc', '0']))
+        self.assertFalse(_is_rev_gte([1, 9, 'rc', 1], [1, 9, 0]))
+        self.assertFalse(_is_rev_gte([1, 9, '0.2'], [1, 9, '0.3']))
+        self.assertFalse(_is_rev_gte([1, 9, 'build2'], [1, 9, 'build3']))
+
+
 # ------------------------------------------------------------------------------
 # Start Here
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
+    RUN_TESTS = True
 
-    # Run main
-    main(sys.argv[1:])
-
-    # Optional log files cleanup
-    # keeplogs and tmpdir are global variables
-    if not keeplogs:
-        shutil.rmtree(tmpdir)
+    if RUN_TESTS:
+        unittest.main()
     else:
-        print "INFO: Log files saved in " + tmpdir
+        # Run main
+        main(sys.argv[1:])
+
+        # Optional log files cleanup
+        # keeplogs and tmpdir are global variables
+        if not keeplogs:
+            shutil.rmtree(tmpdir)
+        else:
+            print "INFO: Log files saved in " + tmpdir

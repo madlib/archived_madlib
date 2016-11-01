@@ -13,7 +13,7 @@ set(MADLIB_GPPKG_RPM_SOURCE_DIR
 # consistent with the version in madlib.spec.in. gppkg deduces the
 # uninstallation command line options from the filename!
 set(MADLIB_GPPKG_RPM_FILE_NAME
-    "madlib-${MADLIB_VERSION_STRING}-${MADLIB_GPPKG_RELEASE_NUMBER}.${CPACK_RPM_PACKAGE_ARCHITECTURE}.rpm")
+    "madlib-${MADLIB_VERSION_STRING_NO_HYPHEN}-${MADLIB_GPPKG_RELEASE_NUMBER}.${CPACK_RPM_PACKAGE_ARCHITECTURE}.rpm")
 
 find_program(
     GPPKG_BINARY
