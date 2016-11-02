@@ -1477,7 +1477,7 @@ class RevTest(unittest.TestCase):
 # Start Here
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
-    RUN_TESTS = True
+    RUN_TESTS = False
 
     if RUN_TESTS:
         unittest.main()
