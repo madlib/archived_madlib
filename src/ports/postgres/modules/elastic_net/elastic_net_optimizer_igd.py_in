@@ -1,126 +1,56 @@
 
 import plpy
-import math
 from utilities.utilities import unique_string
 from utilities.in_mem_group_control import GroupIterationController
-from elastic_net_utils import __compute_means
-from elastic_net_utils import __normalize_data
-from elastic_net_utils import __compute_data_scales
-from elastic_net_utils import __tbl_dimension_rownum
-from elastic_net_utils import __elastic_net_validate_args
+from elastic_net_utils import _compute_means
+from elastic_net_utils import _normalize_data
+from elastic_net_utils import _compute_data_scales
+from elastic_net_utils import _tbl_dimension_rownum
+from elastic_net_utils import _elastic_net_validate_args
 from utilities.utilities import _array_to_string
-from elastic_net_utils import __compute_average_sq
-from elastic_net_utils import __generate_warmup_lambda_sequence
-from elastic_net_utils import __process_warmup_lambdas
-from elastic_net_generate_result import __elastic_net_generate_result
-from utilities.utilities import __mad_version
-from utilities.utilities import preprocess_keyvalue_params
+from elastic_net_utils import _compute_average_sq
+from elastic_net_utils import _generate_warmup_lambda_sequence
+from elastic_net_utils import _process_warmup_lambdas
+from elastic_net_generate_result import _elastic_net_generate_result
+from utilities.utilities import extract_keyvalue_params
 from utilities.control import MinWarning
 
-version_wrapper = __mad_version()
-mad_vec = version_wrapper.select_vecfunc()
-## ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __igd_params_parser(optimizer_params, lambda_value, tolerance, schema_madlib):
+def _igd_params_parser(optimizer_params, lambda_value, tolerance, schema_madlib):
     """
     Parse IGD parameters.
     """
-    allowed_params = set(["stepsize", "warmup", "warmup_lambdas",
-                          "warmup_lambda_no",
-                          "threshold", "parallel", "warmup_tolerance",
-                          "step_decay"])
-    name_value = dict()
     # default values
-    name_value["parallel"] = True
-    name_value["stepsize"] = 0.01
-    name_value["warmup"] = False
-    name_value["warmup_lambdas"] = None
-    name_value["warmup_lambda_no"] = 15
-    name_value["threshold"] = 1e-10
-    name_value["warmup_tolerance"] = tolerance
-    name_value["step_decay"] = 0
+    defaults_and_types = {
+        "stepsize": (0.01, float),
+        "warmup": (False, bool),
+        "warmup_lambdas": (None, list),
+        "warmup_lambda_no": (15, int),
+        "threshold": (1e-10, float),
+        "parallel": (True, bool),
+        "step_decay": (0.0, float),
+        "warmup_tolerance": (tolerance, float)
+    }
+    param_defaults = dict([(k, v[0]) for k, v in defaults_and_types.items()])
+    param_types = dict([(k, v[1]) for k, v in defaults_and_types.items()])
 
-    warmup_lambdas = None
-    warmup_lambda_no = None
+    if not optimizer_params:
+        return param_defaults
 
-    if optimizer_params is None or len(optimizer_params) == 0:
-        return name_value
+    usage_str = ("Run:\n"
+                 "   SELECT {0}.elastic_net_train('igd');\n"
+                 "   to see the parameters for FISTA algorithm.".
+                 format(schema_madlib))
+    name_value = extract_keyvalue_params(optimizer_params, param_types,
+                                         param_defaults,
+                                         usage_str=usage_str,
+                                         ignore_invalid=True)
 
-    for s in preprocess_keyvalue_params(optimizer_params):
-        items = s.split("=")
-        if (len(items) != 2):
-            plpy.error("Elastic Net error: Optimizer parameter list has incorrect format!")
-        param_name = items[0].strip(" \"").lower()
-        param_value = items[1].strip(" \"").lower()
-
-        if param_name not in allowed_params:
-            plpy.error(
-                """
-                Elastic Net error: {param_name} is not a valid parameter name for the IGD optimizer.
-                Run:
-
-                SELECT {schema_madlib}.elastic_net_train('igd');
-
-                to see the parameters for IGD algorithm.
-                """.format(param_name=param_name,
-                           schema_madlib=schema_madlib))
-
-        if param_name == "step_decay":
-            try:
-                name_value["step_decay"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: Decay of step must be a float number!")
-
-        if param_name == "stepsize":
-            try:
-                name_value["stepsize"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: stepsize must be a float number!")
-
-        if param_name == "warmup_tolerance":
-            try:
-                name_value["warmup_tolerance"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: warmup_tolerance must be a float number!")
-
-        if param_name == "warmup":
-            if param_value in ["true", "t", "yes", "y"]:
-                name_value["warmup"] = True
-            elif param_value in ["false", "f", "no", "n"]:
-                name_value["warmup"] = False
-            else:
-                plpy.error("Elastic Net error: Do you need warmup (True/False or yes/no) ?")
-
-        if param_name == "warmup_lambdas" and param_value != "null":
-            warmup_lambdas = param_value
-
-        if param_name == "warmup_lambda_no":
-            warmup_lambda_no = param_value
-
-        if param_name == "threshold":
-            try:
-                name_value["threshold"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: threshold must be a float number!")
-
-        if param_name == "parallel":
-            if param_value in ["true", "t", "yes", "y"]:
-                name_value["parallel"] = True
-            elif param_value in ["false", "f", "no", "n"]:
-                name_value["parallel"] = False
-            else:
-                plpy.error("Elastic Net error: Do you need parallel (True/False or yes/no) ? IGD in parallel might be slower !")
-
-    if name_value["warmup"]:
-        if warmup_lambdas is not None:
-            # errors are handled in __process_warmup_lambdas
-            name_value["warmup_lambdas"] = __process_warmup_lambdas(warmup_lambdas, lambda_value)
-        if warmup_lambda_no is not None:
-            try:
-                name_value["warmup_lambda_no"] = int(warmup_lambda_no)
-            except:
-                plpy.error("Elastic Net error: warmup_lambda_no must be an integer!")
+    if name_value["warmup"] and name_value['warmup_lambdas'] is not None:
+        # errors are handled in _process_warmup_lambdas
+        name_value['warmup_lambdas'] = _process_warmup_lambdas(name_value['warmup_lambdas'], lambda_value)
 
     # validate the parameters
     if name_value["step_decay"] < 0:
@@ -140,13 +70,14 @@ def __igd_params_parser(optimizer_params, lambda_value, tolerance, schema_madlib
         plpy.error("Elastic Net error: A positive threshold is needed to screen out tiny values around zero!")
 
     return name_value
-## ========================================================================
+# ------------------------------------------------------------------------
 
-def __igd_construct_dict(schema_madlib, family, tbl_source,
-                         col_ind_var, col_dep_var,
-                         tbl_result, dimension, row_num, lambda_value, alpha,
-                         normalization, max_iter, tolerance, outstr_array,
-                         optimizer_params_dict):
+
+def _igd_construct_dict(schema_madlib, family, tbl_source,
+                        col_ind_var, col_dep_var,
+                        tbl_result, dimension, row_num, lambda_value, alpha,
+                        normalization, max_iter, tolerance, outstr_array,
+                        optimizer_params_dict):
     """
     Construct the dict used by a series of SQL queries in IGD optimizer.
     """
@@ -198,10 +129,10 @@ def __igd_construct_dict(schema_madlib, family, tbl_source,
     args["ymean_name"] = unique_string()
 
     return args
-## ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __igd_cleanup_temp_tbls(**args):
+def _igd_cleanup_temp_tbls(**args):
     """
     Drop all temporary tables used by IGD optimizer,
     including tables used in the possible normalization
@@ -215,36 +146,36 @@ def __igd_cleanup_temp_tbls(**args):
                  drop table if exists pg_temp.{tbl_igd_state};
                  """.format(**args))
     return None
-## ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __elastic_net_igd_train(schema_madlib, func_step_aggregate,
-                            func_state_diff, family,
-                            tbl_source, col_ind_var,
-                            col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
-                            normalization, optimizer_params, max_iter,
-                            tolerance, outstr_array, grouping_str,
-                            grouping_col, **kwargs):
-    __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var, tbl_result, tbl_summary,
-                                lambda_value, alpha, normalization, max_iter, tolerance)
+def _elastic_net_igd_train(schema_madlib, func_step_aggregate,
+                           func_state_diff, family,
+                           tbl_source, col_ind_var,
+                           col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
+                           normalization, optimizer_params, max_iter,
+                           tolerance, outstr_array, grouping_str,
+                           grouping_col, **kwargs):
+    _elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var, tbl_result, tbl_summary,
+                               lambda_value, alpha, normalization, max_iter, tolerance)
 
-    return __elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
-                                           func_state_diff, family,
-                                           tbl_source, col_ind_var,
-                                           col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
-                                           normalization, optimizer_params, max_iter,
-                                           tolerance, outstr_array, grouping_str,
-                                           grouping_col, **kwargs)
-## ========================================================================
+    return _elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
+                                          func_state_diff, family,
+                                          tbl_source, col_ind_var,
+                                          col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
+                                          normalization, optimizer_params, max_iter,
+                                          tolerance, outstr_array, grouping_str,
+                                          grouping_col, **kwargs)
+# ------------------------------------------------------------------------
 
 
-def __elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
-                                    func_state_diff, family,
-                                    tbl_source, col_ind_var,
-                                    col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
-                                    normalization, optimizer_params, max_iter,
-                                    tolerance, outstr_array, grouping_str,
-                                    grouping_col, **kwargs):
+def _elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
+                                   func_state_diff, family,
+                                   tbl_source, col_ind_var,
+                                   col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
+                                   normalization, optimizer_params, max_iter,
+                                   tolerance, outstr_array, grouping_str,
+                                   grouping_col, **kwargs):
     """
     Fit linear model with elastic net regularization using IGD optimization.
 
@@ -261,128 +192,123 @@ def __elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
     @param optimizer_params  Parameters of the above optimizer, the format
                              is '{arg = value, ...}'::varchar[]
     """
-    old_msg_level = plpy.execute("""
-                                 select setting from pg_settings
-                                 where name='client_min_messages'
-                                 """)[0]['setting']
-    plpy.execute("set client_min_messages to error")
+    with MinWarning('error'):
+        (dimension, row_num) = _tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var)
 
-    (dimension, row_num) = __tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var)
+        # generate a full dict to ease the following string format
+        # including several temporary table names
+        args = _igd_construct_dict(schema_madlib, family, tbl_source, col_ind_var,
+                                   col_dep_var, tbl_result,
+                                   dimension, row_num, lambda_value, alpha, normalization,
+                                   max_iter, tolerance, outstr_array,
+                                   _igd_params_parser(optimizer_params, lambda_value,
+                                                      tolerance, schema_madlib))
 
-    # generate a full dict to ease the following string format
-    # including several temporary table names
-    args = __igd_construct_dict(schema_madlib, family, tbl_source, col_ind_var,
-                                col_dep_var, tbl_result,
-                                dimension, row_num, lambda_value, alpha, normalization,
-                                max_iter, tolerance, outstr_array,
-                                __igd_params_parser(optimizer_params, lambda_value,
-                                                    tolerance, schema_madlib))
+        args.update({'grouping_col': grouping_col})
+        # use normalized data or not
+        if normalization:
+            _normalize_data(args)
+            tbl_used = args["tbl_data_scaled"]
+            args["col_ind_var_new"] = args["col_ind_var_norm_new"]
+            args["col_dep_var_new"] = args["col_dep_var_norm_new"]
+        else:
+            _compute_data_scales(args)
+            tbl_used = tbl_source
+            args["col_ind_var_new"] = col_ind_var
+            args["col_dep_var_new"] = col_dep_var
 
-    args.update({'grouping_col': grouping_col})
-    # use normalized data or not
-    if normalization:
-        __normalize_data(args)
-        tbl_used = args["tbl_data_scaled"]
-        args["col_ind_var_new"] = args["col_ind_var_norm_new"]
-        args["col_dep_var_new"] = args["col_dep_var_norm_new"]
-    else:
-        __compute_data_scales(args)
-        tbl_used = tbl_source
-        args["col_ind_var_new"] = col_ind_var
-        args["col_dep_var_new"] = col_dep_var
+        args["tbl_used"] = tbl_used
 
-    args["tbl_used"] = tbl_used
+        # average squares of each feature
+        # used to estimate the largest lambda value
+        # also used to screen out tiny values, so order is needed
+        args["sq"] = _compute_average_sq(**args)
+        args["sq_str"] = _array_to_string(args["sq"])
 
-    # average squares of each feature
-    # used to estimate the largest lambda value
-    # also used to screen out tiny values, so order is needed
-    args["sq"] = __compute_average_sq(**args)
-    args["sq_str"] = _array_to_string(args["sq"])
+        if args["warmup_lambdas"] is not None:
+            args["warm_no"] = len(args["warmup_lambdas"])
+            args["warmup_lambdas"] = args["warmup_lambdas"]
 
-    if args["warmup_lambdas"] is not None:
-        args["warm_no"] = len(args["warmup_lambdas"])
-        args["warmup_lambdas"] = args["warmup_lambdas"]
+        if args["warmup"] and args["warmup_lambdas"] is None:
+            args["warmup_lambdas"] = \
+                _generate_warmup_lambda_sequence(
+                args["tbl_used"], args["col_ind_var_new"], args["col_dep_var_new"],
+                dimension, row_num, lambda_value, alpha,
+                args["warmup_lambda_no"], args["sq"])
+            args["warm_no"] = len(args["warmup_lambdas"])
+            args["warmup_lambdas"] = args["warmup_lambdas"]
+        elif args["warmup"] is False:
+            args["warm_no"] = 1
+            args["warmup_lambdas"] = [lambda_value]  # only one value
 
-    if args["warmup"] and args["warmup_lambdas"] is None:
-        args["warmup_lambdas"] = \
-        __generate_warmup_lambda_sequence(
-           args["tbl_used"], args["col_ind_var_new"], args["col_dep_var_new"],
-           dimension, row_num, lambda_value, alpha,
-           args["warmup_lambda_no"], args["sq"])
-        args["warm_no"] = len(args["warmup_lambdas"])
-        args["warmup_lambdas"] = args["warmup_lambdas"]
-    elif args["warmup"] is False:
-        args["warm_no"] = 1
-        args["warmup_lambdas"] = [lambda_value]  # only one value
+        # parameter values required by the IGD optimizer
+        (xmean, ymean) = _compute_means(**args)
 
-    # parameter values required by the IGD optimizer
-    (xmean, ymean) = __compute_means(**args)
-
-    args.update({
-        'rel_args': args["tbl_igd_args"],
-        'rel_state': args["tbl_igd_state"],
-        'col_grp_iteration': unique_string(desp='col_grp_iteration'),
-        'col_grp_state': unique_string(desp='col_grp_state'),
-        'col_grp_key': unique_string(desp='col_grp_key'),
-        'col_n_tuples': unique_string(desp='col_n_tuples'),
-        'lambda_count': 1,
-        'state_type': "double precision[]",
-        'rel_source': tbl_used,
-        'grouping_str': grouping_str,
-        'xmean_val': xmean,
-        'ymean_val': ymean,
-        'tbl_source': tbl_source,
-        'tbl_summary': tbl_summary
+        args.update({
+            'rel_args': args["tbl_igd_args"],
+            'rel_state': args["tbl_igd_state"],
+            'col_grp_iteration': unique_string(desp='col_grp_iteration'),
+            'col_grp_state': unique_string(desp='col_grp_state'),
+            'col_grp_key': unique_string(desp='col_grp_key'),
+            'col_n_tuples': unique_string(desp='col_n_tuples'),
+            'lambda_count': 0,
+            'state_type': "double precision[]",
+            'rel_source': tbl_used,
+            'grouping_str': grouping_str,
+            'xmean_val': xmean,
+            'ymean_val': ymean,
+            'tbl_source': tbl_source,
+            'tbl_summary': tbl_summary
         })
-    if not args.get('parallel'):
-        func_step_aggregate += "_single_seg"
-    # perform the actual calculation
-    iteration_run = __compute_igd(schema_madlib,
-                                  func_step_aggregate,
-                                  func_state_diff,
-                                  args["tbl_igd_args"],
-                                  args["tbl_igd_state"], 
-                                  tbl_used,
-                                  args["col_ind_var_new"], 
-                                  args["col_dep_var_new"],
-                                  grouping_str,
-                                  grouping_col,
-                                  start_iter=0,
-                                  max_iter= args["max_iter"],
-                                  tolerance= args["tolerance"],
-                                  warmup_tolerance= args["warmup_tolerance"],
-                                  warm_no= args["warm_no"],
-                                  step_decay= args["step_decay"],
-                                  dimension= args["dimension"],
-                                  stepsize= args["stepsize"],
-                                  lambda_name= args["warmup_lambdas"],
-                                  warmup_lambda_value = args.get('warmup_lambdas')[args["lambda_count"]-1],
-                                  alpha= args["alpha"],
-                                  row_num= args["row_num"],
-                                  xmean_val= args["xmean_val"],
-                                  ymean_val= args["ymean_val"],
-                                  lambda_count= args["lambda_count"],
-                                  rel_state= args["tbl_igd_state"],
-                                  col_grp_iteration= args["col_grp_iteration"],
-                                  col_grp_state= args["col_grp_state"],
-                                  col_grp_key= args["col_grp_key"],
-                                  col_n_tuples= args["col_n_tuples"],
-                                  rel_source= args["rel_source"],
-                                  state_type= args["state_type"],)
+        if not args.get('parallel'):
+            func_step_aggregate += "_single_seg"
+        # perform the actual calculation
+        iteration_run = _compute_igd(schema_madlib,
+                                     func_step_aggregate,
+                                     func_state_diff,
+                                     args["tbl_igd_args"],
+                                     args["tbl_igd_state"],
+                                     tbl_used,
+                                     args["col_ind_var_new"],
+                                     args["col_dep_var_new"],
+                                     grouping_str,
+                                     grouping_col,
+                                     start_iter=0,
+                                     max_iter=args["max_iter"],
+                                     tolerance=args["tolerance"],
+                                     warmup_tolerance=args["warmup_tolerance"],
+                                     warm_no=args["warm_no"],
+                                     step_decay=args["step_decay"],
+                                     dimension=args["dimension"],
+                                     stepsize=args["stepsize"],
+                                     lambda_name=args["warmup_lambdas"],
+                                     warmup_lambda_value=args.get('warmup_lambdas')[args["lambda_count"]],
+                                     alpha=args["alpha"],
+                                     row_num=args["row_num"],
+                                     xmean_val=args["xmean_val"],
+                                     ymean_val=args["ymean_val"],
+                                     lambda_count=args["lambda_count"],
+                                     rel_state=args["tbl_igd_state"],
+                                     col_grp_iteration=args["col_grp_iteration"],
+                                     col_grp_state=args["col_grp_state"],
+                                     col_grp_key=args["col_grp_key"],
+                                     col_n_tuples=args["col_n_tuples"],
+                                     rel_source=args["rel_source"],
+                                     state_type=args["state_type"],)
 
-    __elastic_net_generate_result("igd", iteration_run, **args)
+        _elastic_net_generate_result("igd", iteration_run, **args)
 
-    # cleanup
-    __igd_cleanup_temp_tbls(**args)
-    plpy.execute("set client_min_messages to " + old_msg_level)
+        # cleanup
+        _igd_cleanup_temp_tbls(**args)
     return None
 
-## ========================================================================
+# ------------------------------------------------------------------------
 
-def __compute_igd(schema_madlib, func_step_aggregate, func_state_diff,
-                  tbl_args, tbl_state, tbl_source,
-                  col_ind_var, col_dep_var, grouping_str, grouping_col, 
-                  start_iter, **kwargs):
+
+def _compute_igd(schema_madlib, func_step_aggregate, func_state_diff,
+                 tbl_args, tbl_state, tbl_source,
+                 col_ind_var, col_dep_var, grouping_str, grouping_col,
+                 start_iter, **kwargs):
     """
     Driver function for elastic net with Gaussian response using IGD
 
@@ -403,7 +329,7 @@ def __compute_igd(schema_madlib, func_step_aggregate, func_state_diff,
         result in \c tbl_state
     """
     args = locals()
-    
+
     for k, v in kwargs.iteritems():
         if k not in args:
             args.update({k: v})
@@ -414,7 +340,7 @@ def __compute_igd(schema_madlib, func_step_aggregate, func_state_diff,
             # manually add the intercept term
             if (it.kwargs["lambda_count"] > len(args.get('lambda_name'))):
                 break
-            it.kwargs["warmup_lambda_value"] = args.get('lambda_name')[it.kwargs["lambda_count"]-1]
+            it.kwargs["warmup_lambda_value"] = args.get('lambda_name')[it.kwargs["lambda_count"] - 1]
             it.update("""
                     {schema_madlib}.{func_step_aggregate}(
                         ({col_ind_var})::double precision[],

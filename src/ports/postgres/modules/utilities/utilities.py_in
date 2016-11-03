@@ -463,7 +463,9 @@ def preprocess_keyvalue_params(input_params, split_char='='):
 def extract_keyvalue_params(input_params,
                             input_param_types,
                             default_values=None,
-                            split_char='='):
+                            split_char='=',
+                            usage_str='',
+                            ignore_invalid=False):
     """ Extract key value pairs from input parameters or set the default values
 
     Args:
@@ -480,6 +482,8 @@ def extract_keyvalue_params(input_params,
         @param default_values: dict, Default values for each allowed parameter.
         @param split_char: str, The character used to split key and value.
                             Default set to '='
+        @param usage_str: str, An optional usage string to print with error message.
+        @param ignore_invalid: bool, If True an invalid param input is ignore silently
 
     Returns:
         Dict. Dictionary of input parameter values with key as parameter name
@@ -499,17 +503,22 @@ def extract_keyvalue_params(input_params,
     for s in preprocess_keyvalue_params(input_params, split_char=split_char):
         items = split_quoted_delimited_str(s, delimiter=split_char)
         if (len(items) != 2):
-            raise KeyError("Input parameter list has incorrect format")
+            raise KeyError("Input parameter list has incorrect format \n"
+                           "{0}".format(usage_str))
 
         param_name = items[0].strip(" \"").lower()
         param_value = items[1].strip()
         if not param_name or param_name in ('none', 'null'):
-            plpy.error("Invalid input param name: {0} ".format(str(param_name)))
+            plpy.error("Invalid input param name: {0} \n"
+                       "{1}".format(param_name, usage_str))
         try:
             param_type = input_param_types[param_name]
         except KeyError:
-            raise KeyError("Invalid input: {0} is not a valid parameter".
-                           format(param_name))
+            if not ignore_invalid:
+                raise KeyError("Invalid input: {0} is not a valid parameter \n"
+                               "{1}".format(param_name, usage_str))
+            else:
+                continue
         try:
             if param_type in (int, str, float):
                 parameter_dict[param_name] = param_type(param_value)
@@ -522,11 +531,11 @@ def extract_keyvalue_params(input_params,
                 #  Raises ValueError if anything else.
                 parameter_dict[param_name] = bool(strtobool(param_value))
             else:
-                raise TypeError("Invalid input: {0} has unsupported type".
-                                format(param_name))
+                raise TypeError("Invalid input: {0} has unsupported type \n"
+                                "{1}".format(param_name, usage_str))
         except ValueError:
-            raise ValueError("Invalid input: {0} must be {1}".
-                             format(param_name, str(param_type)))
+            raise ValueError("Invalid input: {0} must be {1} \n"
+                             "{2}".format(param_name, param_type, usage_str))
     return parameter_dict
 # -------------------------------------------------------------------------
 

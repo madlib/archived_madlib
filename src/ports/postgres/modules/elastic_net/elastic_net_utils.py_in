@@ -1,4 +1,3 @@
-
 import plpy
 import math
 import re
@@ -7,22 +6,25 @@ from utilities.utilities import _array_to_string
 from convex.utils_regularization import __utils_ind_var_scales
 from convex.utils_regularization import __utils_dep_var_scale
 from convex.utils_regularization import __utils_normalize_data
-# from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
-# from utilities.validate_args import scalar_col_has_no_null
-# from utilities.validate_args import array_col_has_same_dimension
-# from utilities.validate_args import array_col_has_no_null
 from utilities.control import IterationController2S
-#from convex.lasso_igd import IterationControllerNoTableDrop
-from utilities.utilities import __mad_version
 
-version_wrapper = __mad_version()
-mad_vec = version_wrapper.select_vecfunc()
+from collections import namedtuple
 
-# ========================================================================
+# ------------------------------------------------------------------------
+# -- constants -----------------------------------------------------------
+
+# below constants are defined in a manner that allow using them as enums:
+#   'igd' in OPTIMIZERS  (returns True)
+#   'igd' == OPTIMIZERS.igd  (returns True)
+#   To change the
+BINOMIAL_FAMILIES = namedtuple("bin", ("binomial logistic"))('binomial', 'logistic')
+GAUSSIAN_FAMILIES = namedtuple("gau", ("gaussian linear"))('gaussian', 'linear')
+OPTIMIZERS = namedtuple("opt", ("igd fista"))('igd', 'fista')
+# -------------------------------------------------------------------------
 
 
-def __process_results(coef, intercept, outstr_array):
+def _process_results(coef, intercept, outstr_array):
     """
     Return features, features_selected, dense_coef
     """
@@ -42,10 +44,10 @@ def __process_results(coef, intercept, outstr_array):
     dense_coef = _array_to_string(dense_coef)
 
     return (features, features_selected, dense_coef, _array_to_string(coef))
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __process_warmup_lambdas(lambdas, lambda_value):
+def _process_warmup_lambdas(lambdas, lambda_value):
     """
     Convert the string of warmup_lambdas into an double array
     @param lambdas The string which will be converted to an array
@@ -57,10 +59,9 @@ def __process_warmup_lambdas(lambdas, lambda_value):
         plpy.error("Elastic Net error: warmup_lambdas must be NULL or something like {3,2,1} !")
 
     elm = _string_to_array(matched.group(1))
-    for i in range(len(elm)):
-        elm[i] = float(elm[i])
+    elm = [float(i) for i in elm]
 
-    if elm[len(elm) - 1] != lambda_value:
+    if elm[- 1] != lambda_value:
         plpy.error("""
                    Elastic Net error: The last element of warmup_lambdas must
                    be equal to the lambda value that you want to compute !
@@ -75,53 +76,40 @@ def __process_warmup_lambdas(lambdas, lambda_value):
                            """)
 
     return elm
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __generate_warmup_lambda_sequence(tbl_used, col_ind_var, col_dep_var,
-                                      dimension, row_num, lambda_value,
-                                      alpha, num_steps, sq):
+def _generate_warmup_lambda_sequence(lambda_value, n_steps):
     """
     Compute lambda sequence, when warmup is True and warmup_lambdas are
     not given
     """
-    if num_steps == 1:
+    if n_steps == 1:
         return [lambda_value]
 
-    # mean_y = plpy.execute("select avg({col_dep_var}) from {tbl_used}".format(
-    #     col_dep_var = col_dep_var, tbl_used = tbl_used))[0]["avg"]
-    # xy = [0] * dimension
-    # for i in range(1,dimension+1):
-    #     xy[i-1] = plpy.execute("""
-    #                          select abs(sum({col_ind_var}[{i}] * ({col_dep_var} - {mean_y})))
-    #                          from {tbl_used}
-    #                          """.format(col_ind_var = col_ind_var,
-    #                                     col_dep_var = col_dep_var,
-    #                                     mean_y = mean_y,
-    #                                     tbl_used = tbl_used,
-    #                                     i = i))[0]["abs"]
-    # max_sq = max(sq)
-    # epsilon = 0.001
-    # effective_alpha = alpha + (1 - alpha) * epsilon
-    # largest = (max(xy)/ float(row_num) + epsilon * max_sq) / effective_alpha
     largest = 1e5
-    if lambda_value == 0.:
+
+    if abs(lambda_value - 0.) < 1e-6:
+        zero_lambda = True
         smallest = 0.001 * largest
+        n_steps -= 1
     else:
         smallest = lambda_value
-    step = math.log(largest / smallest) / (float(num_steps) - 1)
-    seq = range(num_steps)
-    seq.reverse()
-    for i in range(num_steps):
-        seq[i] = math.exp(seq[i] * step + math.log(smallest))
-    if lambda_value == 0:
-        seq.append(0)
+        zero_lambda = False
+
+    smallest, largest = min(smallest, largest), max(smallest, largest)
+    step = math.log(smallest / largest) / (float(n_steps) - 1)
+    constant = math.log(largest)
+
+    seq = [math.exp(j * step + constant) for j in range(n_steps)]
+    if zero_lambda:
+        seq.append(0.)
 
     return seq
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __compute_average_sq(**args):
+def _compute_average_sq(**args):
     """
     Compute the average squares of all features, used to estimtae the largest lambda
     Actually only the largest value is used, so order does not matter here
@@ -132,10 +120,10 @@ def __compute_average_sq(**args):
             sq[i] = (args["x_scales"]["std"][i]) ** 2 + (args["x_scales"]["mean"][i]) ** 2
 
     return sq
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __compute_log_likelihood(coef, intercept, **args):
+def _compute_log_likelihood(coef, intercept, **args):
     """
     Compute the log-likelihood at the end of calculation
     """
@@ -167,23 +155,20 @@ def __compute_log_likelihood(coef, intercept, **args):
             """.format(coefficients=_array_to_string(coef),
                        intercept=intercept,
                        **args))[0]["loss"]
-    module_1 = sum(x * x for x in coef)
+    module_1 = sum(x * x for x in coef) / 2.
     module_2 = sum(abs(x) for x in coef)
 
-    log_likelihood = -(loss + args["lambda_value"] *
-                       ((1 - args["alpha"]) *
-                        module_1 / 2. + args["alpha"] * module_2))
+    log_likelihood = - (loss + args["lambda_value"] *
+                        ((1 - args["alpha"]) * module_1 + args["alpha"] * module_2))
     return log_likelihood
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
-                                tbl_result, tbl_summary, lambda_value, alpha,
-                                normalization, max_iter, tolerance):
-    if (tbl_source is None or col_ind_var is None or col_dep_var is None
-            or tbl_result is None or lambda_value is None or alpha is None
-            or normalization is None or len(tbl_source) == 0 or len(col_ind_var) == 0
-            or len(col_dep_var) == 0 or len(tbl_result) == 0):
+def _elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
+                               tbl_result, tbl_summary, lambda_value, alpha,
+                               normalization, max_iter, tolerance):
+    if (any(i is None for i in (lambda_value, alpha, normalization)) or
+            any(not i for i in (tbl_source, col_ind_var, col_dep_var, tbl_result))):
         plpy.error("Elastic Net error: You have unsupported NULL/empty value(s) in the arguments!")
 
     if table_exists(tbl_result, only_first_schema=True):
@@ -205,31 +190,31 @@ def __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
         plpy.error("Elastic Net error: tolerance must be positive!")
 
     return None
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __compute_data_scales(args):
+def _compute_data_scales(args):
     args["x_scales"] = __utils_ind_var_scales(tbl_data=args["tbl_source"], col_ind_var=args["col_ind_var"],
                                               dimension=args["dimension"], schema_madlib=args["schema_madlib"])
 
     if args["family"] == "binomial":
         args["y_scale"] = dict(mean=0, std=1)
     else:
-        args["y_scale"] = __utils_dep_var_scale(schema_madlib=args["schema_madlib"], tbl_data=args["tbl_source"], 
-            col_ind_var=args["col_ind_var"], col_dep_var=args["col_dep_var"])
+        args["y_scale"] = __utils_dep_var_scale(schema_madlib=args["schema_madlib"], tbl_data=args["tbl_source"],
+                                                col_ind_var=args["col_ind_var"], col_dep_var=args["col_dep_var"])
 
     args["xmean_str"] = _array_to_string(args["x_scales"]["mean"])
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __normalize_data(args):
+def _normalize_data(args):
     """
     Compute the scaling factors for independent and dependent
     variables, and then scale the original data.
 
     The output is stored in tbl_data_scaled
     """
-    __compute_data_scales(args)
+    _compute_data_scales(args)
 
     y_decenter = True if args["family"] == "gaussian" else False
 
@@ -248,10 +233,10 @@ def __normalize_data(args):
                            grouping_col=args["grouping_col"])
 
     return None
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var):
+def _tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var):
     """
     Measure the dimension and row number of source data table
     """
@@ -270,14 +255,14 @@ def __tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var):
                            select count(*) from {tbl_source}
                            WHERE not {schema_madlib}.array_contains_null({col_ind_var})
                            """.format(tbl_source=tbl_source,
-                           schema_madlib=schema_madlib,
-                           col_ind_var=col_ind_var))[0]["count"]
+                                      schema_madlib=schema_madlib,
+                                      col_ind_var=col_ind_var))[0]["count"]
 
     return (dimension, row_num)
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __compute_means(**args):
+def _compute_means(**args):
     """
     Compute the averages of dependent (y) and independent (x) variables
     """
@@ -287,7 +272,7 @@ def __compute_means(**args):
         return (xmean_str, ymean)
     else:
         return (args["xmean_str"], args["y_scale"]["mean"])
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
 class IterationControllerNoTableDrop (IterationController2S):

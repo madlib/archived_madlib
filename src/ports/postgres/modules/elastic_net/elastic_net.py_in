@@ -1,9 +1,13 @@
 
 import plpy
-from elastic_net_models import __elastic_net_gaussian_igd_train
-from elastic_net_models import __elastic_net_gaussian_fista_train
-from elastic_net_models import __elastic_net_binomial_fista_train
-from elastic_net_models import __elastic_net_binomial_igd_train
+from elastic_net_models import _elastic_net_gaussian_igd_train
+from elastic_net_models import _elastic_net_gaussian_fista_train
+from elastic_net_models import _elastic_net_binomial_fista_train
+from elastic_net_models import _elastic_net_binomial_igd_train
+from elastic_net_utils import _generate_warmup_lambda_sequence
+
+from elastic_net_utils import BINOMIAL_FAMILIES, GAUSSIAN_FAMILIES, OPTIMIZERS
+
 from utilities.validate_args import is_col_array
 from utilities.validate_args import table_exists
 from utilities.validate_args import table_is_empty
@@ -11,21 +15,19 @@ from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import get_cols_and_types
 from utilities.validate_args import cols_in_tbl_valid
 from utilities.validate_args import explicit_bool_to_text
+from utilities.utilities import extract_keyvalue_params
 
 from utilities.control import MinWarning
 
 from utilities.utilities import _string_to_array_with_quotes
 from utilities.utilities import _string_to_array
-from utilities.utilities import set_client_min_messages
-from utilities.utilities import __mad_version
 from utilities.utilities import is_psql_numeric_type
 from utilities.utilities import _assert
 from utilities.utilities import add_postfix
 import re
 
-version_wrapper = __mad_version()
-mad_vec = version_wrapper.select_vecfunc()
-# ========================================================================
+from validation.internal.cross_validation import CrossValidator
+# ------------------------------------------------------------------------
 
 
 def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
@@ -176,11 +178,11 @@ def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
           );
 
     View the results:
-    SELECT  houses.id, 
-            houses.price, 
-            houses_en1_prediction.prediction, 
-            houses.price - houses_en1_prediction.prediction AS residual 
-    FROM houses_en1_prediction, houses 
+    SELECT  houses.id,
+            houses.price,
+            houses_en1_prediction.prediction,
+            houses.price - houses_en1_prediction.prediction AS residual
+    FROM houses_en1_prediction, houses
     WHERE houses.id=houses_en1_prediction.id;
 
         """
@@ -322,20 +324,23 @@ def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
     modified version of IGD is actually used.
 
     Parameters --------------------------------
-    stepsize         - default is 0.01
-    threshold        - default is 1e-10. When a coefficient is really
-                       small, set it to be 0
-    warmup           - default is False
-    warmup_lambdas   - default is Null
-    warmup_lambda_no - default is 15. How many lambda's are used in
-                       warm-up, will be overridden if warmup_lambdas
-                       is not NULL
-    warmup_tolerance - default is the same as tolerance. The value
-                       of tolerance used during warmup.
-    parallel         - default is True. Run the computation on
-                       multiple segments or not.
+    stepsize          - default is 0.01
+    threshold         - default is 1e-10. When a coefficient is really
+                        small, set it to be 0
+    warmup            - default is False
+    warmup_lambdas    - default is Null
+    warmup_lambda_no  - default is 15. How many lambda's are used in
+                        warm-up, will be overridden if warmup_lambdas
+                        is not NULL
+    warmup_tolerance  - default is the same as tolerance. The value
+                        of tolerance used during warmup.
+    n_folds           - default is 1, Number of cross validation folds.
+                        Set this to greater than 1 if CV over lambda is required.
+    validation_result - Name of the table to store the cross validation results.
+    parallel          - default is True. Run the computation on
+                        multiple segments or not.
 
-    When warmup is True and warmup_lambdas is NULL, a series
+    When warmup is True or if n_folds > 1, and warmup_lambdas is NULL, a series
     of lambda values will be automatically generated and used.
 
     Reference --------------------------------
@@ -353,25 +358,28 @@ def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
     Right now, it supports fitting both linear and logistic models.
 
     Parameters --------------------------------
-    max_stepsize     - default is 4.0
-    eta              - default is 1.2, if stepsize does not work
-                       stepsize/eta will be tried
-    warmup           - default is False
-    warmup_lambdas   - default is NULL, which means that lambda
-                       values will be automatically generated
-    warmup_lambda_no - default is 15. How many lambda's are used in
-                       warm-up, will be overridden if warmup_lambdas
-                       is not NULL
-    warmup_tolerance - default is the same as tolerance. The value
-                       of tolerance used during warmup.
-    use_active_set   - default is False. Sometimes active-set method
-                       can speed up the calculation.
+    max_stepsize        - default is 4.0
+    eta                 - default is 1.2, if stepsize does not work
+                          stepsize/eta will be tried
+    warmup              - default is False
+    warmup_lambdas      - default is NULL, which means that lambda
+                          values will be automatically generated
+    warmup_lambda_no    - default is 15. How many lambda's are used in
+                          warm-up, will be overridden if warmup_lambdas
+                          is not NULL
+    warmup_tolerance    - default is the same as tolerance. The value
+                          of tolerance used during warmup.
+    use_active_set      - default is False. Sometimes active-set method
+                          can speed up the calculation.
     activeset_tolerance - default is the same as tolerance. The
                           value of tolerance used during active set
                           calculation
-    random_stepsize - default is False. Whether add some randomness
-                      to the step size. Sometimes, this can speed
-                      up the calculation.
+    random_stepsize     - default is False. Whether add some randomness
+                         to the step size. Sometimes, this can speed
+                         up the calculation.
+    n_folds             - default is 1. Number of cross validation folds.
+                          Set this to greater than 1 if CV over lambda is required.
+    validation_result   - Name of the table to store the cross validation results.
 
     When warmup is True and warmup_lambdas is NULL, warmup_lambda_no
     of lambda values will be automatically generated and used.
@@ -391,22 +399,22 @@ def elastic_net_help(schema_madlib, family_or_optimizer=None, **kwargs):
     SELECT {schema_madlib}.elastic_net_train();
     for help
     """.format(schema_madlib=schema_madlib)
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
-def elastic_net_train(schema_madlib, tbl_source, tbl_result, col_dep_var,
-                      col_ind_var, regress_family, alpha, lambda_value,
+def elastic_net_train(schema_madlib, source_table, model_table, dependent_varname,
+                      independent_varname, regress_family, alpha, lambda_value,
                       standardize, grouping_col, optimizer,
                       optimizer_params, excluded, max_iter, tolerance,
                       **kwargs):
     """
     A wrapper for all variants of elastic net regularization.
 
-    @param tbl_source        Name of data source table
-    @param col_ind_var       Name of independent variable column,
+    @param source_table        Name of data source table
+    @param independent_varname       Name of independent variable column,
                              independent variable is an array
-    @param col_dep_var       Name of dependent variable column
-    @param tbl_result        Name of the table to store the results,
+    @param dependent_varname       Name of dependent variable column
+    @param model_table        Name of the table to store the results,
                              will return fitting coefficients and
                              likelihood
     @param lambda_value      The regularization parameter
@@ -417,96 +425,173 @@ def elastic_net_train(schema_madlib, tbl_source, tbl_result, col_dep_var,
     @param optimizer_params  Parameters of the above optimizer, the format
                              is '{arg = value, ...}'::varchar[]
     @param excluded          Which variables are excluded when
-                             col_ind_var == "*"
+                             independent_varname == "*"
     """
-    if regress_family is None:
-        plpy.error("""
-                   Elastic Net error: Please enter a valid response family name!
-                   Run:
-                   SELECT {schema_madlib}.elastic_net_train();
-                   for supported response family.
-                   """.format(schema_madlib=schema_madlib))
+    with MinWarning("warning"):
+        if regress_family is None:
+            plpy.error("""
+                       Elastic Net error: Please enter a valid response family name!
+                       Run:
+                       SELECT {schema_madlib}.elastic_net_train();
+                       for supported response family.
+                       """.format(schema_madlib=schema_madlib))
 
-    if optimizer is None:
-        plpy.error("""
-                   Elastic Net error: Please enter a valid optimizer name!
-                   Run:
-                   SELECT {schema_madlib}.elastic_net_train('gaussian');
-                   for supported optimizers.
-                   """.format(schema_madlib=schema_madlib))
-    # handle all special cases of col_ind_var
-    col_ind_var, outstr_array = analyze_input_str(schema_madlib, tbl_source,
-                                                  col_ind_var, col_dep_var,
-                                                  excluded)
+        if optimizer is None:
+            plpy.error("""
+                       Elastic Net error: Please enter a valid optimizer name!
+                       Run:
+                       SELECT {schema_madlib}.elastic_net_train('gaussian');
+                       for supported optimizers.
+                       """.format(schema_madlib=schema_madlib))
+
+        regress_family = regress_family.lower()
+        optimizer = optimizer.lower()
+
+        if (regress_family not in (BINOMIAL_FAMILIES + GAUSSIAN_FAMILIES) or
+                optimizer not in OPTIMIZERS):
+            plpy.error("""
+                Elastic Net error: Not a supported response family or supported
+                optimizer of the given response family!
+
+                Run:
+                    SELECT {schema_madlib}.elastic_net_train();
+                for help.
+                """.format(schema_madlib=schema_madlib))
+
+        cv_param, optimizer_params = _get_cv_optimizer_params(
+            optimizer_params, alpha, lambda_value)
+
+        args = locals()
+        if cv_param['n_folds'] > 1:
+            args.update(cv_param)
+            _cross_validate_en(args)
+        _internal_elastic_net_train(**args)
+# ------------------------------------------------------------------------
+
+
+def _internal_elastic_net_train(
+        schema_madlib, source_table, model_table, dependent_varname,
+        independent_varname, grouping_col,
+        regress_family, alpha, lambda_value,
+        standardize, optimizer, optimizer_params, excluded,
+        max_iter, tolerance, **kwargs):
+
+    tbl_summary = add_postfix(model_table, "_summary")
+
+    # handle all special cases of independent_varname
+    independent_varname, outstr_array = analyze_input_str(
+        schema_madlib, source_table,
+        independent_varname, dependent_varname, excluded)
+
     # get the grouping info
     grouping_str, grouping_col = _get_grouping_col_str(schema_madlib,
-                                                           tbl_source, grouping_col)
+                                                       source_table, grouping_col)
 
-    # # Special case for ridge linear regression
-    # if ((regress_family.lower() == "gaussian" or regress_family.lower() == "linear") and
-    #     optimizer.lower() == "newton" and
-    #     alpha == 0):
-    #     plpy.execute("""select {schema_madlib}.ridge_newton_train(
-    #                         '{tbl_source}', '{col_ind_var}', '{col_dep_var}',
-    #                         '{tbl_result}', {lambda_value}, {standardize}
-    #     )""".format(schema_madlib=schema_madlib,
-    #                 tbl_source = tbl_source,
-    #                 col_ind_var = col_ind_var,
-    #                 col_dep_var = col_dep_var,
-    #                 tbl_result = tbl_result,
-    #                 lambda_value = lambda_value,
-    #                 standardize = standardize))
-    #     return None
-
-    not_supported_family = False
-    not_supported_opt = False
-    tbl_summary = add_postfix(tbl_result, "_summary")
-    if regress_family.lower() in ("gaussian", "linear"):
-        if optimizer.lower() == "igd":
-            __elastic_net_gaussian_igd_train(
-                schema_madlib, tbl_source, col_ind_var, col_dep_var,
-                tbl_result, tbl_summary, lambda_value, alpha, standardize,
-                optimizer_params, max_iter, tolerance, outstr_array, 
-                grouping_str, grouping_col, **kwargs)
-            return None
-        if optimizer.lower() == "fista":
-            __elastic_net_gaussian_fista_train(
-            	schema_madlib, tbl_source, col_ind_var, col_dep_var,
-                tbl_result, tbl_summary, lambda_value, alpha, standardize,
-                optimizer_params, max_iter, tolerance, outstr_array, 
-                grouping_str, grouping_col, **kwargs)
-            return None
-        not_supported_opt = True
-    elif regress_family.lower() in ("binomial", "logistic"):
-        if optimizer.lower() == "igd":
-            col_dep_var = "(" + col_dep_var + ")::boolean"
-            __elastic_net_binomial_igd_train(
-                schema_madlib, tbl_source, col_ind_var, col_dep_var,
-                tbl_result, tbl_summary, lambda_value, alpha, standardize,
-                optimizer_params, max_iter, tolerance, outstr_array, 
-                grouping_str, grouping_col, **kwargs)
-            return None
-
-        if optimizer.lower() == "fista":
-            col_dep_var = "(" + col_dep_var + ")::boolean"
-            __elastic_net_binomial_fista_train(
-                schema_madlib, tbl_source, col_ind_var, col_dep_var,
-                tbl_result, tbl_summary, lambda_value, alpha, standardize,
+    if regress_family in GAUSSIAN_FAMILIES:
+        if optimizer == OPTIMIZERS.igd:
+            _elastic_net_gaussian_igd_train(
+                schema_madlib, source_table, independent_varname, dependent_varname,
+                model_table, tbl_summary, lambda_value, alpha, standardize,
                 optimizer_params, max_iter, tolerance, outstr_array,
                 grouping_str, grouping_col, **kwargs)
             return None
-        not_supported_opt = True
-    else:
-        not_supported_family = True
-    if not_supported_family or not_supported_opt:
-        plpy.error("""
-               Elastic Net error: Not a supported response family or supported optimizer of the given response family!
-               Run:
-               SELECT {schema_madlib}.elastic_net_train();
-               for help.
-               """.format(schema_madlib=schema_madlib))
+        if optimizer == OPTIMIZERS.fista:
+            _elastic_net_gaussian_fista_train(
+                schema_madlib, source_table, independent_varname, dependent_varname,
+                model_table, tbl_summary, lambda_value, alpha, standardize,
+                optimizer_params, max_iter, tolerance, outstr_array,
+                grouping_str, grouping_col, **kwargs)
+            return None
+    elif regress_family in BINOMIAL_FAMILIES:
+        if optimizer == OPTIMIZERS.igd:
+            dependent_varname = "(" + dependent_varname + ")::boolean"
+            _elastic_net_binomial_igd_train(
+                schema_madlib, source_table, independent_varname, dependent_varname,
+                model_table, tbl_summary, lambda_value, alpha, standardize,
+                optimizer_params, max_iter, tolerance, outstr_array,
+                grouping_str, grouping_col, **kwargs)
+            return None
+        if optimizer == OPTIMIZERS.fista:
+            dependent_varname = "(" + dependent_varname + ")::boolean"
+            _elastic_net_binomial_fista_train(
+                schema_madlib, source_table, independent_varname, dependent_varname,
+                model_table, tbl_summary, lambda_value, alpha, standardize,
+                optimizer_params, max_iter, tolerance, outstr_array,
+                grouping_str, grouping_col, **kwargs)
+            return None
     return None
-# ========================================================================
+# ----------------------------------------------------------------------
+
+
+def _get_cv_optimizer_params(param_str, alpha, smallest_lambda):
+    cv_params_defaults = {
+        "n_folds": (1, int),
+        "lambda_value": (None, list),
+        "alpha": ([alpha], list),
+        "n_lambdas": (15, int),
+        "validation_result": (None, str)
+    }
+    param_defaults = dict([(k, v[0]) for k, v in cv_params_defaults.items()])
+    param_types = dict([(k, v[1]) for k, v in cv_params_defaults.items()])
+
+    if not param_str:
+        return param_defaults, param_str
+
+    name_value = extract_keyvalue_params(param_str, param_types, param_defaults,
+                                         ignore_invalid=True)
+    if name_value['n_folds'] > 1:
+        if not name_value['lambda_value']:
+            if name_value['n_lambdas']:
+                name_value['lambda_value'] = _generate_warmup_lambda_sequence(
+                    smallest_lambda, name_value['n_lambdas'])
+                # no warmup when cross validating on lambda
+                param_str += ', warmup=False'
+            else:
+                name_value['lambda_value'] = [float(smallest_lambda)]
+        else:
+            name_value['lambda_value'] = map(float, name_value['lambda_value'])
+            # no warmup when cross validating on lambda
+            param_str += ', warmup=False'
+        name_value['alpha'] = map(float, name_value['alpha'])
+    return name_value, param_str
+# ------------------------------------------------------------------------
+
+
+def _cross_validate_en(args):
+    # updating params_dict will also update args['params_dict']
+    if args['n_folds'] > 1 and args['grouping_col']:
+        plpy.error('Elastic Net Error: cross validation with grouping is not supported!')
+
+    allowed_cv_params = ('lambda_value', 'alpha')  # keep trailing comma for single element
+    cv_params_values = {}
+
+    for param in allowed_cv_params:
+        if isinstance(args[param], list):
+            if len(args[param]) > 1:
+                cv_params_values[param] = args[param]
+            else:
+                args[param] = args[param][0]
+
+    if not cv_params_values and args['n_folds'] <= 1:
+        # no cross validation
+        return
+
+    if not cv_params_values and args['n_folds'] > 1:
+        plpy.warning('Elastic Net Warning: n_folds > 1 but no '
+                     'cross validation parameter provided')
+        return
+
+    if cv_params_values and args['n_folds'] <= 1:
+        plpy.error('Elastic Net Error: All parameters must be scalar '
+                   'when n_folds is 0 or 1')
+
+    scorer = 'classification' if args['regress_family'] in BINOMIAL_FAMILIES else 'regression'
+    cv = CrossValidator(_internal_elastic_net_train, elastic_net_predict_all, scorer, args)
+    val_res = cv.validate(cv_params_values, args['n_folds'])
+    if 'validation_result' in args:
+        val_res.output_tbl(args['validation_result'])
+    args.update(val_res.top('sub_args'))
+# ------------------------------------------------------------------------------
 
 
 def _get_grouping_col_str(schema_madlib, source_table, grouping_col):
@@ -517,7 +602,7 @@ def _get_grouping_col_str(schema_madlib, source_table, grouping_col):
         intersect = frozenset(
             _string_to_array(grouping_col)).intersection(
                 frozenset(
-                    ('regress_family', 'coef_all', 
+                    ('regress_family', 'coef_all',
                      'features_selected',
                      'coef_nonzero', 'intercept',
                      'log_likelihood', 'standardize',
@@ -541,7 +626,7 @@ def _get_grouping_col_str(schema_madlib, source_table, grouping_col):
 # ------------------------------------------------------------------------------
 
 
-def __check_args(tbl_source, col_ind_var, col_dep_var):
+def _check_args(tbl_source, col_ind_var, col_dep_var):
     """
     Check arguments before analyze_input_str
     """
@@ -555,7 +640,7 @@ def __check_args(tbl_source, col_ind_var, col_dep_var):
 
     if table_is_empty(tbl_source):
         plpy.error("Elastic Net error: Data table " + tbl_source + " is empty!")
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
 def analyze_input_str(schema_madlib, tbl_source,
@@ -568,7 +653,7 @@ def analyze_input_str(schema_madlib, tbl_source,
     @param col_dep_var Dependent variables
     @param excluded Which variables are excluded when col_ind_var == "*"
     """
-    __check_args(tbl_source, col_ind_var, col_dep_var)
+    _check_args(tbl_source, col_ind_var, col_dep_var)
 
     outstr_array = []
     if col_ind_var == "*":
@@ -593,38 +678,36 @@ def analyze_input_str(schema_madlib, tbl_source,
             included_col_types = [col_types_dict[i] for i in outstr_array]
             if not all(is_psql_numeric_type(i)
                        for i in included_col_types):
-                plpy.error("""
-                           Elastic Net error: All columns to be included in the
-                           independent variables should be of the numeric type.
-                           """)
+                plpy.error("Elastic Net error: All columns to be included in the"
+                           "independent variables should be of the numeric type.")
         col_ind_var_new = "ARRAY[" + ','.join(outstr_array) + "]"
         return (col_ind_var_new, outstr_array)
 
     if columns_exist_in_table(tbl_source, [col_ind_var], schema_madlib):
-        ## if the input is a column name and not an expression
+        # if the input is a column name and not an expression
         return analyze_single_input_str(schema_madlib, tbl_source,
                                         col_ind_var, excluded)
     else:
-        ## if input is an expression resulting in an array output
+        # if input is an expression resulting in an array output
         matched = re.match(r"(?i)^array\[(.*)\]", col_ind_var)
         if matched:
-            ## array expression starts with the word "ARRAY"
+            # array expression starts with the word "ARRAY"
             outstr_array = _string_to_array(matched.group(1))
         else:
-            ## any other form of array expression
+            # any other form of array expression
             n_feat = plpy.execute(""" SELECT array_upper({indep_var}, 1) as num_feat
                                       FROM {source} LIMIT 1
                                   """.format(indep_var=col_ind_var,
                                              source=tbl_source))[0]["num_feat"]
-            outstr_array = ["[" + str(i) + "]" for i in range(1, n_feat+1)]
-        ## We allow expressions for independent variables that could start with
-        ## something other than 'array'
-        ##    Example use case: input independent variable of array column
-        ##     adding an intercept could be done as '1 || x' where 'x' is array
-        ##     of independent variables.
+            outstr_array = ["[" + str(i) + "]" for i in range(1, n_feat + 1)]
+        # We allow expressions for independent variables that could start with
+        # something other than 'array'
+        # Example use case: input independent variable of array column
+        # adding an intercept could be done as '1 || x' where 'x' is array
+        # of independent variables.
         # plpy.error("Elastic Net error: Independent variable format is not quite right!")
         return (col_ind_var, outstr_array)
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
 def analyze_single_input_str(schema_madlib, tbl_source, col_ind_var,
@@ -670,7 +753,7 @@ def analyze_single_input_str(schema_madlib, tbl_source, col_ind_var,
             s = []
 
         outstr_array = ["%s[%s]" % (col_ind_var, str(i))
-                        for i in range(1, dimension+1) if i not in s]
+                        for i in range(1, dimension + 1) if i not in s]
         if s:
             col_ind_var_new = "ARRAY[" + ",".join(outstr_array) + "]"
         else:
@@ -680,7 +763,7 @@ def analyze_single_input_str(schema_madlib, tbl_source, col_ind_var,
     else:
         plpy.error("Elastic Net error: Single column name included for "
                    "independent variable is not found in source table.")
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
 def elastic_net_predict_all(schema_madlib, tbl_model, tbl_new_source,
@@ -690,32 +773,52 @@ def elastic_net_predict_all(schema_madlib, tbl_model, tbl_new_source,
     """
     summary_table = add_postfix(tbl_model, "_summary")
     grouping_col = plpy.execute("SELECT grouping_col FROM {summary_table}".
-        format(summary_table=summary_table))[0]["grouping_col"]
-    old_msg_level = set_client_min_messages("error")
-    regress_family = plpy.execute("SELECT family FROM {tbl_model} ".
-                                  format(tbl_model=tbl_model))[0]["family"]
+                                format(summary_table=summary_table))[0]["grouping_col"]
+    with MinWarning("error"):
+        regress_family = plpy.execute("SELECT family FROM {tbl_model} ".
+                                      format(tbl_model=tbl_model))[0]["family"]
 
-    if regress_family.lower() in ("gaussian", "linear"):
-        predict_func = "elastic_net_gaussian_predict"
-    elif regress_family.lower() in ("binomial", "logistic"):
-        predict_func = "elastic_net_binomial_predict"
-    else:
-        plpy.error("Elastic Net error: Not a supported response family!")
+        if regress_family.lower() in ("gaussian", "linear"):
+            predict_func = "elastic_net_gaussian_predict"
+        elif regress_family.lower() in ("binomial", "logistic"):
+            predict_func = "elastic_net_binomial_predict"
+        else:
+            plpy.error("Elastic Net error: Not a supported response family!")
 
-    if col_id is None or col_id == '':
-        plpy.error("Elastic Net error: invalid ID column provided!")
-    if columns_exist_in_table(tbl_new_source, [col_id], schema_madlib):
-        elastic_net_predict_id = col_id
-    else:
-        elastic_net_predict_id = 'elastic_net_predict_id'
+        if col_id is None or col_id == '':
+            plpy.error("Elastic Net error: invalid ID column provided!")
+        if columns_exist_in_table(tbl_new_source, [col_id], schema_madlib):
+            elastic_net_predict_id = col_id
+        else:
+            elastic_net_predict_id = 'elastic_net_predict_id'
 
-    dense_vars = mad_vec(plpy.execute(""" SELECT features AS fs
-                                          FROM {tbl_model}
-                                      """.format(tbl_model=tbl_model))[0]["fs"])
-    dense_vars_str = "ARRAY[" + ", ".join(dense_vars) + "]"
-    # Must be careful to avoid possible name conflicts
-    if not grouping_col or grouping_col != 'NULL':
-        qstr = """
+        dense_vars = plpy.execute(""" SELECT features AS fs FROM {tbl_model}
+                                  """.format(tbl_model=tbl_model))[0]["fs"]
+        dense_vars_str = "ARRAY[" + ", ".join(dense_vars) + "]"
+        # Must be careful to avoid possible name conflicts
+
+        if grouping_col and grouping_col != 'NULL':
+            qstr = """
+                DROP TABLE IF EXISTS {tbl_predict};
+                CREATE TABLE {tbl_predict} AS
+                    SELECT
+                        {elastic_net_predict_id},
+                        {schema_madlib}.{predict_func}(coef_all, intercept, ind_var)
+                             AS prediction
+                    FROM
+                        {tbl_model} as tbl1
+                        JOIN
+                        (SELECT
+                            {grouping_col},
+                            {col_id} as {elastic_net_predict_id},
+                            {dense_vars_str} as ind_var
+                        FROM
+                            {tbl_new_source}) tbl2
+                        USING ({grouping_col})
+                        ORDER BY {grouping_col}, {elastic_net_predict_id}
+                """.format(**locals())
+        else:
+            qstr = """
             DROP TABLE IF EXISTS {tbl_predict};
             CREATE TABLE {tbl_predict} AS
                 SELECT
@@ -723,34 +826,15 @@ def elastic_net_predict_all(schema_madlib, tbl_model, tbl_new_source,
                     {schema_madlib}.{predict_func}(coef_all, intercept, ind_var)
                          AS prediction
                 FROM
-                    {tbl_model} as tbl1
-                    JOIN
-                    (SELECT
-                        {grouping_col},
-                        {col_id} as {elastic_net_predict_id},
-                        {dense_vars_str} as ind_var
-                    FROM
-                        {tbl_new_source}) tbl2
-                    USING ({grouping_col})
+                    {tbl_model} as tbl1,
+                    (
+                        SELECT
+                            {col_id} as {elastic_net_predict_id},
+                            {dense_vars_str} as ind_var
+                        FROM
+                            {tbl_new_source}
+                    ) tbl2
             """.format(**locals())
-    else:
-        qstr = """
-        DROP TABLE IF EXISTS {tbl_predict};
-        CREATE TABLE {tbl_predict} AS
-            SELECT
-                {elastic_net_predict_id},
-                {schema_madlib}.{predict_func}(coef_all, intercept, ind_var)
-                     AS prediction
-            FROM
-                {tbl_model} as tbl1,
-                (SELECT
-                    {col_id} as {elastic_net_predict_id},
-                    {dense_vars_str} as ind_var
-                FROM
-                    {tbl_new_source}) tbl2
-        """.format(**locals())
-    plpy.execute(qstr)
-
-    set_client_min_messages(old_msg_level)
+        plpy.execute(qstr)
     return None
-# ========================================================================
+# ------------------------------------------------------------------------

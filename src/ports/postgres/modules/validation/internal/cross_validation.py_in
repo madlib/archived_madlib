@@ -22,6 +22,8 @@ from utilities.utilities import __mad_version
 from utilities.utilities import unique_string
 from utilities.utilities import num_samples
 
+from utilities.validate_args import get_cols_and_types
+
 from math import sqrt
 from collections import namedtuple
 from operator import itemgetter
@@ -134,7 +136,7 @@ class ValidationResult(object):
         The columns of tbl_name are mean, std and the leaf keys in sub_args.
         All column types are assumed to be double precision.
         """
-        if tbl_name == '' or tbl_name is None:
+        if not tbl_name or not str(tbl_name).strip():
             return
 
         cv_history_f = self._flatten()
@@ -171,6 +173,7 @@ class _ValidationArgs(object):
     @classmethod
     def grid(cls, sub_args):
         def comb_dict(dicts):
+            # same as dict((k, v) for d in dicts for k, v in d.iteritems())
             return dict(chain.from_iterable(d.iteritems() for d in dicts))
 
         def make_dicts(k, vs):
@@ -227,8 +230,7 @@ def _cv_copy_data(rel_origin, dependent_varname,
 
 def _cv_split_data(rel_source, col_data, col_id, row_num,
                    rel_train, rel_valid, n_folds, which_fold):
-    """
-    """
+
     col_string = _cv_col_string(rel_source, col_data, [col_id])
 
     (start_row, end_row) = _cv_validation_rows(row_num, n_folds, which_fold)
@@ -282,6 +284,7 @@ class CrossValidator(object):
     args : dict (recursive)
            Contains all the arguments to run estimator and the data to be used for validation:
 
+           Following names are assumed to be available in the args dict:
                 - source_table: the data table
                 - independent_varname: the column for features
                 - dependent_varname: the column for target
@@ -342,16 +345,13 @@ class CrossValidator(object):
         output_table = unique_string(desp='output_table')
         model_table = args['model_table']
 
-        predictor(schema_madlib, model_table,
-                  rel_valid, col_id, output_table)
+        predictor(schema_madlib, model_table, rel_valid, col_id, output_table)
 
         score = self._score(output_table, rel_valid, scorer)
-        plpy.execute("""
-                     DROP TABLE IF EXISTS {model_table}, {model_table}_summary;
-                     """.format(model_table=model_table))
-        plpy.execute("""
-                     DROP TABLE IF EXISTS {output_table};
-                     """.format(output_table=output_table))
+        plpy.execute("DROP TABLE IF EXISTS {model_table}, {model_table}_summary;".
+                     format(model_table=model_table))
+        plpy.execute("DROP TABLE IF EXISTS {output_table};".
+                     format(output_table=output_table))
         return score
 
     def _score(self, pred, orig, method):

@@ -36,8 +36,7 @@ class EnableOptimizer(object):
         self.optimizer_enabled = False
         # we depend on the fact that all GPDB/HAWQ versions that have the
         # optimizer also define function properties
-        self.guc_exists = m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>,
-                                   <!True!>, <!False!>)
+        self.guc_exists = True if HAS_FUNCTION_PROPERTIES else False
 
     def __enter__(self):
         # we depend on the fact that all GPDB/HAWQ versions that have the ORCA
@@ -106,10 +105,9 @@ class MinWarning:
     def __enter__(self):
         self.oldMsgLevel = plpy.execute("""
             SELECT setting FROM pg_settings WHERE name='client_min_messages'
-        """)[0]['setting']
-        plpy.execute("""
-            SET client_min_messages = {warningLevel}
-            """.format(warningLevel=self.warningLevel))
+            """)[0]['setting']
+        plpy.execute("SET client_min_messages = {warningLevel}".
+                     format(warningLevel=self.warningLevel))
         return self
 
     def __exit__(self, *args):
@@ -120,9 +118,8 @@ class MinWarning:
             return False
         else:
             # if no exception then we reset the client_min_messages
-            plpy.execute("""
-                SET client_min_messages = {oldMsgLevel};
-                """.format(oldMsgLevel=self.oldMsgLevel))
+            plpy.execute("SET client_min_messages = {oldMsgLevel}; ".
+                         format(oldMsgLevel=self.oldMsgLevel))
 
 
 class IterationController:
@@ -230,8 +227,8 @@ class IterationController:
                             SELECT $1 AS _state
                         ) AS _state ON True
                     """.format(expression=expression).
-                        format(iteration=self.iteration, **self.kwargs),
-                        ["DOUBLE PRECISION[]"])
+                    format(iteration=self.iteration, **self.kwargs),
+                    ["DOUBLE PRECISION[]"])
                 resultObject = plpy.execute(eval_plan,
                                             [[] if self.new_state['_state'] is None
                                              else self.new_state['_state']])
@@ -245,7 +242,7 @@ class IterationController:
                             WHERE _state._iteration = {{iteration}}
                         ) AS _state ON True
                     """.format(expression=expression).
-                        format(iteration=self.iteration, **self.kwargs))
+                    format(iteration=self.iteration, **self.kwargs))
 
         if resultObject.nrows() == 0:
             return None
@@ -294,13 +291,9 @@ class IterationController:
         if STATE_IN_MEM:
             self.old_state = self.new_state
             update_plan = plpy.prepare("""
-                SELECT
-                    {iteration} AS _iteration,
-                    ({newState}) AS _state
-                """.format(iteration=self.iteration,
-                           newState=newState, **self.kwargs).
-                    format(__state__='$1'),
-                    ["DOUBLE PRECISION[]"])
+                SELECT {0} AS _iteration, ({1}) AS _state
+                """.format(self.iteration, newState).format(__state__='$1'),
+                ["DOUBLE PRECISION[]"])
             self.new_state = plpy.execute(update_plan,
                                           [None if self.new_state['_state'] is None
                                            else self.new_state['_state']])[0]
@@ -310,10 +303,9 @@ class IterationController:
                 SELECT
                     {iteration},
                     ({newState})
-                """.format(
-                    iteration=self.iteration,
-                    newState=newState,
-                    **self.kwargs))
+                """.format(iteration=self.iteration,
+                           newState=newState,
+                           **self.kwargs))
             if self.truncAfterIteration:
                 self.runSQL("""
                     DELETE FROM {rel_state} AS _state
@@ -362,8 +354,8 @@ class IterationController2D(IterationController):
                         LEFT OUTER JOIN (
                             SELECT {{schema_madlib}}.array_to_2d($1) AS _state
                         ) AS _state ON True
-                    """.format(expression=expression).format(
-                               **self.kwargs), ["DOUBLE PRECISION[]"])
+                    """.format(expression=expression).
+                    format(**self.kwargs), ["DOUBLE PRECISION[]"])
 
                 resultObject = plpy.execute(
                     eval_plan,
@@ -378,8 +370,7 @@ class IterationController2D(IterationController):
                             WHERE _state._iteration = {{iteration}}
                         ) AS _state ON True
                     """.format(expression=expression).
-                        format(iteration=self.iteration,
-                               **self.kwargs))
+                    format(iteration=self.iteration, **self.kwargs))
         if resultObject.nrows() == 0:
             return None
         else:
@@ -429,10 +420,7 @@ class IterationController2D(IterationController):
                 SELECT
                     {iteration},
                     ({newState})
-                """.format(
-                    iteration=self.iteration,
-                    newState=newState,
-                    **self.kwargs))
+                """.format(iteration=self.iteration, newState=newState, **self.kwargs))
             if self.truncAfterIteration:
                 self.runSQL("""
                     DELETE FROM {rel_state} AS _state

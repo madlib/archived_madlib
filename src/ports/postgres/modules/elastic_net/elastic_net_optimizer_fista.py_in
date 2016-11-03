@@ -1,145 +1,53 @@
-
-## Try to make every function has a useful return value !
-## Try to avoid any changes to function arguments !
-
 import plpy
-import math
-from elastic_net_utils import __normalize_data
-from elastic_net_utils import __compute_data_scales
-from elastic_net_utils import __compute_means
-from elastic_net_utils import __tbl_dimension_rownum
-from utilities.utilities import unique_string
-from utilities.in_mem_group_control import GroupIterationController
+from elastic_net_generate_result import _elastic_net_generate_result
+from elastic_net_utils import _normalize_data
+from elastic_net_utils import _tbl_dimension_rownum
+from elastic_net_utils import _elastic_net_validate_args
+from elastic_net_utils import _compute_average_sq
+from elastic_net_utils import _generate_warmup_lambda_sequence
+from elastic_net_utils import _process_warmup_lambdas
 from utilities.control import MinWarning
-from elastic_net_utils import __elastic_net_validate_args
-from utilities.utilities import _array_to_string
-from elastic_net_utils import __compute_average_sq
-from elastic_net_utils import __generate_warmup_lambda_sequence
-from elastic_net_utils import __process_warmup_lambdas
-from elastic_net_generate_result import __elastic_net_generate_result
-from utilities.utilities import __mad_version
-from utilities.utilities import preprocess_keyvalue_params
-
-version_wrapper = __mad_version()
-mad_vec = version_wrapper.select_vecfunc()
-
-## ========================================================================
+from utilities.in_mem_group_control import GroupIterationController
+from utilities.utilities import unique_string
+from utilities.utilities import extract_keyvalue_params
 
 
-def __fista_params_parser(optimizer_params, lambda_value, tolerance, schema_madlib):
+# ------------------------------------------------------------------------
+
+
+def _fista_params_parser(optimizer_params, lambda_value, tolerance, schema_madlib):
     """
     Parse fista parameters.
     """
-    allowed_params = set(["max_stepsize", "eta", "warmup", "warmup_lambdas",
-                          "warmup_lambda_no", "use_active_set", "random_stepsize",
-                          "activeset_tolerance", "warmup_tolerance"])
-    name_value = dict()
     # default values
-    name_value["max_stepsize"] = 2.
-    name_value["use_active_set"] = 0  # use of active set
-    name_value["eta"] = 1.2
-    name_value["warmup"] = False
-    name_value["warmup_lambdas"] = None
-    name_value["warmup_lambda_no"] = 15
-    name_value["random_stepsize"] = 0  # use random stepsize
-    name_value["activeset_tolerance"] = tolerance
-    name_value["warmup_tolerance"] = tolerance
+    defaults_and_types = {
+        "max_stepsize": (2., float),
+        "eta": (1.2, float),
+        "warmup": (False, bool),
+        "warmup_lambdas": (None, list),
+        "warmup_lambda_no": (15, int),
+        "use_active_set": (False, bool),
+        "random_stepsize": (False, bool),
+        "activeset_tolerance": (tolerance, float),
+        "warmup_tolerance": (tolerance, float)
+    }
+    param_defaults = dict([(k, v[0]) for k, v in defaults_and_types.items()])
+    param_types = dict([(k, v[1]) for k, v in defaults_and_types.items()])
 
-    warmup_lambdas = None
-    warmup_lambda_no = None
+    if not optimizer_params:
+        return param_defaults
 
-    if optimizer_params is None or len(optimizer_params) == 0:
-        return name_value
+    usage_str = ("Run:\n"
+                 "   SELECT {0}.elastic_net_train('fista');\n"
+                 "   to see the parameters for FISTA algorithm.".
+                 format(schema_madlib))
+    name_value = extract_keyvalue_params(optimizer_params, param_types,
+                                         param_defaults, usage_str=usage_str,
+                                         ignore_invalid=True)
 
-    for s in preprocess_keyvalue_params(optimizer_params):
-        items = s.split("=")
-        if (len(items) != 2):
-            plpy.error("Elastic Net error: Optimizer parameter list "
-                       "has incorrect format!")
-        param_name = items[0].strip(" \"").lower()
-        param_value = items[1].strip(" \"").lower()
-
-        if param_name not in allowed_params:
-            plpy.error(
-                """
-                Elastic Net error: {param_name} is not a valid parameter name for the FISTA optimizer.
-                Run:
-
-                SELECT {schema_madlib}.elastic_net_train('fista');
-
-                to see the parameters for FISTA algorithm.
-                """.format(param_name=param_name,
-                           schema_madlib=schema_madlib))
-
-        if param_name == "activeset_tolerance":
-            try:
-                name_value["activeset_tolerance"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: activeset_tolerance must be a "
-                           "float number!")
-
-        if param_name == "warmup_tolerance":
-            try:
-                name_value["warmup_tolerance"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: warmup_tolerance must be a "
-                           "float number!")
-
-        if param_name == "max_stepsize":
-            try:
-                name_value["max_stepsize"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: max_stepsize must be a "
-                           "float number!")
-
-        if param_name == "eta":
-            try:
-                name_value["eta"] = float(param_value)
-            except:
-                plpy.error("Elastic Net error: eta must be a float number!")
-
-        if param_name == "random_stepsize":
-            if param_value in ["true", "t", "yes", "y"]:
-                name_value["random_stepsize"] = 1
-            elif param_value in ["false", "f", "no", "n"]:
-                name_value["random_stepsize"] = 0
-            else:
-                plpy.error("Elastic Net error: Do you need to add some "
-                           "randomness to step size (True/False or yes/no) ?")
-
-        if param_name == "warmup":
-            if param_value in ["true", "t", "yes", "y"]:
-                name_value["warmup"] = True
-            elif param_value in ["false", "f", "no", "n"]:
-                name_value["warmup"] = False
-            else:
-                plpy.error("Elastic Net error: Do you need warmup "
-                           "(True/False or yes/no) ?")
-
-        if param_name == "warmup_lambdas" and param_value != "null":
-            warmup_lambdas = param_value
-
-        if param_name == "warmup_lambda_no":
-            warmup_lambda_no = param_value
-
-        if param_name == "use_active_set":
-            if param_value in ["true", "t", "yes", "y"]:
-                name_value["use_active_set"] = 1
-            elif param_value in ["false", "f", "no", "n"]:
-                name_value["use_active_set"] = 0
-            else:
-                plpy.error("Elastic Net error: Do you need warmup "
-                           "(True/False or yes/no) ?")
-
-    if name_value["warmup"]:
-        if warmup_lambdas is not None:
-            # errors are handled in __process_warmup_lambdas
-            name_value["warmup_lambdas"] = __process_warmup_lambdas(warmup_lambdas, lambda_value)
-        if warmup_lambda_no is not None:
-            try:
-                name_value["warmup_lambda_no"] = int(warmup_lambda_no)
-            except:
-                plpy.error("Elastic Net error: warmup_lambda_no must be an integer!")
+    if name_value["warmup"] and name_value['warmup_lambdas'] is not None:
+        # errors are handled in _process_warmup_lambdas
+        name_value['warmup_lambdas'] = _process_warmup_lambdas(name_value['warmup_lambdas'], lambda_value)
 
     # validate the parameters
     if name_value["max_stepsize"] <= 0:
@@ -162,9 +70,10 @@ def __fista_params_parser(optimizer_params, lambda_value, tolerance, schema_madl
         plpy.error("Elastic Net error: warmup_tolerance must be positive!")
 
     return name_value
-## ========================================================================
+# -------------------------------------------------------------------------
 
-def __fista_construct_dict(
+
+def _fista_construct_dict(
         schema_madlib, family, tbl_source, col_ind_var, col_dep_var,
         tbl_result, dimension, row_num, lambda_value, alpha,
         normalization, max_iter, tolerance, outstr_array, optimizer_params_dict):
@@ -193,8 +102,8 @@ def __fista_construct_dict(
     # Table names useful when normalizing the original data
     # Note: in order to be consistent with the calling convention
     # of the normalization functions, multiple elements of the dict
-    # actually have the same value. This is a price that one has to pay
-    # if he wants to save typing argument names by using **args as the
+    # actually have the same value. This is a price one has to pay
+    # to save typing argument names by using **args as the
     # function argument.
     tbl_ind_scales = unique_string(desp='temp_ind_scales')
     tbl_dep_scale = unique_string(desp='temp_dep_scales')
@@ -204,25 +113,18 @@ def __fista_construct_dict(
                 tbl_data_scaled=tbl_data_scaled)
 
     # Table names used in IGD iterations
-    args.update(tbl_fista_state=unique_string(),
-                tbl_fista_args=unique_string())
+    args.update(tbl_fista_state=unique_string(), tbl_fista_args=unique_string())
 
     # more, for args table
-    args["dimension_name"] = unique_string()
-    args["lambda_name"] = unique_string()
-    args["alpha_name"] = unique_string()
-    args["total_rows_name"] = unique_string()
-    args["max_iter_name"] = unique_string()
-    args["tolerance_name"] = unique_string()
-    args["max_stepsize_name"] = unique_string()
-    args["eta_name"] = unique_string()
-    args["activeset_name"] = unique_string()
-
+    for name in ('dimension_name', 'lambda_name', 'alpha_name',
+                 'total_rows_name', 'max_iter_name', 'tolerance_name',
+                 'max_stepsize_name', 'eta_name', 'activeset_name'):
+        args[name] = unique_string()
     return args
-## ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __fista_cleanup_temp_tbls(**args):
+def _fista_cleanup_temp_tbls(**kwargs):
     """
     Drop all temporary tables used by FISTA optimizer,
     including tables used in the possible normalization
@@ -234,48 +136,49 @@ def __fista_cleanup_temp_tbls(**args):
                 drop table if exists {tbl_data_scaled};
                 drop table if exists {tbl_fista_args};
                 drop table if exists pg_temp.{tbl_fista_state};
-                """.format(**args))
+                """.format(**kwargs))
 
     return None
-## ========================================================================
+# ------------------------------------------------------------------------
 
 
-def __elastic_net_fista_train(schema_madlib, func_step_aggregate,
-                              func_state_diff, family,
-                              tbl_source, col_ind_var,
-                              col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
-                              normalization, optimizer_params, max_iter,
-                              tolerance, outstr_array, grouping_str,
-                              grouping_col, **kwargs):
+def _elastic_net_fista_train(schema_madlib, func_step_aggregate,
+                             func_state_diff, family,
+                             tbl_source, col_ind_var,
+                             col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
+                             normalization, optimizer_params, max_iter,
+                             tolerance, outstr_array, grouping_str,
+                             grouping_col, **kwargs):
     """
     func_step_aggregate is string, and it is the name of the step function
     """
-    __elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
-                                tbl_result, tbl_summary, lambda_value, alpha,
-                                normalization, max_iter, tolerance)
+    _elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
+                               tbl_result, tbl_summary, lambda_value, alpha,
+                               normalization, max_iter, tolerance)
+    return _elastic_net_fista_train_compute(schema_madlib,
+                                            func_step_aggregate,
+                                            func_state_diff,
+                                            family,
+                                            tbl_source,
+                                            col_ind_var, col_dep_var,
+                                            tbl_result, tbl_summary,
+                                            lambda_value, alpha,
+                                            normalization,
+                                            optimizer_params, max_iter,
+                                            tolerance, outstr_array,
+                                            grouping_str, grouping_col,
+                                            **kwargs)
+# ------------------------------------------------------------------------
 
-    return __elastic_net_fista_train_compute(schema_madlib,
-                                             func_step_aggregate,
-                                             func_state_diff,
-                                             family,
-                                             tbl_source, col_ind_var,
-                                             col_dep_var, tbl_result,
-                                             tbl_summary, lambda_value, alpha,
-                                             normalization,
-                                             optimizer_params, max_iter,
-                                             tolerance, outstr_array,
-                                             grouping_str, grouping_col,
-                                             **kwargs)
-## ========================================================================
 
-
-def __elastic_net_fista_train_compute(schema_madlib, func_step_aggregate,
-                                      func_state_diff, family,
-                                      tbl_source, col_ind_var,
-                                      col_dep_var, tbl_result, tbl_summary, lambda_value, alpha,
-                                      normalization, optimizer_params, max_iter,
-                                      tolerance, outstr_array, grouping_str,
-                                      grouping_col, **kwargs):
+def _elastic_net_fista_train_compute(schema_madlib, func_step_aggregate,
+                                     func_state_diff, family,
+                                     tbl_source, col_ind_var,
+                                     col_dep_var, tbl_result, tbl_summary,
+                                     lambda_value, alpha,
+                                     normalization, optimizer_params, max_iter,
+                                     tolerance, outstr_array, grouping_str,
+                                     grouping_col, **kwargs):
     """
     Fit linear model with elastic net regularization using FISTA optimization.
 
@@ -292,124 +195,119 @@ def __elastic_net_fista_train_compute(schema_madlib, func_step_aggregate,
     @param optimizer_params  Parameters of the above optimizer, the format
                              is '{arg = value, ...}'::varchar[]
     """
-    old_msg_level = plpy.execute("""
-                                 select setting from pg_settings
-                                 where name='client_min_messages'
-                                 """)[0]['setting']
-    plpy.execute("set client_min_messages to error")
+    with MinWarning('error'):
+        (dimension, row_num) = _tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var)
 
-    (dimension, row_num) = __tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var)
+        # generate a full dict to ease the following string format
+        # including several temporary table names
+        args = _fista_construct_dict(schema_madlib, family, tbl_source, col_ind_var,
+                                     col_dep_var, tbl_result,
+                                     dimension, row_num, lambda_value,
+                                     alpha, normalization,
+                                     max_iter, tolerance, outstr_array,
+                                     _fista_params_parser(optimizer_params,
+                                                          lambda_value,
+                                                          tolerance,
+                                                          schema_madlib))
 
-    # generate a full dict to ease the following string format
-    # including several temporary table names
-    args = __fista_construct_dict(schema_madlib, family, tbl_source, col_ind_var,
-                                  col_dep_var, tbl_result,
-                                  dimension, row_num, lambda_value,
-                                  alpha, normalization,
-                                  max_iter, tolerance, outstr_array,
-                                  __fista_params_parser(optimizer_params,
-                                                        lambda_value,
-                                                        tolerance,
-                                                        schema_madlib))
+        args.update({'grouping_col': grouping_col})
+        # use normalized data or not
+        if normalization:
+            _normalize_data(args)
+            tbl_used = args["tbl_data_scaled"]
+            args["col_ind_var_new"] = args["col_ind_var_norm_new"]
+            args["col_dep_var_new"] = args["col_dep_var_norm_new"]
+        else:
+            tbl_used = tbl_source
+            args["col_ind_var_new"] = col_ind_var
+            args["col_dep_var_new"] = col_dep_var
 
-    args.update({'grouping_col': grouping_col})
-    # use normalized data or not
-    if normalization:
-        __normalize_data(args)
-        tbl_used = args["tbl_data_scaled"]
-        args["col_ind_var_new"] = args["col_ind_var_norm_new"]
-        args["col_dep_var_new"] = args["col_dep_var_norm_new"]
-    else:
-        #####__compute_data_scales(args)
-        tbl_used = tbl_source
-        args["col_ind_var_new"] = col_ind_var
-        args["col_dep_var_new"] = col_dep_var
+        args["tbl_used"] = tbl_used
 
-    args["tbl_used"] = tbl_used
+        if args["warmup_lambdas"] is not None:
+            args["warm_no"] = len(args["warmup_lambdas"])
+            args["warmup_lambdas"] = args["warmup_lambdas"]
 
-    if args["warmup_lambdas"] is not None:
-        args["warm_no"] = len(args["warmup_lambdas"])
-        args["warmup_lambdas"] = args["warmup_lambdas"]
+        if args["warmup"] and args["warmup_lambdas"] is None:
+            # average squares of each feature
+            # used to estimate the largest lambda value
+            args["sq"] = _compute_average_sq(**args)
+            args["warmup_lambdas"] = \
+                _generate_warmup_lambda_sequence(
+                    tbl_used, args["col_ind_var_new"], args["col_dep_var_new"],
+                    dimension, row_num, lambda_value, alpha,
+                    args["warmup_lambda_no"], args["sq"])
+            args["warm_no"] = len(args["warmup_lambdas"])
+            args["warmup_lambdas"] = args["warmup_lambdas"]
+        elif args["warmup"] is False:
+            args["warm_no"] = 1
+            args["warmup_lambdas"] = [lambda_value]  # only one value
 
-    if args["warmup"] and args["warmup_lambdas"] is None:
-        # average squares of each feature
-        # used to estimate the largest lambda value
-        args["sq"] = __compute_average_sq(**args)
-        args["warmup_lambdas"] = \
-            __generate_warmup_lambda_sequence(
-                tbl_used, args["col_ind_var_new"], args["col_dep_var_new"],
-                dimension, row_num, lambda_value, alpha,
-                args["warmup_lambda_no"], args["sq"])
-        args["warm_no"] = len(args["warmup_lambdas"])
-        args["warmup_lambdas"] = args["warmup_lambdas"]
-    elif args["warmup"] is False:
-        args["warm_no"] = 1
-        args["warmup_lambdas"] = [lambda_value]  # only one value
-
-    ## This update is needed in __elastic_net_generate_result() after
-    ## __compute_fista is run. Some of these variables are accessed there.
-    args.update({
-        'rel_state': args["tbl_fista_state"],
-        'col_grp_iteration': unique_string(desp='col_grp_iteration'),
-        'col_grp_state': unique_string(desp='col_grp_state'),
-        'col_grp_key': unique_string(desp='col_grp_key'),
-        'col_n_tuples': unique_string(desp='col_n_tuples'),
-        'lambda_count': 1,
-        'is_active': 0,
-        'state_type': "double precision[]",
-        'rel_source': tbl_used,
-        'grouping_str': grouping_str,
-        'tbl_source': tbl_source,
-        'tbl_summary': tbl_summary
+        # This update is needed in _elastic_net_generate_result() after
+        # _compute_fista is run. Some of these variables are accessed there.
+        args.update({
+            'rel_state': args["tbl_fista_state"],
+            'col_grp_iteration': unique_string(desp='col_grp_iteration'),
+            'col_grp_state': unique_string(desp='col_grp_state'),
+            'col_grp_key': unique_string(desp='col_grp_key'),
+            'col_n_tuples': unique_string(desp='col_n_tuples'),
+            'lambda_count': 1,
+            'is_active': 0,
+            'state_type': "double precision[]",
+            'rel_source': tbl_used,
+            'grouping_str': grouping_str,
+            'tbl_source': tbl_source,
+            'tbl_summary': tbl_summary
         })
 
-    # perform the actual calculation
-    iteration_run = __compute_fista(
-        schema_madlib, func_step_aggregate,
-        func_state_diff,
-        args["tbl_fista_args"],
-        args["tbl_fista_state"],
-        tbl_used,
-        args["col_ind_var_new"],
-        args["col_dep_var_new"],
-        grouping_str,
-        grouping_col,
-        tolerance,
-        start_iter=0,
-        lambda_name=args["warmup_lambdas"],
-        warmup_lambda_value = args.get('warmup_lambdas')[args["lambda_count"]-1],
-        activeset_tolerance=args["activeset_tolerance"],
-        warmup_tolerance=args["warmup_tolerance"],
-        max_iter=args["max_iter"],
-        warm_no=args["warm_no"],
-        random_stepsize=args["random_stepsize"],
-        use_active_set=args["use_active_set"],
-        alpha=args["alpha"],
-        row_num=args["row_num"],
-        dimension=args["dimension"],
-        max_stepsize=args["max_stepsize"],
-        eta=args["eta"],
-        rel_state= args["tbl_fista_state"],
-        col_grp_iteration= args["col_grp_iteration"],
-        col_grp_state= args["col_grp_state"],
-        col_grp_key= args["col_grp_key"],
-        col_n_tuples= args["col_n_tuples"],
-        lambda_count= args["lambda_count"],
-        is_active= args["is_active"],
-        state_type= args["state_type"],
-        rel_source= args["rel_source"])
+        # perform the actual calculation
+        iteration_run = _compute_fista(
+            schema_madlib, func_step_aggregate,
+            func_state_diff,
+            args["tbl_fista_args"],
+            args["tbl_fista_state"],
+            tbl_used,
+            args["col_ind_var_new"],
+            args["col_dep_var_new"],
+            grouping_str,
+            grouping_col,
+            tolerance,
+            start_iter=0,
+            lambda_name=args["warmup_lambdas"],
+            warmup_lambda_value=args.get('warmup_lambdas')[args["lambda_count"] - 1],
+            activeset_tolerance=args["activeset_tolerance"],
+            warmup_tolerance=args["warmup_tolerance"],
+            max_iter=args["max_iter"],
+            warm_no=args["warm_no"],
+            random_stepsize=args["random_stepsize"],
+            use_active_set=args["use_active_set"],
+            alpha=args["alpha"],
+            row_num=args["row_num"],
+            dimension=args["dimension"],
+            max_stepsize=args["max_stepsize"],
+            eta=args["eta"],
+            rel_state=args["tbl_fista_state"],
+            col_grp_iteration=args["col_grp_iteration"],
+            col_grp_state=args["col_grp_state"],
+            col_grp_key=args["col_grp_key"],
+            col_n_tuples=args["col_n_tuples"],
+            lambda_count=args["lambda_count"],
+            is_active=args["is_active"],
+            state_type=args["state_type"],
+            rel_source=args["rel_source"])
 
-    __elastic_net_generate_result("fista", iteration_run, **args)
+        _elastic_net_generate_result("fista", iteration_run, **args)
 
-    # cleanup
-    __fista_cleanup_temp_tbls(**args)
-    plpy.execute("set client_min_messages to " + old_msg_level)
+        # cleanup
+        _fista_cleanup_temp_tbls(**args)
     return None
-## ========================================================================
+# ------------------------------------------------------------------------
 
-def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
-                    tbl_args, tbl_state, tbl_source, col_ind_var, 
-                    col_dep_var, grouping_str, grouping_col, tolerance, start_iter, **kwargs):
+
+def _compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
+                   tbl_args, tbl_state, tbl_source, col_ind_var,
+                   col_dep_var, grouping_str, grouping_col, tolerance,
+                   start_iter, **kwargs):
     """
     Driver function for elastic net using FISTA
 
@@ -430,7 +328,7 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
         result in \c tbl_state
     """
     args = locals()
-    
+
     for k, v in kwargs.iteritems():
         if k not in args:
             args.update({k: v})
@@ -441,23 +339,24 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
             # manually add the intercept term
             if (it.kwargs["lambda_count"] > len(args.get('lambda_name'))):
                 break
-            it.kwargs["warmup_lambda_value"] = args.get('lambda_name')[it.kwargs["lambda_count"]-1]
+            it.kwargs["warmup_lambda_value"] = args.get('lambda_name')[it.kwargs["lambda_count"] - 1]
             it.update("""
-                  {schema_madlib}.{func_step_aggregate}(
-                      ({col_ind_var})::double precision[],
-                      ({col_dep_var}),
-                      {rel_state}.{col_grp_state},
-                      ({warmup_lambda_value})::double precision,
-                      ({alpha})::double precision,
-                      ({dimension})::integer,
-                      ({row_num})::integer,
-                      ({max_stepsize})::double precision,
-                      ({eta})::double precision,
-                      ({use_active_set})::integer,
-                      {is_active}::integer,
-                      {random_stepsize}::integer
-                  )
-            """)
+                    {schema_madlib}.{func_step_aggregate}(
+                        ({col_ind_var})::double precision[],
+                        ({col_dep_var}),
+                        {rel_state}.{col_grp_state},
+                        ({warmup_lambda_value})::double precision,
+                        ({alpha})::double precision,
+                        ({dimension})::integer,
+                        ({row_num})::integer,
+                        ({max_stepsize})::double precision,
+                        ({eta})::double precision,
+                        ({use_active_set})::integer,
+                        {is_active}::integer,
+                        {random_stepsize}::integer
+                    )
+                    """)
+
             if it.kwargs["is_active"] == 1:
                 it.kwargs["use_tolerance"] = it.kwargs["activeset_tolerance"]
             elif it.kwargs["lambda_count"] < it.kwargs["warm_no"]:
@@ -465,19 +364,21 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
             else:
                 it.kwargs["use_tolerance"] = args["tolerance"]
 
-            if it.kwargs["use_active_set"] == 1:
+            if it.kwargs["use_active_set"]:
                 is_backtracking = it.are_last_state_value_zero()
-                if it.test(
-                    """
-                    {iteration} >= {max_iter}
-                    or
-                    {schema_madlib}.{func_state_diff}(
-                        _state_previous, _state_current) < {use_tolerance}
-                    """):
+                if it.test("""
+                        {iteration} >= {max_iter}
+                        or
+                        {schema_madlib}.{func_state_diff}(
+                            _state_previous, _state_current) < {use_tolerance}
+                        """):
                     if it.iteration < it.kwargs["max_iter"]:
                         if it.kwargs["is_active"] == 0:
                             if (it.kwargs["lambda_count"] < it.kwargs["warm_no"]):
                                 it.kwargs["lambda_count"] += 1
+                                if (len(args.get('lambda_name')) >=
+                                        it.kwargs["lambda_count"]):
+                                    break
                             else:
                                 break
                         else:
@@ -490,12 +391,12 @@ def __compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
                         it.kwargs["is_active"] = 1
             else:
                 if it.test("""
-                    {iteration} >= {max_iter} or
-                    {schema_madlib}.{func_state_diff}(
-                        _state_previous, _state_current) < {tolerance}
-                    """):
+                        {iteration} >= {max_iter} or
+                        {schema_madlib}.{func_state_diff}(
+                            _state_previous, _state_current) < {tolerance}
+                        """):
                     if (it.iteration < it.kwargs["max_iter"] and
-                        it.kwargs["lambda_count"] < it.kwargs["warm_no"]):
+                            it.kwargs["lambda_count"] < it.kwargs["warm_no"]):
                         it.kwargs["lambda_count"] += 1
                     else:
                         break
