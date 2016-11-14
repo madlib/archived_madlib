@@ -71,7 +71,7 @@ public:
         task.rowDim = inRowDim;
         task.colDim = inColDim;
         task.maxRank = inMaxRank;
-        
+
         // This time all the member fields are correctly binded
         rebind();
     }
@@ -174,10 +174,87 @@ public:
     } algo;
 };
 
+template <class Handle>
+class GLMMultiClassState {
+    template <class OtherHandle>
+    friend class GLMMultiClassState;
+
+public:
+    GLMMultiClassState(const AnyType &inArray) : mStorage(inArray.getAs<Handle>()) {
+        rebind();
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Allocating the state.
+     */
+    inline void allocate(const Allocator &inAllocator, uint32_t nFeatures, uint32_t nClasses) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+                dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(nFeatures, nClasses));
+
+        rebind();
+        task.nFeatures = nFeatures;
+        task.nClasses = nClasses;
+        rebind();
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    GLMMultiClassState &operator=(const GLMMultiClassState<OtherHandle> &inOtherState) {
+        for (size_t i = 0; i < mStorage.size(); i++) {
+            mStorage[i] = inOtherState.mStorage[i];
+        }
+
+        return *this;
+    }
+
+    static inline uint32_t arraySize(const uint32_t nFeatures, const uint32_t nClasses) {
+        return 6 + 1 * nFeatures * nClasses;
+    }
+
+protected:
+    void rebind() {
+        task.nFeatures.rebind(&mStorage[0]);
+        task.nClasses.rebind(&mStorage[1]);
+        task.stepsize.rebind(&mStorage[2]);
+        algo.numRows.rebind(&mStorage[3]);
+        algo.loss.rebind(&mStorage[4]);
+        task.reg.rebind(&mStorage[5]);
+        task.model.rebind(&mStorage[6], task.nFeatures, task.nClasses);
+    }
+
+    Handle mStorage;
+
+public:
+    struct TaskState {
+        typename HandleTraits<Handle>::ReferenceToUInt32 nFeatures;
+        typename HandleTraits<Handle>::ReferenceToUInt32 nClasses;
+        typename HandleTraits<Handle>::ReferenceToDouble stepsize;
+        typename HandleTraits<Handle>::ReferenceToDouble reg;
+        typename HandleTraits<Handle>::MatrixTransparentHandleMap model;
+    } task;
+
+    struct AlgoState {
+        typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+        typename HandleTraits<Handle>::ReferenceToDouble loss;
+    } algo;
+};
+
 /**
  * @brief Inter- (Task State) and intra-iteration (Algo State) state of
  *        incremental gradient descent for generalized linear models
- * 
+ *
  * Generalized Linear Models (GLMs): Logistic regression, Linear SVM
  *
  * TransitionState encapsualtes the transition state during the
@@ -219,7 +296,7 @@ public:
 
         task.dimension.rebind(&mStorage[0]);
         task.dimension = inDimension;
-        
+
         rebind();
     }
 
@@ -298,7 +375,7 @@ public:
 /**
  * @brief Inter- (Task State) and intra-iteration (Algo State) state of
  *        Conjugate Gradient for generalized linear models
- * 
+ *
  * Generalized Linear Models (GLMs): Logistic regression, Linear SVM
  *
  * TransitionState encapsualtes the transition state during the
@@ -340,7 +417,7 @@ public:
 
         task.dimension.rebind(&mStorage[0]);
         task.dimension = inDimension;
-        
+
         rebind();
     }
 
@@ -427,9 +504,9 @@ public:
  * @brief Inter- (Task State) and intra-iteration (Algo State) state of
  *        Newton's method for generic objective functions (any tasks)
  *
- * This class assumes that the coefficients are of type vector. Low-rank 
+ * This class assumes that the coefficients are of type vector. Low-rank
  * matrix factorization, neural networks would not be able to use this.
- * 
+ *
  * TransitionState encapsualtes the transition state during the
  * aggregate function during an iteration. To the database, the state is
  * exposed as a single DOUBLE PRECISION array, to the C++ code it is a proper
@@ -469,7 +546,7 @@ public:
 
         task.dimension.rebind(&mStorage[0]);
         task.dimension = inDimension;
-        
+
         rebind();
     }
 

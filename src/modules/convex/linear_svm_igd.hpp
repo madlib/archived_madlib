@@ -31,3 +31,10 @@ DECLARE_UDF(convex, internal_linear_svm_igd_distance)
  */
 DECLARE_UDF(convex, internal_linear_svm_igd_result)
 
+
+DECLARE_UDF(convex, structure_svm_transition)
+DECLARE_UDF(convex, structure_svm_merge)
+DECLARE_UDF(convex, structure_svm_final)
+DECLARE_UDF(convex, structure_svm_predict)
+DECLARE_UDF(convex, internal_structure_svm_result)
+

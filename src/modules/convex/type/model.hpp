@@ -97,6 +97,9 @@ struct LMFModel {
 typedef HandleTraits<MutableArrayHandle<double> >::ColumnVectorTransparentHandleMap
     GLMModel;
 
+typedef HandleTraits<MutableArrayHandle<double> >::MatrixTransparentHandleMap
+    MultiClassModel;
+
 } // namespace convex
 
 } // namespace modules

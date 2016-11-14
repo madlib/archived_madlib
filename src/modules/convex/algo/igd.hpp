@@ -34,9 +34,24 @@ public:
     typedef typename Task::model_type model_type;
 
     static void transition(state_type &state, const tuple_type &tuple);
+    static double transitionInPlace(state_type &state, const tuple_type &tuple);
     static void merge(state_type &state, const_state_type &otherState);
+    static void mergeInPlace(state_type &state, const_state_type &otherState);
     static void final(state_type &state);
 };
+
+template <class State, class ConstState, class Task>
+double
+IGD<State, ConstState, Task>::transitionInPlace(state_type &state,
+        const tuple_type &tuple) {
+    // apply to the model directly
+    return Task::gradientInPlace(
+            state.task.model,
+            tuple.indVar,
+            tuple.depVar,
+            state.task.stepsize * tuple.weight,
+            state.task.reg);
+}
 
 template <class State, class ConstState, class Task>
 void
@@ -81,6 +96,32 @@ IGD<State, ConstState, Task>::merge(state_type &state,
         static_cast<double>(otherState.algo.numRows);
     state.algo.incrModel += otherState.algo.incrModel;
     state.algo.incrModel *= static_cast<double>(otherState.algo.numRows) /
+        static_cast<double>(totalNumRows);
+}
+
+template <class State, class ConstState, class Task>
+void
+IGD<State, ConstState, Task>::mergeInPlace(state_type &state,
+        const_state_type &otherState) {
+    // avoid division by zero
+    if (state.algo.numRows == 0) {
+        state.task.model= otherState.task.model;
+        return;
+    } else if (otherState.algo.numRows == 0) {
+        return;
+    }
+
+    // The reason of this weird algorithm instead of an intuitive one
+    // -- (w1 * m1 + w2 * m2) / (w1 + w2): we have only one mutable state,
+    // therefore, (m1 * w1 / w2  + m2)  * w2 / (w1 + w2).
+    // Order:         111111111  22222  3333333333333333
+
+    // model averaging, weighted by rows seen
+    double totalNumRows = static_cast<double>(state.algo.numRows + otherState.algo.numRows);
+    state.task.model*= static_cast<double>(state.algo.numRows) /
+        static_cast<double>(otherState.algo.numRows);
+    state.task.model+= otherState.task.model;
+    state.task.model*= static_cast<double>(otherState.algo.numRows) /
         static_cast<double>(totalNumRows);
 }
 

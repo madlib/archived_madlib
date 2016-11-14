@@ -8,9 +8,13 @@
 
 #include <dbconnector/dbconnector.hpp>
 
+#include <string>
+#include <iostream>
+
 #include "linear_svm_igd.hpp"
 
 #include "task/linear_svm.hpp"
+#include "task/structure_svm.hpp"
 #include "task/l1.hpp"
 #include "task/l2.hpp"
 #include "algo/igd.hpp"
@@ -27,6 +31,8 @@ namespace modules {
 
 namespace convex {
 
+using namespace dbal::eigen_integration;
+
 // This 2 classes contain public static methods that can be called
 typedef IGD<GLMIGDState<MutableArrayHandle<double> >,
         GLMIGDState<ArrayHandle<double> >,
@@ -39,6 +45,105 @@ typedef Loss<GLMIGDState<MutableArrayHandle<double> >,
 typedef Gradient<GLMIGDState<MutableArrayHandle<double> >,
         GLMIGDState<ArrayHandle<double> >,
         LinearSVM<GLMModel, GLMTuple > > LinearSVMGradientAlgorithm;
+
+typedef IGD<GLMMultiClassState<MutableArrayHandle<double> >,
+        GLMMultiClassState<ArrayHandle<double> >,
+        StructureSVM<MultiClassModel, MiniBatchTuple> > StructureSVMIGDAlgorithm;
+
+AnyType
+structure_svm_predict::run(AnyType &args) {
+    GLMMultiClassState<ArrayHandle<double> > state = args[0];
+    MappedColumnVector x(NULL);
+    try {
+        new (&x) MappedColumnVector(args[1].getAs<MappedColumnVector>());
+    } catch (const ArrayWithNullException &e) {
+        return -1;
+    }
+    int pred = 0;
+    ColumnVector v = x.transpose()*state.task.model;
+    v.maxCoeff( &pred );
+
+    return pred;
+}
+
+AnyType
+structure_svm_transition::run(AnyType &args) {
+    GLMMultiClassState<MutableArrayHandle<double> > state = args[0];
+    if (state.algo.numRows == 0) {
+        StructureSVM<MultiClassModel, MiniBatchTuple>::nEpochs = args[6].getAs<int>();
+        StructureSVM<MultiClassModel, MiniBatchTuple>::batchSize = args[7].getAs<int>();
+        if (!args[3].isNull()) {
+            GLMMultiClassState<ArrayHandle<double> > previousState = args[3];
+            state.allocate(*this,
+                           previousState.task.nFeatures,
+                           previousState.task.nClasses);
+            state = previousState;
+        } else {
+            // configuration parameters
+            uint32_t nFeatures = args[4].getAs<uint32_t>();
+            uint32_t nClasses = args[5].getAs<uint32_t>();
+            state.allocate(*this, nFeatures, nClasses); // with zeros
+            state.task.model = Matrix::Random(state.task.nFeatures, state.task.nClasses);
+        }
+        state.task.stepsize = args[8].getAs<double>();
+        state.task.reg = args[9].getAs<double>();
+    }
+    MappedMatrix x(NULL);
+    MappedColumnVector y(NULL);
+    try {
+        new (&x) MappedMatrix(args[1].getAs<MappedMatrix>());
+        new (&y) MappedColumnVector(args[2].getAs<MappedColumnVector>());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+    MiniBatchTuple tuple;
+    tuple.indVar = trans(x);
+    tuple.depVar.rebind(y.memoryHandle(), y.size());
+    tuple.weight = 1.0;
+    state.algo.loss += StructureSVMIGDAlgorithm::transitionInPlace(state, tuple);
+    state.algo.numRows ++;
+    return state;
+}
+
+/**
+ * @brief Perform the perliminary aggregation function: Merge transition states
+ */
+AnyType
+structure_svm_merge::run(AnyType &args) {
+    GLMMultiClassState<MutableArrayHandle<double> > stateLeft = args[0];
+    GLMMultiClassState<ArrayHandle<double> > stateRight = args[1];
+
+    if (stateLeft.algo.numRows == 0) { return stateRight; }
+    else if (stateRight.algo.numRows == 0) { return stateLeft; }
+
+    StructureSVMIGDAlgorithm::mergeInPlace(stateLeft, stateRight);
+
+    stateLeft.algo.loss += stateRight.algo.loss;
+    stateLeft.algo.numRows += stateRight.algo.numRows;
+    return stateLeft;
+}
+
+/**
+ * @brief Perform the structure support vector machine final step
+ */
+AnyType
+structure_svm_final::run(AnyType &args) {
+    return args[0];
+}
+
+AnyType
+internal_structure_svm_result::run(AnyType &args) {
+    GLMMultiClassState<ArrayHandle<double> > state = args[0];
+
+    AnyType tuple;
+    tuple << state.task.model
+        << static_cast<double>(state.algo.loss/state.algo.numRows)
+        << static_cast<uint32_t>(state.task.nFeatures)
+        << static_cast<uint32_t>(state.task.nClasses)
+        << static_cast<int64_t>(state.algo.numRows);
+
+    return tuple;
+}
 
 /**
  * @brief Perform the linear support vector machine transition step
