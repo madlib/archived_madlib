@@ -83,8 +83,11 @@ structure_svm_transition::run(AnyType &args) {
             uint32_t nFeatures = args[4].getAs<uint32_t>();
             uint32_t nClasses = args[5].getAs<uint32_t>();
             state.allocate(*this, nFeatures, nClasses); // with zeros
-            state.task.model = Matrix::Random(state.task.nFeatures, state.task.nClasses);
+            double scale = args[10].getAs<double>();
+            state.task.model = scale*Matrix::Random(state.task.nFeatures, state.task.nClasses);
         }
+        state.algo.loss = 0;
+        state.algo.numRows = 0;
         state.task.stepsize = args[8].getAs<double>();
         state.task.reg = args[9].getAs<double>();
     }
@@ -128,7 +131,10 @@ structure_svm_merge::run(AnyType &args) {
  */
 AnyType
 structure_svm_final::run(AnyType &args) {
-    return args[0];
+    GLMMultiClassState<MutableArrayHandle<double> > state = args[0];
+
+    state.algo.loss = state.algo.loss/state.algo.numRows;
+    return state;
 }
 
 AnyType
@@ -137,7 +143,7 @@ internal_structure_svm_result::run(AnyType &args) {
 
     AnyType tuple;
     tuple << state.task.model
-        << static_cast<double>(state.algo.loss/state.algo.numRows)
+        << static_cast<double>(state.algo.loss)
         << static_cast<uint32_t>(state.task.nFeatures)
         << static_cast<uint32_t>(state.task.nClasses)
         << static_cast<int64_t>(state.algo.numRows);
