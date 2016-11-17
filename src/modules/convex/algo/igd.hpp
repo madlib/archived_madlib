@@ -33,24 +33,66 @@ public:
     typedef typename Task::tuple_type tuple_type;
     typedef typename Task::model_type model_type;
 
+    static int batchSize;
+    static int nEpochs;
+
     static void transition(state_type &state, const tuple_type &tuple);
-    static double transitionInPlace(state_type &state, const tuple_type &tuple);
+    static double transitionInMiniBatch(state_type &state, const tuple_type &tuple);
+    // applied on incrModel
     static void merge(state_type &state, const_state_type &otherState);
+    // applied on model
     static void mergeInPlace(state_type &state, const_state_type &otherState);
     static void final(state_type &state);
 };
 
 template <class State, class ConstState, class Task>
+int IGD<State, ConstState, Task>::batchSize = 64;
+
+template <class State, class ConstState, class Task>
+int IGD<State, ConstState, Task >::nEpochs = 1;
+
+/**
+ * @brief Update the transition state in mini-batch
+ *
+ * Note: We assume that
+ *     1. Task define model_eigen_type which is a plain eigen type
+ *     2. a batch of tuple.indVar is a Matrix
+ *     3. a batch of tuple.depVar is a ColumnVector
+ *     4. Task define lossAndGradient method
+ *
+ */
+template <class State, class ConstState, class Task>
 double
-IGD<State, ConstState, Task>::transitionInPlace(state_type &state,
+IGD<State, ConstState, Task>::transitionInMiniBatch(state_type &state,
         const tuple_type &tuple) {
-    // apply to the model directly
-    return Task::gradientInPlace(
-            state.task.model,
-            tuple.indVar,
-            tuple.depVar,
-            state.task.stepsize * tuple.weight,
-            state.task.reg);
+    typedef typename Task::model_eigen_type model_eigen_type;
+
+    int N = tuple.indVar.rows(), d = tuple.indVar.cols();
+    int iter_per_epochs = N < batchSize ? 1 : N / batchSize;
+    elog(NOTICE, "iter per epochs: %d\n", iter_per_epochs);
+    model_eigen_type gradient(state.task.model);
+    double avg_loss = 0.0;
+    for (int i=0; i<nEpochs; i++) {
+        double loss = 0.0;
+        for (int j=0, k=0; j<iter_per_epochs; j++, k+=batchSize) {
+            Matrix X_batch;
+            ColumnVector y_batch;
+            if (j==iter_per_epochs-1) {
+                X_batch = tuple.indVar.bottomRows(N-k);
+                y_batch = tuple.depVar.tail(N-k);
+            } else {
+                X_batch = tuple.indVar.block(k, 0, batchSize, d);
+                y_batch = tuple.depVar.segment(k, batchSize);
+            }
+            loss += Task::lossAndGradient(state.task.model, X_batch, y_batch, gradient);
+            state.task.model -= state.task.stepsize*(gradient + state.task.reg*state.task.model);
+        }
+        loss /= iter_per_epochs;
+        elog(NOTICE, "loss: %e\n", loss);
+        // only return average loss for the first epoch
+        if (i==0) avg_loss = loss;
+    }
+    return avg_loss;
 }
 
 template <class State, class ConstState, class Task>
@@ -110,11 +152,6 @@ IGD<State, ConstState, Task>::mergeInPlace(state_type &state,
     } else if (otherState.algo.numRows == 0) {
         return;
     }
-
-    // The reason of this weird algorithm instead of an intuitive one
-    // -- (w1 * m1 + w2 * m2) / (w1 + w2): we have only one mutable state,
-    // therefore, (m1 * w1 / w2  + m2)  * w2 / (w1 + w2).
-    // Order:         111111111  22222  3333333333333333
 
     // model averaging, weighted by rows seen
     double totalNumRows = static_cast<double>(state.algo.numRows + otherState.algo.numRows);

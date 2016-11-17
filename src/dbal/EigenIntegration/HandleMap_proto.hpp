@@ -19,6 +19,7 @@ namespace eigen_integration {
 template <class EigenType, class Handle, int MapOptions = Eigen::Unaligned>
 class HandleMap : public Eigen::Map<EigenType, MapOptions> {
 public:
+    typedef EigenType PlainEigenType;
     typedef Eigen::Map<EigenType, MapOptions> Base;
     typedef typename Base::Scalar Scalar;
     typedef typename Base::Index Index;
@@ -57,7 +58,7 @@ public:
      *
      * For example, this allows construction of MappedColumnVector from
      * MappedMatrix::col(int) or NativeColumnVector, etc.
-     */ 
+     */
     template <class Derived>
     HandleMap(const Eigen::MapBase<Derived>& inMappedData,
         typename boost::enable_if_c<Derived::IsVectorAtCompileTime>::type* = 0)

@@ -14,7 +14,7 @@
 #include "linear_svm_igd.hpp"
 
 #include "task/linear_svm.hpp"
-#include "task/structure_svm.hpp"
+#include "task/multiclass_loss.hpp"
 #include "task/l1.hpp"
 #include "task/l2.hpp"
 #include "algo/igd.hpp"
@@ -48,7 +48,7 @@ typedef Gradient<GLMIGDState<MutableArrayHandle<double> >,
 
 typedef IGD<GLMMultiClassState<MutableArrayHandle<double> >,
         GLMMultiClassState<ArrayHandle<double> >,
-        StructureSVM<MultiClassModel, MiniBatchTuple> > StructureSVMIGDAlgorithm;
+        StructureSquaredHinge<MultiClassModel, MiniBatchTuple> > StructureSVMIGDAlgorithm;
 
 AnyType
 structure_svm_predict::run(AnyType &args) {
@@ -70,8 +70,8 @@ AnyType
 structure_svm_transition::run(AnyType &args) {
     GLMMultiClassState<MutableArrayHandle<double> > state = args[0];
     if (state.algo.numRows == 0) {
-        StructureSVM<MultiClassModel, MiniBatchTuple>::nEpochs = args[6].getAs<int>();
-        StructureSVM<MultiClassModel, MiniBatchTuple>::batchSize = args[7].getAs<int>();
+        StructureSVMIGDAlgorithm::nEpochs = args[6].getAs<int>();
+        StructureSVMIGDAlgorithm::batchSize = args[7].getAs<int>();
         if (!args[3].isNull()) {
             GLMMultiClassState<ArrayHandle<double> > previousState = args[3];
             state.allocate(*this,
@@ -103,7 +103,7 @@ structure_svm_transition::run(AnyType &args) {
     tuple.indVar = trans(x);
     tuple.depVar.rebind(y.memoryHandle(), y.size());
     tuple.weight = 1.0;
-    state.algo.loss += StructureSVMIGDAlgorithm::transitionInPlace(state, tuple);
+    state.algo.loss += StructureSVMIGDAlgorithm::transitionInMiniBatch(state, tuple);
     state.algo.numRows ++;
     return state;
 }
