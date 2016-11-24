@@ -11,6 +11,7 @@
 
 #include <iomanip>
 
+#include <boost/format.hpp>
 #include <boost/math/policies/error_handling.hpp>
 
 namespace boost {
