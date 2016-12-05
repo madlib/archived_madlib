@@ -33,23 +33,14 @@ public:
     typedef typename Task::tuple_type tuple_type;
     typedef typename Task::model_type model_type;
 
-    static int batchSize;
-    static int nEpochs;
-
     static void transition(state_type &state, const tuple_type &tuple);
-    static double transitionInMiniBatch(state_type &state, const tuple_type &tuple);
+    static void transitionInMiniBatch(state_type &state, const tuple_type &tuple);
     // applied on incrModel
     static void merge(state_type &state, const_state_type &otherState);
     // applied on model
     static void mergeInPlace(state_type &state, const_state_type &otherState);
     static void final(state_type &state);
 };
-
-template <class State, class ConstState, class Task>
-int IGD<State, ConstState, Task>::batchSize = 64;
-
-template <class State, class ConstState, class Task>
-int IGD<State, ConstState, Task >::nEpochs = 1;
 
 /**
  * @brief Update the transition state in mini-batch
@@ -62,11 +53,13 @@ int IGD<State, ConstState, Task >::nEpochs = 1;
  *
  */
 template <class State, class ConstState, class Task>
-double
+void
 IGD<State, ConstState, Task>::transitionInMiniBatch(state_type &state,
         const tuple_type &tuple) {
     typedef typename Task::model_eigen_type model_eigen_type;
 
+    int batchSize = state.algo.batchSize;
+    int nEpochs = state.algo.nEpochs;
     int N = tuple.indVar.rows(), d = tuple.indVar.cols();
     int iter_per_epochs = N < batchSize ? 1 : N / batchSize;
     elog(NOTICE, "iter per epochs: %d\n", iter_per_epochs);
@@ -89,10 +82,10 @@ IGD<State, ConstState, Task>::transitionInMiniBatch(state_type &state,
         }
         loss /= iter_per_epochs;
         elog(NOTICE, "loss: %e\n", loss);
-        // only return average loss for the first epoch
-        if (i==0) avg_loss = loss;
+        // return average loss for the first epoch
+        if (i==0) state.algo.loss += loss;
     }
-    return avg_loss;
+    return;
 }
 
 template <class State, class ConstState, class Task>

@@ -20,6 +20,40 @@ using namespace madlib::dbal::eigen_integration;
 
 
 template <class Model, class Tuple>
+class SoftmaxCrossEntropy {
+public:
+    typedef Model model_type;
+    typedef Tuple tuple_type;
+    typedef typename Tuple::independent_variables_type
+        independent_variables_type;
+    typedef typename Tuple::dependent_variable_type dependent_variable_type;
+    typedef typename model_type::PlainEigenType model_eigen_type;
+
+    static inline double lossAndGradient(
+            const model_type                    &model,
+            const Matrix                        &x,
+            const ColumnVector                  &y,
+            model_eigen_type                    &gradient) {
+        gradient.setZero();
+        model_eigen_type probs = x*model;
+        probs.colwise() -= probs.rowwise().maxCoeff();
+        probs.array() = probs.array().exp();
+        probs = probs.array().colwise() / probs.rowwise().sum().array();
+        double l = 0.0;
+        int n = probs.rows();
+        for (int i=0; i<n; i++) {
+            l -= log(probs(i, y(i)));
+            gradient += x.row(i).transpose() * probs.row(i);
+            gradient.col(y(i)) -= x.row(i);
+        }
+        l /= n;
+        gradient.array() /= n;
+        return l;
+    }
+};
+
+
+template <class Model, class Tuple>
 class StructureHinge {
 public:
     typedef Model model_type;
@@ -35,11 +69,11 @@ public:
             const ColumnVector                  &y,
             model_eigen_type                    &gradient) {
         gradient.setZero();
-        Matrix s = x*model;
+        model_eigen_type s = x*model;
         double l = 0.0;
         int n = s.rows(), m = s.cols();
         for (int i=0; i<n; i++) {
-            Matrix si = s.row(i);
+            model_eigen_type si = s.row(i);
             double ct = si(y(i));
             for (int c=0; c<m; c++) {
                 if (c==y(i)) continue;
@@ -74,11 +108,11 @@ public:
             const ColumnVector                  &y,
             model_eigen_type                    &gradient) {
         gradient.setZero();
-        Matrix s = x*model;
+        model_eigen_type s = x*model;
         double l = 0.0;
         int n = s.rows(), m = s.cols();
         for (int i=0; i<n; i++) {
-            Matrix si = s.row(i);
+            model_eigen_type si = s.row(i);
             double ct = si(y(i));
             for (int c=0; c<m; c++) {
                 if (c==y(i)) continue;

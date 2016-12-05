@@ -33,6 +33,8 @@ namespace convex {
 
 using namespace dbal::eigen_integration;
 
+enum LOSS {MultiLogReg = 0, StructureSquaredSVM, StructureSVM};
+
 // This 2 classes contain public static methods that can be called
 typedef IGD<GLMIGDState<MutableArrayHandle<double> >,
         GLMIGDState<ArrayHandle<double> >,
@@ -48,10 +50,18 @@ typedef Gradient<GLMIGDState<MutableArrayHandle<double> >,
 
 typedef IGD<GLMMultiClassState<MutableArrayHandle<double> >,
         GLMMultiClassState<ArrayHandle<double> >,
-        StructureSquaredHinge<MultiClassModel, MiniBatchTuple> > StructureSVMIGDAlgorithm;
+        SoftmaxCrossEntropy<MultiClassModel, MiniBatchTuple> > MultiLogRegIGDAlgorithm;
+
+typedef IGD<GLMMultiClassState<MutableArrayHandle<double> >,
+        GLMMultiClassState<ArrayHandle<double> >,
+        StructureSquaredHinge<MultiClassModel, MiniBatchTuple> > StructureSquaredSVMIGDAlgorithm;
+
+typedef IGD<GLMMultiClassState<MutableArrayHandle<double> >,
+        GLMMultiClassState<ArrayHandle<double> >,
+        StructureHinge<MultiClassModel, MiniBatchTuple> > StructureSVMIGDAlgorithm;
 
 AnyType
-structure_svm_predict::run(AnyType &args) {
+multiclass_predict::run(AnyType &args) {
     GLMMultiClassState<ArrayHandle<double> > state = args[0];
     MappedColumnVector x(NULL);
     try {
@@ -67,11 +77,9 @@ structure_svm_predict::run(AnyType &args) {
 }
 
 AnyType
-structure_svm_transition::run(AnyType &args) {
+multiclass_transition::run(AnyType &args) {
     GLMMultiClassState<MutableArrayHandle<double> > state = args[0];
     if (state.algo.numRows == 0) {
-        StructureSVMIGDAlgorithm::nEpochs = args[6].getAs<int>();
-        StructureSVMIGDAlgorithm::batchSize = args[7].getAs<int>();
         if (!args[3].isNull()) {
             GLMMultiClassState<ArrayHandle<double> > previousState = args[3];
             state.allocate(*this,
@@ -88,6 +96,8 @@ structure_svm_transition::run(AnyType &args) {
         }
         state.algo.loss = 0;
         state.algo.numRows = 0;
+        state.algo.nEpochs = args[6].getAs<int>();
+        state.algo.batchSize = args[7].getAs<int>();
         state.task.stepsize = args[8].getAs<double>();
         state.task.reg = args[9].getAs<double>();
     }
@@ -103,8 +113,26 @@ structure_svm_transition::run(AnyType &args) {
     tuple.indVar = trans(x);
     tuple.depVar.rebind(y.memoryHandle(), y.size());
     tuple.weight = 1.0;
-    state.algo.loss += StructureSVMIGDAlgorithm::transitionInMiniBatch(state, tuple);
-    state.algo.numRows ++;
+    uint32_t loss_type = args[11].getAs<uint32_t>();
+    switch(loss_type) {
+        case MultiLogReg:
+            MultiLogRegIGDAlgorithm::transitionInMiniBatch(state, tuple);
+            break;
+        case StructureSquaredSVM:
+            StructureSquaredSVMIGDAlgorithm::transitionInMiniBatch(state, tuple);
+            break;
+        case StructureSVM:
+            StructureSVMIGDAlgorithm::transitionInMiniBatch(state, tuple);
+            break;
+        default:
+            std::stringstream errorMsg;
+            errorMsg << "invalid argument - loss type (" << loss_type <<
+                        ") should be {0, 1, 2}";
+            throw std::invalid_argument(errorMsg.str());
+            break;
+    }
+    state.algo.numRows += x.cols();
+    state.algo.numBuffers ++;
     return state;
 }
 
@@ -112,7 +140,7 @@ structure_svm_transition::run(AnyType &args) {
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
 AnyType
-structure_svm_merge::run(AnyType &args) {
+multiclass_merge::run(AnyType &args) {
     GLMMultiClassState<MutableArrayHandle<double> > stateLeft = args[0];
     GLMMultiClassState<ArrayHandle<double> > stateRight = args[1];
 
@@ -123,6 +151,7 @@ structure_svm_merge::run(AnyType &args) {
 
     stateLeft.algo.loss += stateRight.algo.loss;
     stateLeft.algo.numRows += stateRight.algo.numRows;
+    stateLeft.algo.numBuffers += stateRight.algo.numBuffers;
     return stateLeft;
 }
 
@@ -130,15 +159,15 @@ structure_svm_merge::run(AnyType &args) {
  * @brief Perform the structure support vector machine final step
  */
 AnyType
-structure_svm_final::run(AnyType &args) {
+multiclass_final::run(AnyType &args) {
     GLMMultiClassState<MutableArrayHandle<double> > state = args[0];
 
-    state.algo.loss = state.algo.loss/state.algo.numRows;
+    state.algo.loss = state.algo.loss/state.algo.numBuffers;
     return state;
 }
 
 AnyType
-internal_structure_svm_result::run(AnyType &args) {
+internal_multiclass_result::run(AnyType &args) {
     GLMMultiClassState<ArrayHandle<double> > state = args[0];
 
     AnyType tuple;

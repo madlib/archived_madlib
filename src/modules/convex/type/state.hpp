@@ -220,7 +220,7 @@ public:
     }
 
     static inline uint32_t arraySize(const uint32_t nFeatures, const uint32_t nClasses) {
-        return 6 + 1 * nFeatures * nClasses;
+        return 9 + 1 * nFeatures * nClasses;
     }
 
 protected:
@@ -231,7 +231,10 @@ protected:
         algo.numRows.rebind(&mStorage[3]);
         algo.loss.rebind(&mStorage[4]);
         task.reg.rebind(&mStorage[5]);
-        task.model.rebind(&mStorage[6], task.nFeatures, task.nClasses);
+        algo.batchSize.rebind(&mStorage[6]);
+        algo.nEpochs.rebind(&mStorage[7]);
+        algo.numBuffers.rebind(&mStorage[8]);
+        task.model.rebind(&mStorage[9], task.nFeatures, task.nClasses);
     }
 
     Handle mStorage;
@@ -247,7 +250,10 @@ public:
 
     struct AlgoState {
         typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+        typename HandleTraits<Handle>::ReferenceToUInt64 numBuffers;
         typename HandleTraits<Handle>::ReferenceToDouble loss;
+        typename HandleTraits<Handle>::ReferenceToUInt32 batchSize;
+        typename HandleTraits<Handle>::ReferenceToUInt32 nEpochs;
     } algo;
 };
 
