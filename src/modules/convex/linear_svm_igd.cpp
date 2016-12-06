@@ -60,20 +60,47 @@ typedef IGD<GLMMultiClassState<MutableArrayHandle<double> >,
         GLMMultiClassState<ArrayHandle<double> >,
         StructureHinge<MultiClassModel, MiniBatchTuple> > StructureSVMIGDAlgorithm;
 
-AnyType
-multiclass_predict::run(AnyType &args) {
+ColumnVector
+__multiclass_score(AnyType &args) {
     GLMMultiClassState<ArrayHandle<double> > state = args[0];
     MappedColumnVector x(NULL);
     try {
         new (&x) MappedColumnVector(args[1].getAs<MappedColumnVector>());
     } catch (const ArrayWithNullException &e) {
+        throw e;
+    }
+    return x.transpose()*state.task.model;
+}
+
+AnyType
+multiclass_predict::run(AnyType &args) {
+    ColumnVector v;
+    try {
+        new (&v) ColumnVector(__multiclass_score(args));
+    } catch (const ArrayWithNullException &e) {
         return -1;
     }
     int pred = 0;
-    ColumnVector v = x.transpose()*state.task.model;
     v.maxCoeff( &pred );
-
     return pred;
+}
+
+AnyType
+multiclass_score::run(AnyType &args) {
+    ColumnVector v(NULL);
+    try {
+        new (&v) ColumnVector(__multiclass_score(args));
+    } catch (const ArrayWithNullException &e) {
+        return v;
+    }
+    bool probability = args[2].getAs<bool>();
+    if (probability) {
+        // numerically stable softmax
+        v.array() -= v.maxCoeff();
+        v.array() = v.array().exp();
+        v.array() /= v.sum();
+    }
+    return v;
 }
 
 AnyType

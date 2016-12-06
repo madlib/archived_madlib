@@ -36,5 +36,6 @@ DECLARE_UDF(convex, multiclass_transition)
 DECLARE_UDF(convex, multiclass_merge)
 DECLARE_UDF(convex, multiclass_final)
 DECLARE_UDF(convex, multiclass_predict)
+DECLARE_UDF(convex, multiclass_score)
 DECLARE_UDF(convex, internal_multiclass_result)
 
