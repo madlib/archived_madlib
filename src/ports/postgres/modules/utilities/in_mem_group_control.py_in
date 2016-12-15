@@ -5,6 +5,7 @@
 """
 
 import plpy
+import math
 from control import MinWarning
 from utilities import unique_string
 from collections import namedtuple
@@ -54,9 +55,47 @@ class BaseState(object):
                    ret_states=None, **kwargs):
         self.update(col_grp_key, col_grp_state, ret_states)
 
+    def isclose_to_zero(self, a, b=0.0, rel_tol=1e-09, abs_tol=0.0):
+        '''
+        A variation of of Python 3.5 math.isclose()
+        https://hg.python.org/cpython/file/tip/Modules/mathmodule.c#l1993
+        '''
+        # sanity check on the inputs
+        if rel_tol < 0 or abs_tol < 0:
+            raise ValueError("tolerances must be non-negative")
+
+        # short circuit exact equality -- needed to catch two infinities of
+        # the same sign. And perhaps speeds things up a bit sometimes.
+        if a == b:
+            return True
+
+        # This catches the case of two infinities of opposite sign, or
+        # one infinity and one finite number. Two infinities of opposite
+        # sign would otherwise have an infinite relative tolerance.
+        # Two infinities of the same sign are caught by the equality check
+        # above.
+        if math.isinf(a) or math.isinf(b):
+            return False
+
+        # now do the regular computation
+        # this is essentially the "weak" test from the Boost library
+        diff = math.fabs(b - a)
+        result = (((diff <= math.fabs(rel_tol * b)) or
+                   (diff <= math.fabs(rel_tol * a))) or
+                  (diff <= abs_tol))
+        return result
+
+    def are_last_state_value_zero(self):
+        ## This function returns a boolean value, after inspecting the last
+        ## element of the state array for each group.
+        ## This returns True, only if the last element of the state array
+        ## of every group is (almost equal to) 0. If the value is non-zero
+        ## even for a single group, it returns False.
+        return all([self.isclose_to_zero(val[-1]) for val in self._state.itervalues()])
+
     def update(self, col_grp_key, col_grp_state, ret_states):
         failed_grp_keys = []
-        if ret_states is None:
+        if not ret_states:
             return failed_grp_keys
         t0 = ret_states[0]
         # no key column in table ret_states
@@ -294,6 +333,9 @@ class GroupIterationController:
         self.in_with = True
         return self
 
+    def are_last_state_value_zero(self):
+        return self.new_states.are_last_state_value_zero()
+    
     def info(self):
         """ Logging intermediate state information """
         if not self.verbose:
@@ -304,14 +346,17 @@ class GroupIterationController:
                                         group_param.grouped_state_type)
         for grp, t in res.iteritems():
             loss, normg = t['loss'], t['norm_of_gradient']
-            output_str = ("DEBUG: grp = {grp:10s}, "
-                          "iter = {iteration:5d}, "
-                          "loss = {loss:.5e}, "
-                          "|gradient| = {normg:.5e}, "
-                          "stepsize = {stepsize:.5e}")
+            iteration = self.iteration
+            output_str = "DEBUG: \
+                    grp = {grp:10s}, \
+                    iter = {iteration:5d}, \
+                    loss = {loss:.5e}, \
+                    |gradient| = {normg:.5e}, \
+                    stepsize = {stepsize:.5e}"
             plpy.notice(output_str.format(
-                        grp=grp, iteration=self.iteration,
-                        loss=loss, normg=normg, **self.kwargs))
+                        grp=grp, iteration=iteration,
+                        loss=loss, normg=normg,
+                        **self.kwargs))
 
     def final(self):
         """ Store the final converged state to a table for output """
@@ -437,7 +482,6 @@ class GroupIterationController:
         this will replace the old state, otherwise the history of all old states
         is kept.
         """
-
         newState = newState.format(**self.kwargs)
         self.iteration = self.iteration + 1
 

@@ -5,6 +5,8 @@ from elastic_net_utils import __compute_log_likelihood
 from utilities.utilities import __mad_version
 from utilities.utilities import _array_to_string
 from utilities.utilities import __mad_version
+from utilities.control import MinWarning
+from utilities.validate_args import get_cols_and_types
 
 version_wrapper = __mad_version()
 mad_vec = version_wrapper.select_vecfunc()
@@ -13,50 +15,131 @@ def __elastic_net_generate_result (optimizer, iteration_run, **args):
     """
     Generate result table for all optimizers
     """
-    plpy.execute("""
-                 drop table if exists {tbl_result};
-                 create table {tbl_result} (
-                     family            text,
-                     features          text[],
-                     features_selected text[],
-                     coef_nonzero      double precision[],
-                     coef_all          double precision[],
-                     intercept         double precision,
-                     log_likelihood    double precision,
-                     standardize       boolean,
-                     iteration_run     integer)
-                 """.format(**args))
-
     standardize_flag = "True" if args["normalization"] else "False"
-
+    source_table = args["rel_source"]
     if optimizer == "fista":
-        result_func = "__gaussian_fista_result(_state)"
-        tbl_state = "{tbl_fista_state}"
+        result_func = "__gaussian_fista_result({col_grp_state})".format(col_grp_state=args["col_grp_state"])
     elif optimizer == "igd":
-        result_func = "__gaussian_igd_result(_state, '{sq_str}'::double precision[], {threshold}::double precision, {tolerance}::double precision)"
-        tbl_state = "{tbl_igd_state}"
+        result_func = """__gaussian_igd_result({col_grp_state},
+            '{sq_str}'::double precision[],
+            {threshold}::double precision,
+            {tolerance}::double precision
+            )
+        """.format(col_grp_state=args["col_grp_state"], 
+            tolerance=args["warmup_tolerance"],
+            threshold=args["threshold"],
+            sq_str=args["sq_str"])
+    tbl_state = "{rel_state}".format(rel_state=args["rel_state"])
 
-    result = plpy.execute(
-        """
-        select
-            (result).coefficients as coef,
-            (result).intercept as intercept
-        from (
-            select {{schema_madlib}}.{result_func} as result
-            from {tbl_state}
-            where _iteration = {{iteration_run}}
+    grouping_column = args['grouping_col']
+    grouping_str1 = ""
+    if grouping_column:
+        col_grp_key = args['col_grp_key']
+        grouping_str = args['grouping_str']
+        groupby_str = "GROUP BY {grouping_col}, {col_grp_key}".format(
+            grouping_col=grouping_column, col_grp_key=col_grp_key)
+        cols_types = dict(get_cols_and_types(args["tbl_source"]))
+        grouping_str1 = grouping_column + ","
+        select_grouping_info = ','.join([grp_col.strip()+"\t" + cols_types[grp_col.strip()]
+            for grp_col in grouping_column.split(',')]) + ","
+        using_str = "USING ({col_grp_key})".format(col_grp_key=col_grp_key)
+        out_table_qstr = """
+        SELECT
+            {grouping_str1}
+            (result).coefficients AS coef,
+            (result).intercept AS intercept
+        FROM (
+            SELECT {schema_madlib}.{result_func} AS result,
+            {col_grp_key}
+            FROM {tbl_state}
+            WHERE {col_grp_iteration} = {iteration_run}
         ) t
-        """.format(result_func = result_func, tbl_state = tbl_state).format(
+        JOIN
+        (
+            SELECT
+                {grouping_str1}
+                array_to_string(ARRAY[{grouping_str}],
+                                ','
+                               ) AS {col_grp_key}
+            FROM {source_table}
+                {groupby_str}
+        ) n_tuples_including_nulls_subq
+        {using_str}
+        """.format(result_func = result_func, tbl_state = tbl_state,
+            col_grp_iteration = args["col_grp_iteration"],
             iteration_run = iteration_run,
-            **args))[0]
+            groupby_str=groupby_str,
+            grouping_str1=grouping_str1,
+            grouping_str=grouping_str,
+            using_str=using_str,
+            col_grp_key=col_grp_key,
+            source_table=source_table,
+            schema_madlib = args["schema_madlib"])
+    else:
+        ## Its a much simpler query when there is no grouping.
+        select_grouping_info = ""
+        out_table_qstr = """
+            SELECT
+                (result).coefficients AS coef,
+                (result).intercept AS intercept
+            FROM (
+                SELECT {schema_madlib}.{result_func} AS result
+                FROM {tbl_state}
+                WHERE {col_grp_iteration} = {iteration_run}
+            ) t
+        """.format(result_func = result_func, tbl_state = tbl_state,
+            col_grp_iteration = args["col_grp_iteration"],
+            iteration_run = iteration_run,
+            schema_madlib = args["schema_madlib"])
 
-    r_coef = mad_vec(result["coef"], text = False)
+    ## Create the output table
+    plpy.execute("""
+             DROP TABLE IF EXISTS {tbl_result};
+             CREATE TABLE {tbl_result} (
+                 {select_grouping_info}
+                 family            text,
+                 features          text[],
+                 features_selected text[],
+                 coef_nonzero      double precision[],
+                 coef_all          double precision[],
+                 intercept         double precision,
+                 log_likelihood    double precision,
+                 standardize       boolean,
+                 iteration_run     integer)
+             """.format(select_grouping_info=select_grouping_info, **args))
 
+    result = plpy.execute(out_table_qstr)
+    for res in result:
+        build_output_table(res, grouping_column, grouping_str1,
+            standardize_flag, iteration_run, **args)
+
+    ## Create summary table, listing the grouping columns used.
+    summary_table = args["tbl_summary"]
+    grouping_text = "NULL" if not grouping_column else grouping_column
+    plpy.execute("""
+        DROP TABLE IF EXISTS {summary_table};
+        CREATE TABLE {summary_table} (
+            grouping_col    text
+        )
+        """.format(summary_table=summary_table))
+    plpy.execute("""
+            INSERT INTO {summary_table} VALUES
+            ('{grouping_text}')
+        """.format(summary_table=summary_table, grouping_text=grouping_text))
+    return None
+
+
+def build_output_table(res, grouping_column, grouping_str1, 
+    standardize_flag, iteration_run, **args):
+    """
+    Insert model captured in "res" into the output table
+    """
+    r_coef = mad_vec(res["coef"], text = False)
     if args["normalization"]:
-        (coef, intercept) = __restore_scale(r_coef, result["intercept"], args)
+        (coef, intercept) = __restore_scale(r_coef, res["intercept"], args)
     else:
         coef = r_coef
-        intercept = result["intercept"]
+        intercept = res["intercept"]
 
     (features, features_selected, dense_coef, sparse_coef) = __process_results(
         coef, intercept, args["outstr_array"])
@@ -67,23 +150,26 @@ def __elastic_net_generate_result (optimizer, iteration_run, **args):
     else:
         coef_str = sparse_coef
 
-    log_likelihood = __compute_log_likelihood(r_coef, result["intercept"], **args)
-
-    plpy.execute(
-        """
-        insert into {tbl_result} values
-            ('{family}', '{features}'::text[], '{features_selected}'::text[],
+    log_likelihood = __compute_log_likelihood(r_coef, res["intercept"], **args)
+    if grouping_column:
+        grouping_info = ','.join([str(res[grp_col.strip()]) 
+            for grp_col in grouping_str1.split(',') 
+            if grp_col.strip() in res.keys()]) + ","
+    else:
+        grouping_info = ""
+    fquery = """
+        INSERT INTO {tbl_result} VALUES
+            ({grouping_info} '{family}', '{features}'::text[], '{features_selected}'::text[],
             '{dense_coef}'::double precision[], '{sparse_coef}'::double precision[],
             {intercept}, {log_likelihood}, {standardize_flag}, {iteration})
         """.format(
             features = features, features_selected = features_selected,
             dense_coef = dense_coef, sparse_coef = sparse_coef,
             intercept = intercept, log_likelihood = log_likelihood,
+            grouping_info=grouping_info,
             standardize_flag = standardize_flag, iteration = iteration_run,
-            **args))
-
-    return None
-
+            **args)
+    plpy.execute(fquery)
 # ========================================================================
 
 def __restore_scale (coef, intercept, args):
