@@ -208,20 +208,26 @@ variance feature was introduced.  A special case to be aware of:
 'components_param' = 1 (INTEGER) will return 1 principal
 component, but 'components_param' = 1.0 (FLOAT) will return all 
 principal components, i.e., proportion of variance of 100%.
+\n \n
+Also, please note that the number of principal components (<em>k</em>)
+is global, even in the case where grouping is used (see 'grouping_cols'
+below).  In the case of grouping, proportion of variance 
+might be a better choice; this could result in different numbers
+of principal components for different groups.
 
 <DT>grouping_cols (optional)</DT>
-<DD>TEXT, default: NULL.  
+<DD>TEXT, default: NULL. A comma-separated list of column names, with the
+source data grouped using the combination of all the columns. An independent
+PCA model will be computed for each combination of the grouping columns.</DD>
 
-@note <em>Not currently implemented. Any non-NULL value is ignored.
-   Grouping support will be added in a future release. </em> The parameter 
-   is planned to be implemented as a 
-   comma-separated list of column names, with the source data grouped using 
-   the combination of all the columns. An independent PCA model will be 
-   computed for each combination of the grouping columns.</DD>
+@note Dense matrices can be different sizes for different groups if desired.  
+Sparse matrices cannot be different sizes for different groups,
+because the 'row_dim' and 'col_dim' parameters used for sparse matrices 
+are global across all groups.
 
 <DT>lanczos_iter (optional)</DT>
 <DD>INTEGER, default: minimum of {<em>k+40</em>, smallest matrix dimension}
-where <em>k</em> is the number of principle components specified in the 
+where <em>k</em> is the number of principal components specified in the 
 parameter 'components_param'.  This parameter defines the 
 number of Lanczos iterations for the SVD calculation.
 The Lanczos iteration number roughly corresponds to the accuracy of the SVD
@@ -280,7 +286,7 @@ This sumary table has the following columns:
 @anchor examples
 @examp
 
--# View online help for the PCA training function:
+-# View online help for the PCA training functions:
 <pre class="example">
 SELECT madlib.pca_train();
 or
@@ -290,115 +296,192 @@ SELECT madlib.pca_sparse_train();
 -# Create sample data in dense matrix form:
 <pre class="example">
 DROP TABLE IF EXISTS mat;
-CREATE TABLE mat (
-    			row_id integer,
-    			row_vec double precision[]
-);
+CREATE TABLE mat (id integer,
+                  row_vec double precision[]
+                  );
 INSERT INTO mat VALUES
 (1, '{1,2,3}'),
 (2, '{2,1,2}'),
 (3, '{3,2,1}');
 </pre>
 
--# Run the PCA function for a specified number of principle components and view the results:
+-# Run the PCA function for a specified number of principal components and view the results:
 <pre class="example">
 DROP TABLE IF EXISTS result_table, result_table_mean;
-SELECT madlib.pca_train( 'mat',
-                        'result_table',
-                        'row_id',
-                         3);
-SELECT * FROM result_table;
-</pre>
-<pre class="result">
- row_id |                     principal_components                     |       std_dev        |      proportion      
---------+--------------------------------------------------------------+----------------------+----------------------
-      1 | {-0.707106781186547,-1.6306400674182e-16,0.707106781186547}  |     1.41421356237309 |    0.857142857142245
-      2 | {-1.66533453693773e-16,1,5.55111512312578e-17}               |    0.577350269189626 |    0.142857142857041
-      3 | {-0.707106781186548,1.11022302462516e-16,-0.707106781186547} | 1.59506745224211e-16 | 1.09038864737157e-32
-</pre>
-
--# Run the PCA function for a specified proportion of variance and view the results:
-<pre class="example">
-DROP TABLE IF EXISTS result_table, result_table_mean;
-SELECT madlib.pca_train( 'mat',
-                         'result_table',
-                         'row_id',
-                          0.9);
-SELECT * FROM result_table;
+SELECT madlib.pca_train('mat',             -- Source table
+                        'result_table',    -- Output table
+                        'id',              -- Row id of source table
+                         2);               -- Number of principal components
+SELECT * FROM result_table ORDER BY row_id;
 </pre>
 <pre class="result">
  row_id |                     principal_components                     |      std_dev      |    proportion     
 --------+--------------------------------------------------------------+-------------------+-------------------
-      1 | {-0.707106781186548,-3.46944695195361e-17,0.707106781186548} |   1.4142135623731 | 0.857142857142245
-      2 | {2.22044604925031e-16,-1,1.11022302462516e-16}               | 0.577350269189626 | 0.142857142857041
+      1 | {0.707106781186547,-6.93889390390723e-18,-0.707106781186548} |  1.41421356237309 | 0.857142857142244
+      2 | {0,1,0}                                                      | 0.577350269189626 | 0.142857142857041
+(2 rows)
 </pre>
 
--# Create sample data in sparse matrix form:
+-# Run the PCA function for a specified proportion of variance and view the results:
 <pre class="example">
-DROP TABLE IF EXISTS sparse_mat;
-CREATE TABLE sparse_mat (
-                        row_id integer,
-                        col_id integer,
-                        val_id integer
-                        );
-INSERT INTO sparse_mat VALUES
-(1, 2, 4.0),
-(1, 5, 6.0),
-(3, 8, 4.0),
-(5, 4, 2.0),
-(6, 6, 12.0),
-(8, 1, 2.0),
-(8, 7, 2.0),
-(9, 3, 4.0),
-(9, 8, 2.0);
-</pre>
-
--# This matrix is what this matrix looks like in dense form:
-<pre class="example">
-DROP TABLE IF EXISTS dense_mat;
-SELECT madlib.matrix_densify(
-							'sparse_mat', 
-							'row=row_id, col=col_id, val=val_id', 
-							'dense_mat');
-SELECT * FROM dense_mat order by row_id;
-</pre>
-<pre class="result">
- row_id |       val_id       
---------+--------------------
-      1 | {0,4,0,0,6,0,0,0}
-      2 | {0,0,0,0,0,0,0,0}
-      3 | {0,0,0,0,0,0,0,4}
-      4 | {0,0,0,0,0,0,0,0}
-      5 | {0,0,0,2,0,0,0,0}
-      6 | {0,0,0,0,0,12,0,0}
-      7 | {0,0,0,0,0,0,0,0}
-      8 | {2,0,0,0,0,0,2,0}
-      9 | {0,0,4,0,0,0,0,2}
-</pre>
-
--# Run the PCA sparse function for a specified number of principle components and view the results:
-<pre class="example">
+%%sql
 DROP TABLE IF EXISTS result_table, result_table_mean;
-SELECT madlib.pca_sparse_train(
-                                'sparse_mat', 
-                                'result_table',
-                                'row_id', 
-                                'col_id', 
-                                'val_id', 
-                                9, 
-                                8, 
-                                5);
-SELECT * FROM result_table;
+SELECT madlib.pca_train('mat',             -- Source table
+                        'result_table',    -- Output table
+                        'id',              -- Row id of source table
+                         0.9);             -- Proportion of variance
+SELECT * FROM result_table ORDER BY row_id;
 </pre>
-Result (with principle components truncated for readability):
 <pre class="result">
-  row_id |      principal_components                   |      std_dev      |     proportion     
---------+----------------------------------------------------------------------------------------
-      1 | {0.0189854059340971,0.0593979357345431,…    |  4.03069474374092 |  0.604208682045711
-      2 | {0.0346801706473592,-0.536234300404824,…    |  2.42282285507368 |  0.218308410262949
-      3 | {0.166190350977087,-0.112693750915351,…     |  1.54680674776235 | 0.0889814051004931
-      4 | {-0.0699448377725649,0.00569475043252321,…  |  1.10233418049845 | 0.0451911810308358
-      5 | {0.645363366217337,0.0403370697192613,…     | 0.906957663197704 | 0.0305915282045503
+ row_id |                     principal_components                     |      std_dev      |    proportion     
+--------+--------------------------------------------------------------+-------------------+-------------------
+      1 | {0.707106781186548,-2.77555756156289e-17,-0.707106781186548} |   1.4142135623731 | 0.857142857142245
+      2 | {-1.11022302462516e-16,-1,0}                                 | 0.577350269189626 | 0.142857142857041
+(2 rows)
+</pre>
+
+-# Now we use grouping in dense form to learn different models for different groups.
+First, we create sample data in dense matrix form with a grouping column.
+Note we actually have different matrix sizes for the different groups, which 
+is allowed for dense:
+<pre class="example">
+DROP TABLE IF EXISTS mat_group;
+CREATE TABLE mat_group (
+    id integer,
+    row_vec double precision[],
+    matrix_id integer
+);
+INSERT INTO mat_group VALUES
+(1, '{1,2,3}', 1),
+(2, '{2,1,2}', 1),
+(3, '{3,2,1}', 1),
+(4, '{1,2,3,4,5}', 2),
+(5, '{2,5,2,4,1}', 2),
+(6, '{5,4,3,2,1}', 2);
+</pre>
+
+-# Run the PCA function with grouping for a specified proportion of variance and view the results:
+<pre class="example">
+DROP TABLE IF EXISTS result_table_group, result_table_group_mean;
+SELECT madlib.pca_train('mat_group',             -- Source table
+                        'result_table_group',    -- Output table
+                        'id',                    -- Row id of source table
+                         0.8,                    -- Proportion of variance
+                        'matrix_id');            -- Grouping column
+SELECT * FROM result_table_group ORDER BY matrix_id, row_id;
+</pre>
+<pre class="result">
+ row_id |                                      principal_components                                      |     std_dev     |    proportion     | matrix_id 
+--------+------------------------------------------------------------------------------------------------+-----------------+-------------------+-----------
+      1 | {0.707106781186548,0,-0.707106781186547}                                                       | 1.4142135623731 | 0.857142857142245 |         1
+      1 | {-0.555378486712784,-0.388303582074091,0.0442457354870796,0.255566375612852,0.688115693174023} | 3.2315220311722 | 0.764102534485173 |         2
+      2 | {0.587384101786277,-0.485138064894743,0.311532046315153,-0.449458074050715,0.347212037159181}  |  1.795531127192 | 0.235897465516047 |         2
+(3 rows)
+</pre>
+
+-# Now let's look at sparse matrices.  Create sample data in sparse matrix form:
+<pre class="example">
+DROP TABLE IF EXISTS mat_sparse;
+CREATE TABLE mat_sparse (
+    row_id integer,
+    col_id integer,
+    value double precision
+);
+INSERT INTO mat_sparse VALUES
+(1, 1, 1.0),
+(2, 2, 2.0),
+(3, 3, 3.0),
+(4, 4, 4.0),
+(1, 5, 5.0),
+(2, 4, 6.0),
+(3, 2, 7.0),
+(4, 3, 8.0);
+</pre>
+As an aside, this is what the sparse matrix above looks like when 
+put in dense form:
+<pre class="example">
+DROP TABLE IF EXISTS mat_dense;
+SELECT madlib.matrix_densify('mat_sparse', 
+                            'row=row_id, col=col_id, val=value', 
+                            'mat_dense');
+SELECT * FROM mat_dense ORDER BY row_id;
+</pre>
+<pre class="result">
+ row_id |    value    
+--------+-------------
+      1 | {1,0,0,0,5}
+      2 | {0,2,0,6,0}
+      3 | {0,7,3,0,0}
+      4 | {0,0,8,4,0}
+(4 rows)
+</pre>
+
+-# Run the PCA sparse function for a specified number of principal components and view the results:
+<pre class="example">DROP TABLE IF EXISTS result_table, result_table_mean;
+SELECT madlib.pca_sparse_train( 'mat_sparse',       -- Source table
+                                'result_table',     -- Output table
+                                'row_id',           -- Row id of source table
+                                'col_id',           -- Column id of source table
+                                'value',            -- Value of matrix at row_id, col_id
+                                4,                  -- Actual number of rows in the matrix
+                                5,                  -- Actual number of columns in the matrix
+                                3);                 -- Number of principal components                            
+SELECT * FROM result_table ORDER BY row_id;
+</pre>
+Result (with principal components truncated for readability):
+<pre class="result">
+ row_id |         principal_components                 |     std_dev      |    proportion     
+--------+----------------------------------------------+------------------+-------------------
+      1 | {-0.0876046030186158,-0.0968983772909994,... | 4.21362803829554 | 0.436590030617467
+      2 | {-0.0647272661608605,0.877639526308692,...   | 3.68408023747461 | 0.333748701544697
+      3 | {-0.0780380267884855,0.177956517174911,...   | 3.05606908060098 | 0.229661267837836
+(3 rows)
+</pre>
+
+-# Now we use grouping in sparse form to learn different models for different groups.
+First, we create sample data in sparse matrix form with a grouping column:
+<pre class="example">
+DROP TABLE IF EXISTS mat_sparse_group;
+CREATE TABLE mat_sparse_group (
+    row_id integer,
+    col_id integer,
+    value double precision,
+    matrix_id integer);
+INSERT INTO mat_sparse_group VALUES
+(1, 1, 1.0, 1),
+(2, 2, 2.0, 1),
+(3, 3, 3.0, 1),
+(4, 4, 4.0, 1),
+(1, 5, 5.0, 1),
+(2, 4, 6.0, 2),
+(3, 2, 7.0, 2),
+(4, 3, 8.0, 2);
+</pre>
+
+-#  Run the PCA function with grouping for a specified proportion of variance
+and view the results:
+<pre class="example">
+DROP TABLE IF EXISTS result_table_group, result_table_group_mean;
+SELECT madlib.pca_sparse_train( 'mat_sparse_group',   -- Source table
+                                'result_table_group', -- Output table
+                                'row_id',             -- Row id of source table
+                                'col_id',             -- Column id of source table
+                                'value',              -- Value of matrix at row_id, col_id
+                                4,                    -- Actual number of rows in the matrix
+                                5,                    -- Actual number of columns in the matrix
+                                0.8,                  -- Proportion of variance
+                                'matrix_id');
+SELECT * FROM result_table_group ORDER BY matrix_id, row_id;
+</pre>
+Result (with principal components truncated for readability):
+<pre class="result">
+ row_id |           principal_components             |     std_dev      |    proportion     | matrix_id 
+--------+--------------------------------------------+------------------+-------------------+-----------
+      1 | {-0.17805696611353,0.0681313257646983,...  | 2.73659933165925 | 0.544652792875481 |         1
+      2 | {-0.0492086814863993,0.149371585357526,... | 2.06058314533194 | 0.308800210823714 |         1
+      1 | {0,-0.479486114660443,...                  | 4.40325305087975 | 0.520500333693473 |         2
+      2 | {0,0.689230898585949,...                   |  3.7435566458567 | 0.376220573442628 |         2
+(4 rows)
 </pre>
 
 @anchor notes
@@ -453,13 +536,13 @@ recovered as the entries of \f$ {\boldsymbol \Sigma}/(\sqrt{(N-1)} \f$, and the 
 components are the rows of  \f$ {\boldsymbol V} \f$. The reasoning behind using N − 1 instead of N to calculate the covariance is <a href="https://en.wikipedia.org/wiki/Bessel%27s_correction">Bessel's correction</a>.
 
 
-It is important to note that the PCA implementation assumes that the user will
- use only the principal components that have non-zero eigenvalues.  The SVD
- calculation is done with the Lanczos method, with does not guarantee
- correctness for singular vectors with zero-valued eigenvalues.  Consequently,
-  principal components with zero-valued eigenvalues are not guaranteed to be correct.
- Generally, this will not be problem unless the user wants to use the
- principal components for the entire eigenspectrum.
+@note It is important to note that this PCA implementation assumes that the user will
+use only the principal components that have non-zero eigenvalues.  The SVD
+calculation is done with the Lanczos method, which does not guarantee
+correctness for singular vectors with zero-valued eigenvalues.  Consequently,
+principal components with zero-valued eigenvalues are not guaranteed to be correct.
+Generally, this will not be problem unless the user wants to use the
+principal components for the entire eigenspectrum.
 
 
 @anchor literature
@@ -477,8 +560,6 @@ It is important to note that the PCA implementation assumes that the user will
 File pca.sql_in documenting the SQL functions
 
 \ref grp_pca_project
-
-
 
 */
 
@@ -512,14 +593,14 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION
 MADLIB_SCHEMA.pca_train(
-    source_table    TEXT,   -- Source table name (dense matrix)
-    pc_table        TEXT,   -- Output table name for the principal components
-    row_id          TEXT,   -- Column name for the ID for each row
-    k               INTEGER,-- Number of principal components to compute
-    grouping_cols   TEXT,   -- Comma-separated list of grouping columns
-    lanczos_iter    INTEGER,-- The number of Lanczos iterations for the SVD calculation
-    use_correlation BOOLEAN, -- If True correlation matrix is used for principal components
-    result_summary_table  TEXT    -- Table name to store summary of results (Default: NULL)
+    source_table    TEXT,       -- Source table name (dense matrix)
+    pc_table        TEXT,       -- Output table name for the principal components
+    row_id          TEXT,       -- Column name for the ID for each row
+    k               INTEGER,    -- Number of principal components to compute
+    grouping_cols   TEXT,       -- Comma-separated list of grouping columns
+    lanczos_iter    INTEGER,    -- The number of Lanczos iterations for the SVD calculation
+    use_correlation BOOLEAN,    -- If True correlation matrix is used for principal components
+    result_summary_table  TEXT  -- Table name to store summary of results (Default: NULL)
 )
 RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.pca_train($1, $2, $3, $4, $5, $6, $7, $8, NULL)
@@ -913,3 +994,32 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA._pca_union(
+    source_table          TEXT,    -- Source table name (dense matrix)
+    pc_table              TEXT,    -- Output table name for the principal components
+    pc_table_mean         TEXT,    -- Output table name for the principal components
+    row_id                TEXT,    -- Column name for the ID for each row
+    k                     INTEGER, -- Number of principal components to compute
+    grouping_cols         TEXT,    -- Comma-separated list of grouping columns (Default: NULL)
+    lanczos_iter          INTEGER, -- The number of Lanczos iterations for the SVD calculation (Default: min(k+40, smallest Matrix dimension))
+    use_correlation       BOOLEAN, -- If True correlation matrix is used for principal components (Default: False)
+    result_summary_table  TEXT,    -- Table name to store summary of results (Default: NULL)
+    result_summary_table_temp  TEXT,    -- Table name to store summary of results (Default: NULL)
+    variance              DOUBLE PRECISION,   -- The proportion of variance (Default: NULL)
+    grp_id                INTEGER, -- a place holder id for each group
+    grouping_where_clause TEXT,    -- WHERE clause using grouping_cols
+    sparse_where_condition TEXT,   -- WHERE clause used when creating temp sparse matrix table with dims
+    select_grouping_cols  TEXT,    -- SELECT clause using grouping_cols
+    temp_table_columns    TEXT,    -- SELECT caluse for creating temporary copy of the source_table
+    is_sparse             BOOLEAN, -- specifies if the PCA call is for sparse or dense matrices
+    col_id                TEXT,    -- sparse representation based detail
+    val_id                TEXT,    -- sparse representation based detail
+    row_dim               INTEGER, -- sparse representation based detail
+    col_dim               INTEGER  -- sparse representation based detail
+)
+RETURNS VOID AS $$
+PythonFunction(pca, pca, _pca_union)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');

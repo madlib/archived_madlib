@@ -16,11 +16,12 @@ from linalg.svd import _svd_upper_wrap
 from utilities.utilities import _array_to_string
 from utilities.utilities import add_postfix
 from utilities.utilities import __mad_version
-from utilities.utilities import unique_string
+from utilities.utilities import unique_string, split_quoted_delimited_str
 from utilities.utilities import _assert
+from utilities.validate_args import get_cols, get_cols_and_types
+from utilities.control import MinWarning
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_exists
-
 
 import time
 import plpy
@@ -29,16 +30,43 @@ version_wrapper = __mad_version()
 string_to_array = version_wrapper.select_vecfunc()
 array_to_string = version_wrapper.select_vec_return()
 
+
+def pca_sparse(schema_madlib, source_table, pc_table, row_id,
+               col_id, val_id, row_dim, col_dim, k, grouping_cols,
+               lanczos_iter, use_correlation, result_summary_table,
+               variance, **kwargs):
+    """
+    Args:
+        @param schema_madlib
+        @param source_table
+        @param pc_table
+        @param row_id
+        @param col_id
+        @param val_id
+        @param row_dim
+        @param col_dim
+        @param k
+        @param grouping_cols
+        @param lanczos_iter
+        @param use_correlation
+        @param result_summary_table
+        @param variance
+
+    Returns:
+        None
+
+    """
+    pca_wrap(schema_madlib, source_table, pc_table, row_id,
+        k, grouping_cols, lanczos_iter, use_correlation,
+        result_summary_table, variance, True, col_id,
+        val_id, row_dim, col_dim)
+# ------------------------------------------------------------------------
+
 # ========================================================================
 def pca(schema_madlib, source_table, pc_table, row_id,
         k, grouping_cols, lanczos_iter, use_correlation,
         result_summary_table, variance, **kwargs):
     """
-    Compute the PCA of the matrix in source_table.
-
-    This function is the specific call for dense matrices and creates three
-    tables corresponding to the three decomposition matrices.
-
     Args:
         @param schema_madlib
         @param source_table
@@ -55,7 +83,23 @@ def pca(schema_madlib, source_table, pc_table, row_id,
         None
 
     """
-    startTime = time.time()  # measure the starting time
+    pca_wrap(schema_madlib, source_table, pc_table, row_id,
+        k, grouping_cols, lanczos_iter, use_correlation,
+        result_summary_table, variance)
+# ------------------------------------------------------------------------
+
+
+def pca_wrap(schema_madlib, source_table, pc_table, row_id,
+        k, grouping_cols, lanczos_iter, use_correlation,
+        result_summary_table, variance, is_sparse=False, col_id=None,
+        val_id=None, row_dim=None, col_dim=None, **kwargs):
+    """
+    This wrapper was added to support grouping columns. This
+    function does the necessary pre-processing for handling
+    grouping_cols, if set. It then constructs a single query
+    that includes a separate "madlib._pca_union(...)" for each
+    group.
+    """
     # Reset the message level to avoid random messages
     old_msg_level = plpy.execute("""
                                   SELECT setting
@@ -63,25 +107,230 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                                   WHERE name='client_min_messages'
                                   """)[0]['setting']
     plpy.execute('SET client_min_messages TO warning')
-
-    # Step 1: Validate the input arguments
-    _validate_args(schema_madlib, source_table, pc_table, k,
+    grouping_cols_list = []
+    if is_sparse:
+        _validate_args(schema_madlib, source_table, pc_table, k, row_id, col_id,
+                   val_id, row_dim, col_dim, lanczos_iter,
+                   use_correlation, result_summary_table, variance)
+    else:
+        _validate_args(schema_madlib, source_table, pc_table, k,
                    row_id, None, None, None, None,
-                   grouping_cols, lanczos_iter, use_correlation,
+                   lanczos_iter, use_correlation,
                    result_summary_table,variance)
+    if(grouping_cols):
+        # validate the grouping columns. We currently only support grouping_cols
+        # to be column names in the source_table, and not expressions!
+        grouping_cols_list = split_quoted_delimited_str(grouping_cols)
+        _assert(columns_exist_in_table(source_table, grouping_cols_list, schema_madlib),
+                "PCA error: One or more grouping columns in {0} do not exist!".format(grouping_cols))
+        distinct_grouping_values = plpy.execute("""
+                SELECT DISTINCT {grouping_cols} FROM {source_table}
+            """.format(grouping_cols=grouping_cols, source_table=source_table))
+    else:
+        grouping_cols = ''
+    other_columns_in_table = [col for col in get_cols(source_table) if col not in grouping_cols_list]
+    grouping_cols_clause = ''
+    if grouping_cols_list:
+        cols_names_types = get_cols_and_types(source_table)
+        grouping_cols_clause = ', ' + ', '.join([c_name+" "+c_type for (c_name, c_type) in cols_names_types if c_name in grouping_cols_list])
+    ## Create all output tables
+    plpy.execute("""
+        CREATE TABLE {pc_table} (
+            row_id               INTEGER,
+            principal_components double precision[],
+            std_dev              double precision,
+            proportion           double precision
+            {grouping_cols_clause}
+        )
+        """.format(pc_table=pc_table, grouping_cols_clause=grouping_cols_clause))
+    pc_table_mean = add_postfix(pc_table, "_mean")
+    plpy.execute("""
+        DROP TABLE IF EXISTS {pc_table_mean};
+        CREATE TABLE {pc_table_mean} (
+            column_mean     double precision[]
+            {grouping_cols_clause}
+        )
+        """.format(pc_table_mean=pc_table_mean, grouping_cols_clause=grouping_cols_clause))
+    if result_summary_table:
+        plpy.execute("""
+                DROP TABLE IF EXISTS {0};
+                CREATE TABLE {0} (
+                rows_used               INTEGER,
+                "exec_time (ms)"        numeric,
+                iter                    INTEGER,
+                recon_error             double precision,
+                relative_recon_error    double precision,
+                use_correlation         boolean
+                {1}
+                )
+            """.format(result_summary_table, grouping_cols_clause))
+    else:
+        result_summary_table = ''
 
+    # declare variables whose values will be different for each group, if
+    # grouping_cols is specified
+    grouping_where_clause = ''
+    sparse_where_condition = ''
+    select_grouping_cols = ''
+    temp_table_columns = ''
+    result_summary_table_temp = ''
+    # For Dense matrix format only:
+    # We can now ignore the original row_id for all computations since we will
+    # create a new table with a row_id column that has not duplicates and ranges
+    # from 1 to number of rows in the group/table. This is to mainly support the
+    # grouping scneario where the row_id values might not range between 1 and
+    # number of rows in the group, for each group. Doing this also just extends
+    # this behavior for non-grouping scenarios too. If creating a new temp table
+    # that corrects the row_id column is not of much importance in non-grouping
+    # cases, we can avoid creating the temp table and save some computation time.
+    # But, at the moment, the code creates the temp table even for the non-grouping
+    # scenario.
+    # We don't need to do this for sparse representation because of the nature
+    # of its definition.
+    other_columns_in_table.remove(row_id)
+    temp_table_columns = """ ROW_NUMBER() OVER() AS row_id, """ + ','.join(other_columns_in_table)
+
+    pca_union_call_list = []
+    grp_id = 0
+    if not is_sparse:
+        col_id = 'NULL'
+        val_id = 'NULL'
+        row_dim = 0
+        col_dim = 0
+    while True:
+        if result_summary_table:
+            result_summary_table_temp = "pg_temp." + unique_string() + "_" + str(grp_id)
+        if grouping_cols:
+            grp_value_dict = distinct_grouping_values[grp_id]
+            where_conditions = ' AND '.join([str(key)+"="+str(value) for (key, value) in grp_value_dict.items()])
+            sparse_where_condition = ' AND ' + where_conditions
+            grouping_where_clause = ' WHERE ' + where_conditions
+            select_grouping_cols = ', ' + ', '.join([str(value)+" AS "+key for (key, value) in grp_value_dict.items()])
+
+        pca_union_call_list.append("""
+            {schema_madlib}._pca_union('{source_table}', '{pc_table}', '{pc_table_mean}', '{row_id}',
+                {k}, '{grouping_cols}', {lanczos_iter}, {use_correlation},
+                '{result_summary_table}', '{result_summary_table_temp}', {variance},
+                {grp_id}, '{grouping_where_clause}', '{sparse_where_condition}',
+                '{select_grouping_cols}', '{temp_table_columns}', {is_sparse},
+                '{col_id}', '{val_id}', {row_dim}, {col_dim})
+            """.format(schema_madlib=schema_madlib,
+                source_table=source_table, pc_table=pc_table,
+                pc_table_mean=pc_table_mean, row_id=row_id,
+                k='NULL' if k is None else k, grouping_cols=grouping_cols,
+                lanczos_iter=lanczos_iter, use_correlation=use_correlation,
+                result_summary_table=result_summary_table,
+                result_summary_table_temp=result_summary_table_temp,
+                variance='NULL' if variance==None else variance,
+                grp_id=grp_id, grouping_where_clause=grouping_where_clause,
+                sparse_where_condition=sparse_where_condition,
+                select_grouping_cols=select_grouping_cols,
+                temp_table_columns=temp_table_columns, is_sparse=is_sparse,
+                col_id=col_id, val_id=val_id, row_dim=row_dim, col_dim=col_dim))
+        grp_id += 1
+        if not grouping_cols_list or len(distinct_grouping_values) == grp_id:
+            break
+    # "SELECT <query_1>, <query_2>, <query_3>, ..." is expected to run each
+    # <query_i> in parallel.
+    pca_union_call = 'SELECT ' + ', '.join(pca_union_call_list)
+    plpy.execute(pca_union_call)
+
+    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+
+
+def _pca_union(schema_madlib, source_table, pc_table, pc_table_mean,
+        row_id, k, grouping_cols, lanczos_iter, use_correlation,
+        result_summary_table, result_summary_table_temp, variance,
+        grp_id, grouping_where_clause, sparse_where_condition,
+        select_grouping_cols, temp_table_columns, is_sparse, col_id,
+        val_id, row_dim, col_dim, **kwargs):
+    """
+    This function does all the heavy lifting of PCA, for both pca and pca_sparse.
+    Compute the PCA of the matrix in source_table. This function is the specific
+    call for dense matrices and creates three tables corresponding to the three
+    decomposition matrices.
+
+    Args:
+        @param source_table          TEXT,    -- Source table name (dense matrix)
+        @param pc_table              TEXT,    -- Output table name for the principal components
+        @param pc_table_mean         TEXT,    -- Output table name for the principal components
+        @param row_id                TEXT,    -- Column name for the ID for each row
+        @param k                     INTEGER, -- Number of principal components to compute
+        @param grouping_cols         TEXT,    -- Comma-separated list of grouping columns (Default: NULL)
+        @param lanczos_iter          INTEGER, -- The number of Lanczos iterations for the SVD calculation (Default: min(k+40, smallest Matrix dimension))
+        @param use_correlation       BOOLEAN, -- If True correlation matrix is used for principal components (Default: False)
+        @param result_summary_table  TEXT,    -- Table name to store summary of results (Default: NULL)
+        @param result_summary_table_temp  TEXT,    -- Table name to store summary of results (Default: NULL)
+        @param variance              DOUBLE PRECISION,   -- The proportion of variance (Default: NULL)
+        @param grp_id                INTEGER, -- a place holder id for each group
+        @param grouping_where_clause TEXT,    -- WHERE clause using grouping_cols
+        @param select_grouping_cols  TEXT,    -- SELECT clause using grouping_cols
+        @param temp_table_columns    TEXT,    -- SELECT caluse for creating temporary copy of the source_table
+        @param is_sparse             BOOLEAN, -- specifies if the PCA call is for sparse or dense matrices
+        @param col_id                TEXT,    -- sparse representation based detail
+        @param val_id                TEXT,    -- sparse representation based detail
+        @param row_dim               INTEGER, -- sparse representation based detail
+        @param col_dim               INTEGER  -- sparse representation based detail
+
+    Returns:
+        None
+    """
+    startTime = time.time()  # measure the starting time
+    # Step 1: Modify data format for sparse input
+    if is_sparse:
+        # Step 1.1: Densify the matrix for sparse input tables
+        # We densify the matrix because the recentering process will generate a
+        # dense matrix, so we just wrap around regular PCA.
+        # First we must copy the sparse matrix and add in the dimension information
+        sparse_temp = "pg_temp." + unique_string() + "_sparse"
+        # Add in the dimension information needed by the densifying process
+        create_temp_sparse_matrix_table_with_dims(source_table, sparse_temp,
+                                                  row_id, col_id, val_id,
+                                                  row_dim, col_dim, sparse_where_condition)
+        validate_sparse(sparse_temp,
+                        {'row': row_id, 'col': col_id, 'val': val_id},
+                        check_col=False)
+        # Step 1.2: Densify the input matrix
+        x_dense = "pg_temp." + unique_string() + "_dense"
+        plpy.execute("""
+            SELECT {schema_madlib}.matrix_densify(
+                '{sparse_temp}',
+                'row={row_id}, col={col_id}, val={val_id}',
+                '{x_dense}', 'row=row_id, val=row_vec')
+            """.format(schema_madlib=schema_madlib,
+                sparse_temp=sparse_temp, row_id=row_id,
+                col_id=col_id, val_id=val_id, x_dense=x_dense))
+        plpy.execute("""
+            DROP TABLE IF EXISTS {0};
+            """.format(sparse_temp))
+        source_table_grouped = x_dense
+    else:
+        # Creation of this temp table is unnecessary if the scenario does not involve
+        # grouping, and/or, the input table had perfect values for the row_id column.
+        # This temp table will ensure pca works even when the value of row_id column
+        # in dense matrix format does not have values ranging from 1 to number of rows.
+        source_table_grouped = "pg_temp." + unique_string() + "group_" + str(grp_id)
+        plpy.execute("""
+                    CREATE TABLE {source_table_grouped} AS
+                    SELECT {temp_table_columns}
+                    FROM {source_table}
+                    {grouping_where_clause}
+                """.format(source_table_grouped=source_table_grouped,
+                    source_table=source_table, grouping_where_clause=grouping_where_clause,
+                    temp_table_columns=temp_table_columns))
+    row_id = 'row_id'
     # Make sure that the table has row_id and row_vec
     source_table_copy = "pg_temp." + unique_string() + "_reformated_names"
     created_new_table = cast_dense_input_table_to_correct_columns(
-        schema_madlib, source_table, source_table_copy, row_id)
+        schema_madlib, source_table_grouped, source_table_copy, row_id)
 
     if(created_new_table):
-        source_table = source_table_copy
-
-    [row_dim, col_dim] = get_dims(source_table,
+        plpy.execute("DROP TABLE {0}".format(source_table_grouped))
+        source_table_grouped = source_table_copy
+    [row_dim, col_dim] = get_dims(source_table_grouped,
                                   {'row': 'row_id', 'col': 'col_id',
                                    'val': 'row_vec'})
-    validate_dense(source_table,
+    validate_dense(source_table_grouped,
                    {'row': 'row_id', 'val': 'row_vec'},
                    check_col=False, row_dim=row_dim)
     if k:
@@ -100,15 +349,13 @@ def pca(schema_madlib, source_table, pc_table, row_id,
     else:
         if variance: #lanczos_iter overrides the proportion default for k
             curK = lanczos_iter
-
     # Note: we currently don't support grouping columns or correlation matrices
-    if grouping_cols is None and not use_correlation:
-
+    if not use_correlation:
         # Step 2: Normalize the data (Column means)
         dimension = col_dim
         scaled_source_table = "pg_temp." + unique_string() + "_scaled_table"
         column_mean_str = _recenter_data(schema_madlib,
-                                         source_table,
+                                         source_table_grouped,
                                          scaled_source_table,
                                          'row_id',
                                          'row_vec',
@@ -116,19 +363,18 @@ def pca(schema_madlib, source_table, pc_table, row_id,
         # Step 3: Create temporary output & result summary table
         svd_output_temp_table = "pg_temp."+ unique_string()+ "_svd_out_tbl"
 
-        if result_summary_table is None:
+        if result_summary_table_temp is None:
             result_summary_table_string = ''
         else:
-            result_summary_table_string = ", '{0}'".format(result_summary_table)
-
+            result_summary_table_string = ", '{0}'".format(result_summary_table_temp)
         # Step 4: Perform SVD
         # Step 4.1: Perform upper part of SVD
-        if result_summary_table:
+        if result_summary_table_temp:
             t0 = time.time()
 
         (source_table_svd,bd_pref) = _svd_upper_wrap(schema_madlib,
             scaled_source_table, svd_output_temp_table,
-            row_id, curK, lanczos_iter, result_summary_table)
+            row_id, curK, lanczos_iter, result_summary_table_temp)
 
         # Calculate the sum of values for proportion
         svd_var_s = add_postfix(svd_output_temp_table, "_s")
@@ -141,7 +387,6 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             )
             FROM {scaled_source_table}
             """.format(**locals()))[0]['array_sum']
-
         # Step 4.2: Adjust the k value
         if variance:
             variance_tmp_table = "pg_temp."+ unique_string()+ "_var_tmp"
@@ -165,7 +410,6 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             plpy.execute("""
                 DROP TABLE IF EXISTS {variance_tmp_table}
                 """.format(variance_tmp_table=variance_tmp_table))
-
         # Step 4.3: Perform the lower part of SVD
         tmp_matrix_table = "temp_"+ unique_string()+ "_matrix"
         tmp_matrix_s_table = add_postfix(tmp_matrix_table, "_s")
@@ -193,11 +437,10 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             tmp_matrix_table = svd_output_temp_table
             _svd_lower_wrap(schema_madlib, source_table_svd,
                 svd_output_temp_table, row_id, curK, lanczos_iter, bd_pref)
-
         # Step 4.4: Create the SVD result table
-        if result_summary_table:
+        if result_summary_table_temp:
             t1 = time.time()
-            [row_dim, col_dim] = get_dims(source_table,
+            [row_dim, col_dim] = get_dims(source_table_grouped,
                 {'row': 'row_id', 'col': 'col_id', 'val': 'row_vec'})
             arguments = {'schema_madlib': schema_madlib,
                          'source_table': scaled_source_table,
@@ -206,7 +449,7 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                          'matrix_s': add_postfix(tmp_matrix_table, "_s"),
                          'row_dim': row_dim,
                          'col_dim': col_dim,
-                         'result_summary_table': result_summary_table,
+                         'result_summary_table': result_summary_table_temp,
                          'temp_prefix': "pg_temp." + unique_string(),
                          't0': t0, 't1': t1}
             create_summary_table(**arguments)
@@ -229,11 +472,12 @@ def pca(schema_madlib, source_table, pc_table, row_id,
         # Step 6: Insert the output of SVD into the PCA table
         plpy.execute(
             """
-            CREATE TABLE {pc_table} AS
+            INSERT INTO {pc_table}
             SELECT  {svd_v_transpose}.row_id,
                     row_vec AS principal_components,
                     value / sqrt({row_dim} - 1) AS std_dev,
                     ((value*value)/ {eigen_sum}) AS proportion
+                    {select_grouping_cols}
             FROM {svd_v_transpose},
                  {svd_output_temp_table_s}
             WHERE ({svd_v_transpose}.row_id = {svd_output_temp_table_s}.row_id)
@@ -244,30 +488,24 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                        svd_v_transpose=svd_v_transpose,
                        pc_table=pc_table,
                        row_dim=row_dim,
-                       eigen_sum=eigen_sum))
+                       eigen_sum=eigen_sum,
+                       select_grouping_cols=select_grouping_cols))
         # Output the column mean
-        pc_table_mean = add_postfix(pc_table, "_mean")
         plpy.execute(
             """
-            DROP TABLE IF EXISTS {pc_table_mean};
-            CREATE TABLE {pc_table_mean} AS
+            INSERT INTO {pc_table_mean}
             SELECT '{column_mean_str}'::FLOAT8[] AS column_mean
+            {select_grouping_cols}
             """.format(pc_table_mean=pc_table_mean,
-                       column_mean_str=column_mean_str))
+                       column_mean_str=column_mean_str,
+                       select_grouping_cols=select_grouping_cols))
         # Step 7: Append to the SVD summary table to get the PCA summary table
-        if result_summary_table:
+        if result_summary_table_temp:
             stopTime = time.time()
             dt = (stopTime - startTime) * 1000.
-            summary_table_tmp_name = unique_string()
             plpy.execute(
                 """
-                ALTER TABLE {result_summary_table}
-                RENAME TO {tmp_name};
-                """.format(result_summary_table=result_summary_table,
-                           tmp_name=summary_table_tmp_name))
-            plpy.execute(
-                """
-                CREATE TABLE {result_summary_table} AS
+                INSERT INTO {result_summary_table}
                 SELECT
                     rows_used,
                     {dt} AS "exec_time (ms)",
@@ -275,13 +513,15 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                     recon_error,
                     relative_recon_error,
                     {use_correlation} AS use_correlation
-                FROM {tmp_name};
+                    {select_grouping_cols}
+                FROM {result_summary_table_temp};
                 """.format(result_summary_table=result_summary_table,
                            dt=str(dt), iter=curK,
                            use_correlation=bool(use_correlation),
-                           tmp_name=summary_table_tmp_name))
-            plpy.execute("DROP TABLE {tmp_name};".format(
-                tmp_name=summary_table_tmp_name))
+                           result_summary_table_temp=result_summary_table_temp,
+                           select_grouping_cols=select_grouping_cols))
+            plpy.execute("DROP TABLE {result_summary_table_temp};".format(
+                result_summary_table_temp=result_summary_table_temp))
 
         # Step 8: Output handling & cleanup
         plpy.execute(
@@ -294,6 +534,7 @@ def pca(schema_madlib, source_table, pc_table, row_id,
             DROP TABLE IF EXISTS {svd_output_temp_table_u};
             DROP TABLE IF EXISTS {svd_output_temp_table_v};
             DROP TABLE IF EXISTS {scaled_source_table};
+            DROP TABLE IF EXISTS {source_table_grouped};
             """.format(svd_output_temp_table=svd_output_temp_table,
                        svd_output_temp_table_s=svd_output_temp_table_s,
                        svd_output_temp_table_u=svd_output_temp_table_u,
@@ -301,9 +542,8 @@ def pca(schema_madlib, source_table, pc_table, row_id,
                        scaled_source_table=scaled_source_table,
                        svd_v_transpose=svd_v_transpose,
                        source_table_copy=source_table_copy,
-                       tmp_matrix_s_table=tmp_matrix_s_table))
-
-    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
+                       tmp_matrix_s_table=tmp_matrix_s_table,
+                       source_table_grouped=source_table_grouped))
 # ------------------------------------------------------------------------
 
 # ------------------------------------------------------------------------
@@ -318,7 +558,6 @@ def _validate_args(schema_madlib,
                    val_id=None,
                    row_dim=None,
                    col_dim=None,
-                   grouping_cols=None,
                    lanczos_iter=0,
                    use_correlation=False,
                    result_summary_table=None,
@@ -373,10 +612,6 @@ def _validate_args(schema_madlib,
             "PCA error: {1} column does not exist in {0}!".
             format(source_table, "NULL" if row_id is None else row_id))
 
-    if(grouping_cols):
-        plpy.error("PCA error: Grouping columns are not currently supported!\
-        This value must be set to NULL")
-
     if (lanczos_iter < 0):
         plpy.error("PCA error: lanczos_iter can't be negative! (Use zero for \
         default value)  The provided value is {0}".format(str(lanczos_iter)))
@@ -409,9 +644,6 @@ def _validate_args(schema_madlib,
         if col_dim <= 0:
             plpy.error("PCA error: The column dimension must be larger than 0!")
 
-        validate_sparse(source_table,
-                        {'row': row_id, 'col': col_id, 'val': val_id},
-                        check_col=False)
     if use_correlation:
         plpy.error("PCA error: Using the correlation matrix is not enabled! \
         This value must be set to FALSE")
@@ -476,123 +708,7 @@ def _recenter_data(schema_madlib, source_table, output_table, row_id,
     return x_mean_str
 # ------------------------------------------------------------------------
 
-
-def pca_sparse(schema_madlib,
-               source_table,
-               pc_table,
-               row_id,
-               col_id,
-               val_id,
-               row_dim,
-               col_dim,
-               k,
-               grouping_cols,
-               lanczos_iter,
-               use_correlation,
-               result_summary_table,
-               variance,
-               **kwargs):
-    """
-    Compute the PCA of a sparse matrix in source_table.
-
-    This function is the specific call for dense matrices and creates three
-    tables corresponding to the three decomposition matrices.
-
-    Args:
-        @param schema_madlib
-        @param source_table
-        @param pc_table
-        @param row_id
-        @param col_id
-        @param val_id
-        @param row_dim
-        @param col_dim
-        @param k
-        @param grouping_cols
-        @param lanczos_iter
-        @param use_correlation
-        @param result_summary_table
-        @param variance
-
-    Returns:
-        None
-
-    """
-    startTime = time.time()
-    # Reset the message level to avoid random messages
-    old_msg_level = plpy.execute("""
-                                  SELECT setting
-                                  FROM pg_settings
-                                  WHERE name='client_min_messages'
-                                  """)[0]['setting']
-    plpy.execute('SET client_min_messages TO warning')
-
-    # Step 1: Validate the input arguments
-    _validate_args(schema_madlib, source_table, pc_table, k, row_id, col_id,
-                   val_id, row_dim, col_dim, grouping_cols, lanczos_iter,
-                   use_correlation, result_summary_table, variance)
-
-    # Step 2: Densify the matrix
-    #  We densify the matrix because the recentering process will generate a
-    # dense matrix, so we just wrap around regular PCA.
-    # First we must copy the sparse matrix and add in the dimension information
-
-    sparse_temp = "pg_temp." + unique_string() + "_sparse"
-
-    # Add in the dimension information need by the densifying process
-    create_temp_sparse_matrix_table_with_dims(source_table, sparse_temp,
-                                              row_id, col_id, val_id,
-                                              row_dim, col_dim)
-
-    x_dense = "pg_temp." + unique_string() + "_dense"
-    plpy.execute("""
-        SELECT {schema_madlib}.matrix_densify(
-            '{sparse_temp}',
-            'row={row_id}, col={col_id}, val={val_id}',
-            '{x_dense}', 'row=row_id, val=row_vec')
-        """.format(**locals()))
-
-    # Step 3: Pass the densified matrix to regular PCA
-    pca(schema_madlib, x_dense, pc_table, 'row_id',
-        k, grouping_cols, lanczos_iter, use_correlation,
-        result_summary_table, variance)
-
-    # Step 4: Clean up
-    plpy.execute("""
-        DROP TABLE IF EXISTS {x_dense};
-        DROP TABLE IF EXISTS {sparse_temp};
-        """.format(x_dense=x_dense, sparse_temp=sparse_temp))
-
-    if result_summary_table:
-        stopTime = time.time()
-        dt = (stopTime - startTime) * 1000.
-        summary_table_tmp_name = unique_string()
-        plpy.execute(
-            """
-            ALTER TABLE {result_summary_table}
-            RENAME TO {tmp_name};
-            """.format(result_summary_table=result_summary_table,
-                       tmp_name=summary_table_tmp_name))
-        plpy.execute(
-            """
-            CREATE TABLE {result_summary_table} AS
-            SELECT
-                rows_used,
-                {dt} AS "exec_time (ms)",
-                iter,
-                recon_error,
-                relative_recon_error,
-                use_correlation
-            FROM {tmp_name};
-            """.format(result_summary_table=result_summary_table,
-                       dt=str(dt), tmp_name=summary_table_tmp_name))
-        plpy.execute("DROP TABLE {tmp_name};".format(
-            tmp_name=summary_table_tmp_name))
-
-    plpy.execute("SET client_min_messages TO %s" % old_msg_level)
-# ------------------------------------------------------------------------
-
-
+# Sparse PCA train help function
 def pca_sparse_help_message(schema_madlib, message=None, **kwargs):
     """
     Given a help string, provide usage information
@@ -607,82 +723,119 @@ def pca_sparse_help_message(schema_madlib, message=None, **kwargs):
     if message is not None and \
             message.lower() in ("usage", "help", "?"):
         return """
-        -----------------------------------------------------------------------
-                                    USAGE
-        -----------------------------------------------------------------------
-        SELECT {schema_madlib}.pca_sparse_train(
-            source_table        -- TEXT,    Name of data table
-            pc_table            -- TEXT,    Name of the table containing the principle components
-            row_id              -- TEXT,    Column name for the row coordinates.
-            col_id              -- TEXT,    Column name for the column coordinates.
-            val_id              -- TEXT,    Column name for the sparse values.
-            row_dim,            -- INTEGER, The number of rows in the sparse matrix
-            col_dim,            -- INTEGER, The number of columns in the sparse matrix
-            components_param    -- INTEGER OR FLOAT, The parameter to control the number of principal components to calculate from the input data.
-            [
-            grouping_cols       -- TEXT,    Comma-separated list of grouping columns
-                                            (Default: NULL)
-            lanczos_iter        -- INTEGER, The number of Lanczos iterations to use in the SVD calculation
-                                            (Default: minimum of of the smallest input
-                                                matrix dimension and k+40)
-            use_correlation     -- BOOLEAN, If True correlation matrix is used for principal components
-                                            (Default: False)
-            rslt_summary_table  -- TEXT,    Table name to store summary of results
-                                            (Default: NULL)
-            ]
-        );
-        If components_param is INTEGER it is used for denoting the number of principal components to compute.
-        If components_param is FLOAT it is used as the target proportion of variance.
-        -------------------------------------------------------------------------
-                                OUTPUT TABLES
-        -------------------------------------------------------------------------
-        The output table ("pc_table" above) has the following columns:
-            row_id              -- INTEGER, The ranking of the eigenvalues
-            prin_comp           -- FLOAT[], The principal components
-            eigen_values        -- FLOAT[]  The eigenvalues associated with each principal component
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+SELECT {schema_madlib}.pca_sparse_train(
+    source_table        -- TEXT,    Name of data table
+    pc_table            -- TEXT,    Name of the table containing the principal components
+    row_id              -- TEXT,    Column name for the row coordinates.
+    col_id              -- TEXT,    Column name for the column coordinates.
+    val_id              -- TEXT,    Column name for the sparse values.
+    row_dim,            -- INTEGER, The number of rows in the sparse matrix
+    col_dim,            -- INTEGER, The number of columns in the sparse matrix
+    components_param    -- INTEGER OR FLOAT, The parameter to control the number of
+                                    principal components to calculate from the input data.
+    grouping_cols       -- TEXT,    Comma-separated list of grouping columns
+                                    (Default: NULL)
+    lanczos_iter        -- INTEGER, The number of Lanczos iterations to use in the SVD calculation
+                                    (Default: minimum of of the smallest input
+                                        matrix dimension and k+40)
+    use_correlation     -- BOOLEAN, If True correlation matrix is used for principal components
+                                    (Default: False)
+    rslt_summary_table  -- TEXT,    Table name to store summary of results
+                                    (Default: NULL)
+);
+If components_param is INTEGER it is used for denoting the number of principal components to compute.
+If components_param is FLOAT it is used as the target proportion of variance.
+-------------------------------------------------------------------------
+                        OUTPUT TABLES
+-------------------------------------------------------------------------
+A PCA model is created for each group, if grouping_cols is specified.
+The output table ("pc_table" above) has the following columns:
+    row_id              -- INTEGER, The ranking of the eigenvalues
+    prin_comp           -- FLOAT[], The principal components
+    eigen_values        -- FLOAT[]  The eigenvalues associated with each principal component
+    grouping_cols       -- The grouping columns (with their types), if any,
+                           specified in grouping_cols
 
-        A secondary output table named "pc_table"_mean is also generated.
-        This table has only the single column:
-            column_mean         -- FLOAT[], The column means of the input data
+A secondary output table named "pc_table"_mean is also generated.
+This table has only the single column:
+    column_mean         -- FLOAT[], The column means of the input data
 
-        -------------------------------------------------------------------------
-                            RESULT SUMMARY TABLE
-        -------------------------------------------------------------------------
-        The result summary table ("rslt_summary_table" above) has the following columns
-            rows_used              -- INTEGER,  Number of rows used in the PCA calculation
-            exec_time              -- FLOAT,    Number of milliseconds the PCA calculation took
-            use_correlation        -- BOOLEAN,  Value of parameter use_correlation
-            iter                   -- INTEGER,  Number of iterations the SVD took to converge
-            recon_error            -- FLOAT,    Absolute error in the approximation
-            relative_recon_error   -- FLOAT     Relative error in the approximation
+-------------------------------------------------------------------------
+                    RESULT SUMMARY TABLE
+-------------------------------------------------------------------------
+The result summary table ("rslt_summary_table" above) has the following columns
+    rows_used              -- INTEGER,  Number of rows used in the PCA calculation
+    exec_time              -- FLOAT,    Number of milliseconds the PCA calculation took
+    use_correlation        -- BOOLEAN,  Value of parameter use_correlation
+    iter                   -- INTEGER,  Number of iterations the SVD took to converge
+    recon_error            -- FLOAT,    Absolute error in the approximation
+    relative_recon_error   -- FLOAT     Relative error in the approximation
+    grouping_cols          -- The grouping columns (with their types), if any,
+                           specified in grouping_cols
         """.format(schema_madlib=schema_madlib)
     else:
-        if message.lower() in ("example", "examples"):
+        if message is not None and \
+                message.lower() in ("example", "examples"):
             return """
-DROP TABLE IF EXISTS sparse_mat;
-CREATE TABLE sparse_mat (
+----------------------------------------------------------------
+                        Examples
+----------------------------------------------------------------
+DROP TABLE IF EXISTS mat_sparse;
+CREATE TABLE mat_sparse (
     row_id integer,
     col_id integer,
-    val_id integer
+    value double precision
 );
-COPY sparse_mat (row_id, col_id, val_id) FROM stdin delimiter '|';
-1|2|4
-1|5|6
-3|8|4
-5|4|2
-6|6|12
-8|1|2
-8|7|2
-9|3|4
-9|8|2
+INSERT INTO mat_sparse VALUES
+(1, 1, 1.0),
+(2, 2, 2.0),
+(3, 3, 3.0),
+(4, 4, 4.0),
+(1, 5, 5.0),
+(2, 4, 6.0),
+(3, 2, 7.0),
+(4, 3, 8.0);
 \.
-DROP TABLE IF EXISTS result_table;
-DROP TABLE IF EXISTS result_table_mean;
-SELECT pca_sparse_train('sparse_mat', 'result_table',
-'row_id', 'col_id', 'val_id', 10, 10, 10);
-            """
+
+DROP TABLE IF EXISTS result_table_sparse;
+DROP TABLE IF EXISTS result_table_sparse_mean;
+SELECT {schema_madlib}.pca_sparse_train('mat_sparse', 'result_table_sparse',
+'row_id', 'col_id', 'val_id', 4, 5, 3);
+
+SELECT * FROM result_table_sparse ORDER BY row_id;
+
+DROP TABLE IF EXISTS mat_sparse_group;
+CREATE TABLE mat_sparse_group (
+    row_id integer,
+    col_id integer,
+    value double precision,
+    matrix_id integer);
+INSERT INTO mat_sparse_group VALUES
+(1, 1, 1.0, 1),
+(2, 2, 2.0, 1),
+(3, 3, 3.0, 1),
+(4, 4, 4.0, 1),
+(1, 5, 5.0, 1),
+(2, 4, 6.0, 2),
+(3, 2, 7.0, 2),
+(4, 3, 8.0, 2);
+\.
+
+DROP TABLE IF EXISTS result_table_sparsed_grouped;
+DROP TABLE IF EXISTS result_table_sparsed_grouped_mean;
+SELECT {schema_madlib}.pca_sparse_train('mat_sparse_group', 'result_table_sparsed_grouped',
+'row_id', 'col_id', 'val_id', 4, 5, 0.8, 'matrix_id');
+
+SELECT * FROM result_table_sparsed_grouped ORDER BY matrix_id, row_id;
+            """.format(schema_madlib=schema_madlib)
         else:
             return """
+----------------------------------------------------------------
+         Summary: Sparse PCA Training
+----------------------------------------------------------------
 Principal component analysis (PCA) is a mathematical procedure that uses an
 orthogonal transformation to convert a set of observations of possibly
 correlated variables into a set of values of linearly uncorrelated variables
@@ -692,8 +845,10 @@ accounts for as much of the variability in the data as possible), and each
 succeeding component in turn has the highest variance possible under the
 constraint that it be orthogonal to (i.e., uncorrelated with) the preceding
 components.
-
-For an overview on usage, run: SELECT {schema_madlib}.pca_sparse_train('usage');
+--
+For an overview on usage, run:
+SELECT {schema_madlib}.pca_sparse_train('usage');
+--
         """.format(schema_madlib=schema_madlib)
 
 
@@ -711,75 +866,121 @@ def pca_help_message(schema_madlib, message=None, **kwargs):
     if message is not None and \
             message.lower() in ("usage", "help", "?"):
         return """
-        -----------------------------------------------------------------------
-                                    USAGE
-        -----------------------------------------------------------------------
-        SELECT {schema_madlib}.pca_train(
-            source_table        -- TEXT,    Name of data table
-            pc_table            -- TEXT,    Name of the table containing the principle components
-            row_id              -- TEXT,    Column name for the row coordinates.
-            components_param    -- INTEGER OR FLOAT, The parameter to control the number of principal components to calculate from the input data.
-            [
-            grouping_cols       -- TEXT,    Comma-separated list of grouping columns
-                                            (Default: NULL)
-            lanczos_iter        -- INTEGER, The number of Lanczos iterations to use in the SVD calculation
-                                            (Default: minimum of of the smallest input
-                                                matrix dimension and k+40)
-            use_correlation     -- BOOLEAN, If True correlation matrix is used for principal components
-                                            (Default: False)
-            rslt_summary_table  -- TEXT,    Table name to store summary of results
-                                            (Default: NULL)
-            variance            -- DOUBLE PRECISION, Proportion of variance
-                                            (Default: NULL)
-            ]
-        );
-        If components_param is INTEGER it is used for denoting the number of principal components to compute.
-        If components_param is FLOAT it is used as the target proportion of variance.
-        -------------------------------------------------------------------------
-                                OUTPUT TABLES
-        -------------------------------------------------------------------------
-        The output table ("pc_table" above) has the following columns:
-            row_id              -- INTEGER, The ranking of the eigenvalues
-            prin_comp           -- FLOAT[], The principal components
-            eigen_values        -- FLOAT[]  The eigenvalues associated with each principal component
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+SELECT {schema_madlib}.pca_train(
+    source_table        -- TEXT,    Name of data table
+    pc_table            -- TEXT,    Name of the table containing the principal components
+    row_id              -- TEXT,    Column name for the row coordinates.
+    components_param    -- INTEGER OR FLOAT, The parameter to control the number of
+                                             principal components to calculate from
+                                             the input data.
 
-        A secondary output table named "pc_table"_mean is also generated.
-        This table has only the single column:
-            column_mean         -- FLOAT[], The column means of the input data
-        -------------------------------------------------------------------------
-                            RESULT SUMMARY TABLE
-        -------------------------------------------------------------------------
-        The result summary table ("rslt_summary_table" above) has the following columns
-            rows_used              -- INTEGER,  Number of rows used in the PCA calculation
-            exec_time              -- FLOAT,    Number of milliseconds the PCA calculation took
-            use_correlation        -- BOOLEAN,  Value of parameter use_correlation
-            iter                   -- INTEGER,  Number of iterations the SVD took to converge
-            recon_error            -- FLOAT,    Absolute error in the approximation
-            relative_recon_error   -- FLOAT     Relative error in the approximation
+    grouping_cols       -- TEXT,    Comma-separated list of grouping column names
+                                    (Default: NULL)
+    lanczos_iter        -- INTEGER, The number of Lanczos iterations to use in the SVD calculation
+                                    (Default: minimum of of the smallest input
+                                        matrix dimension and k+40)
+    use_correlation     -- BOOLEAN, If True correlation matrix is used for principal components
+                                    (Default: False)
+    rslt_summary_table  -- TEXT,    Table name to store summary of results
+                                    (Default: NULL)
+    variance            -- DOUBLE PRECISION, Proportion of variance
+                                    (Default: NULL)
+);
+If components_param is INTEGER it is used for denoting the number of
+principal components to compute. If components_param is FLOAT it is used
+as the target proportion of variance.
+-------------------------------------------------------------------------
+                        OUTPUT TABLES
+-------------------------------------------------------------------------
+A PCA model is created for each group, if grouping_cols is specified.
+The output table ("pc_table" above) has the following columns:
+    row_id              -- INTEGER, The ranking of the eigenvalues
+    prin_comp           -- FLOAT[], The principal components
+    eigen_values        -- FLOAT[], The eigenvalues associated with each
+                                    principal component
+    grouping_cols       -- The grouping columns (with their types), if any,
+                           specified in grouping_cols
+
+A secondary output table named "pc_table"_mean is also generated.
+This table has only the single column:
+    column_mean         -- FLOAT[], The column means of the input data
+    grouping_cols       -- The grouping columns (with their types), if any,
+                           specified in grouping_cols
+-------------------------------------------------------------------------
+                    RESULT SUMMARY TABLE
+-------------------------------------------------------------------------
+The result summary table ("rslt_summary_table" above) has the following columns
+    rows_used              -- INTEGER,  Number of rows used in the PCA calculation
+    exec_time              -- FLOAT,    Number of milliseconds the PCA calculation took
+    use_correlation        -- BOOLEAN,  Value of parameter use_correlation
+    iter                   -- INTEGER,  Number of iterations the SVD took to converge
+    recon_error            -- FLOAT,    Absolute error in the approximation
+    relative_recon_error   -- FLOAT     Relative error in the approximation
+    grouping_cols          -- The grouping columns (with their types), if any,
+                              specified in grouping_cols
         """.format(schema_madlib=schema_madlib)
     else:
-        if message.lower() in ("example", "examples"):
+        if message is not None and \
+                message.lower() in ("example", "examples"):
             return """
+----------------------------------------------------------------
+                        Examples
+----------------------------------------------------------------
 DROP TABLE IF EXISTS mat;
 CREATE TABLE mat (
-    row_id integer,
+    id integer,
     row_vec double precision[]
 );
-COPY mat (row_id, row_vec) FROM stdin DELIMITER '|';
-1|{1,2,3}
-2|{2,1,2}
-3|{3,2,1}
+COPY mat (id, row_vec) FROM stdin DELIMITER '|';
+1|{{1,2,3}}
+2|{{2,1,2}}
+3|{{3,2,1}}
 \.
+
 DROP TABLE IF EXISTS result_table;
 DROP TABLE IF EXISTS result_table_mean;
-SELECT pca_train( 'mat',
-                  'result_table',
-                  'row_id',
-                  3
+SELECT {schema_madlib}.pca_train( 'mat',
+          'result_table',
+          'id',
+          3
     );
-            """
+    
+SELECT * FROM result_table ORDER BY row_id;
+
+DROP TABLE IF EXISTS mat_group;
+CREATE TABLE mat_group (
+    id integer,
+    row_vec double precision[],
+    matrix_id integer
+);
+INSERT INTO mat_group VALUES
+(1, '{{1,2,3}}', 1),
+(2, '{{2,1,2}}', 1),
+(3, '{{3,2,1}}', 1),
+(4, '{{1,2,3,4,5}}', 2),
+(5, '{{2,5,2,4,1}}', 2),
+(6, '{{5,4,3,2,1}}', 2);
+\.
+
+DROP TABLE IF EXISTS result_table_grp;
+DROP TABLE IF EXISTS result_table_grp_mean;
+SELECT {schema_madlib}.pca_train( 'mat_group',
+          'result_table_grp',
+          'row_id',
+          0.9,
+          'matrix_id'
+    );
+
+SELECT * FROM result_table_grp ORDER BY matrix_id, row_id;
+            """.format(schema_madlib=schema_madlib)
         else:
             return """
+----------------------------------------------------------------
+         Summary: PCA Training
+----------------------------------------------------------------
 Principal component analysis (PCA) is a mathematical procedure that uses an
 orthogonal transformation to convert a set of observations of possibly
 correlated variables into a set of values of linearly uncorrelated variables
@@ -789,6 +990,8 @@ accounts for as much of the variability in the data as possible), and each
 succeeding component in turn has the highest variance possible under the
 constraint that it be orthogonal to (i.e., uncorrelated with) the preceding
 components.
-
-For an overview on usage, run: SELECT {schema_madlib}.pca_train('usage');
+--
+For an overview on usage, run:
+SELECT {schema_madlib}.pca_train('usage');
+--
             """.format(schema_madlib=schema_madlib)
