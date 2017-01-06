@@ -86,13 +86,14 @@ class IterationControllerComposite:
         if STATE_IN_MEM:
             insert_plan=plpy.prepare("""
                 INSERT INTO {rel_state}
-                SELECT $1, CAST( ({schema_madlib}.array_to_2d($2), $3, $4, $5) AS {schema_madlib}.kmeans_state)
+                SELECT $1, CAST( ({schema_madlib}.array_to_2d($2), $3, $4, $5, $6) AS {schema_madlib}.kmeans_state)
                 """.format(**self.kwargs), ["INTEGER", "DOUBLE PRECISION[]",
-                                            "INTEGER[]", "DOUBLE PRECISION",
-                                            "DOUBLE PRECISION"])
+                                            "INTEGER[]", "DOUBLE PRECISION[]",
+                                            "DOUBLE PRECISION", "DOUBLE PRECISION"])
             plpy.execute(insert_plan, [self.new_state['_iteration'],
                          self.new_state['centroids'],
                          self.new_state['old_centroid_ids'],
+                         self.new_state['cluster_variance'],
                          self.new_state['objective_fn'],
                          self.new_state['frac_reassigned']])
 
@@ -119,11 +120,11 @@ class IterationControllerComposite:
         # This should be removed when the issue is fixed in ORCA.
         with EnableOptimizer(False):
             if STATE_IN_MEM:
-                cast_str = "CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4) AS {schema_madlib}.kmeans_state)".format(**self.kwargs)
-                cast_type = ["DOUBLE PRECISION[]", "INTEGER[]",
+                cast_str = "CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4, $5) AS {schema_madlib}.kmeans_state)".format(**self.kwargs)
+                cast_type = ["DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION[]",
                              "DOUBLE PRECISION", "DOUBLE PRECISION"]
                 cast_para = [None if self.new_state is None else self.new_state[i]
-                             for i in ('centroids', 'old_centroid_ids',
+                             for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
                                        'objective_fn', 'frac_reassigned')]
                 eval_plan = plpy.prepare("""
                     SELECT ({expression}) AS expression
@@ -193,21 +194,23 @@ class IterationControllerComposite:
         self.iteration = self.iteration + 1
 
         if STATE_IN_MEM:
-            cast_str = """CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4)
+            cast_str = """CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4, $5)
                             AS {schema_madlib}.kmeans_state)""".format(**self.kwargs)
-            cast_str_old = """CAST (({schema_madlib}.array_to_2d($5), $6, $7, $8)
+            cast_str_old = """CAST (({schema_madlib}.array_to_2d($6), $7, $8, $9, $10)
                                 AS {schema_madlib}.kmeans_state)""".format(**self.kwargs)
             cast_type = [
-                "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION",
-                "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION", "DOUBLE PRECISION"
+                "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION[]",
+                "DOUBLE PRECISION", "DOUBLE PRECISION",
+                "DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION[]",
+                "DOUBLE PRECISION", "DOUBLE PRECISION"
             ]
 
             cast_para = [None if self.new_state is None else self.new_state[i]
-                         for i in ('centroids', 'old_centroid_ids', 'objective_fn',
-                                   'frac_reassigned')]
+                         for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
+                                    'objective_fn', 'frac_reassigned')]
             cast_para.extend([None if self.old_state is None else self.old_state[i]
-                             for i in ('centroids', 'old_centroid_ids', 'objective_fn',
-                                       'frac_reassigned')])
+                             for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
+                                        'objective_fn', 'frac_reassigned')])
 
             updateKwargs.update(curr_state=cast_str, old_state=cast_str_old)
             self.old_state = self.new_state
@@ -217,6 +220,7 @@ class IterationControllerComposite:
                     {iteration} AS _iteration,
                     {schema_madlib}.array_to_1d((_state).centroids) AS centroids,
                     (_state).old_centroid_ids,
+                    (_state).cluster_variance,
                     (_state).objective_fn,
                     (_state).frac_reassigned
                 FROM
