@@ -1,14 +1,16 @@
 """
-@file data_preparation.py_in
+@file create_indicators.py_in
 
-@brief Marginal Effects with Interactions: Contains the main interface function
+@brief Contains the main interface function
 and other functions that are common to the various methods and related to
 database constructs.
 
-@namespace marginal
+@namespace create_indicators
 """
 import plpy
+from control import MinWarning
 from utilities import _assert
+from utilities import get_distribution_policy
 from utilities import split_quoted_delimited_str
 from utilities import strip_end_quotes
 from validate_args import table_exists
@@ -18,43 +20,15 @@ from validate_args import _get_table_schema_names
 from validate_args import get_first_schema
 
 m4_changequote(`<!', `!>')
-
-
-def get_distribution_policy(schema_madlib, source_table):
-    """ Return a list of columns that define the distribution policy of table
-    Args:
-        @param source_table
-
-    Returns:
-        List of str.
-    """
-    _, table_name = _get_table_schema_names(source_table)
-    schema_name = get_first_schema(source_table)
-    dist_attr = plpy.execute("""
-    SELECT array_agg(pga.attname) as dist_attr
-    FROM (
-        SELECT gdp.localoid,
-                 CASE
-                     WHEN ( ARRAY_UPPER(gdp.attrnums, 1) > 0 ) THEN
-                        UNNEST(gdp.attrnums)
-                     ELSE NULL
-                 END AS attnum
-            FROM gp_distribution_policy gdp
-        ) AS distkey
-        INNER JOIN pg_class AS pgc
-        ON distkey.localoid = pgc.oid AND pgc.relname = '{table_name}'
-        INNER JOIN pg_namespace pgn
-        ON pgc.relnamespace = pgn.oid AND pgn.nspname = '{schema_name}'
-        LEFT OUTER JOIN pg_attribute pga
-        ON distkey.attnum = pga.attnum AND distkey.localoid = pga.attrelid
-    """.format(table_name=table_name, schema_name=schema_name))[0]["dist_attr"]
-    return dist_attr
-#------------------------------------------------------------------------------
+IS_POSTGRES = m4_ifdef(<!__POSTGRESQL__!>, <!True!>, <!False!>)
+# -----------------------------------------------------------------------
+# Deprecated functions corresponding to "create_indicators.sql_in"
+# -----------------------------------------------------------------------
 
 
 def create_indicator_variables(schema_madlib, source_table, out_table,
-                 categorical_cols, distributed_by=None,
-                 keep_null=False, **kwargs):
+                               categorical_cols, distributed_by=None,
+                               keep_null=False, **kwargs):
     """
     Helper function that can be used to create dummy coding for
     categorical variables.
@@ -65,50 +39,54 @@ def create_indicator_variables(schema_madlib, source_table, out_table,
         @param categorical_cols   A string, comma separated column names for
                             for categorical variables
     """
-    cols = split_quoted_delimited_str(categorical_cols)
-    validate_dummy_coding(source_table, out_table, cols)
+    with MinWarning('warning'):
+        plpy.warning("This function has been deprecated. "
+                     "Please use `encode_categorical_variables` for encoding categoricals.")
+        cols = split_quoted_delimited_str(categorical_cols)
+        validate_dummy_coding(source_table, out_table, cols)
 
-    sql_list = ["CREATE TABLE " + out_table + " AS (SELECT *"]
-    for col in cols:
-        col_no_quotes = strip_end_quotes(col.strip())
-        distinct_values = plpy.execute(
-            "SELECT {col} AS value FROM {source_table} "
-            "GROUP BY {col} ORDER BY {col}".
-            format(col=col, source_table=source_table))
-        distinct_values = [strip_end_quotes(item['value']) for item in distinct_values]
-        null_wrap_case_str = ""
-        null_wrap_end_str = ""
-        if not keep_null and None in distinct_values:
-            null_wrap_case_str = "CASE WHEN \"{col}\" is NULL THEN NULL ELSE "
-            null_wrap_end_str = "END"
-        case_str = ("({wrap_case} "
-                    "CASE WHEN \"{{col}}\" = '{{value}}' THEN 1 ELSE 0 END "
-                    "{wrap_end})".
-                    format(wrap_case=null_wrap_case_str,
-                           wrap_end=null_wrap_end_str))
-        sql_list.append(
-            ", " +
-            ', '.join("{case_str} as \"{{col}}_{{value}}\"".
-                      format(case_str=case_str).
-                      format(col=col_no_quotes, value=str(value))
-                      for value in distinct_values if value is not None))
-        if keep_null and None in distinct_values:
-            sql_list.append(", (CASE WHEN \"{0}\" IS NULL THEN 1 ELSE 0 END) "
-                            "as \"{0}_NULL\"".format(col_no_quotes))
-    sql_list.append(" FROM " + source_table + ") ")
-    m4_ifdef(<!__POSTGRESQL__!>, <!!>, <!
-    if distributed_by:
-        dist_str = distributed_by
-    else:
-        dist_str = ','.join(['"%s"'%i for i in get_distribution_policy(schema_madlib, source_table)
-                             if i is not None])
-    if dist_str:
-        sql_list.append("distributed by (" + dist_str + ")")
-    else:
-        sql_list.append("distributed randomly")
-    !>)
-    plpy.execute(''.join(sql_list))
-    return None
+        sql_list = ["CREATE TABLE " + out_table + " AS (SELECT *"]
+        for col in cols:
+            col_no_quotes = strip_end_quotes(col.strip())
+            distinct_values = plpy.execute(
+                "SELECT {col} AS value FROM {source_table} "
+                "GROUP BY {col} ORDER BY {col}".
+                format(col=col, source_table=source_table))
+            distinct_values = [strip_end_quotes(item['value']) for item in distinct_values]
+            null_wrap_case_str = ""
+            null_wrap_end_str = ""
+            if not keep_null and None in distinct_values:
+                null_wrap_case_str = "CASE WHEN \"{col}\" is NULL THEN NULL ELSE "
+                null_wrap_end_str = "END"
+            case_str = ("({wrap_case} "
+                        "CASE WHEN \"{{col}}\" = '{{value}}' THEN 1 ELSE 0 END "
+                        "{wrap_end})".
+                        format(wrap_case=null_wrap_case_str,
+                               wrap_end=null_wrap_end_str))
+            sql_list.append(
+                ", " +
+                ', '.join("{case_str} as \"{{col}}_{{value}}\"".
+                          format(case_str=case_str).
+                          format(col=col_no_quotes, value=str(value))
+                          for value in distinct_values if value is not None))
+            if keep_null and None in distinct_values:
+                sql_list.append(", (CASE WHEN \"{0}\" IS NULL THEN 1 ELSE 0 END) "
+                                "as \"{0}_NULL\"".format(col_no_quotes))
+        sql_list.append(" FROM " + source_table + ") ")
+
+        if IS_POSTGRES:
+            if distributed_by:
+                dist_str = distributed_by
+            else:
+                dist_str = ','.join(['"%s"'%i
+                                     for i in get_distribution_policy(source_table)
+                                     if i is not None])
+            if dist_str:
+                sql_list.append("distributed by (" + dist_str + ")")
+            else:
+                sql_list.append("distributed randomly")
+        plpy.execute(''.join(sql_list))
+        return None
 # ---------------------------------------------------------------
 
 
@@ -133,7 +111,7 @@ def validate_dummy_coding(source_table, out_table, cols):
     _assert(columns_exist_in_table(source_table, cols),
             "Not all columns from {0} present in source table ({1})"
             .format(cols, source_table))
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def indicator_variables_help(schema_madlib, message, **kwargs):
@@ -150,6 +128,9 @@ def indicator_variables_help(schema_madlib, message, **kwargs):
     """
     if not message:
         help_string = """
+WARNING: This function has been deprecated in favor of the new
+'encode_categorical_variables' function.
+
 -----------------------------------------------------------------------
                             SUMMARY
 -----------------------------------------------------------------------

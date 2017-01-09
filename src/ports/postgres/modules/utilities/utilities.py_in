@@ -1,4 +1,3 @@
-m4_changequote(`<!', `!>')
 
 import re
 import time
@@ -6,28 +5,12 @@ import random
 from distutils.util import strtobool
 
 if __name__ != "__main__":
+    from validate_args import _get_table_schema_names
+    from validate_args import get_first_schema
     import plpy
 
 
-def _assert(condition, msg):
-    """
-    @brief if the given condition is false, then raise an error with the message
-    @param condition    the condition to be asserted
-    @param msg          the error message to be reported
-    """
-    if not condition:
-        plpy.error(msg)
-# ========================================================================
-
-
-def warn(condition, msg):
-    """
-    @brief if the given condition is false, then raise a warning with the message
-    @param condition    the condition to be asserted
-    @param msg          the error message to be reported
-    """
-    if not condition:
-        plpy.warning(msg)
+m4_changequote(`<!', `!>')
 
 
 def get_seg_number():
@@ -41,7 +24,7 @@ def get_seg_number():
         WHERE role = 'p'
         """)[0]['count']
     !>)
-# ------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def is_orca():
@@ -51,7 +34,66 @@ def is_orca():
     !>, <!
     return False
     !>)
-# -------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
+
+
+def is_platform_pg():
+    return m4_ifdef(<!__POSTGRESQL__!>, <!True!>, <!False!>)
+# ------------------------------------------------------------------------------
+
+
+def _assert(condition, msg):
+    """
+    @brief if the given condition is false, then raise an error with the message
+    @param condition    the condition to be asserted
+    @param msg          the error message to be reported
+    """
+    if not condition:
+        plpy.error(msg)
+# ------------------------------------------------------------------------------
+
+
+def warn(condition, msg):
+    """
+    @brief if the given condition is false, then raise a warning with the message
+    @param condition    the condition to be asserted
+    @param msg          the error message to be reported
+    """
+    if not condition:
+        plpy.warning(msg)
+# ------------------------------------------------------------------------------
+
+
+def get_distribution_policy(source_table):
+    """ Return a list of columns that define the distribution policy of source_table
+    Args:
+        @param source_table
+
+    Returns:
+        List of str.
+    """
+    _, table_name = _get_table_schema_names(source_table)
+    schema_name = get_first_schema(source_table)
+    dist_attr = plpy.execute("""
+    SELECT array_agg(pga.attname) as dist_attr
+    FROM (
+        SELECT gdp.localoid,
+                 CASE
+                     WHEN ( ARRAY_UPPER(gdp.attrnums, 1) > 0 ) THEN
+                        UNNEST(gdp.attrnums)
+                     ELSE NULL
+                 END AS attnum
+            FROM gp_distribution_policy gdp
+        ) AS distkey
+        INNER JOIN pg_class AS pgc
+        ON distkey.localoid = pgc.oid AND pgc.relname = '{table_name}'
+        INNER JOIN pg_namespace pgn
+        ON pgc.relnamespace = pgn.oid AND pgn.nspname = '{schema_name}'
+        LEFT OUTER JOIN pg_attribute pga
+        ON distkey.attnum = pga.attnum AND distkey.localoid = pga.attrelid
+    """.format(table_name=table_name, schema_name=schema_name))[0]["dist_attr"]
+    return dist_attr
+# ------------------------------------------------------------------------------
 
 
 def num_features(source_table, independent_varname):
@@ -59,13 +101,13 @@ def num_features(source_table, independent_varname):
                         "FROM {1} LIMIT 1"
                         .format(independent_varname,
                                 source_table))[0]['dim']
-# ------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def num_samples(source_table):
     return plpy.execute("SELECT count(*) AS n FROM {0}"
                         .format(source_table))[0]['n']
-# ------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def unique_string(desp='', **kwargs):
@@ -78,7 +120,7 @@ def unique_string(desp='', **kwargs):
     r3 = int(time.time()) % random.randint(1, 100000000)
     u_string = "__madlib_temp_" + desp + str(r1) + "_" + str(r2) + "_" + str(r3) + "__"
     return u_string
-# -------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def add_postfix(quoted_string, postfix):
@@ -188,12 +230,15 @@ def _array_to_string(origin):
     return "{" + ",".join(map(str, origin)) + "}"
 # ------------------------------------------------------------------------
 
+
 def _cast_if_null(input, alias=''):
     if input:
         return str(input)
     else:
         null_str = "NULL::text"
         return null_str + " as " + alias if alias else null_str
+# ------------------------------------------------------------------------
+
 
 def set_client_min_messages(new_level):
     """
@@ -407,7 +452,7 @@ def _string_to_sql_array(schema_madlib, s, **kwargs):
     for i in range(len(elm)):
         elm[i] = elm[i].strip("\"")
     return array_to_string(elm)
-# ========================================================================
+# ------------------------------------------------------------------------
 
 
 def current_user():
@@ -435,12 +480,12 @@ def preprocess_keyvalue_params(input_params, split_char='='):
             value is either and
     @param split_char: str, character that splits the key and value elements.
                         Default set to '='
-
-
     """
-    re_str = (r"([-\w]+\s*" +     # key is any alphanumeric character
-                                  # (including -) string
+    re_str = (r"([-:\w]+\s*" +    # key is any alphanumeric character
+                                  # (including - and :) string
+
               split_char +        # key and value are separated by split_char
+
               r"""
                 \s*([\(\{\[]      # value can be string or array
                 [^\[\]\(\)\{\}]*  #  if value is array then accept anything inside
@@ -448,10 +493,11 @@ def preprocess_keyvalue_params(input_params, split_char='='):
 
                    |              # either array (above) or string (below)
 
-                (?P<quote>\"?)[\w\s\-\%]+\.?[\w\s\-\%]*(?P=quote)
+                (?P<quote>\"?)[\w\s\-\%.]+(?P=quote)
                                  #  if value is string, it can be alphanumeric
                                  #    character string with a decimal dot,
-                                 #    optionally quoted by double quotes
+                                 #    hyphen, or percent
+                                 #    optionally quoted by `quote_char`
                   )
                )"""
               )
@@ -461,11 +507,13 @@ def preprocess_keyvalue_params(input_params, split_char='='):
 
 
 def extract_keyvalue_params(input_params,
-                            input_param_types,
+                            input_param_types=None,
                             default_values=None,
                             split_char='=',
                             usage_str='',
-                            ignore_invalid=False):
+                            ignore_invalid=False,
+                            allow_duplicates=True,
+                            lower_case_names=True):
     """ Extract key value pairs from input parameters or set the default values
 
     Args:
@@ -484,6 +532,11 @@ def extract_keyvalue_params(input_params,
                             Default set to '='
         @param usage_str: str, An optional usage string to print with error message.
         @param ignore_invalid: bool, If True an invalid param input is ignore silently
+        @param allow_duplicates: bool, Allow repeat of a 'key' in input_params,
+                                where the last occurence will be reflected
+                                in the output. If False, then a ValueError is
+                                raised.
+        @param lower_case_names: bool, Convert parameter names to lower case.
 
     Returns:
         Dict. Dictionary of input parameter values with key as parameter name
@@ -500,42 +553,56 @@ def extract_keyvalue_params(input_params,
         parameter_dict = default_values
     else:
         parameter_dict = {}
+    seen_params = set()
+
     for s in preprocess_keyvalue_params(input_params, split_char=split_char):
         items = split_quoted_delimited_str(s, delimiter=split_char)
         if (len(items) != 2):
             raise KeyError("Input parameter list has incorrect format "
                            "{0}".format(usage_str))
 
-        param_name = items[0].strip(" \"").lower()
+        param_name = items[0].strip(" \"")
+        if lower_case_names:
+            param_name = param_name.lower()
         param_value = items[1].strip()
+
+        if not allow_duplicates and param_name in seen_params:
+            raise ValueError("Invalid input: {0} duplicated in the param list".
+                             format(param_name))
+
         if not param_name or param_name in ('none', 'null'):
             plpy.error("Invalid input param name: {0} \n"
                        "{1}".format(param_name, usage_str))
-        try:
-            param_type = input_param_types[param_name]
-        except KeyError:
-            if not ignore_invalid:
-                raise KeyError("Invalid input: {0} is not a valid parameter "
-                               "{1}".format(param_name, usage_str))
-            else:
-                continue
-        try:
-            if param_type in (int, str, float):
-                parameter_dict[param_name] = param_type(param_value)
-            elif param_type == list:
-                parameter_dict[param_name] = split_quoted_delimited_str(
-                    param_value.strip('[](){} '))
-            elif param_type == bool:
-                #  True values are y, yes, t, true, on and 1;
-                #  False values are n, no, f, false, off and 0.
-                #  Raises ValueError if anything else.
-                parameter_dict[param_name] = bool(strtobool(param_value))
-            else:
-                raise TypeError("Invalid input: {0} has unsupported type "
-                                "{1}".format(param_name, usage_str))
-        except ValueError:
-            raise ValueError("Invalid input: {0} must be {1} \n"
-                             "{2}".format(param_name, param_type, usage_str))
+        if input_param_types:
+            try:
+                param_type = input_param_types[param_name]
+            except KeyError:
+                if not ignore_invalid:
+                    raise KeyError("Invalid input: {0} is not a valid parameter "
+                                   "{1}".format(param_name, usage_str))
+                else:
+                    continue
+            try:
+                if param_type in (int, str, float):
+                    parameter_dict[param_name] = param_type(param_value)
+                elif param_type == list:
+                    parameter_dict[param_name] = split_quoted_delimited_str(
+                        param_value.strip('[](){} '))
+                elif param_type == bool:
+                    #  True values are y, yes, t, true, on and 1;
+                    #  False values are n, no, f, false, off and 0.
+                    #  Raises ValueError if anything else.
+                    parameter_dict[param_name] = bool(strtobool(param_value))
+                else:
+                    raise TypeError("Invalid input: {0} has unsupported type "
+                                    "{1}".format(param_name, usage_str))
+            except ValueError:
+                raise ValueError("Invalid input: {0} must be {1} \n"
+                                 "{2}".format(param_name, param_type, usage_str))
+        else:
+            # if input parameter types not provided then just return all as string
+            parameter_dict[param_name] = str(param_value)
+        seen_params.add(param_name)
     return parameter_dict
 # -------------------------------------------------------------------------
 
@@ -599,36 +666,51 @@ class UtilitiesTestCase(unittest.TestCase):
         Python Exceptions to successfully run the test cases
     """
     def setUp(self):
-        self.optimizer_params1 = 'max_iter=10, optimizer="irls", precision=1e-4'
-        self.optimizer_params2 = 'max_iter=2.01, optimizer=newton-irls, precision=1e-5'
+        self.optimizer_params1 = 'max_iter=10, optimizer::text="irls", precision=1e-4'
+        self.optimizer_params2 = 'max_iter=.01, optimizer=newton-irls, precision=1e-5'
         self.optimizer_params3 = 'max_iter=10, 10, optimizer=, lambda={1,"2,2",3,4}'
         self.optimizer_params4 = ('max_iter=10, optimizer="irls",'
                                   'precision=0.02.01, lambda={1,2,3,4}')
-        self.optimizer_types = {'max_iter': int, 'optimizer': str,
+        self.optimizer_params5 = ('max_iter=10, optimizer="irls",'
+                                  'precision=0.02, PRECISION=2., lambda={1,2,3,4}')
+        self.optimizer_types = {'max_iter': int, 'optimizer': str, 'optimizer::text': str,
                                 'lambda': list, 'precision': float}
 
     def test_preprocess_optimizer(self):
         self.assertEqual(preprocess_keyvalue_params(self.optimizer_params1),
-                         ['max_iter=10', 'optimizer="irls"', 'precision=1e-4'])
+                         ['max_iter=10', 'optimizer::text="irls"', 'precision=1e-4'])
         self.assertEqual(preprocess_keyvalue_params(self.optimizer_params2),
-                         ['max_iter=2.01', 'optimizer=newton-irls', 'precision=1e-5'])
+                         ['max_iter=.01', 'optimizer=newton-irls', 'precision=1e-5'])
         self.assertEqual(preprocess_keyvalue_params(self.optimizer_params3),
                          ['max_iter=10', 'lambda={1,"2,2",3,4}'])
         self.assertEqual(preprocess_keyvalue_params(self.optimizer_params4),
-                         ['max_iter=10', 'optimizer="irls"', 'precision=0.02', 'lambda={1,2,3,4}'])
+                         ['max_iter=10', 'optimizer="irls"', 'precision=0.02.01', 'lambda={1,2,3,4}'])
 
     def test_extract_optimizers(self):
-        self.assertEqual({'max_iter': 10, 'optimizer': '"irls"', 'precision': 0.0001},
+        self.assertEqual({'max_iter': 10, 'optimizer::text': '"irls"', 'precision': 0.0001},
                          extract_keyvalue_params(self.optimizer_params1, self.optimizer_types))
         self.assertEqual({'max_iter': 10, 'lambda': ['1', '"2,2"', '3', '4']},
                          extract_keyvalue_params(self.optimizer_params3, self.optimizer_types))
-        self.assertEqual({'max_iter': 10, 'optimizer': '"irls"', 'precision': 0.02,
-                          'lambda': ['1', '2', '3', '4']},
-                         extract_keyvalue_params(self.optimizer_params4, self.optimizer_types))
+        self.assertEqual({'max_iter': '10', 'optimizer': '"irls"', 'precision': '0.02.01',
+                          'lambda': '{1,2,3,4}'},
+                         extract_keyvalue_params(self.optimizer_params4))
+        self.assertEqual({'max_iter': '10', 'optimizer': '"irls"',
+                          'PRECISION': '2.', 'precision': '0.02',
+                          'lambda': '{1,2,3,4}'},
+                         extract_keyvalue_params(self.optimizer_params5,
+                                                 allow_duplicates=False,
+                                                 lower_case_names=False
+                                                 ))
         self.assertRaises(ValueError,
                           extract_keyvalue_params, self.optimizer_params2, self.optimizer_types)
+        self.assertRaises(ValueError,
+                          extract_keyvalue_params, self.optimizer_params5, allow_duplicates=False)
+        self.assertRaises(ValueError,
+                          extract_keyvalue_params, self.optimizer_params4, self.optimizer_types)
 
     def test_split_delimited_string(self):
+        self.assertEqual(['max_iter=10', 'optimizer::text="irls"', 'precision=1e-4'],
+                         split_quoted_delimited_str(self.optimizer_params1, quote='"'))
         self.assertEqual(['a', 'b', 'c'], split_quoted_delimited_str('a,    b, c', quote='|'))
         self.assertEqual(['a', '|b, c|'], split_quoted_delimited_str('a,    |b, c|', quote='|'))
         self.assertEqual(['a', '"b, c"'], split_quoted_delimited_str('a, "b, c"'))
