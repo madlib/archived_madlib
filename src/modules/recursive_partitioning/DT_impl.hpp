@@ -1092,7 +1092,8 @@ string
 DecisionTree<Container>::displayLeafNode(
             Index id,
             ArrayHandle<text*> &dep_levels,
-            const std::string & id_prefix){
+            const std::string & id_prefix,
+            bool verbose){
     std::stringstream predict_str;
     if (static_cast<bool>(is_regression)){
         predict_str << predict_response(id);
@@ -1105,14 +1106,14 @@ DecisionTree<Container>::displayLeafNode(
     std::stringstream display_str;
     display_str << "\"" << id_prefix << id << "\" [label=\"" << predict_str.str();
 
-    // // uncomment below if distribution of rows is required in leaf node
-    // display_str << "\\n[";
-    // if (is_regression)
-    //      display_str << statCount(predictions.row(id)) << ", "
-    //                  << statPredict(predictions.row(id));
-    // else
-    //     display_str << predictions.row(id);
-    // display_str << "]";
+    if(verbose){
+        display_str << "\\n samples = " << statCount(predictions.row(id)) << "\\n value = ";
+        if (is_regression)
+            display_str << statPredict(predictions.row(id));
+        else{
+            display_str << "[" << predictions.row(id).head(n_y_labels)<< "]";
+        }
+    }
     display_str << "\",shape=box]" << ";";
     return display_str.str();
 }
@@ -1130,7 +1131,9 @@ DecisionTree<Container>::displayInternalNode(
             ArrayHandle<text*> &con_features_str,
             ArrayHandle<text*> &cat_levels_text,
             ArrayHandle<int> &cat_n_levels,
-            const std::string & id_prefix
+            ArrayHandle<text*> &dep_levels,
+            const std::string & id_prefix,
+            bool verbose
             ){
 
     string feature_name;
@@ -1149,16 +1152,26 @@ DecisionTree<Container>::displayInternalNode(
 
     std::stringstream display_str;
     display_str << "\"" << id_prefix << id << "\" [label=\"" << label_str.str();
-    // // uncomment below if distribution of rows is required in internal node
-    // display_str << "\\n[";
-    // if (is_regression)
-    //      display_str << statCount(predictions.row(id)) << ", "
-    //                  << statPredict(predictions.row(id));
-    // else
-    //     display_str << predictions.row(id);
-    // display_str << "]";
-    display_str <<"\", shape=ellipse]" << ";";
-   return display_str.str();
+    if(verbose){
+
+        display_str << "\\n impurity = "<< impurity(predictions.row(id)) << "\\n samples = " << statCount(predictions.row(id)) << "\\n value = ";
+        if (is_regression)
+            display_str << statPredict(predictions.row(id));
+        else{
+            display_str << "[" << predictions.row(id).head(n_y_labels)<< "]";
+        }
+        std::stringstream predict_str;
+        if (static_cast<bool>(is_regression)){
+            predict_str << predict_response(id);
+        }
+        else{
+            std::string dep_value = get_text(dep_levels, static_cast<int>(predict_response(id)));
+            predict_str << escape_quotes(dep_value);
+        }
+        display_str << "\\n class = " << predict_str.str();
+    }
+    display_str << "\", shape=ellipse]" << ";";
+    return display_str.str();
 }
 // -------------------------------------------------------------------------
 
@@ -1174,11 +1187,12 @@ DecisionTree<Container>::display(
         ArrayHandle<text*> &cat_levels_text,
         ArrayHandle<int> &cat_n_levels,
         ArrayHandle<text*> &dependent_levels,
-        const std::string &id_prefix) {
+        const std::string &id_prefix,
+        bool verbose) {
 
     std::stringstream display_string;
     if (feature_indices(0) == FINISHED_LEAF){
-        display_string << displayLeafNode(0, dependent_levels, id_prefix)
+        display_string << displayLeafNode(0, dependent_levels, id_prefix, verbose)
                        << std::endl;
     }
     else{
@@ -1189,7 +1203,7 @@ DecisionTree<Container>::display(
 
                 display_string << displayInternalNode(
                         index, cat_features_str, con_features_str,
-                        cat_levels_text, cat_n_levels, id_prefix) << std::endl;
+                        cat_levels_text, cat_n_levels, dependent_levels, id_prefix, verbose) << std::endl;
 
                 // Display the children
                 Index tc = trueChild(index);
@@ -1203,7 +1217,7 @@ DecisionTree<Container>::display(
                     if (feature_indices(tc) == IN_PROCESS_LEAF ||
                         feature_indices(tc) == FINISHED_LEAF)
                         display_string
-                            << displayLeafNode(tc, dependent_levels, id_prefix)
+                            << displayLeafNode(tc, dependent_levels, id_prefix, verbose)
                             << std::endl;
                 }
 
@@ -1218,7 +1232,7 @@ DecisionTree<Container>::display(
                     if (feature_indices(fc) == IN_PROCESS_LEAF ||
                         feature_indices(fc) == FINISHED_LEAF)
                         display_string
-                            << displayLeafNode(fc, dependent_levels, id_prefix)
+                            << displayLeafNode(fc, dependent_levels, id_prefix, verbose)
                             << std::endl;
                 }
             }
@@ -1664,7 +1678,7 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
                             updateSurrStats(true,
                                             is_primary_true == is_surrogate_true,
                                             row_index,
-                                            col_index, 
+                                            col_index,
                                             dup_count);
                         }
                     }
@@ -1731,7 +1745,7 @@ TreeAccumulator<Container, DTree>::updateNodeStats(bool is_regression,
                                                   const double weight) {
     ColumnVector stats(stats_per_split);
     stats.fill(0);
-    int n_rows = this->weights_as_rows ? static_cast<int>(weight) : 1; 
+    int n_rows = this->weights_as_rows ? static_cast<int>(weight) : 1;
     if (is_regression){
         double w_response = weight * response;
         stats << weight, w_response, w_response * response, n_rows;
@@ -1758,7 +1772,7 @@ TreeAccumulator<Container, DTree>::updateStats(bool is_regression,
                                                const double weight) {
     ColumnVector stats(stats_per_split);
     stats.fill(0);
-    int n_rows = this->weights_as_rows ? static_cast<int>(weight) : 1; 
+    int n_rows = this->weights_as_rows ? static_cast<int>(weight) : 1;
     if (is_regression){
         double w_response = weight * response;
         stats << weight, w_response, w_response * response, n_rows;

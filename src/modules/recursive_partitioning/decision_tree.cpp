@@ -166,7 +166,7 @@ compute_leaf_stats_transition::run(AnyType & args){
                      static_cast<uint16_t>(con_features.size()),
                      static_cast<uint32_t>(cat_levels.sum()),
                      static_cast<uint16_t>(dt.tree_depth),
-                     stats_per_split, 
+                     stats_per_split,
                      weights_as_rows
                     );
         // compute cumulative sum of the levels of the categorical variables
@@ -408,10 +408,11 @@ display_decision_tree::run(AnyType &args) {
     ArrayHandle<int> cat_n_levels = args[4].getAs<ArrayHandle<int> >();
     ArrayHandle<text*> dependent_var_levels = args[5].getAs<ArrayHandle<text*> >();
     std::string id_prefix = args[6].getAs<std::string>();
+    bool verbose = args[7].getAs<bool>();
 
     string tree_str = dt.display(cat_feature_names, con_feature_names,
                                  cat_levels_text, cat_n_levels,
-                                 dependent_var_levels, id_prefix);
+                                 dependent_var_levels, id_prefix, verbose);
     return tree_str;
 }
 
@@ -893,9 +894,9 @@ void fill_one_row(MutableNativeMatrix &frame, Tree &dt, int me, int i,
 /*
  * PivotalR: randomForest
  * Convert to R's randomForest format for getTree(..) function
- * 
+ *
  */
-AnyType 
+AnyType
 convert_to_random_forest_format::run(AnyType &args) {
     Tree dt = args[0].getAs<ByteString>();
 

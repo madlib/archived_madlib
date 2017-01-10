@@ -123,15 +123,17 @@ public:
     }
 
     uint16_t recomputeTreeDepth() const;
-    string displayLeafNode(Index id, ArrayHandle<text*> &dep_levels, const std::string & id_prefix);
+    string displayLeafNode(Index id, ArrayHandle<text*> &dep_levels, const std::string & id_prefix, bool verbose);
     string displayInternalNode(Index id,
                                ArrayHandle<text*> &cat_features_str,
                                ArrayHandle<text*> &con_features_str,
                                ArrayHandle<text*> &cat_levels_text,
                                ArrayHandle<int> &cat_n_levels,
-                               const std::string & id_prefix);
+                               ArrayHandle<text*> &dep_levels,
+                               const std::string & id_prefix,
+                               bool verbose);
     string display(ArrayHandle<text*>&, ArrayHandle<text*>&, ArrayHandle<text*>&,
-                   ArrayHandle<int>&, ArrayHandle<text*>&, const std::string&);
+                   ArrayHandle<int>&, ArrayHandle<text*>&, const std::string&, bool verbose);
     string getCatLabels(Index, Index, Index, ArrayHandle<text*> &,
                         ArrayHandle<int> &);
     string print_split(bool, bool, Index, double,
@@ -234,7 +236,7 @@ public:
                         MappedColumnVector,  // continuous feature values
                         MappedIntegerVector, // levels for each categorical feature
                         MappedMatrix,        // split values for each continuous feature
-                        int                  // duplicated count for each tuple 
+                        int                  // duplicated count for each tuple
                                              //   (used in random forest)
                        > surr_tuple_type;
 
