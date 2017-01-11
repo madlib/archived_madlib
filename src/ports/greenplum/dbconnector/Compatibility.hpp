@@ -27,6 +27,7 @@ namespace {
 	SearchSysCache(cacheId, key1, 0, 0, 0)
 #endif
 
+#if (GP_VERSION_NUM < 40399)
 /*
  * In commit 2d4db3675fa7a2f4831b755bc98242421901042f,
  * by Tom Lane <tgl@sss.pgh.pa.us> Wed, 6 Jun 2007 23:00:50 +0000,
@@ -75,7 +76,7 @@ AggCheckCallContext(FunctionCallInfo fcinfo, MemoryContext *aggcontext) {
 		*aggcontext = NULL;
 	return 0;
 }
-
+#endif // GP_VERSION_NUM < 40399
 } // namespace
 
 inline ArrayType* madlib_construct_array
