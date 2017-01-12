@@ -67,7 +67,6 @@ updateSumSquaredDeviations(double &ioLeftNumRows, double &ioLeftSumExp,
         return;
 
     // FIXME: Use compensated sums for numerical stability
-    // http://jira.madlib.net/browse/MADLIB-501
     ioLeftSumSquaredDeviations
            += inRightSumSquaredDeviations
             + ioLeftSumExp * inRightSumObsSquareOverExp
@@ -98,7 +97,7 @@ chi2_gof_test_transition::run(AnyType &args) {
     if (observed < 0)
         throw std::invalid_argument("Number of observations must be "
             "nonnegative.");
-    else if (expected < 0) 
+    else if (expected < 0)
         throw std::invalid_argument("Value of expected (count or probability) "
          "must be nonnegative.");
     else if (df < 0)

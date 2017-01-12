@@ -26,8 +26,8 @@ py_min_ver = [2, 6]
 
 # Check python version
 if sys.version_info[:2] < py_min_ver:
-    print "ERROR: python version too old (%s). You need %s or greater." \
-          % ('.'.join(str(i) for i in sys.version_info[:3]), '.'.join(str(i) for i in py_min_ver))
+    print("ERROR: python version too old (%s). You need %s or greater." %
+          ('.'.join(str(i) for i in sys.version_info[:3]), '.'.join(str(i) for i in py_min_ver)))
     exit(1)
 
 # Find MADlib root directory. This file is installed to
@@ -417,21 +417,19 @@ def _get_rev_num(rev):
                 Valid inputs:
                     1.9.0, 1.10.0, 2.5.0
                     1.0.0-alpha, 1.0.0-alpha.1, 1.0.0-0.3.7, 1.0.0-x.7.z.92
-
+                    1.0.0+20130313144700, 1.0.0-beta+exp.sha.5114f85
     """
     try:
-        rev_parts = rev.split('-')  # text to the right of - is treated as single str
+        rev_parts = re.split('[-+_]', rev)
         # get numeric part of the version string
         num = [int(i) for i in rev_parts[0].split('.')]
         num += [0] * (3 - len(num))  # normalize num to be of length 3
         # get identifier part of the version string
         if len(rev_parts) > 1:
-            num.append(str(rev_parts[1]))
-
-        if num:
-            return num
-        else:
-            return [0]
+            num.extend(map(str, rev_parts[1:]))
+        if not num:
+            num = [0]
+        return num
     except:
         # invalid revision
         return [0]
@@ -653,7 +651,7 @@ def _db_upgrade(schema, dbrev):
                 _info("""Dependency on 'linregr_result' could be due to objects
                         created from the output of the aggregate 'linregr'.
                         Please refer to the Linear Regression documentation
-                        <http://doc.madlib.net/latest/group__grp__linreg.html#warning>
+                        <http://madlib.incubator.apache.org/docs/latest/group__grp__linreg.html#warning>
                         for the recommended solution.
                         """, False)
             abort = True
@@ -1443,7 +1441,10 @@ class RevTest(unittest.TestCase):
         self.assertTrue(_get_rev_num('4.3.10') >= _get_rev_num('4.3.5'))
         self.assertTrue(_get_rev_num('1.9.10-dev') >= _get_rev_num('1.9.9'))
         self.assertNotEqual(_get_rev_num('1.9.10-dev'), _get_rev_num('1.9.10'))
-        self.assertEqual(_get_rev_num('1.9.10'), _get_rev_num('1.9.10'))
+        self.assertEqual(_get_rev_num('1.9.10'), [1, 9, 10])
+        self.assertEqual(_get_rev_num('1.0.0+20130313144700'), [1, 0, 0, '20130313144700'])
+        self.assertNotEqual(_get_rev_num('1.0.0+20130313144700'),
+                            _get_rev_num('1.0.0-beta+exp.sha.5114f85'))
 
     def test_is_rev_gte(self):
         # 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta <
@@ -1457,7 +1458,7 @@ class RevTest(unittest.TestCase):
         self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9.0')))
         self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9')))
         self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0'), _get_rev_num('1.9.0-dev')))
-        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9.0-dev')))
+        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9-dev')))
         self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0-dev'), _get_rev_num('1.9.0-dev')))
         self.assertTrue(_is_rev_gte([1, 9, 'rc', 1], [1, 9, 'dev', 0]))
 
@@ -1471,6 +1472,9 @@ class RevTest(unittest.TestCase):
         self.assertFalse(_is_rev_gte([1, 9, 'rc', 1], [1, 9, 0]))
         self.assertFalse(_is_rev_gte([1, 9, '0.2'], [1, 9, '0.3']))
         self.assertFalse(_is_rev_gte([1, 9, 'build2'], [1, 9, 'build3']))
+
+        self.assertFalse(_is_rev_gte(_get_rev_num('1.0.0+20130313144700'),
+                                     _get_rev_num('1.0.0-beta+exp.sha.5114f85')))
 
 
 # ------------------------------------------------------------------------------
