@@ -127,11 +127,13 @@ def run_query(sql, show_error, con_args=con_args):
               '-U', con_args['user'],
               '-F', delimiter,
               '--no-password',
-              '-Ac', "set CLIENT_MIN_MESSAGES=error; " + sql]
+              '--no-psqlrc',
+              '--no-align',
+              '-c', sql]
     runenv = os.environ
     if 'password' in con_args:
         runenv["PGPASSWORD"] = con_args['password']
-    runenv["PGOPTIONS"] = '-c search_path=public -c client_min_messages=notice'
+    runenv["PGOPTIONS"] = '-c search_path=public -c client_min_messages=error'
     std, err = subprocess.Popen(runcmd, env=runenv, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE).communicate()
 
