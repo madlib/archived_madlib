@@ -1081,6 +1081,8 @@ def main(argv):
         con_args['host'] = c_host + ':' + c_port
         con_args['database'] = c_db
         con_args['user'] = c_user
+        if c_pass is not None:
+            con_args['password'] = c_pass
 
         # Try connecting to the database
         _info("Testing database connection...", verbose)
