@@ -85,7 +85,7 @@ add_sql_files(
     "../postgres/modules"
     "${CMAKE_CURRENT_BINARY_DIR}/modules"
 )
-# Add Greenplum-specific modules. Files will be appended to SQL_TARGET_FILES.
+# Add HAWQ-specific modules. Files will be appended to SQL_TARGET_FILES.
 add_sql_files(
     SQL_TARGET_FILES
     "modules"

@@ -317,13 +317,9 @@ def _get_dbver():
         if portid == 'postgres':
             match = re.search("PostgreSQL[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         elif portid == 'greenplum':
-            match = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+)", versionStr)
-            # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
-            # MADlib treat 4.3.5+ as DB version 4.3V2 that is different from 4.3
-            if match and match.group(1) == '4.3':
-                match_details = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+.\d+)", versionStr)
-                if _is_rev_gte(_get_rev_num(match_details.group(1)), _get_rev_num('4.3.5')):
-                    return '4.3ORCA'
+            # for Greenplum the 3rd digit is necessary to differentiate
+            # 4.3.5+ from versions < 4.3.5
+            match = re.search("Greenplum[a-zA-Z\s]*(\d+\.\d+\.\d+)", versionStr)
         elif portid == 'hawq':
             match = re.search("HAWQ[a-zA-Z\s]*(\d+\.\d+)", versionStr)
         return None if match is None else match.group(1)
@@ -1098,11 +1094,6 @@ def main(argv):
 
         # Get DB version
         dbver = _get_dbver()
-        portdir = os.path.join(maddir, "ports", portid)
-        if portid == "hawq" and _is_rev_gte(_get_rev_num(dbver), _get_rev_num('2.0')):
-            is_hawq2 = True
-        else:
-            is_hawq2 = False
 
         # Get MADlib version in DB
         dbrev = _get_madlib_dbrev(schema)
@@ -1111,12 +1102,14 @@ def main(argv):
         if portid == 'hawq' and not is_hawq2 and schema.lower() != 'madlib':
             _error("*** Installation is currently restricted only to 'madlib' schema ***", True)
 
+        portdir = os.path.join(maddir, "ports", portid)
         supportedVersions = [dirItem for dirItem in os.listdir(portdir)
                              if os.path.isdir(os.path.join(portdir, dirItem)) and
-                             re.match("^\d+\.\d+", dirItem)]
+                             re.match("^\d+", dirItem)]
         if dbver is None:
-            dbver = ".".join(map(str, max([map(int, versionStr.split('.'))
-                                           for versionStr in supportedVersions])))
+            dbver = ".".join(
+                map(str, max([versionStr.split('.')
+                              for versionStr in supportedVersions])))
             _info("Could not parse version string reported by {DBMS}. Will "
                   "default to newest supported version of {DBMS} "
                   "({version}).".format(DBMS=ports[portid]['name'],
@@ -1124,6 +1117,27 @@ def main(argv):
         else:
             _info("Detected %s version %s." % (ports[portid]['name'], dbver),
                   True)
+
+            if portid == "hawq":
+                # HAWQ (starting 2.0) and GPDB (starting 5.0) uses semantic versioning,
+                # which implies all HAWQ 2.x or GPDB 5.x versions will have binary
+                # compatibility. Hence, we can keep single folder for all 2.X / 5.X.
+                if (_is_rev_gte(_get_rev_num(dbver), _get_rev_num('2.0')) and
+                        not _is_rev_gte(_get_rev_num(dbver), _get_rev_num('3.0'))):
+                    is_hawq2 = True
+                    dbver = '2'
+            elif portid == 'greenplum':
+                # similar to HAWQ above, collapse all 5.X versions
+                if (_is_rev_gte(_get_rev_num(dbver), _get_rev_num('5.0')) and
+                        not _is_rev_gte(_get_rev_num(dbver), _get_rev_num('6.0'))):
+                    dbver = '5'
+                # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
+                # MADlib treats 4.3.5+ as DB version 4.3ORCA which is different
+                # from 4.3. The name is suffixed with ORCA since optimizer (ORCA) is
+                # 'on' by default in 4.3.5
+                elif _is_rev_gte(_get_rev_num(dbver), _get_rev_num('4.3.4')):
+                    dbver = '4.3ORCA'
+
             if not os.path.isdir(os.path.join(portdir, dbver)):
                 _error("This version is not among the %s versions for which "
                        "MADlib support files have been installed (%s)." %

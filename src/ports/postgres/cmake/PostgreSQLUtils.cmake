@@ -4,7 +4,7 @@ function(define_postgresql_features IN_VERSION OUT_FEATURES)
     if(NOT ${IN_VERSION} VERSION_LESS "9.0")
         list(APPEND ${OUT_FEATURES} __HAS_ORDERED_AGGREGATES__)
     endif()
-    
+
     # Pass values to caller
     set(${OUT_FEATURES} "${${OUT_FEATURES}}" PARENT_SCOPE)
 endfunction(define_postgresql_features)
@@ -54,7 +54,7 @@ endfunction(cpack_add_version_component)
 #
 function(determine_target_versions OUT_VERSIONS)
     get_subdirectories("${CMAKE_CURRENT_SOURCE_DIR}" SUPPORTED_VERSIONS)
-    get_filtered_list(SUPPORTED_VERSIONS "^[0-9]+.[0-9]+.*$" ${SUPPORTED_VERSIONS})
+    get_filtered_list(SUPPORTED_VERSIONS "^[0-9]+.*$" ${SUPPORTED_VERSIONS})
 
     foreach(VERSION ${SUPPORTED_VERSIONS})
         string(REPLACE "." "_" VERSION_UNDERSCORE "${VERSION}")
@@ -64,18 +64,28 @@ function(determine_target_versions OUT_VERSIONS)
     endforeach(VERSION)
     if(NOT DEFINED ${OUT_VERSIONS})
         find_package(${PORT})
-
         if(${PORT_UC}_FOUND)
-            # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
-            # MADlib treat 4.3.5+ as DB version that is different from 4.3
-            if(${PORT_UC} STREQUAL "GREENPLUM" AND
-                    ${${PORT_UC}_VERSION_MAJOR} EQUAL 4 AND
-                    ${${PORT_UC}_VERSION_MINOR} EQUAL 3 AND
-                    ${${PORT_UC}_VERSION_PATCH} GREATER 4)
-                set(VERSION "4.3ORCA")
-            else()
-                set(VERSION "${${PORT_UC}_VERSION_MAJOR}.${${PORT_UC}_VERSION_MINOR}")
+            set(VERSION "${${PORT_UC}_VERSION_MAJOR}.${${PORT_UC}_VERSION_MINOR}")
+            if(${PORT_UC} STREQUAL "GREENPLUM")
+                # Starting GPDB 5.0, semantic versioning will be followed,
+                # implying we only need 1 folder for same major versions
+                if(${${PORT_UC}_VERSION_MAJOR} EQUAL 5)
+                    set(VERSION "5")
+
+                # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
+                # MADlib treat 4.3.5+ as DB version that is different from 4.3
+                elseif(${${PORT_UC}_VERSION_MAJOR} EQUAL 4 AND
+                        ${${PORT_UC}_VERSION_MINOR} EQUAL 3 AND
+                        ${${PORT_UC}_VERSION_PATCH} GREATER 4)
+                    set(VERSION "4.3ORCA")
+                endif()
+            elseif(${PORT_UC} STREQUAL "HAWQ" AND
+                    ${${PORT_UC}_VERSION_MAJOR} EQUAL 2)
+                # Starting HAWQ 2.0, semantic versioning will be followed,
+                # implying we only need 1 folder for same major versions
+                set(VERSION "2")
             endif()
+
             list(FIND SUPPORTED_VERSIONS "${VERSION}" _POS)
             if(_POS EQUAL -1)
                 string(REPLACE ";" ", " _SUPPORTED_VERSIONS_STR "${SUPPORTED_VERSIONS}")
@@ -96,7 +106,7 @@ function(determine_target_versions OUT_VERSIONS)
             endif(_POS EQUAL -1)
         endif(${PORT_UC}_FOUND)
     endif(NOT DEFINED ${OUT_VERSIONS})
-    
+
     # Pass values to caller
     set(${OUT_VERSIONS} "${${OUT_VERSIONS}}" PARENT_SCOPE)
     # ${PORT_UC}_${_VERSION_UNDERSCORE}_PG_CONFIG might have been set earlier!
