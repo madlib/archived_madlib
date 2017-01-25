@@ -185,10 +185,14 @@ lda_train( data_table,
     <dd>TEXT. The name of the table storing the training dataset. Each row is
     in the form <tt>&lt;docid, wordid, count&gt;</tt> where \c docid, \c wordid, and \c count
     are non-negative integers.
-
+  
     The \c docid column refers to the document ID, the \c wordid column is the
     word ID (the index of a word in the vocabulary), and \c count is the
-    number of occurrences of the word in the document. </dd>
+    number of occurrences of the word in the document.
+  
+    Please note that column names for \c docid, \c wordid, and \c count are currently fixed, so you must use these
+    exact names in the data_table.</dd>
+
     <dt>model_table</dt>
     <dd>TEXT. The name of the table storing the learned models. This table has one row and the following columns.
         <table class="output">
@@ -312,12 +316,13 @@ lda_get_perplexity( model_table,
 
 -# Prepare a training dataset for LDA. The examples below are small strings extracted from various Wikipedia documents .
 <pre class="example">
+DROP TABLE IF EXISTS documents;
 CREATE TABLE documents(docid INT4, contents TEXT);
 INSERT INTO documents VALUES
 (0, 'Statistical topic models are a class of Bayesian latent variable models, originally developed for analyzing the semantic content of large document corpora.'),
 (1, 'By the late 1960s, the balance between pitching and hitting had swung in favor of the pitchers. In 1968 Carl Yastrzemski won the American League batting title with an average of just .301, the lowest in history.'),
 (2, 'Machine learning is closely related to and often overlaps with computational statistics; a discipline that also specializes in prediction-making. It has strong ties to mathematical optimization, which deliver methods, theory and application domains to the field.'),
-(3, 'California''s diverse geography ranges from the Sierra Nevada in the east to the Pacific Coast in the west, from the Redwood–Douglas fir forests of the northwest, to the Mojave Desert areas in the southeast. The center of the state is dominated by the Central Valley, a major agricultural area. ')
+(3, 'California''s diverse geography ranges from the Sierra Nevada in the east to the Pacific Coast in the west, from the Redwood–Douglas fir forests of the northwest, to the Mojave Desert areas in the southeast. The center of the state is dominated by the Central Valley, a major agricultural area. ');
 </pre>
 
 -# Build a word count table by extracting the words and building a histogram for
@@ -328,7 +333,7 @@ ALTER TABLE documents ADD COLUMN words TEXT[];
 UPDATE documents SET words = regexp_split_to_array(lower(contents), E'[\\\\s+\\\\.\\\\,]');
 \nbsp
 -- Create the term frequency table
-DROP TABLE IF EXISTS my_training;
+DROP TABLE IF EXISTS my_training, my_training_vocabulary;
 SELECT madlib.term_frequency('documents', 'docid', 'words', 'my_training', TRUE);
 SELECT * FROM my_training order by docid limit 20;
 </pre>
@@ -388,6 +393,7 @@ SELECT * FROM my_training_vocabulary order by wordid limit 20;
 
 -# Create an LDA model using the \c lda_train() function.
 <pre class="example">
+DROP TABLE IF EXISTS my_model, my_outdata;
 SELECT madlib.lda_train( 'my_training',
                          'my_model',
                          'my_outdata',
@@ -398,12 +404,15 @@ SELECT madlib.lda_train( 'my_training',
                          0.01
                        );
 </pre>
+Reminder that column names for \c docid, \c wordid, and \c count are currently fixed, 
+so you must use these exact names in the input table.
 After a successful run of the lda_train() function two tables are generated,
 one for storing the learned model and the other for storing the output data table.
 
 -# To get the detailed information about the learned model, run these commands:
 <pre class="example">
 -- The topic description by top-k words
+DROP TABLE IF EXISTS my_topic_desc;
 SELECT madlib.lda_get_topic_desc( 'my_model',
                                   'my_training_vocabulary',
                                   'my_topic_desc',
@@ -433,8 +442,10 @@ select * from my_topic_desc order by topicid, prob DESC;
 \nbsp
 <pre class="example">
 -- The per-word topic counts (sorted by topic id)
+DROP TABLE IF EXISTS my_word_topic_count;
 SELECT madlib.lda_get_word_topic_count( 'my_model',
                                         'my_word_topic_count');
+SELECT * FROM my_word_topic_count ORDER BY wordid;
 </pre>
 \nbsp
 <pre class="result">
