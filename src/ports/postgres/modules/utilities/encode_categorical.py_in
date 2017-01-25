@@ -60,7 +60,7 @@ class CategoricalEncoder(object):
                  top=None,
                  value_to_drop=None,
                  encode_null=False,
-                 array_output=False,
+                 output_type='column',
                  output_dictionary=False,
                  distributed_by=None,
                  **kwargs):
@@ -74,7 +74,7 @@ class CategoricalEncoder(object):
         self.top = top
         self.value_to_drop = value_to_drop
         self.encode_null = encode_null
-        self.array_output = array_output
+        self.output_type = output_type
         self.output_dictionary = output_dictionary
         self.distributed_by = distributed_by
 
@@ -121,9 +121,14 @@ class CategoricalEncoder(object):
                                     if (c not in self._output_cols and
                                         unquote_ident(c) not in self._output_cols)])
 
-        if self.array_output:
+        if self.output_type == 'array':
             categorical_col_str = ("ARRAY[{0}] AS {1}".
                                    format(categorical_col_str,
+                                          self._array_out_name))
+        elif self.output_type == 'svec':
+            categorical_col_str = ("ARRAY[{0}]::float8[]::{1}.svec AS {2}".
+                                   format(categorical_col_str,
+                                          self.schema_madlib,
                                           self._array_out_name))
         out_sql = """
             CREATE TABLE {out} AS (
@@ -154,7 +159,7 @@ class CategoricalEncoder(object):
         self._row_id_cols = split_quoted_delimited_str(self.row_id)
 
         # flag to build a dictionary table
-        self._output_dictionary = True if self.array_output else self.output_dictionary
+        self._output_dictionary = True if self.output_type in ['array', 'svec'] else self.output_dictionary
 
         # how to distribute the output table (for distributed platforms)
         if not is_platform_pg():
@@ -295,7 +300,7 @@ class CategoricalEncoder(object):
                 value_str = "= '{v}'".format(v=str(v))
                 v_type = str
 
-            if not self.array_output:
+            if self.output_type not in ('array', 'svec'):
                 # array_output = True implies all the case outputs will be wrapped
                 # as an array, hence not requiring an alias for each case
                 if not self._output_dictionary:
@@ -350,7 +355,7 @@ class CategoricalEncoder(object):
             values = col_to_values[col]
             local_seq = count(1)
             col_no_quotes = strip_end_quotes(col)
-            if self.array_output:
+            if self.output_type != 'column':
                 encoded_col_name = "__encoded_variables__"
                 seq = global_seq
             else:
@@ -549,7 +554,7 @@ def encode_categorical_variables(
         top=None,
         value_to_drop=None,
         encode_null=False,
-        array_output=None,
+        output_type='column',
         output_dictionary=False,
         distributed_by=None,
         **kwargs):
@@ -573,7 +578,7 @@ def encode_categorical_variables(
         encoder = CategoricalEncoder(schema_madlib, source_table, output_table,
                                      categorical_cols, categorical_cols_to_exclude,
                                      row_id, top, value_to_drop, encode_null,
-                                     array_output, output_dictionary,
+                                     output_type, output_dictionary,
                                      distributed_by)
         encoder.build_output_table()
     return None
@@ -639,7 +644,7 @@ SELECT {madlib}.encode_categorical_variables (
         value_to_drop,                  -- (Optional) Reference value to drop for each column
         encode_null,                    -- (Optional) Whether NULL should be treated as one of the
                                         --  values of the categorical variable.
-        array_output,                   -- (Optional) Get all encoded variables in an array
+        output_type,                    -- (Optional) Get all encoded variables in an array
         output_dictionary,              -- (Optional) Simplify output column naming and provide
                                         --  a mapping between simple names and meaning
         distributed_by                  -- (Optional) Columns to use for the distribution policy of
