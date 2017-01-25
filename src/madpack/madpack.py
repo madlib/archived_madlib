@@ -35,8 +35,7 @@ if sys.version_info[:2] < py_min_ver:
 # two levels up in the directory hierarchy. We use (a) os.path.realpath and
 # (b) __file__ (instead of sys.argv[0]) because madpack.py could be called
 # (a) through a symbolic link and (b) not as the main module.
-maddir = os.path.abspath(os.path.dirname(os.path.realpath(
-    __file__)) + "/..")   # MADlib root dir
+maddir = os.path.abspath(os.path.dirname(os.path.realpath(__file__)) + "/..")   # MADlib root dir
 sys.path.append(maddir + "/madpack")
 
 # Import MADlib python modules
@@ -56,6 +55,8 @@ rev = configyml.get_version(maddir_conf)  # MADlib OS-level version
 portid_list = []
 for port in ports:
     portid_list.append(port)
+
+SUPPORTED_PORTS = ('postgres', 'greenplum', 'hawq')
 
 # Global variables
 portid = None       # Target port ID (eg: pg90, gp40)
@@ -182,10 +183,48 @@ def _internal_run_query(sql, show_error):
 # ------------------------------------------------------------------------------
 
 
+def _get_relative_maddir(maddir, port):
+    """ Return a relative path version of maddir
+
+    GPDB and HAWQ installations have a symlink outside of GPHOME that
+    links to the current GPHOME. After a DB upgrade, this symlink is updated to
+    the new GPHOME.
+
+    'maddir_lib', which uses the absolute path of GPHOME, is hardcoded into each
+    madlib function definition. Replacing the GPHOME path with the equivalent
+    relative path makes it simpler to perform DB upgrades without breaking MADlib.
+    """
+    if port not in ('greenplum', 'hawq'):
+        # do nothing for postgres
+        return maddir
+
+    # e.g. maddir_lib = $GPHOME/madlib/Versions/1.9/lib/libmadlib.so
+    # 'madlib' is supposed to be in this path, which is the default folder
+    # used by GPPKG to install madlib
+    try:
+        abs_gphome, tail = maddir.split('madlib/')
+    except ValueError:
+        return maddir
+
+    link_name = 'greenplum-db' if port == 'greenplum' else 'hawq'
+
+    # Check outside $GPHOME if there is a symlink to this absolute path
+    # os.pardir is equivalent to ..
+    # os.path.normpath removes the extraneous .. from that path
+    rel_gphome = os.path.normpath(os.path.join(abs_gphome, os.pardir, link_name))
+    if os.path.islink(rel_gphome) and os.path.realpath(rel_gphome) == os.path.realpath(abs_gphome):
+        # if the relative link exists and is pointing to current location
+        return os.path.join(rel_gphome, 'madlib', tail)
+    else:
+        return maddir
+# ------------------------------------------------------------------------------
+
+
 def _run_sql_file(schema, maddir_mod_py, module, sqlfile,
                   tmpfile, logfile, pre_sql, upgrade=False,
                   sc=None):
-    """Run SQL file
+    """
+        Run SQL file
             @param schema name of the target schema
             @param maddir_mod_py name of the module dir with Python code
             @param module  name of the module
@@ -955,8 +994,7 @@ def parseConnectionStr(connectionStr):
 # ------------------------------------------------------------------------------
 
 
-def main(argv):
-
+def parse_arguments():
     parser = argparse.ArgumentParser(
         prog="madpack",
         description='MADlib package manager (' + str(rev) + ')',
@@ -1018,7 +1056,12 @@ def main(argv):
                         help="Module names to test, comma separated. Effective only for install-check.")
 
     # Get the arguments
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main(argv):
+    args = parse_arguments()
+
     global verbose
     verbose = args.verbose
     _info("Arguments: " + str(args), verbose)
@@ -1040,9 +1083,6 @@ def main(argv):
 
     # Parse DB Platform (== PortID) and compare with Ports.yml
     global portid
-    global dbver
-    global is_hawq2
-
     if args.platform:
         try:
             # Get the DB platform name == DB port id
@@ -1060,7 +1100,7 @@ def main(argv):
         (c_user, c_pass, c_host, c_port, c_db) = parseConnectionStr(connStr)
 
         # Find the default values for PG and GP
-        if portid in ('postgres', 'greenplum', 'hawq'):
+        if portid in SUPPORTED_PORTS:
             if c_user is None:
                 c_user = os.environ.get('PGUSER', getpass.getuser())
             if c_pass is None:
@@ -1093,14 +1133,24 @@ def main(argv):
             _error('Failed to connect to database', True)
 
         # Get DB version
+        global dbver
         dbver = _get_dbver()
-
-        # Get MADlib version in DB
-        dbrev = _get_madlib_dbrev(schema)
+        global is_hawq2
+        if portid == "hawq" and _is_rev_gte(_get_rev_num(dbver), _get_rev_num('2.0')):
+            is_hawq2 = True
+        else:
+            is_hawq2 = False
 
         # HAWQ < 2.0 has hard-coded schema name 'madlib'
         if portid == 'hawq' and not is_hawq2 and schema.lower() != 'madlib':
             _error("*** Installation is currently restricted only to 'madlib' schema ***", True)
+
+        # update maddir to use a relative path if available
+        global maddir
+        maddir = _get_relative_maddir(maddir, portid)
+
+        # Get MADlib version in DB
+        dbrev = _get_madlib_dbrev(schema)
 
         portdir = os.path.join(maddir, "ports", portid)
         supportedVersions = [dirItem for dirItem in os.listdir(portdir)
@@ -1151,11 +1201,17 @@ def main(argv):
         global maddir_conf
         if os.path.isdir(maddir + "/ports/" + portid + "/" + dbver + "/config"):
             maddir_conf = maddir + "/ports/" + portid + "/" + dbver + "/config"
+        else:
+            maddir_conf = maddir + "/config"
+
         global maddir_lib
         if os.path.isfile(maddir + "/ports/" + portid + "/" + dbver +
                           "/lib/libmadlib.so"):
             maddir_lib = maddir + "/ports/" + portid + "/" + dbver + \
                 "/lib/libmadlib.so"
+        else:
+            maddir_lib = maddir + "/lib/libmadlib.so"
+
         # Get the list of modules for this port
         global portspecs
         portspecs = configyml.get_modules(maddir_conf)
