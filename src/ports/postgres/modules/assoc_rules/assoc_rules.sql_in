@@ -43,7 +43,7 @@ support and confidence values, this function generates all single and
 multidimensional association rules that meet the minimum thresholds.
 
 Association rule mining is a widely used technique for discovering relationships
-between variables in a large data set (e.g items in a store that are commonly
+between variables in a large data set (e.g., items in a store that are commonly
 purchased together). The classic market basket analysis example using
 association rules is the "beer and diapers" rule. According to data mining urban
 legend, a study of customer purchase behavior in a supermarket found that men
@@ -62,7 +62,7 @@ data is stored in two columns with one item and transaction id per row.
 Transactions with multiple items will span multiple rows with one row per item.
 
 <pre>
-     tran_id | product
+    trans_id | product
     ---------+---------
            1 | 1
            1 | 2
@@ -81,16 +81,26 @@ Transactions with multiple items will span multiple rows with one row per item.
 @par Rules
 
 Association rules take the form "If X, then Y", where X and Y are non-empty
-itemsets. X and Y are called the antecedent and consequent, or the left-hand-side 
+itemsets. X and Y are called the antecedent and consequent, or the left-hand-side
 and right-hand-side, of the rule respectively. Using our previous example,
 the association rule may state "If {diapers}, then {beer}" with .2 support and
 .85 confidence.
 
-Given any association rule "If X, then Y", the association rules function will
-also calculate the following metrics:
+The following metrics are defined for any given itemset "X".
+- Count: The number of transactions that contain X
+
 - Support: The ratio of transactions that contain X to all transactions, T
 \f[
 S (X) = \frac{Total X}{Total transactions}
+\f]
+
+Given any association rule "If X, then Y", the association rules function will
+also calculate the following metrics:
+- Count: The number of transactions that contain X,Y
+
+- Support: The ratio of transactions that contain X,Y to all transactions, T
+\f[
+S (X \Rightarrow Y) = \frac{Total(X \cup Y)}{Total transactions}
 \f]
 
 - Confidence: The ratio of transactions that contain \f$ X,Y \f$ to
@@ -124,7 +134,7 @@ Conv (X \Rightarrow Y) = \frac{1 - S(Y)}{1 - C(X \Rightarrow Y)}
 @par Apriori Algorithm
 
 Although there are many algorithms that generate association rules, the classic
-algorithm used is called Apriori [1] which we have implemented in this module. It is a
+algorithm is called Apriori [1] which we have implemented in this module. It is a
 breadth-first search, as opposed to depth-first searches like Eclat. Frequent
 itemsets of order \f$ n \f$ are generated from sets of order \f$ n - 1 \f$.
 Using the downward closure property, all sets must have frequent subsets. There
@@ -143,7 +153,7 @@ itemsets of order \f$ n - 1 \f$.
 This is done by doing the union of two itemsets that have identical items except one.
 -# Eliminate itemsets that have (n-1) order subsets with insufficient support.
 -# Eliminate itemsets with insufficient support.
--# Repeat until itemsets cannot be generated.
+-# Repeat until itemsets cannot be generated, or maximum itemset size is exceeded.
 
 \e Association \e rule \e generation
 
@@ -162,7 +172,8 @@ assoc_rules( support,
              item_col,
              input_table,
              output_schema,
-             verbose
+             verbose,
+             max_itemset_size
            );</pre>
 This generates all association rules that satisfy the specified minimum
 <em>support</em> and <em>confidence</em>.
@@ -170,19 +181,19 @@ This generates all association rules that satisfy the specified minimum
 \b Arguments
 <dl class="arglist">
   <dt>support</dt>
-  <dd>The minimum level of support needed for each itemset to be included in result.</dd>
+  <dd>Minimum level of support needed for each itemset to be included in result.</dd>
 
   <dt>confidence</dt>
-  <dd>The minimum level of confidence needed for each rule to be included in result.</dd>
+  <dd>Minimum level of confidence needed for each rule to be included in result.</dd>
 
   <dt>tid_col</dt>
-  <dd>The name of the column storing the transaction ids.</dd>
+  <dd>Name of the column storing the transaction ids.</dd>
 
   <dt>item_col</dt>
-  <dd>The name of the column storing the products.</dd>
+  <dd>Name of the column storing the products.</dd>
 
   <dt>input_table</dt>
-  <dd>The name of the table containing the input data.
+  <dd>Name of the table containing the input data.
 
   The input data is expected to be of the following form:
 <pre>{TABLE|VIEW} <em>input_table</em> (
@@ -199,7 +210,7 @@ This generates all association rules that satisfy the specified minimum
   The schema must be created before calling the function.  Alternatively, use
   <tt>NULL</tt> to output to the current schema.
 
-  The results containing the rules, support, confidence, lift, and
+  The results containing the rules, support, count, confidence, lift, and
   conviction are stored in the table \c assoc_rules in the schema
   specified by \c output_schema.
 
@@ -216,6 +227,10 @@ This generates all association rules that satisfy the specified minimum
       <tr>
         <th>post</th>
         <td>text</td>
+      </tr>
+      <tr>
+        <th>count</th>
+        <td>integer</td>
       </tr>
       <tr>
         <th>support</th>
@@ -243,15 +258,20 @@ This generates all association rules that satisfy the specified minimum
   </dd>
 
   <dt>verbose</dt>
-  <dd>BOOLEAN, default FALSE. Determines if details are printed for each iteration
+  <dd>BOOLEAN, default: FALSE. Determines if details are printed for each iteration
   as the algorithm progresses.</dd>
+
+  <dt>max_itemset_size</dt>
+  <dd>INTEGER, default: generate itemsets of all sizes. Determines the maximum size of frequent
+  itemsets that are used for generating association rules. Must be 2 or more.
+  This parameter can be used to reduce run time for data sets where itemset size is large. </dd>
 </dl>
 
 
 @anchor examples
 @examp
 
-Let us take a look at some sample transactional data and generate association rules.
+Let's look at some sample transactional data and generate association rules.
 
 -# Create an input dataset:
 <pre class="example">
@@ -283,20 +303,20 @@ In this example we set verbose to
 TRUE so that we have some insight into progress of the function. We
 can now generate association rules as follows:
 <pre class="example">
-SELECT * FROM madlib.assoc_rules( .25,
-                                  .5,
-                                  'trans_id',
-                                  'product',
-                                  'test_data',
-                                  NULL,
-                                  TRUE
+SELECT * FROM madlib.assoc_rules( .25,            -- Support
+                                  .5,             -- Confidence
+                                  'trans_id',     -- Transaction id col
+                                  'product',      -- Product col
+                                  'test_data',    -- Input data
+                                  NULL,           -- Output schema
+                                  TRUE            -- Verbose output
                                 );
 </pre>
 Result (iteration details not shown):
 <pre class="result">
  output_schema | output_table | total_rules |   total_time    
 ---------------+--------------+-------------+-----------------
- public        | assoc_rules  |           7 | 00:00:00.028534
+ public        | assoc_rules  |           7 | 00:00:00.569254
 (1 row)
 </pre>
 The association rules are stored in the assoc_rules table:
@@ -306,16 +326,51 @@ ORDER BY support DESC, confidence DESC;
 </pre>
 Result:
 <pre class="result">
- ruleid |       pre       |      post      |      support      |    confidence     |       lift        |    conviction     
---------+-----------------+----------------+-------------------+-------------------+-------------------+-------------------
-      4 | {diapers}       | {beer}         | 0.714285714285714 |                 1 |                 1 |                 0
-      3 | {beer}          | {diapers}      | 0.714285714285714 | 0.714285714285714 |                 1 |                 1
-      1 | {chips}         | {beer}         | 0.428571428571429 |                 1 |                 1 |                 0
-      7 | {diapers,chips} | {beer}         | 0.285714285714286 |                 1 |                 1 |                 0
-      2 | {chips}         | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
-      5 | {chips}         | {beer,diapers} | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
-      6 | {beer,chips}    | {diapers}      | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+ ruleid |       pre       |      post      | count |      support      |    confidence     |       lift        |    conviction     
+--------+-----------------+----------------+-------+-------------------+-------------------+-------------------+-------------------
+      2 | {diapers}       | {beer}         |     5 | 0.714285714285714 |                 1 |                 1 |                 0
+      6 | {beer}          | {diapers}      |     5 | 0.714285714285714 | 0.714285714285714 |                 1 |                 1
+      5 | {chips}         | {beer}         |     3 | 0.428571428571429 |                 1 |                 1 |                 0
+      4 | {chips,diapers} | {beer}         |     2 | 0.285714285714286 |                 1 |                 1 |                 0
+      1 | {chips}         | {diapers,beer} |     2 | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+      7 | {chips}         | {diapers}      |     2 | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+      3 | {beer,chips}    | {diapers}      |     2 | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
 (7 rows)
+</pre>
+
+-# Limit association rules generated from itemsets of size at most 2:
+<pre class="example">
+SELECT * FROM madlib.assoc_rules( .25,            -- Support
+                                  .5,             -- Confidence
+                                  'trans_id',     -- Transaction id col
+                                  'product',      -- Product col
+                                  'test_data',    -- Input data
+                                  NULL,           -- Output schema
+                                  TRUE,           -- Verbose output
+                                  2               -- Max itemset size
+                                );
+</pre>
+Result (iteration details not shown):
+<pre class="result">
+ output_schema | output_table | total_rules |   total_time    
+---------------+--------------+-------------+-----------------
+ public        | assoc_rules  |           4 | 00:00:00.565176
+(1 row)
+</pre>
+The association rules are again stored in the assoc_rules table:
+<pre class="example">
+SELECT * FROM assoc_rules
+ORDER BY support DESC, confidence DESC;
+</pre>
+Result:
+<pre class="result">
+ ruleid |    pre    |   post    | count |      support      |    confidence     |       lift        |    conviction     
+--------+-----------+-----------+-------+-------------------+-------------------+-------------------+-------------------
+      1 | {diapers} | {beer}    |     5 | 0.714285714285714 |                 1 |                 1 |                 0
+      2 | {beer}    | {diapers} |     5 | 0.714285714285714 | 0.714285714285714 |                 1 |                 1
+      3 | {chips}   | {beer}    |     3 | 0.428571428571429 |                 1 |                 1 |                 0
+      4 | {chips}   | {diapers} |     2 | 0.285714285714286 | 0.666666666666667 | 0.933333333333333 | 0.857142857142857
+(4 rows)
 </pre>
 
 -# Post-processing can now be done on the output table in the case that
@@ -326,10 +381,10 @@ SELECT * FROM assoc_rules WHERE array_upper(pre,1) = 1 AND post = array['beer'];
 </pre>
 Result:
 <pre class="result">
- ruleid |    pre    |  post  |      support      | confidence | lift | conviction 
---------+-----------+--------+-------------------+------------+------+------------
-      1 | {chips}   | {beer} | 0.428571428571429 |          1 |    1 |          0
-      4 | {diapers} | {beer} | 0.714285714285714 |          1 |    1 |          0
+ ruleid |    pre    |  post  | count |      support      | confidence | lift | conviction 
+--------+-----------+--------+-------+-------------------+------------+------+------------
+      1 | {diapers} | {beer} |     5 | 0.714285714285714 |          1 |    1 |          0
+      3 | {chips}   | {beer} |     3 | 0.428571428571429 |          1 |    1 |          0
 (2 rows)
 </pre>
 
@@ -433,7 +488,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules
     item_col TEXT,
     input_table TEXT,
     output_schema TEXT,
-    verbose BOOLEAN
+    verbose BOOLEAN,
+    max_itemset_size INTEGER
    )
 RETURNS MADLIB_SCHEMA.assoc_rules_results
 AS $$
@@ -451,7 +507,8 @@ AS $$
         item_col,
         input_table,
         output_schema,
-        verbose
+        verbose,
+        max_itemset_size
         );
 
 $$ LANGUAGE plpythonu
@@ -488,8 +545,57 @@ AS $$
         item_col,
         input_table,
         output_schema,
-        False
+        False,
+        'NULL'
         );
 
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules
+    (
+    support FLOAT8,
+    confidence FLOAT8,
+    tid_col TEXT,
+    item_col TEXT,
+    input_table TEXT,
+    output_schema TEXT,
+    verbose BOOLEAN
+    )
+RETURNS MADLIB_SCHEMA.assoc_rules_results
+AS $$
+
+    PythonFunctionBodyOnly(`assoc_rules', `assoc_rules')
+
+    plpy.execute("SET client_min_messages = error;")
+
+    # schema_madlib comes from PythonFunctionBodyOnly
+    return assoc_rules.assoc_rules(
+        schema_madlib,
+        support,
+        confidence,
+        tid_col,
+        item_col,
+        input_table,
+        output_schema,
+        verbose,
+        'NULL'
+        );
+
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+--------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules(message TEXT)
+RETURNS text AS $$
+PythonFunction(assoc_rules, assoc_rules, assoc_rules_help_message)
+$$ language plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.assoc_rules()
+RETURNS text AS $$
+    SELECT MADLIB_SCHEMA.assoc_rules('');
+$$ language SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `CONTAINS SQL', `');

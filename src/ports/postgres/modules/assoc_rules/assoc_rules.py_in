@@ -7,7 +7,6 @@
 
 @namespace assoc_rules
 """
-
 import time
 import plpy
 from utilities.validate_args import columns_exist_in_table
@@ -55,13 +54,19 @@ def __float_le(val1, val2):
 @param input_table     name of the table where the data is stored
 @param output_schema   name of the schema where the final results will be stored
 @param verbose         determining if output contains comments
+@param max_itemset_size determines the maximum size of frequent itemsets allowed
+                        to generate association rules from
 """
 def assoc_rules(madlib_schema, support, confidence, tid_col,
-                item_col, input_table, output_schema, verbose):
+                item_col, input_table, output_schema, verbose, max_itemset_size):
 
     begin_func_exec = time.time();
     begin_step_exec = time.time();
     cal_itemsets_time = 0;
+    if max_itemset_size is None:
+        max_itemset_size = float('inf')
+    elif max_itemset_size <= 1:
+        plpy.error("ERROR: max_itemset_size has to be greater than 1.")
 
     #check parameters
     __assert(
@@ -113,6 +118,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
             ruleId      INT,
             pre         TEXT[],
             post        TEXT[],
+            count       INT,
             support     FLOAT8,
             confidence  FLOAT8,
             lift        FLOAT8,
@@ -304,7 +310,7 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
 
     iter = 0;
 
-    while num_item_loop > 0 :
+    while num_item_loop > 0 and iter < max_itemset_size:
         begin_step_exec = time.time();
         iter = iter + 1;
 
@@ -459,14 +465,14 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
 
         plpy.execute("""
              INSERT INTO {0}.assoc_rules
-             SELECT t1.ruleId, t2.pre, t3.post, support,
+             SELECT t1.ruleId, t2.pre, t3.post, t1.support*{1}::INT AS count, support,
                     confidence, lift, conviction
              FROM
                 assoc_rules_aux_tmp t1,
                 pre_tmp_table t2,
                 post_tmp_table t3
              WHERE t1.ruleId = t2.ruleId AND t1.ruleId = t3.ruleId
-             """.format(output_schema)
+             """.format(output_schema, num_tranx)
              );
 
         # if in verbose mode, we will keep all the intermediate tables
@@ -504,3 +510,119 @@ def assoc_rules(madlib_schema, support, confidence, tid_col,
             total_rules,
             time.time() - begin_func_exec
            );
+
+def assoc_rules_help_message(schema_madlib, message=None, **kwargs):
+    """
+    Given a help string, provide usage information
+
+    Args:
+        @param schema_madlib Name of the MADlib schema
+        @param message  Helper message to print
+
+    Returns:
+        None
+    """
+    if message is not None and \
+            message.lower() in ("usage", "help", "?"):
+        return """
+-----------------------------------------------------------------------
+                                USAGE
+-----------------------------------------------------------------------
+SELECT {schema_madlib}.assoc_rules(
+    support,            -- FLOAT8, minimum level of support needed for each itemset to be included in result
+    confidence,         -- FLOAT8, minimum level of confidence needed for each rule to be included in result
+    tid_col,            -- TEXT, name of the column storing the transaction ids
+    item_col,           -- TEXT, name of the column storing the products
+    input_table,        -- TEXT, name of the table containing the input data
+    output_schema,      -- TEXT, name of the schema where the final results will be stored.
+                                The schema must be created before calling the function.  Alternatively, use
+                                <tt>NULL</tt> to output to the current schema.
+    verbose,            -- BOOLEAN, (optional, default: False) determines if details are printed for each
+                                iteration as the algorithm progresses
+    max_itemset_size    -- INTEGER, (optional, default: itemsets of all sizes) determines the maximum size of frequent
+                                itemsets allowed that are used for generating association rules. Value less
+                                than 2 throws an error.
+);
+-------------------------------------------------------------------------
+                                OUTPUT TABLES
+-------------------------------------------------------------------------
+The output table "assoc_rules" in the "output_schema" contains a unique rule of the form "If X, then Y
+(i.e., X => Y)" in each row. X and Y are non-empty itemsets, called the antecedent and consequent, or
+the left-hand-side (LHS) and right-hand-side (LHS), of the rule respectively.
+
+in each row, with the following columns:
+    ruleid,     -- INTEGER, row number
+    pre,        -- TEXT, specifies the antecedent, or the LHS of the rule
+    post,       -- DOUBLE, specifies the consequent, or the RHS of the rule
+    support,    -- DOUBLE, support of the frequent itemset X,Y
+    count,      -- INTEGER, number of transactions in the input table that contain X,Y
+    confidence, -- DOUBLE, the ratio of number of transactions that contain X,Y to the number of transactions
+                        that contain X
+    lift,       -- DOUBLE, the ratio of observed support of X,Y to the expected support of X,Y, assuming X and
+                        Y are independent.
+    conviction  -- DOUBLE, the ratio of expected support of X occurring without Y assuming X and Y are
+                        independent, to the observed support of X occuring without Y
+        """.format(schema_madlib=schema_madlib)
+    else:
+        if message.lower() in ("example", "examples"):
+            return """
+------------------------------------------------------------------------
+                                EXAMPLES
+------------------------------------------------------------------------
+DROP TABLE IF EXISTS test_data;
+CREATE TABLE test_data (
+    trans_id INT,
+    product TEXT
+);
+INSERT INTO test_data VALUES (1, 'beer');
+INSERT INTO test_data VALUES (1, 'diapers');
+INSERT INTO test_data VALUES (1, 'chips');
+INSERT INTO test_data VALUES (2, 'beer');
+INSERT INTO test_data VALUES (2, 'diapers');
+INSERT INTO test_data VALUES (3, 'beer');
+INSERT INTO test_data VALUES (3, 'diapers');
+INSERT INTO test_data VALUES (4, 'beer');
+INSERT INTO test_data VALUES (4, 'chips');
+INSERT INTO test_data VALUES (5, 'beer');
+INSERT INTO test_data VALUES (6, 'beer');
+INSERT INTO test_data VALUES (6, 'diapers');
+INSERT INTO test_data VALUES (6, 'chips');
+INSERT INTO test_data VALUES (7, 'beer');
+INSERT INTO test_data VALUES (7, 'diapers');
+
+Find all association rules with a support and threshold value of
+at least 0.25 and 0.5 respectively.
+
+SELECT * FROM {schema_madlib}.assoc_rules( .25,
+                          .5,
+                          'trans_id',
+                          'product',
+                          'test_data',
+                          NULL,
+                          TRUE
+                        );
+
+View output results:
+SELECT * FROM assoc_rules;
+
+Find association rules generated from itemsets of size at most 2,
+and a support and threshold value of at least 0.25 and 0.5 respectively.
+
+SELECT * FROM {schema_madlib}.assoc_rules( .25,
+                          .5,
+                          'trans_id',
+                          'product',
+                          'test_data',
+                          NULL,
+                          TRUE,
+                          2
+                        );
+
+View output results:
+SELECT * FROM assoc_rules;
+            """.format(schema_madlib=schema_madlib)
+        else:
+            return """
+For an overview on usage, run: SELECT {schema_madlib}.assoc_rules('usage');
+For an example of using assoc_rules, run: SELECT {schema_madlib}.assoc_rules('example');
+            """.format(schema_madlib=schema_madlib)
