@@ -105,7 +105,7 @@ are skipped during analysis.
 </dd>
 
 <dt>expr_point</dt>
-<dd>TEXT. The name of the column with point coordinates.</dd>
+<dd>TEXT. The name of the column with point coordinates or an array expression.</dd>
 
 <dt>k</dt>
 <dd>INTEGER. The number of centroids to calculate.</dd>
@@ -148,20 +148,11 @@ Note: the final K-means algorithm is run on the complete dataset. This parameter
 only builds a subsample for the seeding and is only available for kmeans++.
 
 <dt>rel_initial_centroids</dt>
-<dd>TEXT. The set of initial centroids. The centroid relation is
-expected to be of the following form:
-<pre>
-{TABLE|VIEW} rel_initial_centroids (
-    ...
-    expr_centroid DOUBLE PRECISION[],
-    ...
-)
-</pre>
-where <em>expr_centroid</em> is the name of a column with coordinates.
+<dd>TEXT. The set of initial centroids.
 </dd>
 
 <dt>expr_centroid</dt>
-<dd>TEXT. The name of the column in the <em>rel_initial_centroids</em> relation that contains the centroid coordinates.</dd>
+<dd>TEXT. The name of the column (or the array expression) in the <em>rel_initial_centroids</em> relation that contains the centroid coordinates.</dd>
 
 <dt>initial_centroids</dt>
 <dd>TEXT. A string containing a DOUBLE PRECISION array expression with the initial centroid coordinates.</dd>
@@ -501,6 +492,13 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_validate_src(
 $$ LANGUAGE plpythonu
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__kmeans_validate_expr(
+    rel_source      VARCHAR,
+    expr_point      VARCHAR
+) RETURNS BOOLEAN AS $$
+    PythonFunction(kmeans, kmeans, kmeans_validate_expr)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__seeding_validate_args(
     rel_source VARCHAR,
@@ -516,6 +514,11 @@ DECLARE
   rel_source_regclass REGCLASS;
   rel_filtered VARCHAR;
 BEGIN
+
+    -- Validate the expr_point input. Since we don't need a view at this
+    -- point, the output is safe to ignore.
+    PERFORM MADLIB_SCHEMA.__kmeans_validate_expr(rel_source,expr_point);
+
     rel_source_regclass := rel_source;
 
     IF (initial_centroids IS NOT NULL) THEN
@@ -532,6 +535,7 @@ BEGIN
         Number of clusters k must be <= 32767 (for results to be returned in a
         reasonable amount of time).';
     END IF;
+
     EXECUTE $sql$ SELECT count(*)
                   FROM $sql$ || textin(regclassout(rel_source_regclass)) || $sql$
                   WHERE abs(coalesce(MADLIB_SCHEMA.svec_elsum($sql$ || expr_point || $sql$), 'Infinity'::FLOAT8)) < 'Infinity'::FLOAT8 $sql$
@@ -1570,6 +1574,10 @@ BEGIN
         EXECUTE $sql$ SET optimizer=off $sql$;', `') -- disable ORCA before MPP-23166 is fixed
 
     PERFORM MADLIB_SCHEMA.__kmeans_validate_src(rel_source);
+
+    -- Validate the expr_point input. Since we don't need a view at this
+    -- point, the output is safe to ignore.
+    PERFORM MADLIB_SCHEMA.__kmeans_validate_expr(rel_source,expr_point);
 
     class_rel_source := rel_source;
 

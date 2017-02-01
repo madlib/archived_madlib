@@ -12,11 +12,15 @@ m4_changequote(`<!', `!>')
 """
 
 import plpy
+import re
 
 from utilities.control import IterationController2D
 from utilities.control_composite import IterationControllerComposite
 from utilities.validate_args import table_exists
+from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
+from utilities.validate_args import get_expr_type
+from utilities.utilities import unique_string
 
 STATE_IN_MEM = m4_ifdef(<!__HAWQ__!>, <!True!>, <!False!>)
 HAS_FUNCTION_PROPERTIES = m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!True!>, <!False!>)
@@ -34,6 +38,31 @@ def kmeans_validate_src(schema_madlib, rel_source, **kwargs):
 
 # ----------------------------------------------------------------------
 
+def kmeans_validate_expr(schema_madlib, rel_source, expr_point, **kwargs):
+    """
+    Validation function for the expr_point parameter
+    expr_point accepts 2 formats:
+        - A single column name of a numeric array
+        - A numeric array expression
+    """
+
+    expr_type = get_expr_type(expr_point,rel_source).lower()
+
+    # Both formats should return a numeric array type
+    if expr_type in ['smallint[]', 'integer[]', 'bigint[]', 'decimal[]',
+                        'numeric[]', 'real[]', 'double precision[]',
+                        'serial[]', 'bigserial[]', 'float8[]']:
+
+        # An array expression should fail this check
+        if columns_exist_in_table(rel_source, [expr_point]):
+            return False
+        return True
+    else:
+        plpy.error(
+            """Kmeans error: {expr_point} is not a valid column or array!
+            """.format(**locals()))
+
+# ----------------------------------------------------------------------
 
 def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
                              expr_point, **kwargs):
@@ -54,6 +83,16 @@ def compute_kmeanspp_seeding(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
+
+    if kmeans_validate_expr(schema_madlib, rel_source, expr_point):
+        view_name = unique_string('km_view')
+
+        plpy.execute(""" CREATE TEMP VIEW {view_name} AS
+            SELECT {expr_point} AS expr FROM {rel_source}
+            """.format(**locals()))
+        rel_source = view_name
+        expr_point = 'expr'
+
     fn_dist_name = plpy.execute("SELECT fn_dist_name FROM " + rel_args)[0]['fn_dist_name']
     iterationCtrl = IterationController2D(
         rel_args=rel_args,
@@ -139,6 +178,15 @@ def compute_kmeans_random_seeding(schema_madlib, rel_args, rel_state,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
+    if kmeans_validate_expr(schema_madlib, rel_source, expr_point):
+        view_name = unique_string('km_view')
+
+        plpy.execute(""" CREATE TEMP VIEW {view_name} AS
+            SELECT {expr_point} AS expr FROM {rel_source}
+            """.format(**locals()))
+        rel_source = view_name
+        expr_point = 'expr'
+
     iterationCtrl = IterationController2D(
         rel_args=rel_args,
         rel_state=rel_state,
@@ -211,6 +259,16 @@ def compute_kmeans(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
+
+    if kmeans_validate_expr(schema_madlib, rel_source, expr_point):
+        view_name = unique_string('km_view')
+
+        plpy.execute(""" CREATE TEMP VIEW {view_name} AS
+            SELECT {expr_point} AS expr FROM {rel_source}
+            """.format(**locals()))
+        rel_source = view_name
+        expr_point = 'expr'
+
     fn_dist_name = plpy.execute("SELECT fn_dist_name FROM " +
                                 rel_args)[0]['fn_dist_name']
     iterationCtrl = IterationControllerComposite(
