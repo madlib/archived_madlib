@@ -1,0 +1,449 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ *//* ----------------------------------------------------------------------- */
+
+
+/* ----------------------------------------------------------------------- *//**
+ *
+ * @file knn.sql_in
+ * @brief Set of functions for k-nearest neighbors.
+ * @sa For a brief introduction to k-nearest neighbors algorithm for regression and classification,
+ * see the module description \ref grp_knn.
+ *
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_knn
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li class="level1"><a href="#knn">K-Nearest Neighbors</a></li>
+<li class="level1"><a href="#usage">Usage</a></li>
+<li class="level1"><a href="#output">Output Format</a></li>
+<li class="level1"><a href="#examples">Examples</a></li>
+<li class="level1"><a href="#background">Technical Background</a></li>
+<li class="level1"><a href="#literature">Literature</a></li>
+<li class="level1"><a href="#related">Related Topics</a></li>
+</ul>
+</div>
+
+@brief Finds k nearest data points to the given data point and outputs majority vote value of output classes in case of classification and average value of target values for regression task.
+
+\warning <em> This MADlib method is still in early stage development. There may be some
+issues that will be addressed in a future version. Interface and implementation
+is subject to change. </em>
+
+@anchor knn
+
+k-Nearest Neighbors is a method for finding k closest points to a
+given data point in terms of a given metric. Its input consist of
+data points as features from testing examples. For a given k, it
+looks for k closest points in training set for each of the data
+points in test set. Algorithm generates one output per testing example.
+The output of KNN depends on the type of task:
+For Classification, the output is majority vote of the classes of
+the k nearest data points. The testing example gets assigned the
+most popular class among nearest neighbors.
+For Regression, the output is average of the values of k nearest
+neighbors of the given testing example.
+
+@anchor usage
+@par Usage
+<pre class="syntax">
+knn( point_source,
+     point_column_name,
+     label_column_name,
+     test_source,
+     test_column_name,
+     id_column_name,
+     output_table,
+     operation,
+     k
+   )
+</pre>
+
+\b Arguments
+<dl class="arglist">
+<dt>point_source</dt>
+<dd>TEXT. The name of the table containing the training data points.
+
+Training data points are expected to be stored row-wise,
+in a column of type <tt>DOUBLE PRECISION[]</tt>.
+</dd>
+
+<dt>point_column_name</dt>
+<dd>TEXT. The name of the column with training data points.</dd>
+
+<dt>label_column_name</dt>
+<dd>TEXT. The name of the column with labels/values of training data points.</dd>
+
+<dt>test_source</dt>
+<dd>TEXT. The name of the table containing the test data points.
+
+Testing data points are expected to be stored row-wise,
+in a column of type <tt>DOUBLE PRECISION[]</tt>.
+</dd>
+
+<dt>test_column_name</dt>
+<dd>TEXT. The name of the column with testing data points.</dd>
+
+<dt>id_column_name</dt>
+<dd>TEXT. Name of the column having ids of data points in test data table.</dd>
+
+<dt>output_table</dt>
+<dd>TEXT. Name of the table to store final results.</dd>
+
+<dt>operation</dt>
+<dd>TEXT. the type of task; r for regression and c for classification.</dd>
+
+<dt>k (optional)</dt>
+<dd>INTEGER. default: 1. The number of nearest neighbors to consider.</dd>
+
+</dl>
+
+
+@anchor output
+@par Output Format
+
+The output of the KNN module is a table with the following columns:
+<table class="output">
+    <tr>
+        <th>id</th>
+        <td>INTEGER. The ids of test data points.</td>
+    </tr>
+    <tr>
+        <th>test_column_name</th>
+        <td>DOUBLE PRECISION[]. The test data points.</td>
+    </tr>
+    <tr>
+        <th>prediction</th>
+        <td>INTEGER. The output of KNN- label in case of classification, average value in case of regression.</td>
+    </tr>
+</table>
+
+
+@anchor examples
+@examp
+
+-#  Prepare some training data.
+<pre class="example">
+CREATE TABLE knn_train_data (id integer, data integer[], label float);
+COPY knn_train_data (id, data, label) from stdin delimiter '|';
+1|{1,1}|1.0
+2|{2,2}|1.0
+3|{3,3}|1.0
+4|{4,4}|1.0
+5|{4,5}|1.0
+6|{20,50}|0.0
+7|{10,31}|0.0
+8|{81,13}|0.0
+9|{1,111}|0.0
+\\.
+</pre>
+
+-#  Prepare some testing data.
+<pre class="example">
+CREATE TABLE knn_test_data (id integer, data integer[]);
+COPY knn_test_data (id, data) from stdin delimiter '|';
+1|{2,1}
+2|{2,6}
+3|{15,40}
+4|{12,1}
+5|{2,90}
+6|{50,45}
+\\.
+</pre>
+
+-#  Run KNN for classification:
+<pre class="example">
+SELECT * FROM madlib.knn( 'knn_train_data',
+                               'data',
+                               'label',
+                               'knn_test_data',
+                               'data',
+                               'id',
+                               'madlib_knn_result_classification',
+                               'c',
+                               3
+                             );
+SELECT * from madlib_knn_result_classification;
+</pre>
+Result:
+<pre class="result">
+  id |   data   | prediction
+-----+----------+-----------
+   1 | {2,1}    |       1
+   2 | {2,6}    |       1
+   3 | {15,40}  |       0
+   4 | {12,1}   |       1
+   5 | {2,90}   |       0
+   6 | {50,45}  |       0
+</pre>
+
+-#  Run KNN for regression:
+<pre class="example">
+SELECT * FROM madlib.knn( 'knn_train_data',
+                               'data',
+                               'label',
+                               'knn_test_data',
+                               'data',
+                               'id',
+                               'madlib_knn_result_regression',
+                               'r',
+                               3
+                             );
+SELECT * from madlib_knn_result_regression;
+</pre>
+Result:
+<pre class="result">
+  id |   data   | prediction
+-----+----------+-----------
+   1 | {2,1}    |      1
+   2 | {2,6}    |      1
+   3 | {15,40}  |      0.5
+   4 | {12,1}   |      1
+   5 | {2,90}   |      0.25
+   6 | {50,45}  |      0.25
+</pre>
+
+
+
+@anchor background
+@par Technical Background
+
+The training data points are vectors in a multidimensional feature space,
+each with a class label. The training phase of the algorithm consists
+only of storing the feature vectors and class labels of the training points.
+
+In the classification phase, k is a user-defined constant, and an unlabeled
+vector (a test point) is classified by assigning the label which is most
+frequent among the k training samples nearest to that test point.
+In case of regression, average of the values of these k training samples
+is assigned to the test point.
+The only distance metric supported in this version is MADlib's squared_dist_norm2.
+Other distance metrics will be added in a future release of this module.
+
+
+@anchor literature
+@literature
+
+@anchor knn-lit-1
+[1] Wikipedia, k-nearest neighbors algorithm,
+    https://en.wikipedia.org/wiki/K-nearest_neighbors_algorithm
+
+@anchor knn-lit-2
+[2] N. S. Altman: An Introduction to Kernel and Nearest-Neighbor Nonparametric Regression
+    http://www.stat.washington.edu/courses/stat527/s13/readings/Altman_AmStat_1992.pdf
+
+@anchor knn-lit-3
+[3] Gongde Guo1, Hui Wang, David Bell, Yaxin Bi, Kieran Greer: KNN Model-Based Approach in Classification,
+    https://ai2-s2-pdfs.s3.amazonaws.com/a7e2/814ec5db800d2f8c4313fd436e9cf8273821.pdf
+
+
+@anchor related
+@par Related Topics
+
+File knn.sql_in documenting the knn SQL functions
+
+@internal
+@sa namespace knn (documenting the implementation in Python)
+@endinternal
+*/
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__knn_validate_src(
+"trainingSource" VARCHAR,
+"trainingClassColumn" VARCHAR,
+"trainingFeatureColumn" VARCHAR,
+"testSource" VARCHAR,
+"testingIdColumn" VARCHAR,
+"testingFeatureColumn" VARCHAR,
+"K" INTEGER
+) RETURNS VOID AS $$
+    PythonFunction(knn, knn, knn_validate_src)
+$$ LANGUAGE plpythonu
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
+    arg1 VARCHAR
+) RETURNS VOID AS $$
+BEGIN
+    IF arg1 = 'help' OR arg1 = 'usage' OR arg1 = '?' THEN
+	RAISE NOTICE
+'
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+SELECT {schema_madlib}.knn(
+    point_source,       -- Training data table having training features as vector column and labels
+    point_column_name,  -- Name of column having feature vectors in training data table
+    label_column_name,  -- Name of column having actual label/vlaue for corresponding feature vector in training data table
+    test_source,        -- Test data table having features as vector column. Id of features is mandatory
+    test_column_name,   -- Name of column having feature vectors in test data table
+    id_column_name,     -- Name of column having feature vector Ids in test data table
+    output_table,       -- Name of output table
+    operation,          -- c for classification task, r for regression task
+    k                   -- value of k. Default will go as 1
+    );
+
+-----------------------------------------------------------------------
+                            OUTPUT
+-----------------------------------------------------------------------
+The output of the KNN module is a table with the following columns:
+
+id                  The ids of test data points.
+test_column_name    The test data points.
+prediction          The output of KNN- label in case of classification, average value in case of regression.
+';
+    END IF;
+END;
+$$ LANGUAGE plpgsql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
+) RETURNS VOID AS $$
+BEGIN
+    RAISE NOTICE '
+k-Nearest Neighbors is a method for finding k closest points to a given data
+point in terms of a given metric. Its input consist of data points as features
+from testing examples. For a given k, it looks for k closest points in
+training set for each of the data points in test set. Algorithm generates one
+output per testing example. The output of KNN depends on the type of task:
+For Classification, the output is majority vote of the classes of the k
+nearest data points. The testing example gets assigned the most popular class
+among nearest neighbors. For Regression, the output is average of the values
+of k nearest neighbors of the given testing example.
+    ';
+END;
+$$ LANGUAGE plpgsql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
+    point_source VARCHAR,
+    point_column_name VARCHAR,
+    label_column_name VARCHAR,
+    test_source VARCHAR,
+    test_column_name VARCHAR,
+    id_column_name VARCHAR,
+    output_table VARCHAR,
+    operation VARCHAR,
+    k INTEGER
+) RETURNS VARCHAR AS $$
+DECLARE
+    class_test_source REGCLASS;
+    class_point_source REGCLASS;
+    l FLOAT;
+    outputTableFlag INTEGER;
+    id INTEGER;
+    vector DOUBLE PRECISION[];
+    cur_pid integer;
+    oldClientMinMessages VARCHAR;
+    returnstring VARCHAR;
+    x_temp_table VARCHAR;
+    y_temp_table VARCHAR;
+BEGIN
+    oldClientMinMessages :=
+        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
+    EXECUTE 'SET client_min_messages TO warning';
+    PERFORM MADLIB_SCHEMA.__knn_validate_src(point_source, label_column_name, point_column_name, test_source, id_column_name, test_column_name,k);
+    class_test_source := test_source;
+    class_point_source := point_source;
+    --checks
+    IF (k <= 0) THEN
+        RAISE EXCEPTION 'KNN error: Number of neighbors k must be a positive integer.';
+    END IF;
+    IF (operation != 'c' AND operation != 'r') THEN
+        RAISE EXCEPTION 'KNN error: The operation has to be r for regression OR c for classification.';
+    END IF;
+    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
+    x_temp_table := 'knn_'||md5('knn_'||now()::text||random()::text)||'_temp';
+    y_temp_table := 'knn_'||md5('knn_'||now()::text||random()::text)||'_temp';
+
+    EXECUTE
+	$sql$
+	SELECT count(*) FROM information_schema.tables WHERE table_name = '$sql$ || output_table || $sql$'$sql$ into outputTableFlag;
+    IF (outputTableFlag != 0) THEN
+	RAISE Exception 'KNN error: Output table % already exists.', output_table;
+    END IF;
+
+    EXECUTE
+        $sql$
+	DROP TABLE IF EXISTS pg_temp.madlib_knn_interm;
+	CREATE TABLE pg_temp.madlib_knn_interm AS
+	SELECT *
+    FROM
+        (
+        SELECT row_number() over (partition by test_id order by dist) as r, $sql$ || x_temp_table || $sql$.*
+        FROM
+            (
+                SELECT test. $sql$ || id_column_name || $sql$ as test_id, MADLIB_SCHEMA.squared_dist_norm2(train.$sql$ || point_column_name || $sql$,test.$sql$ || test_column_name || $sql$) as dist, $sql$ || label_column_name || $sql$ from $sql$ || textin(regclassout(point_source)) || $sql$ AS train, $sql$ || textin(regclassout(test_source)) || $sql$ AS test
+            )$sql$ || x_temp_table || $sql$
+        )$sql$ || y_temp_table || $sql$
+    WHERE $sql$ || y_temp_table || $sql$.r <= $sql$ || k;
+	IF (operation = 'c') THEN
+    	EXECUTE
+        $sql$
+	CREATE TABLE $sql$ || output_table || $sql$ AS
+    SELECT test_id as id, $sql$ || test_column_name || $sql$, MADLIB_SCHEMA.mode($sql$ || label_column_name || $sql$) as prediction from pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$  on test_id=$sql$ || id_column_name || $sql$ group by test_id, $sql$ || test_column_name;
+        ELSE
+        EXECUTE
+        $sql$
+	CREATE TABLE $sql$ || output_table || $sql$ AS
+        SELECT test_id as id, $sql$ || test_column_name || $sql$ ,avg($sql$ || label_column_name || $sql$) as prediction from pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$  on test_id=$sql$ || id_column_name || $sql$ group by test_id, $sql$ || test_column_name || $sql$ order by test_id $sql$;
+        END IF;
+
+   EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
+   IF (operation = 'c') THEN
+   	returnstring := 'The classification results have been written to table';
+   ELSE
+        returnstring := 'The regression results have been written to table';
+   END IF;
+   DROP TABLE pg_temp.madlib_knn_interm;
+   RETURN returnstring;
+END;
+$$ LANGUAGE plpgsql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
+    point_source VARCHAR,
+    point_column_name VARCHAR,
+    label_column_name VARCHAR,
+    test_source VARCHAR,
+    test_column_name VARCHAR,
+    id_column_name VARCHAR,
+    output_table VARCHAR,
+    operation VARCHAR
+) RETURNS VARCHAR AS $$
+DECLARE
+    returnstring VARCHAR;
+BEGIN
+    returnstring = MADLIB_SCHEMA.knn($1,$2,$3,$4,$5,$6,$7,$8,1);
+    RETURN returnstring;
+END;
+$$ LANGUAGE plpgsql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
