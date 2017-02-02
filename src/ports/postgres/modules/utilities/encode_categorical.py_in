@@ -159,7 +159,7 @@ class CategoricalEncoder(object):
         self._row_id_cols = split_quoted_delimited_str(self.row_id)
 
         # flag to build a dictionary table
-        self._output_dictionary = True if self.output_type in ['array', 'svec'] else self.output_dictionary
+        self._output_dictionary = True if self.output_type in ('array', 'svec') else self.output_dictionary
 
         # how to distribute the output table (for distributed platforms)
         if not is_platform_pg():
@@ -228,6 +228,9 @@ class CategoricalEncoder(object):
             _assert(is_var_valid(self.source_table, ','.join(self._row_id_cols)),
                     "Encoding categorical: Not all columns from ({0}) present in source table ({1})"
                     .format(self._row_id_cols, self.source_table))
+        _assert(self.output_type in ('column', 'array', 'svec'),
+                "Encoding categorical: Output type should be one of {0}".
+                format(('column', 'array', 'svec')))
     # ------------------------------------------------------------------------------
 
     def _is_col_name_long(self, col_to_values):
@@ -301,8 +304,6 @@ class CategoricalEncoder(object):
                 v_type = str
 
             if self.output_type not in ('array', 'svec'):
-                # array_output = True implies all the case outputs will be wrapped
-                # as an array, hence not requiring an alias for each case
                 if not self._output_dictionary:
                     value_names = {None: 'NULL',
                                    list: self._name_others_col,
@@ -311,6 +312,8 @@ class CategoricalEncoder(object):
                 else:
                     alias = 'AS "{0}_{1}"'.format(col_no_quotes, seq)
             else:
+                # if output_type is array-like then each case does not
+                # require an alias
                 alias = ""
             return ("(CASE WHEN ({col} {value_str}) "
                     "THEN 1 ELSE 0 END)::INTEGER {alias}".
@@ -569,7 +572,8 @@ def encode_categorical_variables(
         @param top: str, Parameter to include only top values of a categorical variable
         @param value_to_drop: str, Parameter to set reference column in dummy coding
         @param encode_null: bool, If True, NULL is treated as a categorical value
-        @param array_output: bool, Parameter to determine if output should be in an array or columns
+        @param output_type: str, Parameter to determine if output should be an array, svec or individual columns
+                                 Can take values ('column', 'array', 'svec')
         @param output_dictionary: bool, If True columns names are simplified and
                     a separate mapping table is created to understand the names
         @param distributed_by: str, Comma-separated list of column names to use for distribution of output
@@ -644,7 +648,8 @@ SELECT {madlib}.encode_categorical_variables (
         value_to_drop,                  -- (Optional) Reference value to drop for each column
         encode_null,                    -- (Optional) Whether NULL should be treated as one of the
                                         --  values of the categorical variable.
-        output_type,                    -- (Optional) Get all encoded variables in an array
+        output_type,                    -- (Optional) Get encoded variables in individual columns
+                                        --    or as an array (Can be 'column', 'array', or 'svec')
         output_dictionary,              -- (Optional) Simplify output column naming and provide
                                         --  a mapping between simple names and meaning
         distributed_by                  -- (Optional) Columns to use for the distribution policy of
