@@ -5,7 +5,7 @@
  *//* ----------------------------------------------------------------------- */
 
 #ifndef MADLIB_MALLOC_ALLOCATOR_HPP
-#define MADLIB_NALLOC_ALLOCATOR_HPP
+#define MADLIB_MALLOC_ALLOCATOR_HPP
 
 namespace madlib {
 
