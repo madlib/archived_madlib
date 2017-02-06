@@ -1187,6 +1187,9 @@ def main(argv):
                 # 'on' by default in 4.3.5
                 elif _is_rev_gte(_get_rev_num(dbver), _get_rev_num('4.3.4')):
                     dbver = '4.3ORCA'
+                else:
+                    # only need the first two digits for <= 4.3.4
+                    dbver = '.'.join(dbver.split('.')[:2])
 
             if not os.path.isdir(os.path.join(portdir, dbver)):
                 _error("This version is not among the %s versions for which "
