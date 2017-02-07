@@ -271,19 +271,32 @@ File knn.sql_in documenting the knn SQL functions
 @endinternal
 */
 
-
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__knn_validate_src(
-"trainingSource" VARCHAR,
-"trainingClassColumn" VARCHAR,
-"trainingFeatureColumn" VARCHAR,
-"testSource" VARCHAR,
-"testingIdColumn" VARCHAR,
-"testingFeatureColumn" VARCHAR,
-"K" INTEGER
-) RETURNS VOID AS $$
-    PythonFunction(knn, knn, knn_validate_src)
-$$ LANGUAGE plpythonu
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
+    point_source VARCHAR,
+    point_column_name VARCHAR,
+    label_column_name VARCHAR,
+    test_source VARCHAR,
+    test_column_name VARCHAR,
+    id_column_name VARCHAR,
+    output_table VARCHAR,
+    operation VARCHAR,
+    k INTEGER
+) RETURNS INTEGER AS $$
+    PythonFunctionBodyOnly(`knn', `knn')
+    return knn.knn_validate_src(
+        schema_madlib,
+        point_source,
+        point_column_name,
+        label_column_name,
+        test_source,
+        test_column_name,
+        id_column_name,
+        output_table,
+        operation,
+        k
+    )
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
@@ -353,10 +366,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
     k INTEGER
 ) RETURNS VARCHAR AS $$
 DECLARE
-    class_test_source REGCLASS;
-    class_point_source REGCLASS;
     l FLOAT;
-    outputTableFlag INTEGER;
     id INTEGER;
     vector DOUBLE PRECISION[];
     cur_pid integer;
@@ -364,29 +374,24 @@ DECLARE
     returnstring VARCHAR;
     x_temp_table VARCHAR;
     y_temp_table VARCHAR;
+    k_val INTEGER;
+    label_column_name_unique VARCHAR;
+    test_id VARCHAR;
+    convert_boolean_to_int VARCHAR;
 BEGIN
     oldClientMinMessages :=
         (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
     EXECUTE 'SET client_min_messages TO warning';
-    PERFORM MADLIB_SCHEMA.__knn_validate_src(point_source, label_column_name, point_column_name, test_source, id_column_name, test_column_name,k);
-    class_test_source := test_source;
-    class_point_source := point_source;
-    --checks
-    IF (k <= 0) THEN
-        RAISE EXCEPTION 'KNN error: Number of neighbors k must be a positive integer.';
-    END IF;
-    IF (operation != 'c' AND operation != 'r') THEN
-        RAISE EXCEPTION 'KNN error: The operation has to be r for regression OR c for classification.';
-    END IF;
+    SELECT * FROM MADLIB_SCHEMA.__knn_validate_src(point_source, point_column_name, label_column_name, test_source, test_column_name, id_column_name, output_table, operation, k) INTO k_val;
     PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
     x_temp_table := 'knn_'||md5('knn_'||now()::text||random()::text)||'_temp';
     y_temp_table := 'knn_'||md5('knn_'||now()::text||random()::text)||'_temp';
+    label_column_name_unique := 'label'||md5('knn_'||now()::text||random()::text)||'_name';
+    test_id := 'id'||md5('knn_'||now()::text||random()::text)||'_name';
 
-    EXECUTE
-	$sql$
-	SELECT count(*) FROM information_schema.tables WHERE table_name = '$sql$ || output_table || $sql$'$sql$ into outputTableFlag;
-    IF (outputTableFlag != 0) THEN
-	RAISE Exception 'KNN error: Output table % already exists.', output_table;
+    convert_boolean_to_int := '';
+    IF (operation = 'c') THEN
+        convert_boolean_to_int := '::INTEGER';
     END IF;
 
     EXECUTE
@@ -396,30 +401,38 @@ BEGIN
 	SELECT *
     FROM
         (
-        SELECT row_number() over (partition by test_id order by dist) as r, $sql$ || x_temp_table || $sql$.*
+        SELECT row_number() over (partition by $sql$ || test_id || $sql$ order by dist) AS r, $sql$ || x_temp_table || $sql$.*
         FROM
             (
-                SELECT test. $sql$ || id_column_name || $sql$ as test_id, MADLIB_SCHEMA.squared_dist_norm2(train.$sql$ || point_column_name || $sql$,test.$sql$ || test_column_name || $sql$) as dist, $sql$ || label_column_name || $sql$ from $sql$ || textin(regclassout(point_source)) || $sql$ AS train, $sql$ || textin(regclassout(test_source)) || $sql$ AS test
+                SELECT test.$sql$ || id_column_name || $sql$ AS $sql$ || test_id || $sql$, MADLIB_SCHEMA.squared_dist_norm2(train.$sql$ || point_column_name || $sql$,test.$sql$ || test_column_name || $sql$) AS dist, train.$sql$ || label_column_name || $sql$ $sql$ || convert_boolean_to_int || $sql$ AS $sql$ || label_column_name_unique || $sql$
+                FROM $sql$ || textin(regclassout(point_source)) || $sql$ AS train, $sql$ || textin(regclassout(test_source)) || $sql$ AS test
             )$sql$ || x_temp_table || $sql$
         )$sql$ || y_temp_table || $sql$
-    WHERE $sql$ || y_temp_table || $sql$.r <= $sql$ || k;
-	IF (operation = 'c') THEN
+    WHERE $sql$ || y_temp_table || $sql$.r <= $sql$ || k_val;
+
+    IF (operation = 'c') THEN
     	EXECUTE
         $sql$
-	CREATE TABLE $sql$ || output_table || $sql$ AS
-    SELECT test_id as id, $sql$ || test_column_name || $sql$, MADLIB_SCHEMA.mode($sql$ || label_column_name || $sql$) as prediction from pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$  on test_id=$sql$ || id_column_name || $sql$ group by test_id, $sql$ || test_column_name;
-        ELSE
+    	CREATE TABLE $sql$ || output_table || $sql$ AS
+        SELECT $sql$ || test_id || $sql$ AS id, $sql$ || test_column_name || $sql$, MADLIB_SCHEMA.mode($sql$ || label_column_name_unique || $sql$) AS prediction
+        FROM pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$ ON $sql$ || test_id || $sql$=$sql$ || id_column_name || $sql$
+        GROUP BY $sql$ || test_id || $sql$, $sql$ || test_column_name;
+    ELSE
         EXECUTE
         $sql$
-	CREATE TABLE $sql$ || output_table || $sql$ AS
-        SELECT test_id as id, $sql$ || test_column_name || $sql$ ,avg($sql$ || label_column_name || $sql$) as prediction from pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$  on test_id=$sql$ || id_column_name || $sql$ group by test_id, $sql$ || test_column_name || $sql$ order by test_id $sql$;
-        END IF;
+	    CREATE TABLE $sql$ || output_table || $sql$ AS
+        SELECT $sql$ || test_id || $sql$ AS id, $sql$ || test_column_name || $sql$, avg($sql$ || label_column_name_unique || $sql$) AS prediction
+        FROM
+            pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$ on $sql$ || test_id || $sql$=$sql$ || id_column_name || $sql$
+        GROUP BY $sql$ || test_id || $sql$, $sql$ || test_column_name || $sql$
+        ORDER BY $sql$ || test_id || $sql$ $sql$;
+    END IF;
 
    EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
    IF (operation = 'c') THEN
-   	returnstring := 'The classification results have been written to table';
+   	returnstring := 'The classification results have been written to output table '||output_table;
    ELSE
-        returnstring := 'The regression results have been written to table';
+        returnstring := 'The regression results have been written to output table '||output_table;
    END IF;
    DROP TABLE pg_temp.madlib_knn_interm;
    RETURN returnstring;

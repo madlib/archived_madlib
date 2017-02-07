@@ -44,86 +44,88 @@ UDF_ON_SEGMENT_NOT_ALLOWED = m4_ifdef(<!__UDF_ON_SEGMENT_NOT_ALLOWED__!>, <!True
 # ----------------------------------------------------------------------
 
 
-def knn_validate_src(schema_madlib, **kwargs):
-    trainingSource = kwargs['trainingSource']
-    if not trainingSource:
-        plpy.error("knn error: Invalid training table name!")
-    if not table_exists(trainingSource):
-        plpy.error("knn error: Training table {0} does not exist!".format(trainingSource))
-    if table_is_empty(trainingSource):
-        plpy.error("knn error: Training table {0} is empty!".format(trainingSource))
+def knn_validate_src(schema_madlib, point_source, point_column_name, label_column_name,
+    test_source, test_column_name, id_column_name, output_table, operation, k, **kwargs):
+    if not operation or operation not in ['c', 'r']:
+        plpy.error("kNN Error: operation='{0}' is an invalid value, has to be 'r' for regression OR 'c' for classification.".format(operation))
+    if not point_source:
+        plpy.error("kNN Error: Invalid training table name.")
+    if not table_exists(point_source):
+        plpy.error("kNN Error: Training table '{0}' does not exist.".format(point_source))
+    if table_is_empty(point_source):
+        plpy.error("kNN Error: Training table '{0}' is empty.".format(point_source))
 
-    testSource = kwargs['testSource']
-    if not testSource:
-        plpy.error("knn error: Invalid test table name!")
-    if not table_exists(testSource):
-        plpy.error("knn error: Test table {0} does not exist!".format(testSource))
-    if table_is_empty(testSource):
-        plpy.error("knn error: Test table {0} is empty!".format(testSource))
+    if not test_source:
+        plpy.error("kNN Error: Invalid test table name.")
+    if not table_exists(test_source):
+        plpy.error("kNN Error: Test table '{0}' does not exist.".format(test_source))
+    if table_is_empty(test_source):
+        plpy.error("kNN Error: Test table '{0}' is empty.".format(test_source))
 
-    trainingClassColumn = kwargs['trainingClassColumn']
-    trainingFeatureColumn = kwargs['trainingFeatureColumn']
-    for c in (trainingClassColumn, trainingFeatureColumn):
+    for c in (label_column_name, point_column_name):
         if not c:
-            plpy.error("knn error: Invalid column name in training table!")
-        if not columns_exist_in_table(trainingSource, [c]):
-            plpy.error("knn error: " + \
-                    "Column '{0}' does not exist in {1}!".format(c, trainingSource))
+            plpy.error("kNN Error: Invalid column name in training table.")
+        if not columns_exist_in_table(point_source, [c]):
+            plpy.error("kNN Error: " + \
+                    "Column '{0}' does not exist in {1}.".format(c, point_source))
 
-    testingFeatureColumn = kwargs['testingFeatureColumn']
-    testingIdColumn = kwargs['testingIdColumn']
-    for c in (testingFeatureColumn, testingIdColumn):
+    for c in (test_column_name, id_column_name):
         if not c:
-            plpy.error("knn error: Invalid column name in test table!")
-        if not columns_exist_in_table(testSource, [c]):
-            plpy.error("knn error: " + \
-                    "Column '{0}' does not exist in {1}!".format(c, testSource))
+            plpy.error("kNN Error: Invalid column name in test table.")
+        if not columns_exist_in_table(test_source, [c]):
+            plpy.error("kNN Error: " + \
+                    "Column '{0}' does not exist in {1}.".format(c, test_source))
 
-    if not is_col_array(trainingSource, trainingFeatureColumn):
-        plpy.error("knn error:" + \
-                    "'Feature column {0} in train table is not an array!".format(str(trainingFeatureColumn)))
-    if not is_col_array(testSource, testingFeatureColumn):
-        plpy.error("knn error:" + \
-                    "'Feature column {0} in test table is not an array!".format(str(testingFeatureColumn)))
+    if not is_col_array(point_source, point_column_name):
+        plpy.error("kNN Error: " + \
+                    "Feature column '{0}' in train table is not an array.".format(point_column_name))
+    if not is_col_array(test_source, test_column_name):
+        plpy.error("kNN Error: " + \
+                    "Feature column '{0}' in test table is not an array.".format(test_column_name))
 
-    if not array_col_has_no_null(trainingSource, trainingFeatureColumn):
-        plpy.error("knn error:" + \
-                    "'Feature column {0} in train table has some NULL values!".format(str(trainingFeatureColumn)))
-    if not array_col_has_no_null(testSource, testingFeatureColumn):
-        plpy.error("knn error:" + \
-                    "'Feature column {0} in test table has some NULL values!".format(str(testingFeatureColumn)))
+    if not array_col_has_no_null(point_source, point_column_name):
+        plpy.error("kNN Error: " + \
+                    "Feature column '{0}' in train table has some NULL values.".format(point_column_name))
+    if not array_col_has_no_null(test_source, test_column_name):
+        plpy.error("kNN Error: " + \
+                    "Feature column '{0}' in test table has some NULL values.".format(test_column_name))
 
-    k = int(kwargs['K'])
+    if not output_table:
+        plpy.error("kNN Error: Invalid output table name")
+    if table_exists(output_table):
+        plpy.error("kNN Error: Table '{0}' already exists, cannot use it as output table.".format(output_table))
+
+    if k is None:
+        k = 1
     if k<=0:
-        plpy.error("knn error:" + \
-                    "'k' {0} is not valid for knn!".format(str(k)))
+        plpy.error("kNN Error: k='{0}' is an invalid value, must be greater than 0.".format(k))
     bound = plpy.execute("""SELECT {k} <= count(*)
-            AS bound FROM {tbl}""".format(k=str(k),
-            trainingFeatureColumn=trainingFeatureColumn, tbl=trainingSource))[0]['bound']
+            AS bound FROM {tbl}""".format(k=k,
+            point_column_name=point_column_name, tbl=point_source))[0]['bound']
     if not bound:
-        plpy.error("knn error:" + \
-                "'k' {0} is greater than number of rows in training table!".format(str(k)))
+        plpy.error("kNN Error: " + \
+                "k='{0}' is greater than number of rows in training table.".format(k))
 
-    colTypesList = get_cols_and_types(trainingSource)
+    colTypesList = get_cols_and_types(point_source)
     colType = ''
     for type in colTypesList:
-        if type[0] == trainingClassColumn:
+        if type[0] == label_column_name:
             colType = type[1]
             break
     if colType not in ['INTEGER','integer','double precision','DOUBLE PRECISION','float','FLOAT','boolean','BOOLEAN'] :
-        plpy.error("knn error:" + \
-                    "Data type {0} is not valid as label for scope of knn!".format(str(colType)))
+        plpy.error("kNN Error: " + \
+                    "Data type '{0}' is not a valid type for column '{1}' in table '{2}'.".format(colType, label_column_name, point_source))
 
-    colTypesTestList = get_cols_and_types(testSource)
+    colTypesTestList = get_cols_and_types(test_source)
     colType = ''
     for type in colTypesTestList:
-        if type[0] == testingIdColumn:
+        if type[0] == id_column_name:
             colType = type[1]
             break
     if colType not in ['INTEGER','integer'] :
-        plpy.error("knn error:" + \
-                    "Data type {0} is not valid as Id in test table!".format(str(colType)))
-
+        plpy.error("kNN Error: " + \
+                    "Data type '{0}' is not a valid type for column '{1}' in table '{2}'.".format(colType, id_column_name, test_source))
+    return k
 
 # ----------------------------------------------------------------------
 m4_changequote(<!`!>, <!'!>)
