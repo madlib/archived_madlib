@@ -60,7 +60,7 @@ class CategoricalEncoder(object):
                  top=None,
                  value_to_drop=None,
                  encode_null=False,
-                 output_type='column',
+                 output_type=None,
                  output_dictionary=False,
                  distributed_by=None,
                  **kwargs):
@@ -74,7 +74,8 @@ class CategoricalEncoder(object):
         self.top = top
         self.value_to_drop = value_to_drop
         self.encode_null = encode_null
-        self.output_type = output_type
+
+        self.output_type = 'column' if not output_type else output_type.lower()
         self.output_dictionary = output_dictionary
         self.distributed_by = distributed_by
 
@@ -158,8 +159,22 @@ class CategoricalEncoder(object):
         # columns that determine the index for output table
         self._row_id_cols = split_quoted_delimited_str(self.row_id)
 
+        # output type for specific supported types
+        all_output_types = sorted(['array', 'column', 'svec'])
+        try:
+            # allow user to specify a prefix substring of
+            # supported output types. This works because the supported
+            # output types have unique prefixes.
+            self.output_type = next(s for s in all_output_types
+                                    if s.startswith(self.output_type))
+        except StopIteration:
+            # next() returns a StopIteration if no element found
+            plpy.error("Encoding categorical: Output type should be one of {0}".
+                       format(','.join(all_output_types)))
+
         # flag to build a dictionary table
-        self._output_dictionary = True if self.output_type in ('array', 'svec') else self.output_dictionary
+        self._output_dictionary = (True if self.output_type in ('array', 'svec')
+                                   else self.output_dictionary)
 
         # how to distribute the output table (for distributed platforms)
         if not is_platform_pg():
@@ -228,9 +243,6 @@ class CategoricalEncoder(object):
             _assert(is_var_valid(self.source_table, ','.join(self._row_id_cols)),
                     "Encoding categorical: Not all columns from ({0}) present in source table ({1})"
                     .format(self._row_id_cols, self.source_table))
-        _assert(self.output_type in ('column', 'array', 'svec'),
-                "Encoding categorical: Output type should be one of {0}".
-                format(('column', 'array', 'svec')))
     # ------------------------------------------------------------------------------
 
     def _is_col_name_long(self, col_to_values):
