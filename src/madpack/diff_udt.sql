@@ -66,44 +66,44 @@ $$ LANGUAGE plpythonu;
 
 -- Get UDTs
 DROP TABLE IF EXISTS types_madlib;
-DROP TABLE IF EXISTS types_madlib_v19;
+DROP TABLE IF EXISTS types_madlib_old_vers;
 SELECT get_types('madlib');
-SELECT get_types('madlib_v19');
+SELECT get_types('madlib_old_vers');
 
 --SELECT name FROM types_madlib;
 --SELECT name FROM types_madlib_v15;
 
 --Dropped
 SELECT
-    v19.name AS "Dropped UDTs"
+    old_vers.name AS "Dropped UDTs"
 FROM
-    types_madlib_v19 AS v19
+    types_madlib_old_vers AS old_vers
     LEFT JOIN
-    types_madlib AS v191
+    types_madlib AS new_vers
     USING (name)
-WHERE v191.name IS NULL;
+WHERE new_vers.name IS NULL;
 
 --Added
 SELECT
-     v191.name AS "Added UDTs"
+     new_vers.name AS "Added UDTs"
 FROM
-     types_madlib_v19 AS v19
+     types_madlib_old_vers AS old_vers
      RIGHT JOIN
-     types_madlib AS v191
+     types_madlib AS new_vers
      USING (name)
-WHERE v19.name IS NULL;
+WHERE old_vers.name IS NULL;
 
 --Common
 DROP TABLE IF EXISTS types_common;
 CREATE TABLE types_common AS
 SELECT
-    v19.name, v19.typrelid AS old_relid, v191.typrelid AS new_relid
+    old_vers.name, old_vers.typrelid AS old_relid, new_vers.typrelid AS new_relid
 FROM
-    types_madlib_v19 AS v19
+    types_madlib_old_vers AS old_vers
     JOIN
-    types_madlib AS v191
+    types_madlib AS new_vers
     USING (name)
-WHERE v19.typrelid <> 0; -- 0 means base type
+WHERE old_vers.typrelid <> 0; -- 0 means base type
 
 SELECT
     array_upper(detect_changed_types('types_common'), 1) AS N,
