@@ -1516,7 +1516,7 @@ AnyType marginalstateToResult(
     const ColumnVector &inCoef,
     const ColumnVector &diagonal_of_variance_matrix,
     const double inmarginal_effects_per_observation,
-    const double numRows) {
+    const Index numRows) {
 
     MutableNativeColumnVector marginal_effects(
         inAllocator.allocateArray<double>(inCoef.size()));
@@ -1531,7 +1531,7 @@ AnyType marginalstateToResult(
 
     for (Index i = 0; i < inCoef.size(); ++i) {
         coef(i) = inCoef(i);
-        marginal_effects(i) = inCoef(i) * inmarginal_effects_per_observation / numRows;
+        marginal_effects(i) = inCoef(i) * inmarginal_effects_per_observation / static_cast<double>(numRows);
         stdErr(i) = std::sqrt(diagonal_of_variance_matrix(i));
         tStats(i) = marginal_effects(i) / stdErr(i);
 
@@ -1673,7 +1673,7 @@ marginal_logregr_step_final::run(AnyType &args) {
                                  state.coef,
                                  std_err.diagonal(),
                                  state.marginal_effects_per_observation,
-                                 static_cast<double>(state.numRows));
+                                 state.numRows);
 }
 
 // ------------------------ End of Marginal ------------------------------------

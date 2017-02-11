@@ -322,7 +322,7 @@ mlogregr_marginal_step_transition::run(AnyType &args) {
                     state.delta(index, idx) += prob(j) *
                         (e_k_K_j_J - prob(J) * e_k_K - x(K) * margins_matrix(J,k));
                 }
-            }      
+            }
         }
     }
 
@@ -356,7 +356,7 @@ mlogregr_marginal_step_merge_states::run(AnyType &args) {
 
 AnyType mlogregr_marginalstateToResult(
     const Allocator &inAllocator,
-    const double numRows,
+    const Index numRows,
     const ColumnVector &inCoef,
     const ColumnVector &inMargins,
     const ColumnVector &inVariance
@@ -446,7 +446,7 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     variance.setOnes();
 
     variance = (state.delta * V * trans(state.delta) / static_cast<double>(state.numRows*state.numRows)).diagonal();
-    
+
     // Add in reference variables to all the calculations
     // ----------------------------------------------------------
     ColumnVector coef_with_ref(size);
@@ -462,7 +462,7 @@ mlogregr_marginal_step_final::run(AnyType &args) {
     }
 
     return mlogregr_marginalstateToResult(*this,
-                                          static_cast<double>(state.numRows),
+                                          state.numRows,
                                           coef_with_ref,
                                           margins_with_ref,
                                           variance);

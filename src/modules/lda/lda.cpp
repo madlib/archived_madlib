@@ -184,7 +184,8 @@ AnyType lda_gibbs_sample::run(AnyType & args)
     int32_t voc_size = args[6].getAs<int32_t>();
     int32_t topic_num = args[7].getAs<int32_t>();
     int32_t iter_num = args[8].getAs<int32_t>();
-    size_t model64_size = static_cast<size_t>(voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t);
+    size_t model64_size =
+        static_cast<size_t>(voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t);
 
     if(alpha <= 0)
         throw std::invalid_argument("invalid argument - alpha");
@@ -621,9 +622,9 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
         }
 
         state =  madlib_construct_array(NULL,
-                                        static_cast<int>(model64.size())
-                                            + topic_num
-                                            + sizeof(double) / sizeof(int64_t),
+                                        static_cast<int>(model64.size()) +
+                                            topic_num +
+                                            static_cast<int>(sizeof(double) / sizeof(int64_t)),
                                         INT8TI.oid,
                                         INT8TI.len,
                                         INT8TI.byval,

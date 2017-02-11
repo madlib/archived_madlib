@@ -46,7 +46,7 @@ AnyType path_pattern_match::run(AnyType & args)
     MappedColumnVector row_id = args[2].getAs<MappedColumnVector>();
     bool overlapping_patterns = args[3].getAs<bool>();
 
-    if (sym_str.size() != row_id.size()) {
+    if (sym_str.size() != static_cast<size_t>(row_id.size())) {
         std::stringstream errorMsg;
         errorMsg << "dimensions mismatch: " << sym_str.size() <<
                     " != " << row_id.size() <<

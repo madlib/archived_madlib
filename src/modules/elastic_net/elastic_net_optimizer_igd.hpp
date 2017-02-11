@@ -66,7 +66,7 @@ AnyType Igd<Model>::igd_transition (AnyType& args, const Allocator& inAllocator)
             state.ymean = args[10].getAs<double>();
             // dual vector theta
             state.theta.setZero();
-            state.p = 2 * log(state.dimension);
+            state.p = 2 * log(double(state.dimension));
             state.lambda = lambda;
             state.q = state.p / (state.p - 1);
             link_fn(state.theta, state.coef, state.p);

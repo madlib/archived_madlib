@@ -127,7 +127,7 @@ DecisionTree<Container>::bind(ByteStream_type& inStream) {
     size_t n_labels = 0;
     size_t max_surrogates = 0;
     if (!tree_depth.isNull()) {
-        n_nodes = static_cast<size_t>(pow(2, tree_depth) - 1);
+        n_nodes = static_cast<size_t>(pow(2.0, tree_depth) - 1);
         // for classification n_labels = n_y_labels + 1 since the last element
         // is the count of actual (unweighted) tuples landing on a node
         // for regression, n_y_labels is same as REGRESS_N_STATS
@@ -173,7 +173,7 @@ inline
 DecisionTree<Container>&
 DecisionTree<Container>::incrementInPlace() {
     // back up current tree
-    size_t n_orig_nodes = static_cast<size_t>(pow(2, tree_depth) - 1);
+    size_t n_orig_nodes = static_cast<size_t>(pow(2.0, tree_depth) - 1);
     DecisionTree<Container> orig = DecisionTree<Container>();
     orig.rebind(tree_depth, n_y_labels, max_n_surr, is_regression);
     orig.copy(*this);
@@ -712,7 +712,7 @@ DecisionTree<Container>::pickSurrogates(
             Index surr_count = 0;
             for(Index j=0; j < max_size; j++){
                 Index curr_surr = sorted_surr_indices(j);
-                if (all_counts(curr_surr) < getMajorityCount(curr_node)){
+                if (all_counts(curr_surr) < double(getMajorityCount(curr_node))){
                     break;
                 }
                 Index to_update_surr = curr_node * max_n_surr + surr_count;
@@ -1084,7 +1084,7 @@ DecisionTree<Container>::recomputeTreeDepth() const{
         return tree_depth;
 
     for(uint16_t depth_counter = 2; depth_counter <= tree_depth; depth_counter++){
-        uint32_t n_leaf_nodes = static_cast<uint32_t>(pow(2, depth_counter - 1));
+        uint32_t n_leaf_nodes = static_cast<uint32_t>(pow(2.0, depth_counter - 1));
         uint32_t leaf_start_index = n_leaf_nodes - 1;
         bool all_non_existing = true;
         for (uint32_t leaf_index=0; leaf_index < n_leaf_nodes; leaf_index++){
@@ -1605,7 +1605,7 @@ TreeAccumulator<Container, DTree>::rebind(
     total_n_cat_levels = in_n_total_levels;
     weights_as_rows = in_weights_as_rows;
     if (tree_depth > 0)
-        n_leaf_nodes = static_cast<uint32_t>(pow(2, tree_depth - 1));
+        n_leaf_nodes = static_cast<uint32_t>(pow(2.0, tree_depth - 1));
     else
         n_leaf_nodes = 1;
     if (n_reachable_leaves >= n_leaf_nodes)
