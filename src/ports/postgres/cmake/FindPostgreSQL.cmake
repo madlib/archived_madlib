@@ -86,7 +86,6 @@ if(${PKG_NAME}_PG_CONFIG)
         OUTPUT_VARIABLE ${PKG_NAME}_SERVER_INCLUDE_DIR
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
-
     execute_process(COMMAND ${${PKG_NAME}_PG_CONFIG} --includedir
         OUTPUT_VARIABLE ${PKG_NAME}_CLIENT_INCLUDE_DIR
         OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -97,7 +96,7 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_SERVER_INCLUDE_DIR)
     set(${PKG_NAME}_VERSION_MAJOR 0)
     set(${PKG_NAME}_VERSION_MINOR 0)
     set(${PKG_NAME}_VERSION_PATCH 0)
-    
+
     set(CONFIG_FILE ${${PKG_NAME}_SERVER_INCLUDE_DIR}/pg_config.h)
 
     if(EXISTS ${CONFIG_FILE})
@@ -112,7 +111,6 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_SERVER_INCLUDE_DIR)
         else(${CMAKE_COMPILER_IS_GNUCC})
             file(READ ${CONFIG_FILE} _PG_CONFIG_HEADER_CONTENTS)
         endif(${CMAKE_COMPILER_IS_GNUCC})
-        
 
 		# Get PACKAGE_NAME
 		if (_PG_CONFIG_HEADER_CONTENTS MATCHES "#define PACKAGE_NAME \".*\"")
@@ -159,6 +157,10 @@ if(${PKG_NAME}_PG_CONFIG AND ${PKG_NAME}_SERVER_INCLUDE_DIR)
 			endif(_PG_CONFIG_HEADER_CONTENTS MATCHES "#define ${_PG_CONFIG_VERSION_MACRO} ([0-9]+).*")
 
         endif(${PKG_NAME}_VERSION_NUM MATCHES "^[0-9]+$")
+    else(EXISTS ${CONFIG_FILE})
+        message(FATAL_ERROR "Found pg_config (\"${${PKG_NAME}_PG_CONFIG}\"), "
+              "but pg_config.h file not present in the "
+              "server include dir (${${PKG_NAME}_SERVER_INCLUDE_DIR}).")
     endif(EXISTS ${CONFIG_FILE})
 
     if(_PACKAGE_NAME STREQUAL "${_NEEDED_PG_CONFIG_PACKAGE_NAME}")
