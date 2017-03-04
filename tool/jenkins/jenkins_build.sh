@@ -1,4 +1,4 @@
-#
+#!/bin/bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -16,28 +16,73 @@
 # specific language governing permissions and limitations
 # under the License.
 
-#!/bin/sh
-
 #####################################################################################
-### If this bash script is executed as a stand-alone file, assuming this
-### is not part of the MADlib source code, then the following two commands
-### may have to be used:
-# git clone https://github.com/apache/incubator-madlib.git
-# pushd incubator-madlib
-#####################################################################################
+workdir=`pwd`
+user_name=`whoami`
+echo "Build by user $user_name in directory $workdir"
+echo "-------------------------------"
+echo "ls -la"
+ls -la
+echo "-------------------------------"
+echo "rm -rf build"
+rm -rf build
+echo "-------------------------------"
+echo "rm -rf logs"
+rm -rf logs
+echo "mkdir logs"
+mkdir logs
+echo "-------------------------------"
 
+echo "docker kill madlib"
+docker kill madlib
+echo "docker rm madlib"
+docker rm madlib
+
+echo "Creating docker container"
 # Pull down the base docker images
-docker pull madlib/postgres_9_6:jenkins
-# Assuming git clone of incubator-madlib has been done, launch a container with the volume mounted
-docker run -d --name madlib -v incubator-madlib:/incubator-madlib madlib/postgres_9.6:jenkins
+docker pull madlib/postgres_9.6:jenkins
+# Launch docker container with volume mounted from workdir
+echo "-------------------------------"
+cat <<EOF
+docker run -d --name madlib -v "${workdir}/incubator-madlib":/incubator-madlib madlib/postgres_9.6:jenkins | tee logs/docker_setup.log
+EOF
+docker run -d --name madlib -v "${workdir}/incubator-madlib":/incubator-madlib madlib/postgres_9.6:jenkins | tee logs/docker_setup.log
+echo "-------------------------------"
+
 ## This sleep is required since it takes a couple of seconds for the docker
 ## container to come up, which is required by the docker exec command that follows.
 sleep 5
-# cmake, make and make install MADlib
-docker exec madlib bash -c 'mkdir /incubator-madlib/build ; cd /incubator-madlib/build ; cmake .. ; make ; make install'
-# Install MADlib and run install check
-docker exec -it madlib /incubator-madlib/build/src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install
-docker exec -it madlib /incubator-madlib/build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres install-check
 
-docker kill madlib
-docker rm madlib
+echo "---------- Building package -----------"
+# cmake, make, make install, and make package
+cat <<EOF
+docker exec madlib bash -c 'rm -rf /build; mkdir /build; cd /build; cmake ../incubator-madlib; make clean; make; make install; make package' | tee $workdir/logs/madlib_compile.log
+EOF
+docker exec madlib bash -c 'rm -rf /build; mkdir /build; cd /build; cmake ../incubator-madlib; make clean; make; make install; make package' | tee $workdir/logs/madlib_compile.log
+
+echo "---------- Installing and running install-check --------------------"
+# Install MADlib and run install check
+cat <<EOF
+docker exec madlib /build/src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install | tee $workdir/logs/madlib_install.log
+docker exec madlib /build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres install-check | tee $workdir/logs/madlib_install_check.log
+EOF
+docker exec madlib /build/src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install | tee $workdir/logs/madlib_install.log
+docker exec madlib /build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres install-check | tee $workdir/logs/madlib_install_check.log
+
+echo "--------- Copying packages -----------------"
+echo "docker cp madlib:build $workdir"
+docker cp madlib:build $workdir
+
+echo "-------------------------------"
+echo "ls -la"
+ls -la
+echo "-------------------------------"
+echo "ls -la build"
+ls -la build/
+echo "-------------------------------"
+
+# convert install-check test results to junit format for reporting
+cat <<EOF
+python incubator-madlib/tool/jenkins/junit_export.py $workdir/logs/madlib_install_check.log $workdir/logs/madlib_install_check.xml
+EOF
+python incubator-madlib/tool/jenkins/junit_export.py $workdir/logs/madlib_install_check.log $workdir/logs/madlib_install_check.xml
