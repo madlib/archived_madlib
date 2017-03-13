@@ -28,6 +28,7 @@
 """
 
 import plpy
+from graph_utils import *
 from utilities.control import MinWarning
 from utilities.utilities import _assert
 from utilities.utilities import extract_keyvalue_params
@@ -84,7 +85,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 		local_distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
 			<!"DISTRIBUTED BY (id)"!>)
 
-		validate_graph_coding(vertex_table, vertex_id, edge_table,
+		validate_sssp(vertex_table, vertex_id, edge_table,
 			edge_params, source_vertex, out_table)
 
 		plpy.execute(" DROP TABLE IF EXISTS {0},{1},{2}".format(
@@ -284,35 +285,11 @@ def graph_sssp_get_path(schema_madlib, sssp_table, dest_vertex, **kwargs):
 
 	return None
 
-def validate_graph_coding(vertex_table, vertex_id, edge_table, edge_params,
+def validate_sssp(vertex_table, vertex_id, edge_table, edge_params,
 	source_vertex, out_table, **kwargs):
 
-	_assert(out_table and out_table.strip().lower() not in ('null', ''),
-		"Graph SSSP: Invalid output table name!")
-	_assert(not table_exists(out_table),
-		"Graph SSSP: Output table already exists!")
-
-	_assert(vertex_table and vertex_table.strip().lower() not in ('null', ''),
-		"Graph SSSP: Invalid vertex table name!")
-	_assert(table_exists(vertex_table),
-		"Graph SSSP: Vertex table ({0}) is missing!".format(vertex_table))
-	_assert(not table_is_empty(vertex_table),
-		"Graph SSSP: Vertex table ({0}) is empty!".format(vertex_table))
-
-	_assert(edge_table and edge_table.strip().lower() not in ('null', ''),
-		"Graph SSSP: Invalid edge table name!")
-	_assert(table_exists(edge_table),
-		"Graph SSSP: Edge table ({0}) is missing!".format(edge_table))
-	_assert(not table_is_empty(edge_table),
-		"Graph SSSP: Edge table ({0}) is empty!".format(edge_table))
-
-	existing_cols = set(unquote_ident(i) for i in get_cols(vertex_table))
-	_assert(vertex_id in existing_cols,
-		"""Graph SSSP: The vertex column {vertex_id} is not present in vertex
-		table ({vertex_table}) """.format(**locals()))
-	_assert(columns_exist_in_table(edge_table, edge_params.values()),
-		"Graph SSSP: Not all columns from {0} present in edge table ({1})".
-		format(edge_params.values(), edge_table))
+	validate_graph_coding(vertex_table, vertex_id, edge_table, edge_params,
+		out_table,'SSSP')
 
 	_assert(isinstance(source_vertex,int),
 		"""Graph SSSP: Source vertex {source_vertex} has to be an integer """.
@@ -377,28 +354,7 @@ For more details on function usage:
             """
     elif message in ['usage', 'help', '?']:
         help_string = """
-----------------------------------------------------------------------------
-                            USAGE
-----------------------------------------------------------------------------
- SELECT {schema_madlib}.graph_sssp(
-    vertex_table  TEXT, -- Name of the table that contains the vertex data.
-    vertex_id     TEXT, -- Name of the column containing the vertex ids.
-    edge_table    TEXT, -- Name of the table that contains the edge data.
-    edge_args     TEXT, -- A comma-delimited string containing multiple
-    			-- named arguments of the form "name=value".
-    source_vertex INT,  -- The source vertex id for the algorithm to start.
-    out_table     TEXT  -- Name of the table to store the result of SSSP.
-);
-
-The following parameters are supported for edge table arguments ('edge_args'
-	above):
-
-src (default = 'src')		: Name of the column containing the source
-				vertex ids in the edge table.
-dest (default = 'dest')		: Name of the column containing the destination
-				vertex ids in the edge table.
-weight (default = 'weight')	: Name of the column containing the weight of
-				edges in the edge table.
+{graph_usage}
 
 To retrieve the path for a specific vertex:
 
@@ -428,5 +384,9 @@ shortest path from the initial source vertex to the desired destination vertex.
     else:
         help_string = "No such option. Use {schema_madlib}.graph_sssp()"
 
-    return help_string.format(schema_madlib=schema_madlib)
+    return help_string.format(schema_madlib=schema_madlib,
+    	graph_usage=get_graph_usage(schema_madlib, 'graph_sssp',
+    """source_vertex INT,  -- The source vertex id for the algorithm to start.
+    out_table     TEXT  -- Name of the table to store the result of SSSP."""))
 # ---------------------------------------------------------------------
+
