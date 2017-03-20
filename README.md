@@ -1,4 +1,4 @@
-![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/magnetic-icon.png) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/agile-icon.png) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/deep-icon.png)
+![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/magnetic-icon.png?raw=True) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/agile-icon.png?raw=True) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/deep-icon.png?raw=True)
 =================================================
 **MADlib<sup>&reg;</sup>** is an open-source library for scalable in-database analytics.
 It provides data-parallel implementations of mathematical, statistical and
@@ -66,7 +66,7 @@ The following block-diagram gives a high-level overview of MADlib's
 architecture.
 
 
-![MADlib Architecture](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/architecture.png)
+![MADlib Architecture](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/architecture.png?raw=True)
 
 
 Third Party Components
