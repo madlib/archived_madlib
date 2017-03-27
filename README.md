@@ -4,6 +4,9 @@
 It provides data-parallel implementations of mathematical, statistical and
 machine learning methods for structured and unstructured data.
 
+[![master build status](https://builds.apache.org/buildStatus/icon?job=madlib-master-build&style=plastic)](https://builds.apache.org/job/madlib-master-build)
+
+
 Installation and Contribution
 ==============================
 See the project webpage  [`MADlib Home`](http://madlib.incubator.apache.org/) for links to the
