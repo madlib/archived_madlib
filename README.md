@@ -18,19 +18,24 @@ Development with Docker
 We provide a Docker image with necessary dependencies required to compile and test MADlib on PostgreSQL 9.6. You can view the dependency Docker file at ./tool/docker/base/Dockerfile_postgres_9_6. The image is hosted on Docker Hub at madlib/postgres_9.6:latest. Later we will provide a similar Docker image for Greenplum Database.
 
 Some useful commands to use the docker file:
+
 ```
 ## 1) Pull down the `madlib/postgres_9.6:latest` image from docker hub:
 docker pull madlib/postgres_9.6:latest
 
-## 2) Launch a container corresponding to the MADlib image, mounting the source code folder to the container:
-docker run -d -it --name madlib -v (path to incubator-madlib directory):/incubator-madlib/ madlib/postgres_9.6
+## 2) Launch a container corresponding to the MADlib image, mounting the
+##    source code folder to the container:
+docker run -d -it --name madlib \
+    -v (path to incubator-madlib directory):/incubator-madlib/ madlib/postgres_9.6
 # where incubator-madlib is the directory where the MADlib source code resides.
 
-############################################## * WARNING * ##################################################
-# Please be aware that when mounting a volume as shown above, any changes you make in the "incubator-madlib"
-# folder inside the Docker container will be reflected on your local disk (and vice versa). This means that
-# deleting data in the mounted volume from a Docker container will delete the data from your local disk also.
-#############################################################################################################
+################################# * WARNING * #################################
+# Please be aware that when mounting a volume as shown above, any changes you
+# make in the "incubator-madlib" folder inside the Docker container will be
+# reflected on your local disk (and vice versa). This means that deleting data
+# in the mounted volume from a Docker container will delete the data from your
+# local disk also.
+###############################################################################
 
 ## 3) When the container is up, connect to it and build MADlib:
 docker exec -it madlib bash
@@ -44,7 +49,7 @@ make install
 ## 4) Install MADlib:
 src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install
 
-## 5) Several other commands, apart from the ones above can now be run, such as:
+## 5) Several other commands can now be run, such as:
 # Run install check, on all modules:
 src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install-check
 # Run install check, on a specific module, say svm:
