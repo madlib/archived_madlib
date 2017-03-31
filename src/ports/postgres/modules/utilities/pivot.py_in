@@ -42,6 +42,7 @@ from validate_args import columns_exist_in_table
 from validate_args import table_is_empty
 from validate_args import _get_table_schema_names
 from validate_args import get_first_schema
+from validate_args import get_expr_type
 
 
 m4_changequote(`<!', `!>')
@@ -49,14 +50,14 @@ m4_changequote(`<!', `!>')
 
 def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
           pivot_values, aggregate_func=None, fill_value=None, keep_null=False,
-          output_col_dictionary=False, **kwargs):
+          output_col_dictionary=False, output_type=None, **kwargs):
     """
     Helper function that can be used to pivot tables
     Args:
         @param source_table     The original data table
         @param out_table        The output table that contains the dummy
                                 variable columns
-        @param index            The index columns to group by the records by
+        @param index            The index columns to group the records by
         @param pivot_cols       The columns to pivot the table
         @param pivot_values     The value columns to be summarized in the
                                 pivoted table
@@ -80,6 +81,16 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
         FROM pivset GROUP BY id ORDER BY id)
     """
 
+    def _fill_value_wrapper(sel_str):
+        """ Wrap a given SQL SELECT statement with COALESCE using a given fill value.
+
+            No-op if the fill value is not provided
+        """
+        if fill_value is not None:
+            return " COALESCE({0}, {1}) ".format(sel_str, fill_value)
+        else:
+            return sel_str
+
     with MinWarning('warning'):
 
         # If there are more than 1000 columns for the output table, we give a
@@ -93,6 +104,25 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
         indices = split_quoted_delimited_str(index)
         pcols = split_quoted_delimited_str(pivot_cols)
         pvals = split_quoted_delimited_str(pivot_values)
+
+        # output type for specific supported types
+        output_type = 'column' if not output_type else output_type.lower()
+        all_output_types = sorted(['array', 'column', 'svec'])
+        try:
+            # allow user to specify a prefix substring of
+            # supported output types. This works because the supported
+            # output types have unique prefixes.
+            output_type = next(s for s in all_output_types
+                               if s.startswith(output_type))
+        except StopIteration:
+            # next() returns a StopIteration if no element found
+            plpy.error("Encoding categorical: Output type should be one of {0}".
+                       format(','.join(all_output_types)))
+
+        is_array_output = output_type in ('array', 'svec')
+        # always build dictionary table if output is array
+        output_col_dictionary = True if is_array_output else output_col_dictionary
+
         validate_pivot_coding(source_table, out_table, indices, pcols, pvals)
 
         # Strip the end quotes for building output columns (this can only be
@@ -103,6 +133,8 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
         # Create a dictionary that assigns one or more aggregate functions for every
         # value column.
         agg_dict = parse_aggregates(pvals, aggregate_func)
+
+        validate_output_types(source_table, agg_dict, is_array_output)
 
         # Find the distinct values of pivot_cols
         array_agg_str = ', '.join("array_agg(DISTINCT {pcol}) AS {pcol}_values".
@@ -143,7 +175,7 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
                                               for pcol in pcols])))
 
         # Check the max possible length of a output column name
-        # If it is over 63 (psql upper limit) create table lookup
+        # If it is over 63 (postgresql upper limit) create dictionary lookup
         for pval in pvals:
             agg_func = agg_dict[pval]
             # Length calculation: value column length + aggregate length +
@@ -159,122 +191,157 @@ def pivot(schema_madlib, source_table, out_table, index, pivot_cols,
                                  format(**locals()))
                 output_col_dictionary = True
 
-        # Create the output dictionary if needed
+        # Types of pivot columns are needed for building the right columns
+        # in the dictionary table and to decide if a pivot column value needs to
+        # be quoted during comparison (will be quoted if it's a text column)
+        types_str = ', '.join("pg_typeof(\"{pcol}\") as {pcol}".
+                              format(pcol=p) for p in pcols)
+        pcol_types = plpy.execute("SELECT {0} FROM {1} LIMIT 1".
+                                  format(types_str, source_table))[0]
         if output_col_dictionary:
             out_dict = out_table + "_dictionary"
             _assert(not table_exists(out_dict),
                     "Pivot: Output dictionary table already exists!")
-
-            # Collect the types for pivot columns
-            types_str = ','.join("pg_typeof(\"{pcol}\") as {pcol}_type".
-                                 format(pcol=pcol) for pcol in pcols)
-            pcol_types = plpy.execute("SELECT {0} FROM {1} LIMIT 1".
-                                      format(types_str, source_table))
-
             # Create the empty dictionary table
-            dict_str = ', '.join(" {pcol} {pcol_type} ".
-                                 format(pcol=pcol, pcol_type=pcol_types[0][pcol+"_type"])
-                                 for pcol in pcols)
+            pcol_names_types = ', '.join(" {pcol} {pcol_type} ".
+                                         format(pcol=pcol,
+                                                pcol_type=pcol_types[pcol])
+                                         for pcol in pcols)
             plpy.execute("""
                 CREATE TABLE {out_dict} (
-                    __pivot_cid__ VARCHAR, pval VARCHAR,
-                    agg VARCHAR, {dict_str}, col_name VARCHAR)
-                """.format(**locals()))
+                    __pivot_cid__ VARCHAR,
+                    pval VARCHAR,
+                    agg VARCHAR,
+                    {pcol_names_types},
+                    col_name VARCHAR)
+                """.format(out_dict=out_dict, pcol_names_types=pcol_names_types))
 
-            # The holder for rows to insert into output dictionary
-            insert_str = []
+            # List of rows to insert into output dictionary
+            dict_insert_str = []
             # Counter for the new output column names
-            dict_counter = 0
+            dict_counter = 1
 
-        pivot_str_sel_list = []
-        pivot_str_from_list = []
-        # Prepare the wrapper for fill value
-        if fill_value is not None:
-            fill_str_begin = " COALESCE("
-            fill_str_end = ", " + fill_value + " ) "
-        else:
-            fill_str_begin, fill_str_end = "", ""
+        pivot_sel_list = []
+        pivot_from_list = []
 
         for pval in pvals:
             agg_func = agg_dict[pval]
             for agg in agg_func:
+
+                # is using array_output, create a new array for each pval-agg combo
+                if is_array_output:
+                    # we store information in the dictionary table for each
+                    # index in the array. 'index_counter' is the current index
+                    # being updated (resets for each new array)
+                    index_counter = 1
+
+                sub_pivot_sel_list = []
                 for comb in pivot_comb:
                     pivot_col_condition = []
-                    pivot_col_name = ["\"{pval}_{agg}".format(pval=pval, agg=agg)]
+                    # note column name starts with double quotes
+                    pivot_col_name = ['{pval}_{agg}'.format(pval=pval, agg=agg)]
 
                     if output_col_dictionary:
                         # Prepare the entry for the dictionary
-                        insert_str.append("(\'__p_{dict_counter}__\', \'{pval}\', "
-                                          "\'{agg}\' ".format(dict_counter=dict_counter,
-                                                              pval=pval, agg=agg))
+                        if not is_array_output:
+                            index_name = ("__p_{dict_counter}__".
+                                          format(dict_counter=dict_counter))
+                        else:
+                            # for arrays, index_name is just the index into each array
+                            index_name = str(index_counter)
+                            index_counter += 1
+                        dict_insert_str.append(
+                            "(\'{index_name}\', \'{pval}\', \'{agg}\' ".
+                            format(index_name=index_name, pval=pval, agg=agg))
 
                     # For every pivot column in a given combination
                     for counter, pcol in enumerate(pcols):
+                        if comb[counter] is None:
+                            quoted_pcol_value = "NULL"
+                        elif pcol_types[pcol] in ("text", "varchar", "character varying"):
+                            quoted_pcol_value = "'" + comb[counter] + "'"
+                        else:
+                            quoted_pcol_value = comb[counter]
+
                         # If we encounter a NULL value that means it is not filtered
                         # because of keep_null. Use "IS NULL" for comparison
                         if comb[counter] is None:
                             pivot_col_condition.append(" \"{0}\" IS NULL".format(pcol))
                             pivot_col_name.append("_{0}_null".format(pcol))
                         else:
-                            pivot_col_condition.append(" \"{0}\" = '{1}'".
-                                                       format(pcol, comb[counter]))
+                            pivot_col_condition.append(" \"{0}\" = {1}".
+                                                       format(pcol, quoted_pcol_value))
                             pivot_col_name.append("_{0}_{1}".format(pcol, comb[counter]))
 
-                        # Collect pcol values for the dict
                         if output_col_dictionary:
-                            insert_str.append("{0}".format(
-                                comb[counter] if comb[counter] is not None else "NULL"))
-                    pivot_col_name.append("\"")
+                            dict_insert_str.append("{0}".format(quoted_pcol_value))
 
                     if output_col_dictionary:
-                        # Store the whole string in case some user wants it
-                        insert_str.append("\'{column_name}\')".
-                                          format(column_name=''.join(pivot_col_name)))
-                        pivot_col_name = ["__p_"+str(dict_counter)+"__"]
+                        # Store the whole string as additional info
+                        dict_insert_str.append("'{0}')".format(''.join(pivot_col_name)))
+                        pivot_col_name = ["__p_" + str(dict_counter) + "__"]
                         dict_counter += 1
+
                     # Collecting the whole sql query
                     # Please refer to the earlier comment for a sample output
-
                     # Build the pivot column with NULL values in tuples that don't
                     # satisfy that column's condition
-                    pivot_str_from = ("(CASE WHEN {condition} THEN {pval} END) "
-                                      "AS {pivot_col_name}".
-                                      format(pval=pval,
-                                             condition=' AND '.join(pivot_col_condition),
-                                             pivot_col_name=''.join(pivot_col_name)))
-                    pivot_str_from_list.append(pivot_str_from)
-                    # Aggregate over each pivot column, while filtering all NULL values
-                    # created by previous query.
-                    pivot_str_sel = ("{fill_str_begin}"
-                                     "  {agg} ({pivot_col_name}) "
-                                     "    FILTER (WHERE {pivot_col_name} IS NOT NULL) "
-                                     "{fill_str_end} AS {pivot_col_name}".
-                                     format(agg=agg, fill_str_begin=fill_str_begin,
-                                            fill_str_end=fill_str_end,
-                                            pivot_col_name=''.join(pivot_col_name)))
-                    pivot_str_sel_list.append(pivot_str_sel)
+                    p_name = '"{0}"'.format(''.join(pivot_col_name))
+                    pivot_str_from = (
+                        "(CASE WHEN {condition} THEN {pval} END) AS {p_name}".
+                        format(pval=pval,
+                               condition=' AND '.join(pivot_col_condition),
+                               p_name=p_name))
+                    pivot_from_list.append(pivot_str_from)
+
+                    # Aggregate over each pivot column, while filtering all NULL
+                    #  values created by previous query.
+                    sub_pivot_str_sel = _fill_value_wrapper(
+                        "{agg}({p_name}) "
+                        "   FILTER (WHERE {p_name} IS NOT NULL)".
+                        format(agg=agg, p_name=p_name))
+                    if not is_array_output:
+                        # keep spaces around the 'AS'
+                        sub_pivot_str_sel += " AS " + p_name
+                    sub_pivot_sel_list.append(sub_pivot_str_sel)
+
+                if sub_pivot_sel_list:
+                    if is_array_output:
+                        if output_type is 'svec':
+                            cast_str = '::FLOAT8[]::{0}.svec'.format(schema_madlib)
+                        else:
+                            cast_str = '::FLOAT8[]'
+                        pivot_sel_list.append(
+                            'ARRAY[{all_pivot_sel}]{cast_str} AS "{pval}_{agg}"'.
+                            format(all_pivot_sel=', '.join(sub_pivot_sel_list),
+                                   cast_str=cast_str,
+                                   pval=pval,
+                                   agg=agg))
+                    else:
+                        pivot_sel_list += sub_pivot_sel_list
 
         try:
             plpy.execute("""
                 CREATE TABLE {out_table} AS
                     SELECT {index},
-                           {pivot_str_sel_list}
+                           {all_pivot_sel_str}
                     FROM (
                             SELECT {index},
-                                   {pivot_str_from_list}
+                                   {all_pivot_from_str}
                             FROM {source_table}
                         ) x
                     GROUP BY {index}
                 """.format(out_table=out_table,
                            index=index,
                            source_table=source_table,
-                           pivot_str_from_list=', '.join(pivot_str_from_list),
-                           pivot_str_sel_list=', '.join(pivot_str_sel_list)))
+                           all_pivot_from_str=', '.join(pivot_from_list),
+                           all_pivot_sel_str=', '.join(pivot_sel_list)
+                           ))
 
             if output_col_dictionary:
                 plpy.execute("INSERT INTO {out_dict} VALUES {insert_sql}".
                              format(out_dict=out_dict,
-                                    insert_sql=', '.join(insert_str)))
+                                    insert_sql=', '.join(dict_insert_str)))
         except plpy.SPIError:
             # Warn user if the number of columns is over the limit
             with MinWarning("warning"):
@@ -314,16 +381,16 @@ def parse_aggregates(pvals, aggregate_func):
     5) A partial mapping (eg. 'val2=sum'): Use the default ('avg') for the
        missing value columns
     """
-    param_types = dict.fromkeys(pvals, list)
+    param_types = dict.fromkeys(pvals, tuple)
     agg_dict = extract_keyvalue_params(aggregate_func, param_types)
 
     if not agg_dict:
-        agg_list = split_quoted_delimited_str(aggregate_func)
-        agg_dict = dict.fromkeys(pvals, (agg_list if agg_list else ['avg']))
+        agg_list = tuple(split_quoted_delimited_str(aggregate_func))
+        agg_dict = dict.fromkeys(pvals, (agg_list if agg_list else ('avg', )))
     else:
         for pval in pvals:
             if pval not in agg_dict:
-                agg_dict[pval] = ['avg']
+                agg_dict[pval] = ('avg', )
     return agg_dict
 # ------------------------------------------------------------------------------
 
@@ -364,6 +431,26 @@ def validate_pivot_coding(source_table, out_table, indices, pivs, vals):
 # ------------------------------------------------------------------------------
 
 
+def validate_output_types(source_table, agg_dict, is_array_output):
+    """
+    Args:
+        @param source_table: str, Name of table containing data
+        @param agg_dict: dict, Key-value pair containing aggregates applied for each val column
+        @param is_array_output: bool, Is the pivot output columnar (False) or array (True)
+
+    Returns:
+        None
+    """
+    for val, func_iterable in agg_dict.items():
+        for func in func_iterable:
+            func_call_str = '{0}({1})'.format(func, val)
+            _assert(not ('[]' in get_expr_type(func_call_str, source_table) and
+                         is_array_output),
+                    "Pivot: Aggregate {0} with an array return type cannot be "
+                    "combined with output_type='array' or 'svec'".format(func))
+# ----------------------------------------------------------------------
+
+
 def pivot_help(schema_madlib, message, **kwargs):
     """
     Help function for pivot
@@ -401,14 +488,19 @@ For more details on function usage:
                             -- of the output pivot table
     pivot_cols,             -- Comma-separated columns that will form the
                             -- columns of the output pivot table
-    pivot_values            -- Comma-separated columns that contain the values
+    pivot_values,            -- Comma-separated columns that contain the values
                             -- to be summarized in the output pivot table
-    fill_value              -- If specified, determines how to fill NULL values
+    fill_value,              -- If specified, determines how to fill NULL values
                             -- resulting from pivot operation
-    keep_null               -- The flag for determining how to handle NULL
+    keep_null,               -- The flag for determining how to handle NULL
                             -- values in pivot columns
-    output_col_dictionary   -- The flag for enabling the creation of the
+    output_col_dictionary,   -- The flag for enabling the creation of the
                             -- output dictionary for shorter column names
+    output_type             -- This parameter controls the output format
+                            -- of the pivoted variables.
+                            -- If 'column', a column is created for each pivot
+                            -- If 'array', an array is created combining all pivots
+                            -- If 'svec', the array is cast to madlib.svec
  );
 
 -----------------------------------------------------------------------
