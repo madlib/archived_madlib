@@ -22,11 +22,12 @@
 \chapter[Graph]{Graph}
 
 \begin{moduleinfo}
-\item[Author] \href{mailto:okislal@pivotal.io}{Orhan Kislal}
+\item[Authors] \href{mailto:okislal@pivotal.io}{Orhan Kislal}, \href{mailto:njayaram@pivotal.io}{Nandish Jayaram}
 \item[History]
 	\begin{modulehistory}
 		\item[v0.1] Initial version, SSSP only.
 		\item[v0.2] Graph Framework, SSSP implementation details.
+        \item[v0.3] PageRank
 	\end{modulehistory}
 \end{moduleinfo}
 
@@ -272,3 +273,147 @@ of the algorithm.
 Please note that, for ideal performance, \emph{vertex} and \emph{edge} tables
 should be distributed on \emph{vertex id} and \emph{source id} respectively.
 
+\section{PageRank} \label{sec:graph:pagerank}
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/pagerank_example.pdf}
+\caption{An example graph for PageRank}
+\label{pagerank:example}
+\end{figure}
+
+PageRank is a link analysis algorithm that assigns a score to every vertex
+measuring the relative importance of vertices within the set of all
+vertices. PageRank~\cite{pagerank} was first used by Google to measure the
+importance of website pages where the World Wide Web was modeled as a directed
+graph. Figure~\ref{pagerank:example} shows an example graph with the PageRank
+value of each vertex. The intuition behind the algorithm is that the number and
+quality of links to a vertex determine the authoritativeness of the vertex,
+which is reflected in the PageRank scores as shown in the figure.
+
+The pagerank module in MADlib implements the model of a random surfer who
+follows the edges of a graph to traverse it, and jumps to a random vertex
+after several clicks. The random surfer is modeled using a damping factor
+that represents the probability with which the surfer will continue to follow
+links in the graph rather than jumping to a random vertex. MADlib's pagerank
+module outputs a probability distribution that represents the likelihood that
+the random surfer arrives at a particular vertex in the graph.
+
+PageRank is an iterative algorithm where the PageRank scores of vertices from
+the previous iteration are used to compute the new PageRank scores. The
+PageRank score of a vertex $v$, at the $i^{th}$ iteration, denoted by $PR(v_i)$
+is computed as:
+
+\begin{equation}
+PR(v_i) = \frac{1-d}{N} + d \sum_{u \in M(v)}(\frac{PR(u_{i-1})}{L(u)})
+\label{eq:pagerank}
+\end{equation}
+
+where $N$ is the number of vertices in the graph, $d$ is the damping factor,
+$M(v)$ represents the set of vertices that have an edge to vertex $v$,
+$L(u)$ represents the out-degree of vertex $u$, i.e., the number of
+out-going edges from vertex $u$, and $PR(u_{i-1})$ represents the PageRank
+score of vertex $u$ in the $(i-1)^{st}$ iteration.
+
+$\frac{1-d}{N}$ represents the tiny probability with which the surfer
+would randomly jump to vertex $v$, rather than arriving at $v$ following
+links in the graph. This ensures that there is some probability of visiting
+every vertex in the graph even if they do not have any incoming edges. Note
+that the PageRank score computed for a vertex $v$ using~\ref{eq:pagerank}
+in the $i^{th}$ iteration is not updated until the new score is computed for
+all the vertices in the graph. The computation terminates either when the
+PageRank score of no vertex changes beyond a threshold across two consecutive
+iterations, or when a pre-set number of iterations are completed.
+
+\subsection{Implementation Details} \label{sec:pagerank:implementation}
+
+In this section, we discuss the MADlib implementation of PageRank in depth.
+We maintain two tables at every iteration: $previous$ and $cur$. The
+$previous$ table maintains the PageRank scores of all vertices computed in
+the previous iteration, while $cur$ maintains the updated scores of all
+vertices in the current iteration.
+
+\begin{algorithm}[PageRank$(V,E)$] \label{alg:pagerank:high}
+\begin{algorithmic}[1]
+    \State Create $previous$ table with a default PageRank score of
+            $\frac{1}{N}$ for every vertex
+    \Repeat
+        \State Create empty table $cur$.
+        \State Update $cur$ using PageRank scores of vertices in $previous$
+        \State Update PageRank scores of vertices without incoming edges
+        \State Drop $previous$ and rename $cur$ to $previous$
+    \Until {PageRank scores have converged or \emph{max} iterations have elapsed}
+\end{algorithmic}
+\end{algorithm}
+
+The implementation consists of updating the PageRank scores of all vertices
+at every iteration, using the PageRank scores of vertices from the previous
+iteration. The PageRank score of every vertex is initialized to $\frac{1}{N}$
+where $N$ is the total number of vertices in the graph. The out-degree of
+every vertex in the graph (represented by $L(u)$ in eq.~\ref{eq:pagerank}),
+is captured in table $out\_cnts$. The following query is used to create and
+update the PageRank scores in $cur$ table using the PageRank scores in
+$previous$ table.
+
+\begin{algorithm}[Update PageRank scores$(previous,out\_cnts,d,N)$]
+\label{alg:pagerank:update}
+\begin{lstlisting}
+CREATE TABLE cur AS
+    SELECT edge_table.dest AS id,
+        SUM(previous1.pagerank/out_cnts.cnt)*d + (1-d)/N AS pagerank
+    FROM edge_table
+        INNER JOIN previous ON edge_table.dest = previous.id
+        INNER JOIN out_cnts ON edge_table.src = out_cnts.id
+        INNER JOIN previous AS previous1 ON edge_table.src = previous1.id
+    GROUP BY edge_table.dest
+
+-- Update PageRank scores of vertices without any incoming edges:
+INSERT INTO cur
+    SELECT id, (1-d)/N AS pagerank
+    FROM previous
+    WHERE id NOT IN (
+        SELECT id
+        FROM cur
+    )
+\end{lstlisting}
+\end{algorithm}
+
+The PageRank computation is terminated either when a fixed number of iterations
+are completed, or when the PageRank scores of all vertices have converged. The
+PageRank score of a vertex is deemed converged if the absolute difference in
+its PageRank scores from $previous$ and $cur$ is less than a specified threshold.
+The following query is used to find all the vertices whose PageRank scores have
+not converged yet.
+
+\begin{algorithm}[Update PageRank scores$(previous,cur,threshold)$]
+\label{alg:pagerank:update}
+\begin{lstlisting}
+SELECT id
+FROM cur
+INNER JOIN previous ON cur.id = previous.id
+WHERE ABS(previous.pagerank - cur.pagerank) > threshold
+\end{lstlisting}
+\end{algorithm}
+
+\subsection{Best Practices} \label{sec:pagerank:bestpractices}
+
+The pagerank module in MADlib has a few optional parameters: damping factor
+$d$, number of iterations $max$, and the threshold for convergence $threshold$.
+The default values for these parameters when not specified by the user are
+$0.85$, $100$ and $\frac{1}{N*100}$ respectively.
+
+The damping factor denotes the probability with which the surfer uses the edges
+to traverse the graph. If set to $0$, it implies that the only way a surfer
+would visit a vertex in the graph is by randomly jumping to it. If set to
+$1$, it implies that the only way the surfer can reach a vertex is by following
+the edges in the graph, thus precluding the surfer from reaching a vertex
+that has no incoming edges. It is common practice to set damping factor
+to $0.85$~\cite{pagerank}, and the maximum number of iterations to $100$.
+The convergence test for PageRank in MADlib checks for the delta between
+the PageRank scores of a vertex across two consecutive iterations. Since
+the initial value of the PageRank score is set to $\frac{1}{N}$, the delta
+will be small in the initial iterations when $N$ is large (say over 100
+million). We thus set the threshold to $\frac{1}{N*100}$, and it is to be
+noted that this is not based on any experimental study. Users of MADlib are
+encouraged to consider this factor when setting a value for threshold, since
+a high $threshold$ value would lead to early termination of PageRank
+computation, thus resulting in incorrect PageRank values.

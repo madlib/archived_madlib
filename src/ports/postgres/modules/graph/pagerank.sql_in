@@ -58,7 +58,8 @@ pagerank( vertex_table,
             out_table,
             damping_factor,
             max_iter,
-            threshold
+            threshold,
+            grouping_cols
           )
 </pre>
 
@@ -91,7 +92,13 @@ this string argument:
 It will contain a row for every vertex from 'vertex_table' with
 the following columns:
   - vertex_id : The id of a vertex. Will use the input parameter 'vertex_id' for column naming.
-  - pagerank : The vertex's PageRank.</dd>
+  - pagerank : The vertex's PageRank.
+  - grouping_cols : Grouping column (if any) values associated with the vertex_id.</dd>
+
+A summary table is also created that contains information 
+regarding the number of iterations required for convergence.
+It is named by adding the suffix '_summary' to the 'out_table' 
+parameter.
 
 <dt>damping_factor</dt>
 <dd>FLOAT8, default 0.85. The probability, at any step, that a user will continue following the links in a random surfer model.</dd>
@@ -100,9 +107,18 @@ the following columns:
 <dd>INTEGER, default: 100. The maximum number of iterations allowed.</dd>
 
 <dt>threshold</dt>
-<dd>FLOAT8, default: 1e-5. If the difference between the PageRank of every vertex of two consecutive
+<dd>FLOAT8, default: (1/number of vertices * 100). If the difference between the PageRank of every vertex of two consecutive
 iterations is smaller than 'threshold', or the iteration number is larger than 'max_iter', the
-computation stops.  If you set the threshold to zero, then you will force the algorithm to run for the full number of iterations specified in 'max_iter'.</dd>
+computation stops.  If you set the threshold to zero, then you will force the algorithm to run for the full number of iterations specified in 'max_iter'.
+It is advisable to set threshold to a value lower than 1/(number of vertices in the graph) since the PageRank value of nodes is initialized to that
+value.</dd>
+
+<dt>grouping_cols (optional)</dt>
+<dd>TEXT, default: NULL. A single column or a list of comma-separated
+columns that divides the input data into discrete groups, resulting in one
+distribution per group. When this value is NULL, no grouping is used and
+a single model is generated for all data.
+@note Expressions are not currently supported for 'grouping_cols'.</dd>
 
 </dl>
 
@@ -122,7 +138,8 @@ CREATE TABLE vertex(
         );
 CREATE TABLE edge(
         src INTEGER,
-        dest INTEGER
+        dest INTEGER,
+        user_id INTEGER
         );
 INSERT INTO vertex VALUES
 (0),
@@ -133,47 +150,66 @@ INSERT INTO vertex VALUES
 (5),
 (6);
 INSERT INTO edge VALUES
-(0, 1),
-(0, 2),
-(0, 4),
-(1, 2),
-(1, 3),
-(2, 3),
-(2, 5),
-(2, 6),
-(3, 0),
-(4, 0),
-(5, 6),
-(6, 3);
+(0, 1, 1),
+(0, 2, 1),
+(0, 4, 1),
+(1, 2, 1),
+(1, 3, 1),
+(2, 3, 1),
+(2, 5, 1),
+(2, 6, 1),
+(3, 0, 1),
+(4, 0, 1),
+(5, 6, 1),
+(6, 3, 1),
+(0, 1, 2),
+(0, 2, 2),
+(0, 4, 2),
+(1, 2, 2),
+(1, 3, 2),
+(2, 3, 2),
+(3, 0, 2),
+(4, 0, 2),
+(5, 6, 2),
+(6, 3, 2);
 </pre>
 
 -# Compute the PageRank:
 <pre class="syntax">
-DROP TABLE IF EXISTS pagerank_out;
+DROP TABLE IF EXISTS pagerank_out, pagerank_out_summary;
 SELECT madlib.pagerank(
                          'vertex',             -- Vertex table
                          'id',                 -- Vertix id column
                          'edge',               -- Edge table
                          'src=src, dest=dest', -- Comma delimted string of edge arguments
                          'pagerank_out');      -- Output table of PageRank
-SELECT * FROM pagerank_out ORDER BY pagerank desc;
+SELECT * FROM pagerank_out ORDER BY pagerank DESC;
 </pre>
 <pre class="result">
  id |      pagerank
-----+--------------------
-  0 |  0.278256122055856
-  3 |  0.201882680839737
-  2 |  0.142878491945534
-  6 |  0.114538731993905
-  1 |  0.100266150276761
-  4 |  0.100266150276761
-  5 |  0.061911672611445
+----+-------------------
+  0 |  0.28753749341184
+  3 |  0.21016988901855
+  2 |  0.14662683454062
+  4 |  0.10289614384217
+  1 |  0.10289614384217
+  6 |  0.09728637768887
+  5 |  0.05258711765692
 (7 rows)
 </pre>
-
--# Run PageRank with a damping factor of 0.5 results in different final values:
 <pre class="syntax">
-DROP TABLE IF EXISTS pagerank_out;
+SELECT * FROM pagerank_out_summary;
+</pre>
+<pre class="result">
+ __iterations__
+ ----------------+
+             16
+(1 row)
+</pre>
+
+-# Running PageRank with a damping factor of 0.5 results in different final values:
+<pre class="syntax">
+DROP TABLE IF EXISTS pagerank_out, pagerank_out_summary;
 SELECT madlib.pagerank(
                          'vertex',             -- Vertex table
                          'id',                 -- Vertix id column
@@ -181,19 +217,65 @@ SELECT madlib.pagerank(
                          'src=src, dest=dest', -- Comma delimted string of edge arguments
                          'pagerank_out',       -- Output table of PageRank
                          0.5);                 -- Damping factor
-SELECT * FROM pagerank_out ORDER BY pagerank desc;
+SELECT * FROM pagerank_out ORDER BY pagerank DESC;
 </pre>
 <pre class="result">
- id |     pagerank      
-----+-------------------
-  0 | 0.221378135793372
-  3 | 0.191574922960784
-  6 | 0.140994575864846
-  2 | 0.135406336658892
-  4 | 0.108324751971412
-  1 | 0.108324751971412
-  5 | 0.093996524779681
+ id |      pagerank      
+----+--------------------
+  0 |  0.225477161441199
+  3 |  0.199090328586664
+  2 |  0.136261327206477
+  6 |  0.132691559968224
+  4 |  0.109009291409508
+  1 |  0.109009291409508
+  5 | 0.0884610399788161
 (7 rows)
+</pre>
+
+-# Now compute the PageRank of vertices associated with each user
+using the grouping feature:
+<pre class="syntax">
+DROP TABLE IF EXISTS pagerank_out, pagerank_out_summary;
+SELECT madlib.pagerank(
+                         'vertex',             -- Vertex table
+                         'id',                 -- Vertix id column
+                         'edge',               -- Edge table
+                         'src=src, dest=dest', -- Comma delimted string of edge arguments
+                         'pagerank_out',       -- Output table of PageRank
+                         NULL,                 -- Default damping factor (0.85)
+                         NULL,                 -- Default max iters (100)
+                         0.00000001,           -- Threshold
+                         'user_id');           -- Grouping column name
+SELECT * FROM pagerank_out ORDER BY user_id, pagerank DESC;
+</pre>
+<pre class="result">
+ user_id | id |      pagerank
+---------+----+--------------------
+       1 |  0 |  0.27825488388552
+       1 |  3 |  0.20188114667075
+       1 |  2 |  0.14288112346059
+       1 |  6 |  0.11453637832147
+       1 |  1 |  0.10026745615438
+       1 |  4 |  0.10026745615438
+       1 |  5 |  0.06191155535288
+       2 |  0 |  0.31854625004173
+       2 |  3 |  0.23786686773343
+       2 |  2 |  0.15914876489397
+       2 |  1 |  0.11168334437971
+       2 |  4 |  0.11168334437971
+       2 |  6 |  0.03964285714285
+       2 |  5 |  0.02142857142857
+(14 rows)
+</pre>
+<pre class="syntax">
+SELECT * FROM pagerank_out_summary ORDER BY user_id;
+</pre>
+<pre class="result">
+ user_id | __iterations__
+---------+----------------
+       1 |             27
+       2 |             31
+(2 rows)
 </pre>
 
 @anchor literature
@@ -210,7 +292,8 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pagerank(
     out_table       TEXT,
     damping_factor  FLOAT8,
     max_iter        INTEGER,
-    threshold       FLOAT8
+    threshold       FLOAT8,
+    grouping_cols   VARCHAR
 ) RETURNS VOID AS $$
     PythonFunction(graph, pagerank, pagerank)
 $$ LANGUAGE plpythonu VOLATILE
@@ -223,9 +306,23 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pagerank(
     edge_args       TEXT,
     out_table       TEXT,
     damping_factor  FLOAT8,
+    max_iter        INTEGER,
+    threshold       FLOAT8
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.pagerank($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pagerank(
+    vertex_table    TEXT,
+    vertex_id       TEXT,
+    edge_table      TEXT,
+    edge_args       TEXT,
+    out_table       TEXT,
+    damping_factor  FLOAT8,
     max_iter        INTEGER
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.pagerank($1, $2, $3, $4, $5, $6, $7, 0.00001)
+    SELECT MADLIB_SCHEMA.pagerank($1, $2, $3, $4, $5, $6, $7, 0.00001, NULL)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 -------------------------------------------------------------------------
@@ -237,7 +334,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pagerank(
     out_table       TEXT,
     damping_factor  FLOAT8
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.pagerank($1, $2, $3, $4, $5, $6, 100, 0.00001)
+    SELECT MADLIB_SCHEMA.pagerank($1, $2, $3, $4, $5, $6, 100, 0.00001, NULL)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 -------------------------------------------------------------------------
@@ -248,7 +345,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.pagerank(
     edge_args       TEXT,
     out_table       TEXT
 ) RETURNS VOID AS $$
-    SELECT MADLIB_SCHEMA.pagerank($1, $2, $3, $4, $5, 0.85, 100, 0.00001)
+    SELECT MADLIB_SCHEMA.pagerank($1, $2, $3, $4, $5, 0.85, 100, 0.00001, NULL)
 $$ LANGUAGE SQL
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 -------------------------------------------------------------------------
