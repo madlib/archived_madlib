@@ -1424,6 +1424,11 @@ def main(argv):
             # Skip if doesn't meet specified modules
             if modset is not None and len(modset) > 0 and module not in modset:
                 continue
+            # JIRA: MADLIB-1078 fix
+            # Skip pmml during install-check (when run without the -t option).
+            # We can still run install-check on pmml with '-t' option.
+            if not modset and module in ['pmml']:
+                continue
             _info("> - %s" % module, verbose)
 
             # Make a temp dir for this module (if doesn't exist)
