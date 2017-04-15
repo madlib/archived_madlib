@@ -574,7 +574,6 @@ DecisionTree<Container>::expand(const Accumulator &state,
                 feature_indices(i) = FINISHED_LEAF;
         }
     }
-
     return training_finished;
 }
 // -------------------------------------------------------------------------
@@ -1025,11 +1024,10 @@ DecisionTree<Container>::shouldSplit(const ColumnVector &combined_stats,
     uint64_t thresh_min_bucket = (min_bucket == 0) ? 1u : min_bucket;
     uint64_t true_count = statCount(combined_stats.segment(0, stats_per_split));
     uint64_t false_count = statCount(combined_stats.segment(stats_per_split, stats_per_split));
-
     return ((true_count + false_count) >= min_split &&
             true_count >= thresh_min_bucket &&
             false_count >= thresh_min_bucket &&
-            tree_depth <= max_depth);
+            tree_depth <= max_depth + 1);
 }
 // ------------------------------------------------------------------------
 
@@ -1107,11 +1105,32 @@ DecisionTree<Container>::displayLeafNode(
     display_str << "\"" << id_prefix << id << "\" [label=\"" << predict_str.str();
 
     if(verbose){
-        display_str << "\\n samples = " << statCount(predictions.row(id)) << "\\n value = ";
+        display_str << "\\n impurity = "<< impurity(predictions.row(id))
+                    << "\\n samples = " << statCount(predictions.row(id))
+                    << "\\n value = ";
         if (is_regression)
             display_str << statPredict(predictions.row(id));
         else{
-            display_str << "[" << predictions.row(id).head(n_y_labels)<< "]";
+            display_str << "[";
+            // NUM_PER_LINE: inserting new lines at fixed intervals
+            // avoids a really long 'value' line
+            const uint16_t NUM_PER_LINE = 10;
+            // note: last element of predictions is 'statCount' and
+            // can be ignored
+            const Index pred_size = predictions.row(id).size() - 1;
+            for (Index i = 0; i < pred_size; i += NUM_PER_LINE){
+                uint16_t n_elem;
+                if (i + NUM_PER_LINE <= pred_size) {
+                    // not overflowing the vector
+                    n_elem = NUM_PER_LINE;
+                } else {
+                    // less than NUM_PER_LINE left, avoid reading past the end
+                    n_elem = pred_size - i;
+                }
+                display_str << predictions.row(id).segment(i, n_elem) << "\n";
+            }
+            display_str << "]";
+
         }
     }
     display_str << "\",shape=box]" << ";";
@@ -1143,23 +1162,46 @@ DecisionTree<Container>::displayInternalNode(
         label_str << escape_quotes(feature_name) << " <= " << feature_thresholds(id);
     } else {
         feature_name = get_text(cat_features_str, feature_indices(id));
-        label_str << escape_quotes(feature_name) << " in "
-                   << getCatLabels(feature_indices(id),
-                                   static_cast<Index>(0),
-                                   static_cast<Index>(feature_thresholds(id)),
-                                   cat_levels_text, cat_n_levels);
+        label_str << escape_quotes(feature_name) << " <= ";
+
+        // Text for all categoricals are stored in a flat array (cat_levels_text);
+        // find the appropriate index for this node
+        size_t to_skip = 0;
+        for (Index i=0; i < feature_indices(id); i++)
+            to_skip += cat_n_levels[i];
+        const size_t index = to_skip + feature_thresholds(id);
+        label_str << get_text(cat_levels_text, index);
     }
 
     std::stringstream display_str;
     display_str << "\"" << id_prefix << id << "\" [label=\"" << label_str.str();
     if(verbose){
+        display_str << "\\n impurity = "<< impurity(predictions.row(id)) << "\\n samples = " << statCount(predictions.row(id));
 
-        display_str << "\\n impurity = "<< impurity(predictions.row(id)) << "\\n samples = " << statCount(predictions.row(id)) << "\\n value = ";
+        display_str << "\\n value = ";
         if (is_regression)
             display_str << statPredict(predictions.row(id));
         else{
-            display_str << "[" << predictions.row(id).head(n_y_labels)<< "]";
+            display_str << "[";
+            // NUM_PER_LINE: inserting new lines at fixed interval
+            // avoids really long 'value' line
+            const uint16_t NUM_PER_LINE = 10;
+            // note: last element of predictions is just 'statCount' and needs to
+            // be ignored
+            const Index pred_size = predictions.row(id).size() - 1;
+            for (Index i = 0; i < pred_size; i += NUM_PER_LINE){
+                uint16_t n_elem;
+                if (i + NUM_PER_LINE <= pred_size) {
+                    // not overflowing the vector
+                    n_elem = NUM_PER_LINE;
+                } else {
+                    n_elem = pred_size - i;
+                }
+                display_str << predictions.row(id).segment(i, n_elem) << "\n";
+            }
+            display_str << "]";
         }
+
         std::stringstream predict_str;
         if (static_cast<bool>(is_regression)){
             predict_str << predict_response(id);
@@ -1360,20 +1402,24 @@ DecisionTree<Container>::getCatLabels(Index cat_index,
                                       Index end_value,
                                       ArrayHandle<text*> &cat_levels_text,
                                       ArrayHandle<int> &cat_n_levels) {
+    Index MAX_LABELS = 5;
     size_t to_skip = 0;
     for (Index i=0; i < cat_index; i++) {
         to_skip += cat_n_levels[i];
     }
     std::stringstream cat_levels;
-    size_t start_index;
+    size_t index;
     cat_levels << "{";
-    for (start_index = to_skip + start_value;
-            start_index < to_skip + end_value &&
-            start_index < cat_levels_text.size();
-            start_index++) {
-        cat_levels << get_text(cat_levels_text, start_index) << ",";
+    for (index = to_skip + start_value;
+            index < to_skip + end_value && index < cat_levels_text.size();
+            index++) {
+        cat_levels << get_text(cat_levels_text, index) << ",";
+        if (index > to_skip + start_value + MAX_LABELS){
+            cat_levels << " ... ";
+            break;
+        }
     }
-    cat_levels << get_text(cat_levels_text, start_index) << "}";
+    cat_levels << get_text(cat_levels_text, index) << "}";
     return cat_levels.str();
 }
 // -------------------------------------------------------------------------
@@ -1575,7 +1621,7 @@ TreeAccumulator<Container, DTree>::operator<<(const tuple_type& inTuple) {
             uint16_t n_non_leaf_nodes = static_cast<uint16_t>(n_leaf_nodes - 1);
             Index dt_search_index = dt.search(cat_features, con_features);
             if (dt.feature_indices(dt_search_index) != dt.FINISHED_LEAF &&
-                 dt.feature_indices(dt_search_index) != dt.NODE_NON_EXISTING) {
+                   dt.feature_indices(dt_search_index) != dt.NODE_NON_EXISTING) {
                 Index row_index = dt_search_index - n_non_leaf_nodes;
                 assert(row_index >= 0);
                 // add this row into the stats for the node
@@ -1651,7 +1697,7 @@ TreeAccumulator<Container, DTree>::operator<<(const surr_tuple_type& inTuple) {
         double primary_val = is_primary_cat ? cat_features(primary_index) :
                                               con_features(primary_index);
 
-        // We only capture statistics for rows that:
+        // Only capture statistics for rows that:
         //  1. lead to leaf nodes in the last layer. Surrogates for other nodes
         //      have already been trained.
         //  2. have non-null values for the primary split.

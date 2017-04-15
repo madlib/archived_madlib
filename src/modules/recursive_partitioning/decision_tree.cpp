@@ -237,7 +237,9 @@ dt_apply::run(AnyType & args){
     }
 
     AnyType output_tuple;
-    output_tuple << dt.storage() << return_code << static_cast<uint16_t>(dt.tree_depth - 1);
+    output_tuple << dt.storage()
+                 << return_code
+                 << static_cast<uint16_t>(dt.tree_depth - 1);
     return output_tuple;
 } // apply function
 // -------------------------------------------------------------------------

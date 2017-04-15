@@ -156,11 +156,11 @@ p_log2_p(const double &p) {
 AnyType
 dst_compute_entropy_final::run(AnyType &args){
     MappedIntegerVector state = args[0].getAs<MappedIntegerVector>();
-    double sum = static_cast<double>(state.sum());
-    ColumnVector probilities = state.cast<double>() / sum;
+    double sum_of_dep_counts = static_cast<double>(state.sum());
+    ColumnVector probs = state.cast<double>() / sum_of_dep_counts;
     // usage of unaryExpr with functor:
     // http://eigen.tuxfamily.org/dox/classEigen_1_1MatrixBase.html#a23fc4bf97168dee2516f85edcfd4cfe7
-    return -(probilities.unaryExpr(std::ptr_fun(p_log2_p))).sum();
+    return -(probs.unaryExpr(std::ptr_fun(p_log2_p))).sum();
 }
 // ------------------------------------------------------------
 

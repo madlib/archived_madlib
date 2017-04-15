@@ -34,7 +34,7 @@ from decision_tree import _is_dep_categorical
 from decision_tree import _get_n_and_deplist
 from decision_tree import _classify_features
 from decision_tree import _get_filter_str
-from decision_tree import _get_col_value
+from decision_tree import _dict_get_quoted
 from decision_tree import _get_display_header
 from decision_tree import get_feature_str
 # ------------------------------------------------------------
@@ -329,8 +329,8 @@ def forest_train(
                         "is more than the actual number of features.")
 
                 all_cols_types = dict(get_cols_and_types(training_table_name))
-                cat_features, con_features, boolean_cats = _classify_features(
-                    all_cols_types, features)
+                cat_features, ordered_cat_features, con_features, boolean_cats = \
+                    _classify_features(all_cols_types, features)
 
                 filter_null = _get_filter_str(schema_madlib, cat_features,
                                               con_features, boolean_cats,
@@ -382,7 +382,8 @@ def forest_train(
                     # bins, and continuous bins
                     num_groups = 1
                     bins = _get_bins(schema_madlib, training_table_name,
-                                     cat_features, con_features, num_bins, dep,
+                                     cat_features, ordered_cat_features,
+                                     con_features, num_bins, dep,
                                      boolean_cats, n_rows, is_classification,
                                      dep_n_levels, filter_null)
                     # some features may be dropped because they have only one value
@@ -390,13 +391,14 @@ def forest_train(
                     bins['grp_key_cat'] = ['']
                 else:
                     grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
-                    grouping_cols_and_types = [(col, _get_col_value(all_cols_types, col))
+                    grouping_cols_and_types = [(col, _dict_get_quoted(all_cols_types, col))
                                                for col in grouping_cols_list]
-                    grouping_array_str = "array_to_string(array[" + \
-                            ','.join("(case when " + col + " then 'True' else 'False' end)::text"
+                    grouping_array_str = (
+                        "array_to_string(array[" +
+                        ','.join("(case when " + col + " then 'True' else 'False' end)::text"
                                  if col_type == 'boolean' else '(' + col + ')::text'
-                                 for col, col_type in grouping_cols_and_types) + \
-                            "], ',')"
+                                 for col, col_type in grouping_cols_and_types) +
+                        "], ',')")
                     grouping_cols_str = ('' if grouping_cols is None
                                          else grouping_cols + ",")
                     sql_grp_key_to_grp_cols = """
@@ -417,7 +419,8 @@ def forest_train(
                             """.format(**locals()))[0]['count']
                     plpy.notice("Analyzing data to compute split boundaries for variables")
                     bins = _get_bins_grps(schema_madlib, training_table_name,
-                                          cat_features, con_features, num_bins, dep,
+                                          cat_features, ordered_cat_features,
+                                          con_features, num_bins, dep,
                                           boolean_cats, grouping_cols,
                                           grouping_array_str, n_rows,
                                           is_classification, dep_n_levels, filter_null)
@@ -1198,7 +1201,7 @@ def _create_summary_table(**kwargs):
     else:
         kwargs['dep_list_str'] = "NULL"
 
-    kwargs['indep_type'] = ', '.join(_get_col_value(kwargs['all_cols_types'], col)
+    kwargs['indep_type'] = ', '.join(_dict_get_quoted(kwargs['all_cols_types'], col)
                            for col in kwargs['cat_features'] + kwargs['con_features'])
     kwargs['dep_type'] = _get_dep_type(kwargs['training_table_name'],
                                        kwargs['dependent_variable'])
