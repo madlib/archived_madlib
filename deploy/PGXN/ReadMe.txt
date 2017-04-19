@@ -5,11 +5,11 @@ MADlib is an open-source library for scalable in-database analytics.
 It provides data-parallel implementations of mathematical, statistical
 and machine learning methods for structured and unstructured data.
 
-See the project web site located at http://madlib.incubator.apache.org/ for links to the latest
-binary and source packages.
+See the project web site located at http://madlib.incubator.apache.org/ for
+links to the latest binary and source packages.
 
 For installation and contribution guides, please see the MADlib wiki at
-https://github.com/madlib/madlib/wiki.
+https://cwiki.apache.org/confluence/display/MADLIB.
 
 The latest documentation of MADlib modules can be found at http://madlib.incubator.apache.org/docs
 or can be accessed directly from the MADlib installation directory by opening
@@ -18,18 +18,28 @@ doc/user/html/index.html.
 Changes between MADlib versions are described in the ReleaseNotes.txt file.
 
 MADlib incorporates material from the following third-party components:
+
+Bundled with source code:
+- libstemmer "small string processing language"
+  http://snowballstem.org/
+- m_widen_init "allows compilation with recent versions of gcc with runtime
+  dependencies from earlier versions of libstdc++"
+  https://github.com/apache/incubator-madlib/blob/master/licenses/third_party/_M_widen_init.txt
+- PyYAML 3.10 "is a YAML parser and emitter for Python"
+  http://pyyaml.org/wiki/PyYAML
 - argparse 1.2.1 "provides an easy, declarative interface for creating command
   line tools"
   http://code.google.com/p/argparse/
-- Boost 1.47.0 (or newer) "provides peer-reviewed portable C++ source
+- UseLATEX.cmake "CMAKE commands to use the LaTeX compiler"
+  https://github.com/kmorel/UseLATEX/blob/master/UseLATEX.cmake
+
+Downloaded at build time:
+- Boost 1.61.0 (or newer) "provides peer-reviewed portable C++ source
   libraries"
   http://www.boost.org/
-- doxypy 0.4.2 "is an input filter for Doxygen"
-  http://code.foosel.org/doxypy
-- Eigen 3.2.2 "is a C++ template library for linear algebra"
+- Eigen 3.2 "is a C++ template library for linear algebra"
   http://eigen.tuxfamily.org/index.php?title=Main_Page
-- PyYAML 3.10 "is a YAML parser and emitter for Python"
-  http://pyyaml.org/wiki/PyYAML
+- PyXB 1.2.4 "Python library for XML Schema Bindings"
 
 License information regarding MADlib and included third-party libraries can be
 found inside the 'licenses' directory.

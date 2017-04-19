@@ -12,6 +12,7 @@ set(MADLIB_PGXN_NAME "madlib-pgxn-${MADLIB_PGXN_VERSION_STR}")
 configure_file(META.json.in META.json)
 configure_file(generate_package.sh.in generate_package.sh @ONLY)
 configure_file(zipignore.in zipignore)
+configure_file(ReadMe.txt ReadMe.txt COPYONLY)
 add_custom_command(
     OUTPUT madlib.zip
     COMMAND "${CMAKE_COMMAND}" -E create_symlink

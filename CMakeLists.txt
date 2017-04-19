@@ -182,7 +182,6 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/licenses"
 )
 install(
     FILES
-        "${CMAKE_CURRENT_SOURCE_DIR}/ReadMe.txt"
         "${CMAKE_CURRENT_SOURCE_DIR}/README.md"
         "${CMAKE_CURRENT_SOURCE_DIR}/RELEASE_NOTES"
     DESTINATION doc

@@ -2,7 +2,7 @@
 # MADlib Documentation
 # ------------------------------------------------------------------------------
 
-set(DOXYGEN_README_FILE "../ReadMe.txt" CACHE STRING
+set(DOXYGEN_README_FILE "../README.md" CACHE STRING
     "Path to ReadMe file relative to the doc directory after installation")
 set(DOXYGEN_LICENSE_DIR "../../licenses" CACHE STRING
     "Path to license directory relative to the doc directory after installation")
