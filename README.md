@@ -9,9 +9,10 @@ machine learning methods for structured and unstructured data.
 
 Installation and Contribution
 ==============================
-See the project webpage  [`MADlib Home`](http://madlib.incubator.apache.org/) for links to the
+See the project website  [`MADlib Home`](http://madlib.incubator.apache.org/) for links to the
 latest binary and source packages. For installation and contribution guides,
-please see [`MADlib Wiki`](https://cwiki.apache.org/confluence/display/MADLIB/)
+and other useful information
+please refer to the [`MADlib Wiki`](https://cwiki.apache.org/confluence/display/MADLIB/)
 
 Development with Docker
 =======================
@@ -79,13 +80,19 @@ architecture.
 
 Third Party Components
 ======================
-MADlib incorporates material from the following third-party components
+MADlib incorporates software from the following third-party components.  Bundled with source code:
 
-1. [`argparse 1.2.1`](http://code.google.com/p/argparse/) "provides an easy, declarative interface for creating command line tools"
-2. [`Boost 1.47.0 (or newer)`](http://www.boost.org/) "provides peer-reviewed portable C++ source libraries"
-3. [`Eigen 3.2.2`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "is a C++ template library for linear algebra"
-4. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "is a YAML parser and emitter for Python"
-5. [`PyXB 1.2.4`](http://pyxb.sourceforge.net/) "is a Python library for XML Schema Bindings"
+1. [`libstemmer`](http://snowballstem.org/) "small string processing language"
+2. [`m_widen_init`](https://github.com/apache/incubator-madlib/blob/master/licenses/third_party/_M_widen_init.txt) "allows compilation with recent versions of gcc with runtime dependencies from earlier versions of libstdc++"
+3. [`argparse 1.2.1`](http://code.google.com/p/argparse/) "provides an easy, declarative interface for creating command line tools"
+4. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "YAML parser and emitter for Python"
+5. [`UseLATEX.cmake`](https://github.com/kmorel/UseLATEX/blob/master/UseLATEX.cmake) "CMAKE commands to use the LaTeX compiler"
+
+Downloaded at build time:
+
+6. [`Boost 1.61.0 (or newer)`](http://www.boost.org/) "provides peer-reviewed portable C++ source libraries"
+7. [`PyXB 1.2.4`](http://pyxb.sourceforge.net/) "Python library for XML Schema Bindings"
+8. [`Eigen 3.2.2`](http://eigen.tuxfamily.org/index.php?title=Main_Page) "C++ template library for linear algebra"
 
 Licensing
 ==========
