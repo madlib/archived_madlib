@@ -18,10 +18,10 @@ set(BITBUCKET_BASE_URL
     "${MADLIB_REDIRECT_PREFIX}https://bitbucket.org"
     CACHE STRING
     "Base URL for Bitbucket projects. May be overridden for testing purposes.")
-set(GITHUB_MADLIB_BASE_URL
-    "${MADLIB_REDIRECT_PREFIX}https://github.com/madlib"
+set(EIGEN_BASE_URL
+    "${MADLIB_REDIRECT_PREFIX}https://github.com/madlib/eigen/archive"
     CACHE STRING
-    "Base URL for MADlib Github projects. May be overridden for testing purposes.")
+    "Base URL for Eigen projects. May be overridden for testing purposes.")
 
 # Boost might not be present on the system (or simply too old). In this case, we
 # download the following version (unless it is already present in
@@ -52,7 +52,7 @@ endif (NOT BOOST_TAR_SOURCE)
 # -DEIGEN_TAR_SOURCE=/path/to/eigen-x.x.x.tar.gz
 
 set(EIGEN_VERSION "branches/3.2")
-set(EIGEN_URL "${GITHUB_MADLIB_BASE_URL}/eigen/archive/${EIGEN_VERSION}.tar.gz")
+set(EIGEN_URL "${EIGEN_BASE_URL}/${EIGEN_VERSION}.tar.gz")
 set(EIGEN_TAR_MD5 13bc1043270d8f4397339c0cb0b62938)
 set(EIGEN_MPL2_ONLY TRUE)
 

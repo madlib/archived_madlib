@@ -12,7 +12,7 @@ rh_version(RH_VERSION)
 # -- Set RPM-specific variables ------------------------------------------------
 
 set(CPACK_RPM_PACKAGE_ARCHITECTURE x86_64 PARENT_SCOPE)
-set(CPACK_RPM_PACKAGE_LICENSE "New BSD License" PARENT_SCOPE)
+set(CPACK_RPM_PACKAGE_LICENSE "ASL 2.0" PARENT_SCOPE)
 set(CPACK_RPM_PACKAGE_GROUP "Development/Libraries" PARENT_SCOPE)
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/local/madlib/Versions/${MADLIB_VERSION_STRING}" PARENT_SCOPE)
 

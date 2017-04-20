@@ -1,4 +1,4 @@
-![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/magnetic-icon.png?raw=True) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/agile-icon.png?raw=True) ![](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/deep-icon.png?raw=True)
+![](doc/imgs/magnetic-icon.png?raw=True) ![](doc/imgs/agile-icon.png?raw=True) ![](doc/imgs/deep-icon.png?raw=True)
 =================================================
 **MADlib<sup>&reg;</sup>** is an open-source library for scalable in-database analytics.
 It provides data-parallel implementations of mathematical, statistical and
@@ -63,6 +63,8 @@ docker kill madlib
 docker rm madlib
 ```
 
+Detailed build instructions are available in [`ReadMe_Build.txt`](ReadMe_Build.txt)
+
 User and Developer Documentation
 ==================================
 The latest documentation of MADlib modules can be found at [`MADlib
@@ -75,7 +77,7 @@ The following block-diagram gives a high-level overview of MADlib's
 architecture.
 
 
-![MADlib Architecture](https://github.com/apache/incubator-madlib/blob/master/doc/imgs/architecture.png?raw=True)
+![MADlib Architecture](doc/imgs/architecture.png?raw=True)
 
 
 Third Party Components
@@ -83,12 +85,12 @@ Third Party Components
 MADlib incorporates software from the following third-party components.  Bundled with source code:
 
 1. [`libstemmer`](http://snowballstem.org/) "small string processing language"
-2. [`m_widen_init`](https://github.com/apache/incubator-madlib/blob/master/licenses/third_party/_M_widen_init.txt) "allows compilation with recent versions of gcc with runtime dependencies from earlier versions of libstdc++"
+2. [`m_widen_init`](licenses/third_party/_M_widen_init.txt) "allows compilation with recent versions of gcc with runtime dependencies from earlier versions of libstdc++"
 3. [`argparse 1.2.1`](http://code.google.com/p/argparse/) "provides an easy, declarative interface for creating command line tools"
 4. [`PyYAML 3.10`](http://pyyaml.org/wiki/PyYAML) "YAML parser and emitter for Python"
 5. [`UseLATEX.cmake`](https://github.com/kmorel/UseLATEX/blob/master/UseLATEX.cmake) "CMAKE commands to use the LaTeX compiler"
 
-Downloaded at build time:
+Downloaded at build time (or supplied as build dependencies):
 
 6. [`Boost 1.61.0 (or newer)`](http://www.boost.org/) "provides peer-reviewed portable C++ source libraries"
 7. [`PyXB 1.2.4`](http://pyxb.sourceforge.net/) "Python library for XML Schema Bindings"
@@ -96,13 +98,17 @@ Downloaded at build time:
 
 Licensing
 ==========
-License information regarding MADlib and included third-party libraries can be
-found inside the [`license`](https://github.com/apache/incubator-madlib/blob/master/licenses) directory.
+Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the [`NOTICE`](NOTICE) file distributed with this work for additional information regarding copyright ownership. The ASF licenses this project to You under the Apache License, Version 2.0 (the "License"); you may not use this project except in compliance with the License. You may obtain a copy of the License at [`LICENSE`](LICENSE).
+
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+As specified in [`LICENSE`](LICENSE) additional license information regarding included third-party libraries can be
+found inside the [`licenses`](licenses) directory.
 
 Release Notes
 =============
 Changes between MADlib versions are described in the
-[`ReleaseNotes.txt`](https://github.com/apache/incubator-madlib/blob/master/RELEASE_NOTES) file.
+[`ReleaseNotes.txt`](RELEASE_NOTES) file.
 
 Papers and Talks
 =================

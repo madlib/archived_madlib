@@ -17,7 +17,8 @@ Building and Installing from Source
 - CMake >= 2.8.4
 
 - Internet connection to automatically download MADlib's dependencies if needed
-  (Boost, Eigen). See configuration options below.
+  (Boost, Eigen). You can avoid this and build MADlib in a networkless mode
+  by providing tarballs of 3 external dependencies. See configuration options below.
 
 Optional:
 
@@ -40,6 +41,12 @@ Optional:
   + Greenplum 4.2, 4.3
   + All requirements for generating user-level documentation (see above)
 
+** Build-time Debian package dependencies (optional read):
+-------------------------------------------
+
+On Debian based platform you can install the required dependencies (aside from
+Boost, Eigen and PyXB) by running the following command:
+  apt-get install cmake g++ m4 python flex bison doxygen graphviz postgresql-server-dev-all texlive-full poppler-utils
 
 ** Build instructions (required read):
 --------------------------------------
@@ -158,8 +165,14 @@ root directory) for more options, after having run `cmake` the first time.
 
 - `EIGEN_TAR_SOURCE` (default: *empty*)
 
-    Eigen is downloaded automatically, unless the you call `./configure`
+    Eigen is downloaded automatically, unless you call `./configure`
     with `-DEIGEN_TAR_SOURCE=/path/to/eigen_x.tar.gz`, in which case
+    this tarball is used.
+
+- `PYXB_TAR_SOURCE` (default: *empty*)
+
+    PyXB is downloaded automatically, unless you call `./configure`
+    with `-DPYXB_TAR_SOURCE=/path/to/pyxb_x.tar.gz`, in which case
     this tarball is used.
 
 
