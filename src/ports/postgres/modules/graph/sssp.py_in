@@ -314,9 +314,13 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 						{checkg_oo})
 					UNION
 					SELECT {grp_comma} id, {weight}, parent FROM {oldupdate};
-				DROP TABLE {out_table};
-				ALTER TABLE {temp_table} RENAME TO {out_table};
-				CREATE TABLE {temp_table} AS (
+				"""
+				plpy.execute(sql.format(**locals()))
+				sql = "DROP TABLE {out_table}"
+				plpy.execute(sql.format(**locals()))
+				sql = "ALTER TABLE {temp_table} RENAME TO {out_table}"
+				plpy.execute(sql.format(**locals()))
+				sql = """ CREATE TABLE {temp_table} AS (
 					SELECT * FROM {out_table} LIMIT 0)
 					{distribution};"""
 				plpy.execute(sql.format(**locals()))
@@ -409,7 +413,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 			# It is possible that not all groups has negative cycles.
 			else:
 
-				# gsql is the string created by collating grouping columns.
+				# grp is the string created by collating grouping columns.
 				# By looking at the oldupdate table we can see which groups
 				# are in a negative cycle.
 
@@ -419,9 +423,6 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 					""".format(**locals()))[0]['grp']
 
 				# Delete the groups with negative cycles from the output table.
-				sql_del = """ DELETE FROM {out_table}
-					USING {oldupdate} AS oldupdate
-					WHERE {checkg_oo_sub}"""
 				if is_hawq:
 					sql_del = """
 						TRUNCATE TABLE {temp_table};
@@ -432,11 +433,17 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 								SELECT 1
 								FROM {oldupdate} as oldupdate
 								WHERE {checkg_oo_sub}
-								);
-						DROP TABLE {out_table};
-						ALTER TABLE {temp_table} RENAME TO {out_table};"""
-
-				plpy.execute(sql_del.format(**locals()))
+								);"""
+					plpy.execute(sql_del.format(**locals()))
+					sql_del = "DROP TABLE {out_table}"
+					plpy.execute(sql_del.format(**locals()))
+					sql_del = "ALTER TABLE {temp_table} RENAME TO {out_table};"
+					plpy.execute(sql_del.format(**locals()))
+				else:
+					sql_del = """ DELETE FROM {out_table}
+						USING {oldupdate} AS oldupdate
+						WHERE {checkg_oo_sub}"""
+					plpy.execute(sql_del.format(**locals()))
 
 				# If every group has a negative cycle,
 				# drop the output table as well.
