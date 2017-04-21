@@ -932,7 +932,7 @@ def _db_create_objects(schema, old_schema, upgrade=False, sc=None, testcase="",
                                    sc)
             # Check the exit status
             if retval != 0:
-                _error("Failed executing %s" % tmpfile, False)
+                _error("TEST CASE RESULTed executing %s" % tmpfile, False)
                 _error("Check the log at %s" % logfile, False)
                 raise Exception
 # ------------------------------------------------------------------------------
@@ -1489,8 +1489,6 @@ def main(argv):
 
                 # Check the exit status
                 if retval != 0:
-                    _error("Failed executing %s" % tmpfile, False)
-                    _error("Check the log at %s" % logfile, False)
                     result = 'FAIL'
                     keeplogs = True
                 # Since every single statement in the test file gets logged,
@@ -1501,11 +1499,14 @@ def main(argv):
                 else:
                     result = 'ERROR'
 
-                # Spit the line
+                # Output result
                 print "TEST CASE RESULT|Module: " + module + \
                     "|" + os.path.basename(sqlfile) + "|" + result + \
                     "|Time: %d milliseconds" % (milliseconds)
 
+                if result == 'FAIL':
+                    _error("Failed executing %s" % tmpfile, False)
+                    _error("Check the log at %s" % logfile, False)
             # Cleanup test schema for the module
             _internal_run_query("DROP SCHEMA IF EXISTS %s CASCADE;" % (test_schema), True)
 

@@ -19,6 +19,7 @@
 
 import re
 import sys
+import subprocess
 from collections import namedtuple
 
 """ Convert install-check results into a standardized JUnit XML format
@@ -36,7 +37,7 @@ Example of JUnit output:
 """
 
 
-TestResult = namedtuple("TestResult", 'name suite status duration')
+TestResult = namedtuple("TestResult", 'name suite status duration message')
 
 
 def _test_result_factory(install_check_log):
@@ -48,11 +49,29 @@ def _test_result_factory(install_check_log):
         Next result of type test_result
     """
     with open(install_check_log, 'r') as ic_log:
-        for line in ic_log:
+        line = ic_log.readline()
+        while line:
             m = re.match(r"^TEST CASE RESULT\|Module: (.*)\|(.*)\|(.*)\|Time: ([0-9]+)(.*)", line)
             if m:
-                yield TestResult(name=m.group(2), suite=m.group(1),
-                                 status=m.group(3), duration=m.group(4))
+                suite, name, status, duration = [m.group(i) for i in range(1, 5)]
+                message = ""
+                if status == 'FAIL':
+                    # get the tmp file and log file containing error
+                    # these two lines are output after each failure
+                    tmp_file_line = ic_log.readline()
+                    log_file_line = ic_log.readline()
+                    failure_m = re.match(r".* Check the log at (.*)", log_file_line)
+                    if failure_m:
+                        log_file = failure_m.group(1)
+                        try:
+                            message = subprocess.check_output(['tail', '-n 100', log_file],
+                                                              stderr=subprocess.STDOUT)
+                        except subprocess.CalledProcessError as e:
+                            message = e.output
+                yield TestResult(name=name, suite=suite,
+                                 status=status, duration=duration,
+                                 message=message)
+            line = ic_log.readline()
 # ----------------------------------------------------------------------
 
 
@@ -68,15 +87,17 @@ def _add_footer(out_log):
 
 
 def _add_test_case(out_log, test_results):
-    for res in test_results:
+    for t in test_results:
         try:
             # convert duration from milliseconds to seconds
-            duration = float(res.duration)/1000
+            duration = float(t.duration)/1000
         except TypeError:
             duration = 0.0
         output = ['<testcase classname="{t.suite}" name="{t.name}" '
                   'status="{t.status}" time="{d}">'.
-                  format(t=res, d=duration)]
+                  format(t=t, d=duration)]
+        if t.status == "FAIL":
+            output.append('<failure>{0}</failure>'.format(t.message))
         output.append('</testcase>')
         out_log.write('\n'.join(output))
 
@@ -93,4 +114,6 @@ def main(install_check_log, test_output_log):
 
 
 if __name__ == "__main__":
+    # argv[1] = install check log
+    # argv[2] = output file to store xml
     main(sys.argv[1], sys.argv[2])

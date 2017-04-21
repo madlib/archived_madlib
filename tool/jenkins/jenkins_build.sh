@@ -64,7 +64,9 @@ echo "---------- Installing and running install-check --------------------"
 # Install MADlib and run install check
 cat <<EOF
 docker exec madlib /build/src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install | tee $workdir/logs/madlib_install.log
-docker exec madlib /build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres install-check | tee $workdir/logs/madlib_install_check.log
+
+mkdir -p $workdir/tmp
+docker exec madlib /build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres -d $workdir/tmp install-check | tee $workdir/logs/madlib_install_check.log
 EOF
 docker exec madlib /build/src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install | tee $workdir/logs/madlib_install.log
 docker exec madlib /build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres install-check | tee $workdir/logs/madlib_install_check.log
