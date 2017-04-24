@@ -6,8 +6,10 @@ from utilities.utilities import _array_to_string
 from convex.utils_regularization import __utils_ind_var_scales
 from convex.utils_regularization import __utils_dep_var_scale
 from convex.utils_regularization import __utils_normalize_data
+from convex.utils_regularization import __utils_ind_var_scales_grouping
+from convex.utils_regularization import __utils_dep_var_scale_grouping
+from convex.utils_regularization import __utils_normalize_data_grouping
 from utilities.validate_args import table_exists
-from utilities.control import IterationController2S
 
 from collections import namedtuple
 
@@ -108,7 +110,6 @@ def _generate_warmup_lambda_sequence(lambda_value, n_steps):
     return seq
 # ------------------------------------------------------------------------
 
-
 def _compute_average_sq(**args):
     """
     Compute the average squares of all features, used to estimtae the largest lambda
@@ -192,16 +193,27 @@ def _elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
     return None
 # ------------------------------------------------------------------------
 
+def _compute_data_scales_grouping(args):
+    __utils_ind_var_scales_grouping(args["tbl_source"], args["col_ind_var"],
+        args["dimension"], args["schema_madlib"], args["grouping_col"],
+        args["x_mean_table"])
+    if args["family"] == "binomial":
+        # set mean and std to 0 and 1 respectively, for each group.
+        __utils_dep_var_scale_grouping(args["y_mean_table"],
+            args["tbl_source"], args["grouping_col"], args["family"])
+    else:
+        __utils_dep_var_scale_grouping(args["y_mean_table"],
+            args["tbl_source"], args["grouping_col"], args["family"],
+            args["schema_madlib"], args["col_ind_var"], args["col_dep_var"])
 
 def _compute_data_scales(args):
-    args["x_scales"] = __utils_ind_var_scales(tbl_data=args["tbl_source"], col_ind_var=args["col_ind_var"],
-                                              dimension=args["dimension"], schema_madlib=args["schema_madlib"])
-
+    args["x_scales"] = __utils_ind_var_scales(args["tbl_source"],
+        args["col_ind_var"], args["dimension"], args["schema_madlib"])
     if args["family"] == "binomial":
         args["y_scale"] = dict(mean=0, std=1)
     else:
-        args["y_scale"] = __utils_dep_var_scale(schema_madlib=args["schema_madlib"], tbl_data=args["tbl_source"],
-                                                col_ind_var=args["col_ind_var"], col_dep_var=args["col_dep_var"])
+        args["y_scale"] = __utils_dep_var_scale(args["schema_madlib"],
+            args["tbl_source"], args["col_ind_var"], args["col_dep_var"])
 
     args["xmean_str"] = _array_to_string(args["x_scales"]["mean"])
 # ------------------------------------------------------------------------
@@ -214,23 +226,45 @@ def _normalize_data(args):
 
     The output is stored in tbl_data_scaled
     """
-    _compute_data_scales(args)
-
     y_decenter = True if args["family"] == "gaussian" else False
-
-    __utils_normalize_data(y_decenter=y_decenter,
-                           tbl_data=args["tbl_source"],
-                           col_ind_var=args["col_ind_var"],
-                           col_dep_var=args["col_dep_var"],
-                           tbl_data_scaled=args["tbl_data_scaled"],
-                           col_ind_var_norm_new=args["col_ind_var_norm_new"],
-                           col_dep_var_norm_new=args["col_dep_var_norm_new"],
-                           schema_madlib=args["schema_madlib"],
-                           x_mean_str=args["xmean_str"],
-                           x_std_str=_array_to_string(args["x_scales"]["std"]),
-                           y_mean=args["y_scale"]["mean"],
-                           y_std=args["y_scale"]["std"],
-                           grouping_col=args["grouping_col"])
+    if args["grouping_col"]:
+        # When grouping_col is defined, we must find an array containing
+        # the mean of every dimension in the independent variable (x), the
+        # mean of dependent variable (y) and the standard deviation for them
+        # specific to groups. Store these results in temp tables x_mean_table
+        # and y_mean_table.
+        _compute_data_scales_grouping(args)
+        # __utils_normalize_data_grouping reads the various means and stds
+        # from the tables.
+        __utils_normalize_data_grouping(y_decenter=y_decenter,
+                               tbl_data=args["tbl_source"],
+                               col_ind_var=args["col_ind_var"],
+                               col_dep_var=args["col_dep_var"],
+                               tbl_data_scaled=args["tbl_data_scaled"],
+                               col_ind_var_norm_new=args["col_ind_var_norm_new"],
+                               col_dep_var_norm_new=args["col_dep_var_norm_new"],
+                               schema_madlib=args["schema_madlib"],
+                               x_mean_table=args["x_mean_table"],
+                               y_mean_table=args["y_mean_table"],
+                               grouping_col=args["grouping_col"])
+    else:
+        # When no grouping_col is defined, the mean and std for both 'x' and
+        # 'y' can be defined using strings, stored in x_mean_str, x_std_str
+        # etc. We don't need a table like how we needed for grouping.
+        _compute_data_scales(args)
+        __utils_normalize_data(y_decenter=y_decenter,
+                               tbl_data=args["tbl_source"],
+                               col_ind_var=args["col_ind_var"],
+                               col_dep_var=args["col_dep_var"],
+                               tbl_data_scaled=args["tbl_data_scaled"],
+                               col_ind_var_norm_new=args["col_ind_var_norm_new"],
+                               col_dep_var_norm_new=args["col_dep_var_norm_new"],
+                               schema_madlib=args["schema_madlib"],
+                               x_mean_str=args["xmean_str"],
+                               x_std_str=_array_to_string(args["x_scales"]["std"]),
+                               y_mean=args["y_scale"]["mean"],
+                               y_std=args["y_scale"]["std"],
+                               grouping_col=args["grouping_col"])
 
     return None
 # ------------------------------------------------------------------------
@@ -242,27 +276,27 @@ def _tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var):
     """
     # independent variable array length
     dimension = plpy.execute("""
-                             select array_upper({col_ind_var},1) as dimension
-                             from {tbl_source} limit 1
-                             """.format(tbl_source=tbl_source,
-                                        col_ind_var=col_ind_var))[0]["dimension"]
+                     SELECT array_upper({col_ind_var},1) AS dimension
+                     FROM {tbl_source} LIMIT 1
+                 """.format(tbl_source=tbl_source,
+                        col_ind_var=col_ind_var))[0]["dimension"]
     # total row number of data source table
-    # The WHERE clause here ignores rows in the table that contain one or more NULLs in the
-    # independent variable (x). There is no NULL check made for the dependent variable (y),
-    # since one of the hard requirements/assumptions of the input data to elastic_net is that the
-    # dependent variable cannot be NULL.
+    # The WHERE clause here ignores rows in the table that contain one or more
+    # NULLs in the independent variable (x). There is no NULL check made for
+    # the dependent variable (y), since one of the hard assumptions of the
+    # input data to elastic_net is that the dependent variable cannot be NULL.
     row_num = plpy.execute("""
-                           select count(*) from {tbl_source}
-                           WHERE not {schema_madlib}.array_contains_null({col_ind_var})
-                           """.format(tbl_source=tbl_source,
-                                      schema_madlib=schema_madlib,
-                                      col_ind_var=col_ind_var))[0]["count"]
+                   SELECT COUNT(*) FROM {tbl_source}
+                   WHERE NOT {schema_madlib}.array_contains_null({col_ind_var})
+               """.format(tbl_source=tbl_source,
+                          schema_madlib=schema_madlib,
+                          col_ind_var=col_ind_var))[0]["count"]
 
     return (dimension, row_num)
 # ------------------------------------------------------------------------
 
 
-def _compute_means(**args):
+def _compute_means(args):
     """
     Compute the averages of dependent (y) and independent (x) variables
     """
@@ -270,127 +304,15 @@ def _compute_means(**args):
         xmean_str = _array_to_string([0] * args["dimension"])
         ymean = 0
         return (xmean_str, ymean)
-    else:
-        return (args["xmean_str"], args["y_scale"]["mean"])
+    if args["grouping_col"]:
+        # We can use the mean of the entire table instead of groups here.
+        # The absolute correct thing to do is to use group specific
+        # mean, but we will need to add a new column and change the input
+        # table contents to do that (it has to be accessed by the group
+        # iteration controller, C++ code). That is a lot more messier,
+        # so living with this approximation for now.
+        _compute_data_scales(args)
+    # If there is no grouping_col, note that _compute_data_scales() was
+    # already called, so we don't have to call it again.
+    return (args["xmean_str"], args["y_scale"]["mean"])
 # ------------------------------------------------------------------------
-
-
-class IterationControllerNoTableDrop (IterationController2S):
-
-    """
-    IterationController but without table dropping
-
-    Useful if one wants to use it in cross validation
-    where dropping tables in a loop would use up all the locks
-    and get "out of memory" error
-    """
-    # ------------------------------------------------------------------------
-
-    def __init__(self, rel_args, rel_state, stateType,
-                 temporaryTables=True,
-                 truncAfterIteration=False,
-                 schema_madlib="MADLIB_SCHEMA_MISSING",
-                 verbose=False,
-                 **kwargs):
-        # Need to call super class's init method to initialize
-        # member fields
-        super(IterationControllerNoTableDrop, self).__init__(
-            self, rel_args, rel_state, stateType, temporaryTables,
-            truncAfterIteration, schema_madlib, verbose, **kwargs)
-        # self.kwargs["rel_state"] = "pg_temp" + rel_state, but for testing
-        # the existence of a table, schema name should be used together
-        self.state_exists = plpy.execute(
-            "select count(*) from information_schema.tables "
-            "where table_name = '{0}' and table_schema = 'pg_temp'".
-            format(rel_state))[0]['count'] == 1
-        # The current total row number of rel_state table
-        if self.state_exists:
-            self.state_row_num = plpy.execute("select count(*) from {rel_state}".
-                                              format(**self.kwargs))[0]["count"]
-
-    # ------------------------------------------------------------------------
-
-    def update(self, newState):
-        """
-        Update state of calculation.
-        """
-        newState = newState.format(iteration=self.iteration, **self.kwargs)
-        self.iteration += 1
-        if self.state_exists and self.iteration <= self.state_row_num:
-            # If the rel_state table already exists, and
-            # iteration number is smaller than total row number,
-            # use UPDATE instead of append. UPDATE does not use
-            # extra locks.
-            self.runSQL("""
-                update {rel_state} set _state = ({newState})
-                where _iteration = {iteration}
-            """.format(iteration=self.iteration,
-                       newState=newState,
-                       **self.kwargs))
-        else:
-            # rel_state table is newly created, and
-            # append data to this table
-            self.runSQL("""
-                INSERT INTO {rel_state}
-                    SELECT
-                        {iteration},
-                        ({newState})
-            """.format(iteration=self.iteration,
-                       newState=newState,
-                       **self.kwargs))
-    # ------------------------------------------------------------------------
-
-    def __enter__(self):
-        """
-        __enter__ and __exit__ methods are special. They are automatically called
-        when using "with" block.
-        """
-        if self.state_exists is False:
-            # create rel_state table when it does not already exist
-            super(IterationControllerNoTableDrop, self).__enter__(self)
-        self.inWith = True
-        return self
-# ------------------------------------------------------------------------
-
-
-class IterationControllerTableAppend (IterationControllerNoTableDrop):
-
-    def __init__(self, rel_args, rel_state, stateType,
-                 temporaryTables=True,
-                 truncAfterIteration=False,
-                 schema_madlib="MADLIB_SCHEMA_MISSING",
-                 verbose=False,
-                 **kwargs):
-        self.kwargs = kwargs
-        self.kwargs.update(
-            rel_args=rel_args,
-            rel_state=rel_state,
-            stateType=stateType.format(schema_madlib=schema_madlib),
-            schema_madlib=schema_madlib)
-        self.temporaryTables = temporaryTables
-        self.truncAfterIteration = truncAfterIteration
-        self.verbose = verbose
-        self.inWith = False
-        self.iteration = -1
-
-        self.state_exists = plpy.execute("""
-                                         select count(*)
-                                         from information_schema.tables
-                                         where table_name = '{rel_state}'
-                                         """.format(**self.kwargs))[0]['count'] == 1
-    # ------------------------------------------------------------------------
-
-    def update(self, newState):
-        """
-        Update state of calculation.
-        """
-        newState = newState.format(iteration=self.iteration, **self.kwargs)
-        self.iteration += 1
-        self.runSQL("""
-                    INSERT INTO {rel_state}
-                    SELECT
-                        {iteration},
-                        ({newState})
-                    """.format(iteration=self.iteration,
-                               newState=newState,
-                               **self.kwargs))

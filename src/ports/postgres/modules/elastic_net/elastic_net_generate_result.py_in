@@ -2,7 +2,7 @@ import plpy
 from elastic_net_utils import _process_results
 from elastic_net_utils import _compute_log_likelihood
 from utilities.validate_args import get_cols_and_types
-
+from utilities.utilities import split_quoted_delimited_str
 
 def _elastic_net_generate_result(optimizer, iteration_run, **args):
     """
@@ -10,6 +10,10 @@ def _elastic_net_generate_result(optimizer, iteration_run, **args):
     """
     standardize_flag = "True" if args["normalization"] else "False"
     source_table = args["rel_source"]
+    data_scaled = False
+    if args["normalization"] or optimizer == "igd":
+        # x_mean_table and y_mean_table are created only in these conditions.
+        data_scaled = True
     if optimizer == "fista":
         result_func = "__gaussian_fista_result({0})".format(args["col_grp_state"])
     elif optimizer == "igd":
@@ -30,38 +34,54 @@ def _elastic_net_generate_result(optimizer, iteration_run, **args):
         grouping_str = args['grouping_str']
         cols_types = dict(get_cols_and_types(args["tbl_source"]))
         grouping_str1 = grouping_column + ","
-        select_grouping_info = ','.join([grp_col.strip() + "\t" + cols_types[grp_col.strip()]
-                                         for grp_col in grouping_column.split(',')]) + ","
+
+        select_mean_and_std = ''
+        inner_join_x = ''
+        inner_join_y = ''
+        if data_scaled:
+            grouping_cols_list = split_quoted_delimited_str(grouping_column)
+            select_grouping_info = ','.join([
+                grp_col.strip()+"\t"+cols_types[grp_col.strip()]
+                for grp_col in grouping_column.split(',')]) + ","
+            select_grp = ','.join(['n_tuples_including_nulls_subq.'+str(grp)
+                            for grp in grouping_cols_list]) + ','
+            x_grp_cols = ' AND '.join([
+                    'n_tuples_including_nulls_subq.{0}={1}.{2}'.format(grp,
+                    args["x_mean_table"], grp) for grp in grouping_cols_list])
+            y_grp_cols = ' AND '.join([
+                    'n_tuples_including_nulls_subq.{0}={1}.{2}'.format(grp,
+                    args["y_mean_table"], grp) for grp in grouping_cols_list])
+            select_mean_and_std = ' {0}.mean AS x_mean, '.format(args["x_mean_table"]) +\
+                ' {0}.mean AS y_mean, '.format(args["y_mean_table"]) +\
+                ' {0}.std AS x_std, '.format(args["x_mean_table"])
+            inner_join_x = ' INNER JOIN {0} ON {1} '.format(
+                args["x_mean_table"], x_grp_cols)
+            inner_join_y = ' INNER JOIN {0} ON {1} '.format(
+                args["y_mean_table"], y_grp_cols)
         out_table_qstr = """
             SELECT
-                {grouping_str1}
+                {select_grp}
+                {select_mean_and_std}
                 (result).coefficients AS coef,
                 (result).intercept AS intercept
             FROM
-                (
-                    SELECT {schema_madlib}.{result_func} AS result, {col_grp_key}
-                    FROM {tbl_state}
-                    WHERE {col_grp_iteration} = {iteration_run}
-                ) t
-                JOIN
                 (
                     SELECT
                         {grouping_str1}
                         array_to_string(ARRAY[{grouping_str}], ',') AS {col_grp_key}
                     FROM {source_table}
-                    GROUP BY {grouping_col}, {col_grp_key}
+                    GROUP BY {grouping_column}, {col_grp_key}
                 ) n_tuples_including_nulls_subq
-                USING ({col_grp_key})
-            """.format(result_func=result_func,
-                       tbl_state=tbl_state,
-                       grouping_col=grouping_column,
-                       col_grp_iteration=args["col_grp_iteration"],
-                       iteration_run=iteration_run,
-                       grouping_str1=grouping_str1,
-                       grouping_str=grouping_str,
-                       col_grp_key=col_grp_key,
-                       source_table=source_table,
-                       schema_madlib=args["schema_madlib"])
+                INNER JOIN
+                (
+                    SELECT {schema_madlib}.{result_func} AS result, {col_grp_key}
+                    FROM {tbl_state}
+                    WHERE {col_grp_iteration} = {iteration_run}
+                ) t USING ({col_grp_key})
+                {inner_join_x}
+                {inner_join_y}
+            """.format(schema_madlib=args["schema_madlib"],
+                       col_grp_iteration=args["col_grp_iteration"], **locals())
     else:
         # It's a much simpler query when there is no grouping.
         grouping_str1 = ""
@@ -139,7 +159,12 @@ def build_output_table(res, grouping_column, grouping_str1,
     r_coef = res["coef"]
     if r_coef:
         if args["normalization"]:
-            (coef, intercept) = _restore_scale(r_coef, res["intercept"], args)
+            if grouping_column:
+                (coef, intercept) = _restore_scale(r_coef, res["intercept"],
+                    args, res["x_mean"], res["x_std"], res["y_mean"])
+            else:
+                (coef, intercept) = _restore_scale(r_coef,
+                    res["intercept"], args)
         else:
             coef = r_coef
             intercept = res["intercept"]
@@ -167,20 +192,22 @@ def build_output_table(res, grouping_column, grouping_str1,
                        **args)
         plpy.execute(fquery)
 # ------------------------------------------------------------------------
-
-
-def _restore_scale(coef, intercept, args):
+def _restore_scale(coef, intercept, args,
+    x_mean=None, x_std=None, y_mean=None):
     """
     Restore the original scales
     """
+    if x_mean is None and x_std is None and y_mean is None:
+        x_mean = args["x_scales"]["mean"]
+        y_mean = args["y_scale"]["mean"]
+        x_std = args["x_scales"]["std"]
     rcoef = [0] * len(coef)
     if args["family"] == "gaussian":
-        rintercept = float(args["y_scale"]["mean"])
+        rintercept = float(y_mean)
     elif args["family"] == "binomial":
         rintercept = float(intercept)
     for i in range(len(coef)):
-        if args["x_scales"]["std"][i] != 0:
-            rcoef[i] = coef[i] / args["x_scales"]["std"][i]
-            rintercept -= (coef[i] * args["x_scales"]["mean"][i] /
-                           args["x_scales"]["std"][i])
+        if x_std[i] != 0:
+            rcoef[i] = coef[i] / x_std[i]
+            rintercept -= (coef[i] * x_mean[i] / x_std[i])
     return (rcoef, rintercept)

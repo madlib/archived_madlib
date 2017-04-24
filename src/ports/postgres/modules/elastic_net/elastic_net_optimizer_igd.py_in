@@ -144,6 +144,8 @@ def _igd_cleanup_temp_tbls(**args):
                  drop table if exists {tbl_data_scaled};
                  drop table if exists {tbl_igd_args};
                  drop table if exists pg_temp.{tbl_igd_state};
+                 drop table if exists {x_mean_table};
+                 drop table if exists {y_mean_table};
                  """.format(**args))
     return None
 # ------------------------------------------------------------------------
@@ -193,17 +195,19 @@ def _elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
                              is '{arg = value, ...}'::varchar[]
     """
     with MinWarning('error'):
-        (dimension, row_num) = _tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var)
+        (dimension, row_num) = _tbl_dimension_rownum(schema_madlib,
+            tbl_source, col_ind_var)
 
         # generate a full dict to ease the following string format
         # including several temporary table names
-        args = _igd_construct_dict(schema_madlib, family, tbl_source, col_ind_var,
-                                   col_dep_var, tbl_result,
-                                   dimension, row_num, lambda_value, alpha, normalization,
-                                   max_iter, tolerance, outstr_array,
-                                   _igd_params_parser(optimizer_params, lambda_value,
-                                                      tolerance, schema_madlib))
+        args = _igd_construct_dict(schema_madlib, family, tbl_source,
+            col_ind_var, col_dep_var, tbl_result, dimension, row_num,
+            lambda_value, alpha, normalization, max_iter, tolerance,
+            outstr_array, _igd_params_parser(optimizer_params, lambda_value,
+            tolerance, schema_madlib))
 
+        args.update({'x_mean_table':unique_string(desp='x_mean_table')})
+        args.update({'y_mean_table':unique_string(desp='y_mean_table')})
         args.update({'grouping_col': grouping_col})
         # use normalized data or not
         if normalization:
@@ -216,9 +220,10 @@ def _elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
             tbl_used = tbl_source
             args["col_ind_var_new"] = col_ind_var
             args["col_dep_var_new"] = col_dep_var
-
         args["tbl_used"] = tbl_used
 
+        # parameter values required by the IGD optimizer
+        (xmean, ymean) = _compute_means(args)
         # average squares of each feature
         # used to estimate the largest lambda value
         # also used to screen out tiny values, so order is needed
@@ -227,22 +232,15 @@ def _elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
 
         if args["warmup_lambdas"] is not None:
             args["warm_no"] = len(args["warmup_lambdas"])
-            args["warmup_lambdas"] = args["warmup_lambdas"]
 
         if args["warmup"] and args["warmup_lambdas"] is None:
             args["warmup_lambdas"] = \
-                _generate_warmup_lambda_sequence(
-                args["tbl_used"], args["col_ind_var_new"], args["col_dep_var_new"],
-                dimension, row_num, lambda_value, alpha,
-                args["warmup_lambda_no"], args["sq"])
+                _generate_warmup_lambda_sequence(lambda_value,
+                args["warmup_lambda_no"])
             args["warm_no"] = len(args["warmup_lambdas"])
-            args["warmup_lambdas"] = args["warmup_lambdas"]
         elif args["warmup"] is False:
             args["warm_no"] = 1
             args["warmup_lambdas"] = [lambda_value]  # only one value
-
-        # parameter values required by the IGD optimizer
-        (xmean, ymean) = _compute_means(**args)
 
         args.update({
             'rel_args': args["tbl_igd_args"],
@@ -263,38 +261,39 @@ def _elastic_net_igd_train_compute(schema_madlib, func_step_aggregate,
         if not args.get('parallel'):
             func_step_aggregate += "_single_seg"
         # perform the actual calculation
-        iteration_run = _compute_igd(schema_madlib,
-                                     func_step_aggregate,
-                                     func_state_diff,
-                                     args["tbl_igd_args"],
-                                     args["tbl_igd_state"],
-                                     tbl_used,
-                                     args["col_ind_var_new"],
-                                     args["col_dep_var_new"],
-                                     grouping_str,
-                                     grouping_col,
-                                     start_iter=0,
-                                     max_iter=args["max_iter"],
-                                     tolerance=args["tolerance"],
-                                     warmup_tolerance=args["warmup_tolerance"],
-                                     warm_no=args["warm_no"],
-                                     step_decay=args["step_decay"],
-                                     dimension=args["dimension"],
-                                     stepsize=args["stepsize"],
-                                     lambda_name=args["warmup_lambdas"],
-                                     warmup_lambda_value=args.get('warmup_lambdas')[args["lambda_count"]-1],
-                                     alpha=args["alpha"],
-                                     row_num=args["row_num"],
-                                     xmean_val=args["xmean_val"],
-                                     ymean_val=args["ymean_val"],
-                                     lambda_count=args["lambda_count"],
-                                     rel_state=args["tbl_igd_state"],
-                                     col_grp_iteration=args["col_grp_iteration"],
-                                     col_grp_state=args["col_grp_state"],
-                                     col_grp_key=args["col_grp_key"],
-                                     col_n_tuples=args["col_n_tuples"],
-                                     rel_source=args["rel_source"],
-                                     state_type=args["state_type"],)
+        iteration_run = _compute_igd(
+             schema_madlib,
+             func_step_aggregate,
+             func_state_diff,
+             args["tbl_igd_args"],
+             args["tbl_igd_state"],
+             tbl_used,
+             args["col_ind_var_new"],
+             args["col_dep_var_new"],
+             grouping_str,
+             grouping_col,
+             start_iter=0,
+             max_iter=args["max_iter"],
+             tolerance=args["tolerance"],
+             warmup_tolerance=args["warmup_tolerance"],
+             warm_no=args["warm_no"],
+             step_decay=args["step_decay"],
+             dimension=args["dimension"],
+             stepsize=args["stepsize"],
+             lambda_name=args["warmup_lambdas"],
+             warmup_lambda_value=args.get('warmup_lambdas')[args["lambda_count"]-1],
+             alpha=args["alpha"],
+             row_num=args["row_num"],
+             xmean_val=args["xmean_val"],
+             ymean_val=args["ymean_val"],
+             lambda_count=args["lambda_count"],
+             rel_state=args["tbl_igd_state"],
+             col_grp_iteration=args["col_grp_iteration"],
+             col_grp_state=args["col_grp_state"],
+             col_grp_key=args["col_grp_key"],
+             col_n_tuples=args["col_n_tuples"],
+             rel_source=args["rel_source"],
+             state_type=args["state_type"])
 
         _elastic_net_generate_result("igd", iteration_run, **args)
 
@@ -341,6 +340,11 @@ def _compute_igd(schema_madlib, func_step_aggregate, func_state_diff,
             if (it.kwargs["lambda_count"] > len(args.get('lambda_name'))):
                 break
             it.kwargs["warmup_lambda_value"] = args.get('lambda_name')[it.kwargs["lambda_count"] - 1]
+            # Fix for JIRA MADLIB-1092
+            # 'col_n_tuples' is supposed to refer to the number of rows in the
+            # table, or the number of rows in a group. col_n_tuples gets
+            # the right value in in_mem_group_control, so using this instead
+            # of row_num (which was used hitherto).
             it.update("""
                     {schema_madlib}.{func_step_aggregate}(
                         ({col_ind_var})::double precision[],
@@ -350,7 +354,7 @@ def _compute_igd(schema_madlib, func_step_aggregate, func_state_diff,
                         ({alpha})::double precision,
                         ({dimension})::integer,
                         ({stepsize})::double precision,
-                        ({row_num})::integer,
+                        ({col_n_tuples})::integer,
                         ('{xmean_val}')::double precision[],
                         ({ymean_val})::double precision,
                         ({step_decay})::double precision

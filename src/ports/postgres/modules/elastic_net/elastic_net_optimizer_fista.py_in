@@ -136,6 +136,8 @@ def _fista_cleanup_temp_tbls(**kwargs):
                 drop table if exists {tbl_data_scaled};
                 drop table if exists {tbl_fista_args};
                 drop table if exists pg_temp.{tbl_fista_state};
+                drop table if exists {x_mean_table};
+                drop table if exists {y_mean_table};
                 """.format(**kwargs))
 
     return None
@@ -209,7 +211,8 @@ def _elastic_net_fista_train_compute(schema_madlib, func_step_aggregate,
                                                           lambda_value,
                                                           tolerance,
                                                           schema_madlib))
-
+        args.update({'x_mean_table':unique_string(desp='x_mean_table')})
+        args.update({'y_mean_table':unique_string(desp='y_mean_table')})
         args.update({'grouping_col': grouping_col})
         # use normalized data or not
         if normalization:
@@ -226,19 +229,15 @@ def _elastic_net_fista_train_compute(schema_madlib, func_step_aggregate,
 
         if args["warmup_lambdas"] is not None:
             args["warm_no"] = len(args["warmup_lambdas"])
-            args["warmup_lambdas"] = args["warmup_lambdas"]
 
         if args["warmup"] and args["warmup_lambdas"] is None:
             # average squares of each feature
             # used to estimate the largest lambda value
             args["sq"] = _compute_average_sq(**args)
             args["warmup_lambdas"] = \
-                _generate_warmup_lambda_sequence(
-                    tbl_used, args["col_ind_var_new"], args["col_dep_var_new"],
-                    dimension, row_num, lambda_value, alpha,
-                    args["warmup_lambda_no"], args["sq"])
+                _generate_warmup_lambda_sequence(lambda_value,
+                args["warmup_lambda_no"])
             args["warm_no"] = len(args["warmup_lambdas"])
-            args["warmup_lambdas"] = args["warmup_lambdas"]
         elif args["warmup"] is False:
             args["warm_no"] = 1
             args["warmup_lambdas"] = [lambda_value]  # only one value
@@ -340,6 +339,11 @@ def _compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
             if (it.kwargs["lambda_count"] > len(args.get('lambda_name'))):
                 break
             it.kwargs["warmup_lambda_value"] = args.get('lambda_name')[it.kwargs["lambda_count"] - 1]
+            # Fix for JIRA MADLIB-1092
+            # 'col_n_tuples' is supposed to refer to the number of rows in the
+            # table, or the number of rows in a group. col_n_tuples gets
+            # the right value in in_mem_group_control, so using this instead
+            # of row_num (which was used hitherto).
             it.update("""
                     {schema_madlib}.{func_step_aggregate}(
                         ({col_ind_var})::double precision[],
@@ -348,7 +352,7 @@ def _compute_fista(schema_madlib, func_step_aggregate, func_state_diff,
                         ({warmup_lambda_value})::double precision,
                         ({alpha})::double precision,
                         ({dimension})::integer,
-                        ({row_num})::integer,
+                        ({col_n_tuples})::integer,
                         ({max_stepsize})::double precision,
                         ({eta})::double precision,
                         ({use_active_set})::integer,
