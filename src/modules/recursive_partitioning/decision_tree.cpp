@@ -154,6 +154,24 @@ compute_leaf_stats_transition::run(AnyType & args){
     }
 
     if (state.empty()){
+        // To initialize the accumulator, first find which of the leaf nodes
+        // in current tree are actually reachable.
+        // The lookup vector maps the leaf node index in a (fictional) complete
+        // tree to the index in the actual tree.
+        ColumnVector leaf_feature_indices =
+            dt.feature_indices.tail(dt.feature_indices.size()/2 + 1).cast<double>();
+        ColumnVector leaf_node_lookup(leaf_feature_indices.size());
+        size_t n_leaves_not_finished = 0;
+        for (Index i=0; i < leaf_feature_indices.size(); i++){
+            if ((leaf_feature_indices(i) != dt.NODE_NON_EXISTING) &&
+                    (leaf_feature_indices(i) != dt.FINISHED_LEAF)){
+                leaf_node_lookup(i) = n_leaves_not_finished++;  // increment after assigning
+            }
+            else{
+                leaf_node_lookup(i) = -1;
+            }
+        }
+
         // For classification, we store for each split the number of weighted
         // tuples for each possible response value and the number of unweighted
         // tuples landing on that node.
@@ -167,22 +185,27 @@ compute_leaf_stats_transition::run(AnyType & args){
                      static_cast<uint32_t>(cat_levels.sum()),
                      static_cast<uint16_t>(dt.tree_depth),
                      stats_per_split,
-                     weights_as_rows
+                     weights_as_rows,
+                     static_cast<uint32_t>(n_leaves_not_finished)
                     );
+        for (Index i=0; i < state.stats_lookup.size(); i++)
+            state.stats_lookup(i) = leaf_node_lookup(i);
+
         // compute cumulative sum of the levels of the categorical variables
         int current_sum = 0;
         for (Index i=0; i < state.n_cat_features; ++i){
-            // We assume that the levels of each categorical variable are sorted
-            //  by the entropy for predicting the response. We then create splits
-            //  of the form 'A <= t', where A has N levels and t in [0, N-2].
+            // Assuming that the levels of each categorical variable are ordered,
+            //    create splits of the form 'A <= t', where A has N levels
+            //    and t in [0, N-2].
             // This split places all levels <= t on true node and
-            //  others on false node. We only check till N-2 since we want at
-            //  least 1 level falling to the false node.
-            // We keep a variable with just 1 level to ensure alignment,
-            //  even though that variable will not be used as a split feature.
+            //    others on false node. Checking till N-2 instead of N-1
+            //    since at least 1 level should go to false node.
+            // Variable with just 1 level is maintained to ensure alignment,
+            //    even though the variable will not be used as a split feature.
             current_sum += cat_levels(i);
             state.cat_levels_cumsum(i) = current_sum;
         }
+
     }
 
     state << MutableLevelState::tuple_type(dt, cat_features, con_features,
@@ -235,6 +258,7 @@ dt_apply::run(AnyType & args){
     else{
         return_code = TERMINATED;  // indicates termination due to error
     }
+
 
     AnyType output_tuple;
     output_tuple << dt.storage()
@@ -292,6 +316,21 @@ compute_surr_stats_transition::run(AnyType & args){
     // the root be an internal node i.e. we need the tree_depth to be more than 1.
     if (dt.tree_depth > 1){
         if (state.empty()){
+             // To initialize the accumulator, first find which of the last
+             // level of internal nodes are actually reachable.
+            ColumnVector final_internal_feature_indices =
+                dt.feature_indices.segment(dt.feature_indices.size()/4,
+                                           dt.feature_indices.size()/4 + 1).cast<double>();
+            ColumnVector index_lookup(final_internal_feature_indices.size());
+            Index n_internal_nodes_reachable = 0;
+            for (Index i=0; i < final_internal_feature_indices.size(); i++){
+                if (final_internal_feature_indices(i) >= 0){
+                    index_lookup(i) = n_internal_nodes_reachable++;  // increment after assigning
+                }
+                else{
+                    index_lookup(i) = -1;
+                }
+            }
             // 1. We need to compute stats for parent of each leaf.
             //      Hence the tree_depth is decremented by 1.
             // 2. We store 2 values for each surrogate split
@@ -303,11 +342,14 @@ compute_surr_stats_transition::run(AnyType & args){
                          static_cast<uint32_t>(cat_levels.sum()),
                          static_cast<uint16_t>(dt.tree_depth - 1),
                          2,
-                         false // dummy, only used in compute_leaf_stat
+                         false, // dummy, only used in compute_leaf_stat
+                         n_internal_nodes_reachable
                         );
+            for (Index i = 0; i < state.stats_lookup.size(); i++)
+                state.stats_lookup(i) = index_lookup(i);
             // compute cumulative sum of the levels of the categorical variables
             int current_sum = 0;
-            for (Index i=0; i < state.n_cat_features; ++i){
+            for (Index i=0; i < state.n_cat_features; i++){
                 current_sum += cat_levels(i);
                 state.cat_levels_cumsum(i) = current_sum;
             }
