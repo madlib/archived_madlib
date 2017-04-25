@@ -239,73 +239,96 @@ INSERT INTO km_sample VALUES
 </pre>
 -#  Run k-means clustering using kmeans++ for centroid seeding:
 <pre class="example">
-\\x on;
-SELECT * FROM madlib.kmeanspp( 'km_sample',   -- Table of source data
-                               'points',      -- Column containing point co-ordinates 
-                               2,             -- Number of centroids to calculate
-                               'madlib.squared_dist_norm2',   -- Distance function
-                               'madlib.avg',  -- Aggregate function
-                               20,            -- Number of iterations
-                               0.001          -- Fraction of centroids reassigned to keep iterating 
-                             );
-</pre>
-Result:
-<pre class="result">
-centroids        | {{13.7533333333333,1.905,2.425,16.0666666666667,90.3333333333333,2.805,2.98,0.29,2.005,5.40663333333333,1.04166666666667, 3.31833333333333,1020.83333333333},
-                   {14.255,1.9325,2.5025,16.05,110.5,3.055,2.9775,0.2975,1.845,6.2125,0.9975,3.365,1378.75}}
-cluster_variance | {122999.110416013,30561.74805}
-objective_fn     | 153560.858466013
-frac_reassigned  | 0
-num_iterations   | 3
-</pre>
--# Calculate the simplified silhouette coefficient:
-<pre class="example">
-SELECT * FROM madlib.simple_silhouette( 'km_sample',
-                                        'points',
-                                        (SELECT centroids FROM
-                                            madlib.kmeanspp('km_sample',
-                                                            'points',
-                                                            2,
-                                                            'madlib.squared_dist_norm2',
-                                                            'madlib.avg',
-                                                            20,
-                                                            0.001)),
-                                        'madlib.dist_norm2'
-                                      );
-</pre>
-Result:
-<pre class="result">
-simple_silhouette | 0.686314347664694
-</pre>
-
--#  Find the cluster assignment for each point:
-<pre class="example">
-\\x off;
 DROP TABLE IF EXISTS km_result;
 -- Run kmeans algorithm
 CREATE TABLE km_result AS
 SELECT * FROM madlib.kmeanspp('km_sample', 'points', 2,
                            'madlib.squared_dist_norm2',
-                           'madlib.avg', 20, 0.001); 
+                           'madlib.avg', 20, 0.001);
+\\x on;
+SELECT * FROM km_result;
+</pre>
+Result:
+<pre class="result">
+centroids        | {{14.036,2.018,2.536,16.56,108.6,3.004,3.03,0.298,2.038,6.10598,1.004,3.326,1340},{13.872,1.814,2.376,15.56,88.2,2.806,2.928,0.288,1.844,5.35198,1.044,3.348,988}}
+cluster_variance | {60672.638245208,90512.324426408}
+objective_fn     | 151184.962671616
+frac_reassigned  | 0
+num_iterations   | 2
+</pre>
+-# Calculate the simplified silhouette coefficient:
+<pre class="example">
+SELECT * FROM madlib.simple_silhouette( 'km_sample',
+                                        'points',
+                                        (SELECT centroids FROM km_result),
+                                        'madlib.dist_norm2'
+                                      );
+</pre>
+Result:
+<pre class="result">
+simple_silhouette | 0.68978804882941
+</pre>
+
+-#  Find the cluster assignment for each point:
+<pre class="example">
+\\x off;
 -- Get point assignment
 SELECT data.*,  (madlib.closest_column(centroids, points)).column_id as cluster_id
 FROM km_sample as data, km_result
 ORDER BY data.pid;
 </pre>
+Result:
 <pre class="result">
- pid |                               points                               | cluster_id 
+ pid |                               points                               | cluster_id
 -----+--------------------------------------------------------------------+------------
-   1 | {14.23,1.71,2.43,15.6,127,2.8,3.06,0.28,2.29,5.64,1.04,3.92,1065}  |          0
-   2 | {13.2,1.78,2.14,11.2,1,2.65,2.76,0.26,1.28,4.38,1.05,3.49,1050}    |          0
+   1 | {14.23,1.71,2.43,15.6,127,2.8,3.06,0.28,2.29,5.64,1.04,3.92,1065}  |          1
+   2 | {13.2,1.78,2.14,11.2,1,2.65,2.76,0.26,1.28,4.38,1.05,3.49,1050}    |          1
    3 | {13.16,2.36,2.67,18.6,101,2.8,3.24,0.3,2.81,5.6799,1.03,3.17,1185} |          0
    4 | {14.37,1.95,2.5,16.8,113,3.85,3.49,0.24,2.18,7.8,0.86,3.45,1480}   |          0
    5 | {13.24,2.59,2.87,21,118,2.8,2.69,0.39,1.82,4.32,1.04,2.93,735}     |          1
    6 | {14.2,1.76,2.45,15.2,112,3.27,3.39,0.34,1.97,6.75,1.05,2.85,1450}  |          0
    7 | {14.39,1.87,2.45,14.6,96,2.5,2.52,0.3,1.98,5.25,1.02,3.58,1290}    |          0
    8 | {14.06,2.15,2.61,17.6,121,2.6,2.51,0.31,1.25,5.05,1.06,3.58,1295}  |          0
-   9 | {14.83,1.64,2.17,14,97,2.8,2.98,0.29,1.98,5.2,1.08,2.85,1045}      |          0
-  10 | {13.86,1.35,2.27,16,98,2.98,3.15,0.22,1.85,7.2199,1.01,3.55,1045}  |          0
+   9 | {14.83,1.64,2.17,14,97,2.8,2.98,0.29,1.98,5.2,1.08,2.85,1045}      |          1
+  10 | {13.86,1.35,2.27,16,98,2.98,3.15,0.22,1.85,7.2199,1.01,3.55,1045}  |          1
 (10 rows)
+</pre>
+
+-#  Unnest the cluster centroids 2-D array to get a set of 1-D centroid arrays:
+<pre class="example">
+DROP TABLE IF EXISTS km_centroids_unnest;
+-- Run unnest function
+CREATE TABLE km_centroids_unnest AS
+SELECT (madlib.array_unnest_2d_to_1d(centroids)).*
+FROM km_result;
+SELECT * FROM km_centroids_unnest ORDER BY 1;
+</pre>
+Result:
+<pre class="result">
+ unnest_row_id |                                  unnest_result
+---------------+----------------------------------------------------------------------------------
+             1 | {14.036,2.018,2.536,16.56,108.6,3.004,3.03,0.298,2.038,6.10598,1.004,3.326,1340}
+             2 | {13.872,1.814,2.376,15.56,88.2,2.806,2.928,0.288,1.844,5.35198,1.044,3.348,988}
+(2 rows)
+</pre>
+Note that the ID column returned by array_unnest_2d_to_1d()
+is not guaranteed to be the same as the cluster ID assigned by k-means.
+See below to create the correct cluster IDs.
+
+-#  Create cluster IDs for 1-D centroid arrays so that cluster ID for any centroid
+can be matched to the cluster assignment for the data points:
+<pre class="example">
+SELECT cent.*,  (madlib.closest_column(centroids, unnest_result)).column_id as cluster_id
+FROM km_centroids_unnest as cent, km_result
+ORDER BY cent.unnest_row_id;
+</pre>
+Result:
+<pre class="result">
+ unnest_row_id |                                  unnest_result                                   | cluster_id
+---------------+----------------------------------------------------------------------------------+------------
+             1 | {14.036,2.018,2.536,16.56,108.6,3.004,3.03,0.298,2.038,6.10598,1.004,3.326,1340} |          0
+             2 | {13.872,1.814,2.376,15.56,88.2,2.806,2.928,0.288,1.844,5.35198,1.044,3.348,988}  |          1
+(2 rows)
 </pre>
 
 -#  Run the same example as above, but using array input.  Create the input table:
