@@ -39,7 +39,7 @@ dst_compute_con_splits_transition::run(AnyType &args){
     if (!state.empty() && state.num_rows >= state.buff_size) {
         return args[0];
     }
-    // NULL-handling is done in python to make sure consistency b/w
+    // NULLs are handled by caller to ensure consistency between
     // feature encoding and tree training
     MappedColumnVector con_features = args[1].getAs<MappedColumnVector>();
 
@@ -71,8 +71,12 @@ dst_compute_con_splits_final::run(AnyType &args){
 
     if (state.num_rows <= state.num_splits) {
         std::stringstream error_msg;
+        // In message below, add 1 to state.num_splits since the meaning of
+        // "splits" for the caller is the number of quantiles, where as
+        // "splits" in this function is the number of values dividing the data
+        // into quantiles.
         error_msg << "Decision tree error: Number of splits ("
-            << state.num_splits
+            << state.num_splits + 1
             << ") is larger than the number of records ("
             << state.num_rows << ")";
         throw std::runtime_error(error_msg.str());
