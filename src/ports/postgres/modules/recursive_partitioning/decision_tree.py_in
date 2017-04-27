@@ -90,6 +90,7 @@ def _tree_validate_args(
     _assert(max_depth >= 0 and max_depth < 100,
             "Decision tree error: maximum tree depth must be positive and less than 100.")
 
+    _assert(cp >= 0, "Decision tree error: cp must be non-negative.")
     _assert(min_split > 0, "Decision tree error: min_split must be positive.")
     _assert(min_bucket > 0, "Decision tree error: min_bucket must be positive.")
     _assert(n_bins > 1, "Decision tree error: number of bins must be at least 2.")
@@ -370,9 +371,7 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
                             for each group. For the no grouping case, the
                             key is ''
     """
-    filter_null = _get_filter_str(schema_madlib, cat_features, con_features,
-                                  boolean_cats, dependent_variable,
-                                  grouping_cols, max_n_surr)
+    filter_dep = _get_filter_str(dependent_variable, grouping_cols)
     # 3)
     if is_classification:
         if split_criterion.lower().strip() == "mse":
@@ -381,11 +380,11 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
         # For classifications, we also need to map dependent_variable to integers
         n_rows, dep_list = _get_n_and_deplist(training_table_name,
                                               dependent_variable,
-                                              filter_null)
+                                              filter_dep)
         dep_list.sort()
         if dep_is_bool:
-            dep_col_str = ("case when " + dependent_variable +
-                           " then 'True' else 'False' end")
+            dep_col_str = ("CASE WHEN {0} THEN 'True' ELSE 'False' END".
+                           format(dependent_variable))
         else:
             dep_col_str = dependent_variable
         dep_var_str = ("(CASE " +
@@ -397,10 +396,11 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
         if split_criterion.lower().strip() != "mse":
             plpy.warning("Decision tree: Using MSE as split criterion as it "
                          "is the only one supported for regression trees.")
-        n_rows = long(plpy.execute(
-            "SELECT count(*)::bigint FROM {source_table} WHERE {filter_null}".
-            format(source_table=training_table_name,
-                   filter_null=filter_null))[0]['count'])
+        n_rows = long(plpy.execute("SELECT count(*)::bigint "
+                                   "FROM {src} "
+                                   "WHERE {filter}".
+                                   format(src=training_table_name,
+                                          filter=filter_dep))[0]['count'])
         dep_var_str = dependent_variable
         dep_list = []
 
@@ -411,8 +411,8 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
         #       categorical bins and continuous bins
         bins = _get_bins(schema_madlib, training_table_name, cat_features,
                          ordered_cat_features, con_features, n_bins,
-                         dep_var_str, boolean_cats,
-                         n_rows, is_classification, dep_n_levels, filter_null)
+                         dep_var_str, boolean_cats, n_rows, is_classification,
+                         dep_n_levels, filter_dep)
         # some features may be dropped if they have only one value
         cat_features = bins['cat_features']
 
@@ -439,7 +439,7 @@ def _get_tree_states(schema_madlib, is_classification, split_criterion,
                                       boolean_cats, grouping_cols,
                                       grouping_array_str, n_rows,
                                       is_classification, dep_n_levels,
-                                      filter_null)
+                                      filter_dep)
                 cat_features = bins['cat_features']
 
                 # 3b) Load each group's tree state in memory and set to the initial tree
@@ -704,8 +704,8 @@ def _is_dep_categorical(training_table_name, dependent_variable):
 
 def _get_bins(schema_madlib, training_table_name,
               cat_features, ordered_cat_features,
-              con_features, n_bins, dependent_variable, boolean_cats,
-              n_rows, is_classification, dep_n_levels, filter_null):
+              con_features, n_bins, dependent_variable, boolean_cats, n_rows,
+              is_classification, dep_n_levels, filter_null):
     """ Compute the bins of all features
 
     @param training_table_name Data source table
@@ -715,7 +715,6 @@ def _get_bins(schema_madlib, training_table_name,
     @param dependent_variable Will be needed when sorting the levels of
     categorical variables
     @param boolean_cats The categorical variables that are of boolean type
-    @param n_rows The total number of rows in the data table
 
     return one dictionary containing two arrays: categorical and continuous
     """
@@ -743,12 +742,6 @@ def _get_bins(schema_madlib, training_table_name,
         # _compute_splits function in CoxPH module, but deal with
         # multiple columns together.
         con_features_str = py_list_to_sql_string(con_features, "double precision")
-        con_split_str = ("{schema_madlib}._dst_compute_con_splits(" +
-                         con_features_str +
-                         ", {sample_size}::integer, {n_bins}::smallint)"
-                         ).format(schema_madlib=schema_madlib,
-                                  sample_size=actual_sample_size,
-                                  n_bins=n_bins)
 
         sample_table_name = unique_string()
         plpy.execute("""
@@ -764,6 +757,11 @@ def _get_bins(schema_madlib, training_table_name,
                 """.format(**locals()))
 
         # The splits for continuous variables
+        con_split_str = ("""{schema_madlib}._dst_compute_con_splits(
+                                {con_features_str},
+                                {actual_sample_size}::integer,
+                                {n_bins}::smallint)""".
+                         format(**locals()))
         con_splits = plpy.execute("""
                 SELECT {con_split_str} as con_splits
                 FROM {sample_table_name}
@@ -990,32 +988,31 @@ def _get_bins_grps(
         con_split_str = """{schema_madlib}._dst_compute_con_splits(
                 {con_features_str},
                 {n_per_seg}::integer,
-                {n_bins}::smallint)""".format(
-            con_features_str=con_features_str,
-            schema_madlib=schema_madlib,
-            n_per_seg=n_per_seg_str,
-            n_bins=n_bins)
-        sql = """
-                SELECT
+                {n_bins}::smallint)""".format(con_features_str=con_features_str,
+                                              schema_madlib=schema_madlib,
+                                              n_per_seg=n_per_seg_str,
+                                              n_bins=n_bins)
+        con_splits_all = plpy.execute(
+            """ SELECT
                     {con_split_str} AS con_splits,
                     {grouping_array_str} AS grp_key
                 FROM {sample_table_name}
                 GROUP BY {grouping_cols}
                 """.format(**locals())   # multiple rows
-
-        con_splits_all = plpy.execute(sql)
+        )
 
         plpy.execute("DROP TABLE {sample_table_name}".format(**locals()))
 
     if cat_features:
         if is_classification:
             # For classifications
-            order_fun = "{schema_madlib}._dst_compute_entropy({dependent_variable}, {n})".format(
-                schema_madlib=schema_madlib,
-                dependent_variable=dependent_variable,
-                n=dep_n_levels)
+            order_fun = ("{schema_madlib}._dst_compute_entropy("
+                         "{dependent_variable}, {n})".
+                         format(schema_madlib=schema_madlib,
+                                dependent_variable=dependent_variable,
+                                n=dep_n_levels))
         else:
-            order_fun = "avg({dependent_variable})".format(dependent_variable=dependent_variable)
+            order_fun = "avg({0})".format(dependent_variable)
 
         sql_cat_levels = """
                 SELECT
@@ -1106,10 +1103,9 @@ def get_feature_str(schema_madlib, boolean_cats,
                     "(coalesce(" + col + "::text,'{0}')".format(unique_val) +
                     ")::text")
 
-        cat_features_str = (
-            "{0}._map_catlevel_to_int(array[" +
-            ", ".join(cat_features_cast) + "], {1}, {2})"
-            ).format(schema_madlib, levels_str, n_levels_str)
+        cat_features_str = ("{0}._map_catlevel_to_int(array[" +
+                            ", ".join(cat_features_cast) + "], {1}, {2})"
+                            ).format(schema_madlib, levels_str, n_levels_str)
     else:
         cat_features_str = "NULL"
 
@@ -1582,38 +1578,17 @@ def _create_summary_table(
 # ------------------------------------------------------------
 
 
-def _get_filter_str(schema_madlib, cat_features, con_features,
-                    boolean_cats, dependent_variable,
-                    grouping_cols, max_n_surr=0):
+def _get_filter_str(dependent_variable, grouping_cols):
     """ Return a 'WHERE' clause string that filters out all rows that contain a
     NULL.
     """
     if grouping_cols:
-        g_filter = ' and '.join('(' + s.strip() + ') is not NULL' for s in grouping_cols.split(','))
+        group_filter = ' and '.join('({0}) is not NULL'.format(g.strip())
+                                    for g in grouping_cols.split(','))
     else:
-        g_filter = None
-
-    if cat_features and max_n_surr == 0:
-        cat_filter = \
-            'NOT {schema_madlib}.array_contains_null({cat_features_array})'.format(
-                schema_madlib=schema_madlib,
-                cat_features_array='array[' + ','.join(
-                    '(' + cat + ')::text' if cat not in boolean_cats else
-                    "(case when " + cat + " then 'True' else 'False' end)::text"
-                    for cat in cat_features) + ']')
-    else:
-        cat_filter = None
-
-    if con_features and max_n_surr == 0:
-        con_filter = \
-            'NOT {schema_madlib}.array_contains_null({con_features_array})'.format(
-                schema_madlib=schema_madlib,
-                con_features_array='array[' + ','.join(con_features) + ']')
-    else:
-        con_filter = None
-
+        group_filter = None
     dep_filter = '(' + dependent_variable + ") is not NULL"
-    return ' and '.join(filter(None, [g_filter, cat_filter, con_filter, dep_filter]))
+    return ' and '.join(filter(None, [group_filter, dep_filter]))
 # -------------------------------------------------------------------------
 
 
@@ -1814,7 +1789,7 @@ def _get_display_header(table_name, dep_levels, is_regression, dot_format=True):
         """.format(str(dep_levels))
         return_str += "\n-------------------------------------"
     return return_str
-#------------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 
 
 def tree_display(schema_madlib, model_table, dot_format=True, verbose=False,
@@ -2008,8 +1983,6 @@ def _prune_and_cplist(schema_madlib, tree, cp, compute_cp_list=False):
                 cp_list: list of cp values at which tree can be pruned
                          (returned only if compute_cp_list=True)
     """
-    if cp <= 0 and not compute_cp_list:
-        return tree
     sql = """
         SELECT (pruned_tree).*
         FROM (
@@ -2198,7 +2171,7 @@ def _xvalidate(schema_madlib, tree_states, training_table_name, output_table_nam
 def _tree_train_using_bins(
         schema_madlib, bins, training_table_name,
         cat_features, con_features, boolean_cats, n_bins, weights,
-        dep_var_str, min_split, min_bucket, max_depth, filter_null,
+        dep_var_str, min_split, min_bucket, max_depth, filter_dep,
         dep_n_levels, is_classification, split_criterion,
         subsample=False, n_random_features=1, max_n_surr=0, **kwargs):
     """Trains a tree without grouping columns"""
@@ -2225,7 +2198,7 @@ def _tree_train_using_bins(
             schema_madlib, training_table_name,
             cat_features, con_features, boolean_cats, bins,
             n_bins, tree_state, weights, dep_var_str,
-            min_split, min_bucket, max_depth, filter_null,
+            min_split, min_bucket, max_depth, filter_dep,
             dep_n_levels, subsample, n_random_features, max_n_surr)
         plpy.notice("Completed training of level {0}".format(tree_depth))
 
@@ -2236,7 +2209,7 @@ def _tree_train_using_bins(
 def _tree_train_grps_using_bins(
         schema_madlib, bins, training_table_name, cat_features, con_features,
         boolean_cats, n_bins, weights, grouping_cols, grouping_array_str, dep_var_str,
-        min_split, min_bucket, max_depth, filter_null, dep_n_levels,
+        min_split, min_bucket, max_depth, filter_dep, dep_n_levels,
         is_classification, split_criterion, subsample=False,
         n_random_features=1, tree_terminated=None, max_n_surr=0, **kwargs):
 
@@ -2281,7 +2254,7 @@ def _tree_train_grps_using_bins(
             con_features, boolean_cats, bins, n_bins,
             tree_states, weights, grouping_cols,
             grouping_array_str, dep_var_str, min_split, min_bucket,
-            max_depth, filter_null, dep_n_levels, subsample,
+            max_depth, filter_dep, dep_n_levels, subsample,
             n_random_features, max_n_surr)
         level += 1
         plpy.notice("Finished training for level " + str(level))
