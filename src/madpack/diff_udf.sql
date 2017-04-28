@@ -2,7 +2,7 @@
 --   name but the content changes (e.g. add a field in composite type)
 
 SET client_min_messages to ERROR;
-
+\x on
 CREATE OR REPLACE FUNCTION filter_schema(argstr text, schema_name text)
 RETURNS text AS $$
     if argstr is None:

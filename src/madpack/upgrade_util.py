@@ -141,15 +141,15 @@ class ChangeHandler(UpgradeBase):
         @brief Load the configuration file
         """
 
-        # _mad_dbrev = 1.8
-        if self._mad_dbrev.split('.') < '1.9'.split('.'):
-            filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.8_1.10.yaml')
         # _mad_dbrev = 1.9
-        elif self._mad_dbrev.split('.') < '1.9.1'.split('.'):
+        if self._mad_dbrev.split('.') < '1.9.1'.split('.'):
             filename = os.path.join(self._maddir, 'madpack',
-                                    'changelist_1.9_1.10.yaml')
+                                    'changelist_1.9_1.11.yaml')
         # _mad_dbrev = 1.9.1
+        elif self._mad_dbrev.split('.') < '1.10.0'.split('.'):
+            filename = os.path.join(self._maddir, 'madpack',
+                                    'changelist_1.9.1_1.11.yaml')
+        # _mad_dbrev = 1.10.0
         else:
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist.yaml')

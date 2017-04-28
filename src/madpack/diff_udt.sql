@@ -1,5 +1,5 @@
 SET client_min_messages to ERROR;
-
+\x on
 CREATE OR REPLACE FUNCTION filter_schema(argstr text, schema_name text)
 RETURNS text AS $$
     if argstr is None:
