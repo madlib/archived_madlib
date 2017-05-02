@@ -137,13 +137,6 @@ def _get_features_to_use(schema_madlib, training_table_name,
 # ------------------------------------------------------------
 
 
-def _dict_get_quoted(input_dict, col_name):
-    """Return value from dict where key could be quoted or unquoted name"""
-    return input_dict.get(
-        col_name, input_dict.get(unquote_ident(col_name)))
-# -------------------------------------------------------------------------
-
-
 def _classify_features(feature_to_type, features):
     """ Returns
     1) an array of categorical features (all casted to string)
@@ -157,17 +150,16 @@ def _classify_features(feature_to_type, features):
     cat_types = int_types + text_types + boolean_types
     ordered_cat_types = int_types
 
-    cat_features = [c for c in features
-                    if _dict_get_quoted(feature_to_type, c) in cat_types]
-    ordered_cat_features = [c for c in features if _dict_get_quoted(
-                            feature_to_type, c) in ordered_cat_types]
+    cat_features = [c for c in features if feature_to_type[c] in cat_types]
+    ordered_cat_features = [c for c in features
+                            if feature_to_type[c] in ordered_cat_types]
 
     cat_features_set = set(cat_features)
     # continuous types - 'real' is cast to 'double precision' for uniformity
-    con_types = ['real', 'float8', 'double precision']
+    con_types = ['real', 'float8', 'double precision', 'numeric']
     con_features = [c for c in features
                     if (c not in cat_features_set and
-                        _dict_get_quoted(feature_to_type, c) in con_types)]
+                        feature_to_type[c] in con_types)]
 
     # In order to be able to form an array, all categorical variables
     # will be cast into TEXT type, but GPDB cannot cast a boolean
@@ -175,7 +167,7 @@ def _classify_features(feature_to_type, features):
     # need special treatment: cast them into integers before casting
     # into text.
     boolean_cats = [c for c in features
-                    if _dict_get_quoted(feature_to_type, c) in boolean_types]
+                    if feature_to_type[c] in boolean_types]
     return cat_features, ordered_cat_features, con_features, boolean_cats
 # ------------------------------------------------------------
 
@@ -481,13 +473,12 @@ def get_grouping_array_str(table_name, grouping_cols, qualifier=None):
     else:
         qualifier_str = ''
 
-    all_cols_types = dict(get_cols_and_types(table_name))
     grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
-    grouping_cols_and_types = [(col, _dict_get_quoted(all_cols_types, col))
-                               for col in grouping_cols_list]
+    grouping_cols_and_types = [(c, get_expr_type(c, table_name))
+                               for c in grouping_cols_list]
     grouping_array_str = 'array_to_string(array[' + \
         ','.join("(case when " + col + " then 'True' else 'False' end)::text"
-                 if col_type == 'boolean' else '(' + qualifier_str + col + ')::text'
+                 if col_type.lower() == 'boolean' else '(' + qualifier_str + col + ')::text'
                  for col, col_type in grouping_cols_and_types) + "]::text[], ',')"
     return grouping_array_str
 # ------------------------------------------------------------------------------
@@ -519,7 +510,9 @@ def _build_tree(schema_madlib, is_classification, split_criterion,
     with MinWarning(msg_level):
         plpy.notice("Building tree for cross validation")
         tree_states, bins, dep_list, n_rows = _get_tree_states(**locals())
-        all_cols_types = dict(get_cols_and_types(training_table_name))
+        all_cols_types = dict([(f, get_expr_type(f, training_table_name))
+                               for f in cat_features + con_features])
+
         n_all_rows = plpy.execute("select count(*) from " + training_table_name
                                   )[0]['count']
         cp = grp_key_to_cp.values()[0]
@@ -604,7 +597,8 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                 "Decision tree error: No feature is selected for the model.")
 
         # 2)
-        all_cols_types = dict(get_cols_and_types(training_table_name))
+        all_cols_types = dict([(f, get_expr_type(f, training_table_name))
+                               for f in features])
         cat_features, ordered_cat_features, con_features, boolean_cats = \
             _classify_features(all_cols_types, features)
         # get all rows
@@ -1529,8 +1523,7 @@ def _create_summary_table(
                         "$dep_list$")
     else:
         dep_list_str = "NULL"
-    indep_type = ', '.join(_dict_get_quoted(all_cols_types, col)
-                           for col in cat_features + con_features)
+    indep_type = ', '.join(all_cols_types[c] for c in cat_features + con_features)
     dep_type = _get_dep_type(training_table_name, dependent_variable)
     cat_features_str = ','.join(cat_features)
     con_features_str = ','.join(con_features)

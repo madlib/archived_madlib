@@ -13,16 +13,17 @@ from math import sqrt
 from utilities.control import MinWarning
 from utilities.control import EnableOptimizer
 from utilities.control import EnableHashagg
-from utilities.validate_args import get_cols_and_types
-from utilities.validate_args import is_var_valid
-from utilities.validate_args import input_tbl_valid
-from utilities.validate_args import output_tbl_valid
-from utilities.validate_args import cols_in_tbl_valid
 from utilities.utilities import _assert
 from utilities.utilities import unique_string
 from utilities.utilities import add_postfix
 from utilities.utilities import split_quoted_delimited_str
 from utilities.utilities import extract_keyvalue_params
+from utilities.validate_args import get_cols_and_types
+from utilities.validate_args import is_var_valid
+from utilities.validate_args import input_tbl_valid
+from utilities.validate_args import output_tbl_valid
+from utilities.validate_args import cols_in_tbl_valid
+from utilities.validate_args import get_expr_type
 
 from decision_tree import _tree_train_using_bins
 from decision_tree import _tree_train_grps_using_bins
@@ -34,7 +35,6 @@ from decision_tree import _is_dep_categorical
 from decision_tree import _get_n_and_deplist
 from decision_tree import _classify_features
 from decision_tree import _get_filter_str
-from decision_tree import _dict_get_quoted
 from decision_tree import _get_display_header
 from decision_tree import get_feature_str
 # ------------------------------------------------------------
@@ -272,8 +272,7 @@ def forest_train(
             with EnableHashagg(False):
                 # we disable hashagg since large number of groups could
                 # result in excessive memory usage.
-                ##################################################################
-                #### set default values
+                # set default values
                 if grouping_cols is not None and grouping_cols.strip() == '':
                     grouping_cols = None
                 num_trees = 100 if num_trees is None else num_trees
@@ -328,7 +327,8 @@ def forest_train(
                         "Random forest error: Number of features to be selected "
                         "is more than the actual number of features.")
 
-                all_cols_types = dict(get_cols_and_types(training_table_name))
+                all_cols_types = dict([(f, get_expr_type(f, training_table_name))
+                                      for f in features])
                 cat_features, ordered_cat_features, con_features, boolean_cats = \
                     _classify_features(all_cols_types, features)
 
@@ -349,10 +349,10 @@ def forest_train(
                     dep_col_str = ("CASE WHEN " + dependent_variable +
                                    " THEN 'True' ELSE 'False' END") if is_bool else dependent_variable
                     dep = ("(CASE " +
-                           "\n               ".join([
-                                "WHEN ({dep_col})::text = $${c}$$ THEN {i}".format(
-                                    dep_col=dep_col_str, c=c, i=i)
-                                for i, c in enumerate(dep_list)]) +
+                           "\n               ".
+                           join(["WHEN ({dep_col})::text = $${c}$$ THEN {i}".
+                                    format(dep_col=dep_col_str, c=c, i=i)
+                                 for i, c in enumerate(dep_list)]) +
                            "\nEND)")
                     dep_n_levels = len(dep_list)
                 else:
@@ -388,12 +388,12 @@ def forest_train(
                     bins['grp_key_cat'] = ['']
                 else:
                     grouping_cols_list = [col.strip() for col in grouping_cols.split(',')]
-                    grouping_cols_and_types = [(col, _dict_get_quoted(all_cols_types, col))
+                    grouping_cols_and_types = [(col, get_expr_type(col, training_table_name))
                                                for col in grouping_cols_list]
                     grouping_array_str = (
                         "array_to_string(array[" +
                         ','.join("(case when " + col + " then 'True' else 'False' end)::text"
-                                 if col_type == 'boolean' else '(' + col + ')::text'
+                                 if col_type.lower() == 'boolean' else '(' + col + ')::text'
                                  for col, col_type in grouping_cols_and_types) +
                         "], ',')")
                     grouping_cols_str = ('' if grouping_cols is None
@@ -1198,8 +1198,9 @@ def _create_summary_table(**kwargs):
     else:
         kwargs['dep_list_str'] = "NULL"
 
-    kwargs['indep_type'] = ', '.join(_dict_get_quoted(kwargs['all_cols_types'], col)
-                           for col in kwargs['cat_features'] + kwargs['con_features'])
+    kwargs['indep_type'] = ', '.join(kwargs['all_cols_types'][col]
+                                     for col in kwargs['cat_features'] +
+                                        kwargs['con_features'])
     kwargs['dep_type'] = _get_dep_type(kwargs['training_table_name'],
                                        kwargs['dependent_variable'])
     kwargs['cat_features_str'] = ','.join(kwargs['cat_features'])
@@ -1407,6 +1408,7 @@ def _validate_get_tree(model, gid, sample_id):
     cols_in_tbl_valid(model, ['gid', 'sample_id', 'tree'], 'Random forest')
 
 # ------------------------------------------------------------
+
 
 def forest_predict_help_message(schema_madlib, message, **kwargs):
     if not message:
