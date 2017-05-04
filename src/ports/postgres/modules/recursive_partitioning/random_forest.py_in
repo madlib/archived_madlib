@@ -450,7 +450,8 @@ def forest_train(
                     bins['cat_origin']])
 
                 con_splits_table = unique_string()
-                _create_con_splits_table(schema_madlib, con_splits_table, grouping_cols, grp_key_to_grp_cols, bins)
+                _create_con_splits_table(schema_madlib, con_splits_table,
+                                         grouping_cols, grp_key_to_grp_cols, bins)
 
                 ##################################################################
                 # create views and tables for training (growing) of trees
@@ -600,7 +601,8 @@ def forest_train(
                         con_splits_table, oob_prediction_table, oob_view,
                         sample_id, id_col_name, cat_features, con_features,
                         boolean_cats, grouping_cols, grp_key_to_grp_cols, dep,
-                        num_permutations, is_classification, importance, num_bins)
+                        num_permutations, is_classification, importance,
+                        num_bins, filter_null)
 
                 ###################################################################
                 # evaluating and summerizing random forest
@@ -626,9 +628,9 @@ def forest_train(
                 # calculated, otherwise we use an empty table which will be used later
                 # for an outer join.
                 if importance:
-                    _calculate_variable_importance(schema_madlib,
-                            oob_prediction_table, is_classification,
-                            importance_table, len(cat_features), len(con_features))
+                    _calculate_variable_importance(
+                        schema_madlib, oob_prediction_table, is_classification,
+                        importance_table, len(cat_features), len(con_features))
 
                 _create_group_table(schema_madlib, output_table_name,
                                     oob_error_table, importance_table,
@@ -926,7 +928,7 @@ def _calculate_oob_prediction(
         schema_madlib, model_table, cat_features_info_table, con_splits_table,
         oob_prediction_table, oob_view, sample_id, id_col_name, cat_features,
         con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols, dep,
-        num_permutations, is_classification, importance, num_bins):
+        num_permutations, is_classification, importance, num_bins, filter_null):
     """Calculate predication for out-of-bag sample"""
 
     cat_features_str, con_features_str = get_feature_str(
@@ -1045,6 +1047,7 @@ def _calculate_oob_prediction(
             LEFT OUTER JOIN -- empty if variable importance is disabled
                 {oob_var_dist_view}
             USING (gid)
+            WHERE {filter_null}
     """.format(**locals())
     plpy.notice("sql_oob_predict : " + str(sql_oob_predict))
     plpy.execute(sql_oob_predict)
@@ -1091,11 +1094,14 @@ def _create_con_splits_table(schema_madlib, con_splits_table, grouping_cols,
 # ------------------------------------------------------------------------------
 
 
-def _calculate_variable_importance(schema_madlib, oob_prediction_table,
-        is_classification, importance_table, n_cat, n_con):
+def _calculate_variable_importance(
+        schema_madlib, oob_prediction_table, is_classification,
+        importance_table, n_cat, n_con):
     if not is_classification:
+        # squared error
         score_expression = "-((oob_prediction - dep)^2)".format(**locals())
     else:
+        # misclassification
         score_expression = """
                 CASE WHEN dep = oob_prediction::integer
                     THEN 1.
@@ -1200,7 +1206,7 @@ def _create_summary_table(**kwargs):
 
     kwargs['indep_type'] = ', '.join(kwargs['all_cols_types'][col]
                                      for col in kwargs['cat_features'] +
-                                        kwargs['con_features'])
+                                                kwargs['con_features'])
     kwargs['dep_type'] = _get_dep_type(kwargs['training_table_name'],
                                        kwargs['dependent_variable'])
     kwargs['cat_features_str'] = ','.join(kwargs['cat_features'])
