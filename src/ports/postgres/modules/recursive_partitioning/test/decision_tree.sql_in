@@ -239,25 +239,29 @@ CREATE TABLE dt_golf (
     "OUTLOOK" text,
     temperature double precision,
     humidity double precision,
+    "Cont_features" double precision[],
+    cat_features text[],
     windy boolean,
     class text
 ) ;
 
-INSERT INTO dt_golf (id,"OUTLOOK",temperature,humidity,windy,class) VALUES
-(1, 'sunny', 85, 85, false, 'Don''t Play'),
-(2, 'sunny', 80, 90, true, 'Don''t Play'),
-(3, 'overcast', 83, 78, false, 'Play'),
-(4, 'rain', 70, 96, false, 'Play'),
-(5, 'rain', 68, 80, false, 'Play'),
-(6, 'rain', 65, 70, true, 'Don''t Play'),
-(7, 'overcast', 64, 65, true, 'Play'),
-(8, 'sunny', 72, 95, false, 'Don''t Play'),
-(9, 'sunny', 69, 70, false, 'Play'),
-(10, 'rain', 75, 80, false, 'Play'),
-(11, 'sunny', 75, 70, true, 'Play'),
-(12, 'overcast', 72, 90, true, 'Play'),
-(13, 'overcast', 81, 75, false, 'Play'),
-(14, 'rain', 71, 80, true, 'Don''t Play');
+INSERT INTO dt_golf (id,"OUTLOOK",temperature,humidity,"Cont_features",cat_features, windy,class) VALUES
+(1, 'sunny', 85, 85,ARRAY[85, 85], ARRAY['a', 'b'], false, 'Don''t Play'),
+(2, 'sunny', 80, 90, ARRAY[80, 90], ARRAY['a', 'b'], true, 'Don''t Play'),
+(3, 'overcast', 83, 78, ARRAY[83, 78], ARRAY['a', 'b'], false, 'Play'),
+(4, 'rain', 70, NULL, ARRAY[70, 96], ARRAY['a', 'b'], false, 'Play'),
+(5, 'rain', 68, 80, ARRAY[68, 80], ARRAY['a', 'b'], false, 'Play'),
+(6, 'rain', NULL, 70, ARRAY[65, 70], ARRAY['a', 'b'], true, 'Don''t Play'),
+(7, 'overcast', 64, 65, ARRAY[64, 65], ARRAY['c', 'b'], NULL , 'Play'),
+(8, 'sunny', 72, 95, ARRAY[72, 95], ARRAY['a', 'b'], false, 'Don''t Play'),
+(9, 'sunny', 69, 70, ARRAY[69, 70], ARRAY['a', 'b'], false, 'Play'),
+(10, 'rain', 75, 80, ARRAY[75, 80], ARRAY['a', 'b'], false, 'Play'),
+(11, 'sunny', 75, 70, ARRAY[75, 70], ARRAY['a', 'd'], true, 'Play'),
+(12, 'overcast', 72, 90, ARRAY[72, 90], ARRAY['c', 'b'], NULL, 'Play'),
+(13, 'overcast', 81, 75, ARRAY[81, 75], ARRAY['a', 'b'], false, 'Play'),
+(15, NULL, 81, 75, ARRAY[81, 75], ARRAY['a', 'b'], false, 'Play'),
+(16, 'overcast', NULL, 75, ARRAY[81, 75], ARRAY['a', 'd'], false, 'Play'),
+(14, 'rain', 71, 80, ARRAY[71, 80], ARRAY['c', 'b'], true, 'Don''t Play');
 
 -- no grouping
 DROP TABLE IF EXISTS train_output, train_output_summary;
@@ -265,7 +269,7 @@ SELECT tree_train('dt_golf'::text,         -- source table
                          'train_output'::text,    -- output model table
                          'id'::text,              -- id column
                          'temperature::double precision'::text,           -- response
-                         'humidity, windy'::text,   -- features
+                         'humidity, windy, "Cont_features"'::text,   -- features
                          NULL::text,        -- exclude columns
                          'gini'::text,      -- split criterion
                          NULL::text,        -- no grouping
@@ -287,7 +291,7 @@ SELECT tree_train('dt_golf'::text,         -- source table
                          'train_output'::text,    -- output model table
                          'id'::text,              -- id column
                          'temperature::double precision'::text,           -- response
-                         '"OUTLOOK", humidity, windy'::text,   -- features
+                         '"OUTLOOK", humidity, windy, cat_features'::text,   -- features
                          NULL::text,        -- exclude columns
                          'gini'::text,      -- split criterion
                          'class'::text,     -- grouping
@@ -302,13 +306,17 @@ SELECT tree_train('dt_golf'::text,         -- source table
 SELECT _print_decision_tree(tree) from train_output;
 SELECT tree_display('train_output', False);
 
+
+-- testing tree_predict with a category not present in training table
 CREATE TABLE dt_golf2 as
 SELECT * FROM dt_golf
 UNION
 SELECT 15 as id, 'humid' as "OUTLOOK", 71 as temperature, 80 as humidity,
-        true as windy, 'Don''t Play' as class;
-SELECT tree_predict('train_output', 'dt_golf2', 'predict_output');
+       ARRAY[90, 90] as "Cont_features", ARRAY['b', 'c'] as cat_features,
+       true as windy, 'Don''t Play' as class;
 \x off
+SELECT * FROM dt_golf2;
+SELECT tree_predict('train_output', 'dt_golf2', 'predict_output');
 SELECT *
 FROM
     predict_output
@@ -326,7 +334,7 @@ SELECT tree_train('dt_golf'::text,         -- source table
                          'train_output'::text,    -- output model table
                          'id'::text,              -- id column
                          'temperature::double precision'::text,           -- response
-                         'humidity, windy'::text,   -- features
+                         '"OUTLOOK", cat_features, "Cont_features"'::text,   -- features
                          NULL::text,        -- exclude columns
                          'mse'::text,      -- split criterion
                          NULL::text,        -- no grouping
@@ -383,7 +391,7 @@ select __build_tree(
     4,
     2,
     1,
-    5,
+    3,
     'group_cp',
     0::smallint,
     'notice',

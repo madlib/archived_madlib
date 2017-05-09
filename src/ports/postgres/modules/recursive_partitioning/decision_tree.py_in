@@ -30,9 +30,9 @@ from utilities.validate_args import unquote_ident
 from utilities.utilities import _assert
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import unique_string
+from utilities.utilities import _array_to_string
 from utilities.utilities import add_postfix
 from utilities.utilities import split_quoted_delimited_str
-from utilities.utilities import _array_to_string
 from utilities.utilities import py_list_to_sql_string
 # ------------------------------------------------------------
 
@@ -126,14 +126,38 @@ def _get_features_to_use(schema_madlib, training_table_name,
         all_col_set = set(get_cols(training_table_name, schema_madlib))
         exclude_set = set(split_quoted_delimited_str(list_of_features_to_exclude))
         feature_set = all_col_set - exclude_set
-        return list(feature_set - group_set - other_col_set)
+        filtered_feature_list = list(feature_set - group_set - other_col_set)
     else:
         feature_list = split_quoted_delimited_str(list_of_features)
         feature_exclude = split_quoted_delimited_str(list_of_features_to_exclude)
         return_set = set(feature_list) - set(feature_exclude) - group_set - other_col_set
         # instead of returning list(return_set) we create a list that has
         # elements in same order as original feature_list
-        return [feat for feat in feature_list if feat in return_set]
+        filtered_feature_list = [feat for feat in feature_list if feat in return_set]
+
+    # check if any of the features is an array and expand the array
+    final_feature_list = []
+    for feat in filtered_feature_list:
+        feat_type = get_expr_type(feat, training_table_name)
+        if '[]' in feat_type:
+            # expand array by indexing into it
+            n_dims = plpy.execute("SELECT array_ndims({feat}) as n "
+                                  "FROM {tbl} LIMIT 1".
+                                  format(feat=feat, tbl=training_table_name))[0]['n']
+            _assert(n_dims == 1,
+                    "Only single dimensional arrays allowed for features. "
+                    "Invalid dimensions in {0}".format(feat))
+            feat_dims = plpy.execute("""
+                                        SELECT array_lower({f}, 1) as l,
+                                               array_upper({f}, 1) as u
+                                        FROM {tbl}
+                                        LIMIT 1
+                                     """.format(f=feat, tbl=training_table_name))[0]
+            final_feature_list += ["{f}[{i}]".format(f=feat, i=i)
+                                   for i in range(feat_dims['l'], feat_dims['u'] + 1)]
+        else:
+            final_feature_list.append(feat)
+    return final_feature_list
 # ------------------------------------------------------------
 
 
@@ -154,12 +178,9 @@ def _classify_features(feature_to_type, features):
     ordered_cat_features = [c for c in features
                             if feature_to_type[c] in ordered_cat_types]
 
-    cat_features_set = set(cat_features)
     # continuous types - 'real' is cast to 'double precision' for uniformity
     con_types = ['real', 'float8', 'double precision', 'numeric']
-    con_features = [c for c in features
-                    if (c not in cat_features_set and
-                        feature_to_type[c] in con_types)]
+    con_features = [c for c in features if feature_to_type[c] in con_types]
 
     # In order to be able to form an array, all categorical variables
     # will be cast into TEXT type, but GPDB cannot cast a boolean
@@ -601,6 +622,7 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
                                for f in features])
         cat_features, ordered_cat_features, con_features, boolean_cats = \
             _classify_features(all_cols_types, features)
+
         # get all rows
         n_all_rows = plpy.execute("SELECT count(*) FROM {source_table}".
                                   format(source_table=training_table_name)
@@ -1657,6 +1679,10 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response',
 
     cat_features = split_quoted_delimited_str(summary_elements["cat_features"])
     con_features = split_quoted_delimited_str(summary_elements["con_features"])
+    _assert(
+        is_var_valid(source, ','.join(cat_features + con_features)),
+        "Decision tree error: Missing columns in predict data table ({0}) "
+        "that were used during training".format(source))
     id_col_name = summary_elements["id_col_name"]
     grouping_cols_str = summary_elements["grouping_cols"]
     dep_varname = summary_elements["dependent_varname"]
@@ -2067,10 +2093,12 @@ def _xvalidate(schema_madlib, tree_states, training_table_name, output_table_nam
     metric_function = "_tree_misclassified" if is_classification else "_tree_rmse"
     pred_name = '"estimated_{0}"'.format(dependent_variable.strip(' "'))
     grouping_str = 'NULL' if not grouping_cols else '"' + grouping_cols + '"'
+
     cat_feature_str = _array_to_string(cat_features)
     ordered_cat_feature_str = _array_to_string(ordered_cat_features)
     boolean_cat_str = _array_to_string(boolean_cats)
     con_feature_str = _array_to_string(con_features)
+
     modeling_params = [str(i) for i in
                        (is_classification,
                         split_criterion, "%data%", "%model%", id_col_name,
