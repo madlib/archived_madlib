@@ -40,7 +40,7 @@ Example of JUnit output:
 TestResult = namedtuple("TestResult", 'name suite status duration message')
 
 
-def _test_result_factory(install_check_log):
+def _test_result_factory(workdir, install_check_log):
     """
     Args:
         @param install_check_log: File name containing results from install-check
@@ -64,7 +64,7 @@ def _test_result_factory(install_check_log):
                     if failure_m:
                         log_file = failure_m.group(1)
                         try:
-                            message = subprocess.check_output(['tail', '-n 100', log_file],
+                            message = subprocess.check_output(['tail', '-n 100', workdir + log_file],
                                                               stderr=subprocess.STDOUT)
                         except subprocess.CalledProcessError as e:
                             message = e.output
@@ -97,15 +97,17 @@ def _add_test_case(out_log, test_results):
                   'status="{t.status}" time="{d}">'.
                   format(t=t, d=duration)]
         if t.status == "FAIL":
-            output.append('<failure>{0}</failure>'.format(t.message))
+            output.append("""<failure><![CDATA[
+                          {0}
+                          ]]></failure>""".format(t.message))
         output.append('</testcase>')
         out_log.write('\n'.join(output))
 
 
-def main(install_check_log, test_output_log):
+def main(workdir, install_check_log, test_output_log):
 
     # need number of test results - so have to create the iterable
-    all_test_results = [i for i in _test_result_factory(install_check_log)]
+    all_test_results = [i for i in _test_result_factory(workdir, install_check_log)]
 
     with open(test_output_log, 'w') as out_log:
         _add_header(out_log, len(all_test_results))
@@ -114,6 +116,7 @@ def main(install_check_log, test_output_log):
 
 
 if __name__ == "__main__":
-    # argv[1] = install check log
-    # argv[2] = output file to store xml
-    main(sys.argv[1], sys.argv[2])
+    # argv[1] = working director
+    # argv[2] = install check log
+    # argv[3] = output file to store xml
+    main(sys.argv[1], sys.argv[2], sys.argv[3])
