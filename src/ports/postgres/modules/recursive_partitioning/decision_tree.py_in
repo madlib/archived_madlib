@@ -2088,37 +2088,30 @@ def _xvalidate(schema_madlib, tree_states, training_table_name, output_table_nam
     pred_name = '"estimated_{0}"'.format(dependent_variable.strip(' "'))
     grouping_str = 'NULL' if not grouping_cols else '"' + grouping_cols + '"'
 
-    cat_feature_str = _array_to_string(cat_features)
-    ordered_cat_feature_str = _array_to_string(ordered_cat_features)
-    boolean_cat_str = _array_to_string(boolean_cats)
-    con_feature_str = _array_to_string(con_features)
+    all_features = [cat_features, ordered_cat_features, boolean_cats, con_features]
 
-    modeling_params = [str(i) for i in
-                       (is_classification,
-                        split_criterion, "%data%", "%model%", id_col_name,
-                        dependent_variable, dep_is_bool,
-                        cat_feature_str, ordered_cat_feature_str,
-                        boolean_cat_str, con_feature_str,
-                        grouping_str, weights, max_depth,
-                        min_split, min_bucket, n_bins,
-                        "%explore%", max_n_surr, msg_level)]
-    modeling_param_types = (["BOOLEAN"] + ["TEXT"] * 5 + ["BOOLEAN"] +
-                            ["VARCHAR[]"] * 4 + ["TEXT"] * 2 + ["INTEGER"] * 4 +
-                            ["TEXT", "SMALLINT", "TEXT"])
-
+    # _get_xvalidate_params builds the parameters used in
+    # DT train, predict, distance functions. Single quotes are added in these
+    # parameters (except for the feature arrays) since we run
+    # cross_validation_grouping_w_params with `add_param_quotes=False'.
+    #  This special handling is put in place to ensure the feature arrays are
+    #  treated as arrays instead of strings.
+    xvalidate_params = _get_xvalidate_params(**locals())
     cross_validation_grouping_w_params(
         schema_madlib,
         schema_madlib + '.__build_tree',
-        modeling_params,
-        modeling_param_types,
+        xvalidate_params[0],
+        xvalidate_params[1],
         schema_madlib + '.__tree_predict',
-        ["%model%", "%data%", "%prediction%", "response", "True"],
-        ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "BOOLEAN"],
+        xvalidate_params[2],
+        xvalidate_params[3],
         schema_madlib + "." + metric_function,
-        ["%data%", dependent_variable, "%prediction%", pred_name, id_col_name, grouping_cols, "%error%", "True"],
-        ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "TEXT", "VARCHAR", "BOOLEAN"],
+        xvalidate_params[4],
+        xvalidate_params[5],
         group_to_param_list_table, param_list_name, grouping_cols,
-        training_table_name, id_col_name, False, model_cv, 'cp', None, n_folds)
+        training_table_name, id_col_name, False,
+        model_cv, 'cp', None, n_folds,
+        add_param_quotes=False)
 
     # 3) find the best cp for each group from table {model_cv}
     if not grouping_cols:
@@ -2181,6 +2174,83 @@ def _xvalidate(schema_madlib, tree_states, training_table_name, output_table_nam
 
     plpy.execute("DROP TABLE {group_to_param_list_table}".format(**locals()))
 # ------------------------------------------------------------
+
+
+def _get_xvalidate_params(**kwargs):
+    """ Build train, predict, and metric parameters for cross_validation
+
+    Args:
+        @param all_features
+
+    Returns:
+
+    """
+    def _list_to_string_to_array(array_input):
+        """ Return a string that can interpreted by postgresql as text[] containing
+        the names in array_input
+
+        Example:
+            Input: ['"Cont_features"[1]', '"Cont_features"[2]']
+            Output: string_to_array('"Cont_features"[1]~^~"Cont_features"[2]'::text, '~^~');
+
+            When this output is executed by Postgresql it creates a text array:
+                madlib=# select string_to_array('"Cont_features"[1]~^~"Cont_features"[2]'::text, '~^~')::VARCHAR[] as t;
+                                        t
+                -------------------------------------------------
+                 {"\"Cont_features\"[1]","\"Cont_features\"[2]"}
+                (1 row)
+        """
+        if not array_input:
+            return "'{}'"
+        return "string_to_array('{0}', '~^~')".format('~^~'.join(array_input))
+
+    all_feature_str = [_list_to_string_to_array(i) for i in kwargs['all_features']]
+
+    def _add_quote(s):
+        if s is None:
+            return None
+        s = str(s)
+        return "NULL" if s.upper() == 'NULL' else "'{0}'".format(s)
+
+    quoted_args = {}
+    for k, v in kwargs.items():
+        quoted_args[k] = _add_quote(v)
+
+    modeling_params = [quoted_args['is_classification'],
+                       quoted_args['split_criterion'],
+                       "%data%",
+                       "%model%",
+                       quoted_args['id_col_name'],
+                       quoted_args['dependent_variable'],
+                       quoted_args['dep_is_bool'],
+                       all_feature_str[0],
+                       all_feature_str[1],
+                       all_feature_str[2],
+                       all_feature_str[3],
+                       quoted_args['grouping_str'],
+                       quoted_args['weights'],
+                       quoted_args['max_depth'],
+                       quoted_args['min_split'], quoted_args['min_bucket'], quoted_args['n_bins'],
+                       "%explore%", quoted_args['max_n_surr'], quoted_args['msg_level']
+                       ]
+    modeling_param_types = (["BOOLEAN"] + ["TEXT"] * 5 + ["BOOLEAN"] +
+                            ["VARCHAR[]"] * 4 + ["TEXT"] * 2 + ["INTEGER"] * 4 +
+                            ["TEXT", "SMALLINT", "TEXT"])
+    predict_params = ["%model%", "%data%", "%prediction%", "'response'", "True"]
+    predict_param_types = ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "BOOLEAN"]
+    metric_params = ["%data%",
+                     quoted_args['dependent_variable'],
+                     "%prediction%",
+                     quoted_args['pred_name'],
+                     quoted_args['id_col_name'],
+                     quoted_args['grouping_cols'],
+                     "%error%",
+                     "True"]
+    metric_param_types = ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "TEXT", "VARCHAR", "BOOLEAN"]
+    return [modeling_params, modeling_param_types,
+            predict_params, predict_param_types,
+            metric_params, metric_param_types]
+# ----------------------------------------------------------------------
 
 
 def _tree_train_using_bins(

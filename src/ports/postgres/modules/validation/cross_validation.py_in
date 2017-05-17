@@ -20,7 +20,8 @@ mad_vec = version_wrapper.select_vecfunc()
 def __cv_combine_params_type_general(params, params_type, tbl_data,
                                      col_random_id, param_explored,
                                      explore_value, tbl_input, tbl_output,
-                                     grp_to_param_tbl=None):
+                                     grp_to_param_tbl=None,
+                                     add_param_quotes=True):
     """
     Create argument list for SQL functions for training, validation and metric measuring
 
@@ -71,7 +72,9 @@ def __cv_combine_params_type_general(params, params_type, tbl_data,
             elif p == "%group_param_tbl%":
                 rst.append("\'" + tbl_output + "\'::" + p_type)
             else:
-                rst.append("\'" + p + "\'::" + p_type)
+                if add_param_quotes:
+                    p = "'{0}'".format(p)
+                rst.append(p + "::" + p_type)
     return ','.join(rst)
 # ------------------------------------------------------------------------
 
@@ -106,7 +109,7 @@ def _replace_explore(params, param_explored, explore_value):
 
 def __cv_funcall_general(func, params, params_type, tbl_data, col_random_id,
                          param_explored, explore_value, tbl_input,
-                         tbl_output):
+                         tbl_output, add_param_quotes=True):
     """
     Call training, validation or metric measuring function
 
@@ -116,9 +119,10 @@ def __cv_funcall_general(func, params, params_type, tbl_data, col_random_id,
     """
     arg_string = __cv_combine_params_type_general(
         params, params_type, tbl_data, col_random_id,
-        param_explored, explore_value, tbl_input, tbl_output
-    )
+        param_explored, explore_value, tbl_input, tbl_output,
+        add_param_quotes=add_param_quotes)
     sql = "SELECT {func}({arg_string})".format(func=func, arg_string=arg_string)
+    plpy.info(sql)
     plpy.execute(sql)
 # ------------------------------------------------------------------------
 
@@ -207,7 +211,7 @@ def _one_step_cv(tbl_output_model, tbl_output_pred, tbl_output_error, tbl_accum_
                  modelling_func, modelling_params, modelling_params_type, tbl_train,
                  predict_func, predict_params, predict_params_type, tbl_valid,
                  metric_func, metric_params, metric_params_type, k=0, append_k=False,
-                 use_existing_tables=False, **kwargs):
+                 use_existing_tables=False, add_param_quotes=True, **kwargs):
     """
     Args:
         @param schema_madlib
@@ -251,19 +255,22 @@ def _one_step_cv(tbl_output_model, tbl_output_pred, tbl_output_error, tbl_accum_
     __cv_funcall_general(
         modelling_func, modelling_params, modelling_params_type,
         tbl_train, col_random_id, temp_param_explored,
-        explore_value, None, tbl_output_model)
+        explore_value, None, tbl_output_model,
+        add_param_quotes=add_param_quotes)
 
     # validation
     __cv_funcall_general(
         predict_func, predict_params, predict_params_type,
         tbl_valid, col_random_id, temp_param_explored,
-        explore_value, tbl_output_model, tbl_output_pred)
+        explore_value, tbl_output_model, tbl_output_pred,
+        add_param_quotes=add_param_quotes)
 
     # measure the performance metric
     __cv_funcall_general(
         metric_func, metric_params, metric_params_type,
         tbl_valid, col_random_id, temp_param_explored,
-        explore_value, tbl_output_pred, tbl_output_error)
+        explore_value, tbl_output_pred, tbl_output_error,
+        add_param_quotes=add_param_quotes)
 
     # accumulate the measured metric result
     if not output_created:
@@ -380,9 +387,10 @@ def cross_validation_general(
         return None
 # ------------------------------------------------------------------------
 
-# XXX Currently, this function is used only by the decision tree,
+# XXX Currently, this function is built specifically for the decision tree,
 # which appends the outputs from different cv folds to a single
 # table to reduce catalog changes and thus improve the performance.
+# FIXME: this should either be made general enough or moved to decision_tree.py_in
 
 
 def cross_validation_grouping_w_params(
@@ -436,7 +444,8 @@ def cross_validation_grouping_w_params(
                                 param_list_name=param_list_name,
                                 group_to_param_list_table=group_to_param_list_table))
 
-        _replace_explore(modelling_params, unique_string(), grp_to_param_tbl)
+        _replace_explore(modelling_params, unique_string(),
+                         "'" + grp_to_param_tbl + "'")
         # get the maximum size of the param list among all groups
         max_len = plpy.execute("""
             SELECT max(array_upper({0}, 1)) as max_len
@@ -477,6 +486,9 @@ def cross_validation_grouping_w_params(
                 # to speed up the search in the prediction table.
                 append_k = True  # k is fold ID to distinguish different sets of results.
 
+                # XXX Important to not add single quotes around param
+                # as a special-handling for decision trees
+                add_param_quotes = False
                 output_created = _one_step_cv(**locals())
 
         # compute the averages and standard deviations of cv_error for each group and explore value
