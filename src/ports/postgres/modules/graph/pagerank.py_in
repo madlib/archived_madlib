@@ -116,7 +116,7 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     # value based on number of nodes in the graph.
     # NOTE: The heuristic below is not based on any scientific evidence.
     if threshold is None:
-        threshold = 1.0/(nvertices*100)
+        threshold = 1.0/(nvertices*1000)
 
     # table/column names used when grouping_cols is set.
     distinct_grp_table = ''
@@ -128,7 +128,8 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
 
     edge_temp_table = unique_string(desp='temp_edge')
     distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
-        <!"DISTRIBUTED BY ({0})".format(dest)!>)
+        <!"DISTRIBUTED BY ({0}{1})".format(grouping_cols+','
+            if grouping_cols else '', dest)!>)
     plpy.execute("DROP TABLE IF EXISTS {0}".format(edge_temp_table))
     plpy.execute("""CREATE TEMP TABLE {edge_temp_table} AS
         SELECT * FROM {edge_table}
@@ -151,8 +152,12 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     out_cnts_cnt = unique_string(desp='cnt')
     v1 = unique_string(desp='v1')
 
+    cur_distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
+        <!"DISTRIBUTED BY ({0}{1})".format(grouping_cols+','
+            if grouping_cols else '', vertex_id)!>)
     cnts_distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
-            <!"DISTRIBUTED BY ({0})".format(vertex_id)!>)
+            <!"DISTRIBUTED BY ({0}{1})".format(grouping_cols+','
+            if grouping_cols else '', vertex_id)!>)
     cur_join_clause = """{edge_temp_table}.{dest}={cur}.{vertex_id}
         """.format(**locals())
     out_cnts_join_clause = """{out_cnts}.{vertex_id}={edge_temp_table}.{src}
@@ -178,6 +183,9 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     message_grp_where_ins = ''
     ignore_group_clause_ins = ''
 
+    nodes_with_no_incoming_edges = unique_string(desp='no_incoming')
+    ignore_group_clause_ins_noincoming = ''
+
     grouping_cols_select_conv = '{0}.{1}'.format(cur, vertex_id)
     group_by_grouping_cols_conv = ''
     message_grp_clause_conv = ''
@@ -192,7 +200,7 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         distinct_grp_table = unique_string(desp='grp')
         plpy.execute("DROP TABLE IF EXISTS {0}".format(distinct_grp_table))
         plpy.execute("""CREATE TEMP TABLE {distinct_grp_table} AS
-                SELECT DISTINCT {grouping_cols} FROM {edge_table}
+                SELECT DISTINCT {grouping_cols} FROM {edge_temp_table}
             """.format(**locals()))
         vertices_per_group = unique_string(desp='nvert_grp')
         init_pr = unique_string(desp='init')
@@ -213,9 +221,9 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 {rand_damp}/COUNT(__vertices__)::DOUBLE PRECISION AS {random_prob}
                 FROM {distinct_grp_table} INNER JOIN (
                     SELECT {grouping_cols}, {src} AS __vertices__
-                    FROM {edge_table}
+                    FROM {edge_temp_table}
                     UNION
-                    SELECT {grouping_cols}, {dest} FROM {edge_table}
+                    SELECT {grouping_cols}, {dest} FROM {edge_temp_table}
                 ){subq}
                 ON {grouping_where_clause}
                 GROUP BY {group_by_clause}
@@ -232,11 +240,12 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                        {init_pr} AS pagerank
                 FROM {vertices_per_group} INNER JOIN (
                     SELECT {grouping_cols}, {src} AS __vertices__
-                    FROM {edge_table}
+                    FROM {edge_temp_table}
                     UNION
-                    SELECT {grouping_cols}, {dest} FROM {edge_table}
+                    SELECT {grouping_cols}, {dest} FROM {edge_temp_table}
                 ){subq}
                 ON {grouping_where_clause}
+                {cur_distribution}
             """.format(**locals()))
         vpg = unique_string(desp='vpg')
         # Compute the out-degree of every node in the group-based subgraphs.
@@ -244,7 +253,7 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         plpy.execute("""CREATE TEMP TABLE {out_cnts} AS
             SELECT {grouping_cols_select} {src} AS {vertex_id},
                    COUNT({dest}) AS {out_cnts_cnt}
-            FROM {edge_table}
+            FROM {edge_temp_table}
             GROUP BY {grouping_cols_select} {src}
             {cnts_distribution}
             """.format(grouping_cols_select=grouping_cols+','
@@ -265,8 +274,8 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         vpg_join_clause = ' AND '.join(
             ["{edge_temp_table}.{col}={vpg}.{col}".format(**locals())
                 for col in grouping_cols_list])
-        vpg_cur_join_clause = ' AND '.join(
-            ["{cur}.{col}={vpg}.{col}".format(**locals())
+        vpg_t1_join_clause = ' AND '.join(
+            ["__t1__.{col}={vpg}.{col}".format(**locals())
                 for col in grouping_cols_list])
         # join clause specific to populating random_prob for nodes without any
         # incoming edges.
@@ -311,12 +320,14 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             AS {vpg} ON {vpg_join_clause}""".format(**locals())
         ignore_group_clause_pr=' WHERE '+get_ignore_groups(summary_table,
             edge_temp_table, grouping_cols_list)
+        ignore_group_clause_ins_noincoming = ' WHERE '+get_ignore_groups(
+            summary_table, nodes_with_no_incoming_edges, grouping_cols_list)
         # Strings required for updating PageRank scores of vertices that have
         # no incoming edges
         grouping_cols_select_ins = cur_grouping_cols_select+','
         vpg_from_clause_ins = ', {vertices_per_group} AS {vpg}'.format(
             **locals())
-        vpg_where_clause_ins = '{vpg_cur_join_clause} AND '.format(
+        vpg_where_clause_ins = ' AND {vpg_t1_join_clause} '.format(
             **locals())
         message_grp_where_ins = 'WHERE {message_grp}'.format(**locals())
         ignore_group_clause_ins = ' AND '+get_ignore_groups(summary_table,
@@ -329,6 +340,27 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         ignore_group_clause_conv = ' AND '+get_ignore_groups(summary_table,
             cur, grouping_cols_list)
         limit = ''
+
+        # Find all nodes, in each group, that have no incoming edges. The PageRank
+        # value of these nodes are not updated using the first query in the
+        # following for loop. They must be explicitly plugged back in to the
+        # message table, with their corresponding group's random_prob as their
+        # PageRank values.
+        plpy.execute("""
+                CREATE TABLE {nodes_with_no_incoming_edges} AS
+                SELECT {select_group_cols}, __t1__.{src} AS {vertex_id},
+                        {vpg}.{random_prob} AS pagerank
+                FROM {edge_temp_table} AS __t1__ {vpg_from_clause_ins}
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM {edge_temp_table} AS __t2__
+                    WHERE __t1__.{src}=__t2__.{dest} AND {where_group_clause}
+                ) {vpg_where_clause_ins}
+            """.format(select_group_cols=','.join(['__t1__.{0}'.format(col)
+                        for col in grouping_cols_list]),
+                    where_group_clause=' AND '.join(['__t1__.{0}=__t2__.{0}'.format(col)
+                        for col in grouping_cols_list]),
+                    **locals()))
     else:
         # cur and out_cnts tables can be simpler when no grouping is involved.
         init_value = 1.0/nvertices
@@ -336,17 +368,17 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 CREATE TEMP TABLE {cur} AS
                 SELECT {vertex_id}, {init_value}::DOUBLE PRECISION AS pagerank
                 FROM {vertex_table}
+                {cur_distribution}
             """.format(**locals()))
 
         # Compute the out-degree of every node in the graph.
         plpy.execute("DROP TABLE IF EXISTS {0}".format(out_cnts))
         plpy.execute("""CREATE TEMP TABLE {out_cnts} AS
             SELECT {src} AS {vertex_id}, COUNT({dest}) AS {out_cnts_cnt}
-            FROM {edge_table}
+            FROM {edge_temp_table}
             GROUP BY {src}
             {cnts_distribution}
             """.format(**locals()))
-
         # The summary table when there is no grouping will contain only
         # the iteration column. We don't need to create the out_table
         # when no grouping is used since the 'cur' table will be renamed
@@ -355,6 +387,16 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 CREATE TABLE {summary_table} (
                     __iterations__ INTEGER
                 )
+            """.format(**locals()))
+        # Find all nodes in the graph that don't have any incoming edges and
+        # assign random_prob as their pagerank values.
+        plpy.execute("""
+                CREATE TABLE {nodes_with_no_incoming_edges} AS
+                SELECT DISTINCT({src}), {random_probability} AS pagerank
+                FROM {edge_temp_table}
+                EXCEPT
+                    (SELECT DISTINCT({dest}), {random_probability} AS pagerank
+                    FROM {edge_temp_table})
             """.format(**locals()))
     unconverged = 0
     iteration_num = 0
@@ -389,6 +431,7 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                     {vertices_per_group_inner_join_pr}
                 {ignore_group_clause}
                 GROUP BY {grouping_cols_select_pr} {edge_temp_table}.{dest}
+                {cur_distribution}
             """.format(ignore_group_clause=ignore_group_clause_pr
                     if iteration_num>0 else ignore_group_clause_first,
                 **locals()))
@@ -397,20 +440,12 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         # with random_prob.
         plpy.execute("""
                 INSERT INTO {message}
-                SELECT {grouping_cols_select_ins} {cur}.{vertex_id},
-                    {random_jump_prob} AS pagerank
-                FROM {cur} {vpg_from_clause_ins}
-                WHERE {vpg_where_clause_ins} {vertex_id} NOT IN (
-                    SELECT {vertex_id}
-                    FROM {message}
-                    {message_grp_where_ins}
-                )
+                SELECT *
+                FROM {nodes_with_no_incoming_edges}
                 {ignore_group_clause}
-                GROUP BY {grouping_cols_select_ins} {cur}.{vertex_id}
-            """.format(ignore_group_clause=ignore_group_clause_ins
+            """.format(ignore_group_clause=ignore_group_clause_ins_noincoming
                     if iteration_num>0 else ignore_group_clause_first,
-                **locals()))
-
+                    **locals()))
         # Check for convergence:
         ## Check for convergence only if threshold != 0.
         if threshold != 0:
@@ -482,9 +517,9 @@ def pagerank(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             """.format(**locals()))
 
     ## Step 4: Cleanup
-    plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2},{3},{4},{5};
+    plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2},{3},{4},{5},{6};
         """.format(out_cnts, edge_temp_table, cur, message, cur_unconv,
-                    message_unconv))
+                    message_unconv, nodes_with_no_incoming_edges))
     if grouping_cols:
         plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2};
             """.format(vertices_per_group, temp_summary_table,
@@ -570,7 +605,7 @@ def pagerank_help(schema_madlib, message, **kwargs):
     damping_factor DOUBLE PRECISION, -- Damping factor in random surfer model
                                      -- (DEFAULT = 0.85)
     max_iter      INTEGER, -- Maximum iteration number (DEFAULT = 100)
-    threshold     DOUBLE PRECISION, -- Stopping criteria (DEFAULT = 1/(N*100),
+    threshold     DOUBLE PRECISION, -- Stopping criteria (DEFAULT = 1/(N*1000),
                                     -- N is number of vertices in the graph)
     grouping_col  TEXT -- Comma separated column names to group on
                        -- (DEFAULT = NULL, no grouping)
