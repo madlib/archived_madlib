@@ -110,24 +110,24 @@ Datum __mfvsketch_trans(PG_FUNCTION_ARGS)
           )))
         elog(ERROR,
              "destructive pass by reference outside agg");
-
     /* initialize if this is first call */
     if (VARSIZE(transblob) <= sizeof(MFV_TRANSVAL_SZ(0))) {
         Oid typOid = get_fn_expr_argtype(fcinfo->flinfo, 1);
         transblob = mfv_init_transval(max_mfvs, typOid);
     }
-    else {
-        check_mfvtransval(transblob);
-    }
+    // else {
+    //     check_mfvtransval(transblob);
+        // }
 
     /* ignore NULL inputs */
     if (PG_ARGISNULL(1) || PG_ARGISNULL(2))
         PG_RETURN_DATUM(PointerGetDatum(transblob));
 
     transval = (mfvtransval *)VARDATA(transblob);
-    if (transval->typOid != get_fn_expr_argtype(fcinfo->flinfo, 1)) {
-        elog(ERROR, "cannot aggregate on elements with different types");
-    }
+    // if (transval->typOid != get_fn_expr_argtype(fcinfo->flinfo, 1)) {
+    //     elog(ERROR, "cannot aggregate on elements with different types");
+    // }
+
     /* insert into the countmin sketch */
     md5_datum = countmin_trans_c(transval->sketch,
                                 newdatum,
@@ -212,6 +212,9 @@ bytea *mfv_init_transval(int max_mfvs, Oid typOid)
     bytea *      transblob;
     mfvtransval *transval;
 
+    if (max_mfvs <= 0) {
+        elog(ERROR, "Invalid entry for number of MFV values");
+    }
     /*
      * initialize mfvtransval, using palloc0 to zero it out.
      * if typlen is positive (fixed), size chosen accurately.

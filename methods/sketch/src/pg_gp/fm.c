@@ -191,9 +191,6 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
     Datum       retval;
     Datum       inval;
 
-    if (!OidIsValid(element_type))
-        elog(ERROR, "could not determine data type of input");
-
     /*
      * This is Postgres boilerplate for UDFs that modify the data in their own context.
      * Such UDFs can only be correctly called in an agg context since regular scalar
@@ -212,8 +209,10 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
 
     /* get the provided element, being careful in case it's NULL */
     if (!PG_ARGISNULL(1)) {
-        inval = PG_GETARG_DATUM(1);
+        if (!OidIsValid(element_type))
+            elog(ERROR, "could not determine data type of input");
 
+        inval = PG_GETARG_DATUM(1);
         /*
          * if this is the first call, initialize transval to hold a sortasort
          * on the first call, we should have the empty string (if the agg was declared properly!)
@@ -238,12 +237,12 @@ Datum __fmsketch_trans(PG_FUNCTION_ARGS)
                            transval->typByVal);
         }
         else {
-            check_fmtransval(transblob);
+            // check_fmtransval(transblob);
             /* extract the existing transval from the transblob */
             transval = (fmtransval *)VARDATA(transblob);
-            if (transval->typOid != element_type) {
-                elog(ERROR, "cannot aggregate on elements with different types");
-            }
+            // if (transval->typOid != element_type) {
+            //     elog(ERROR, "cannot aggregate on elements with different types");
+            // }
         }
 
         /*
