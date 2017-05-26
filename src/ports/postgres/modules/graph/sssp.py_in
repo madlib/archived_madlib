@@ -28,45 +28,21 @@
 """
 
 import plpy
-from graph_utils import *
+from graph_utils import validate_graph_coding
+from graph_utils import get_graph_usage
+from graph_utils import _grp_from_table
+from graph_utils import _check_groups
 from utilities.control import MinWarning
 from utilities.utilities import _assert
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import unique_string
-from utilities.utilities import _string_to_array
 from utilities.utilities import split_quoted_delimited_str
 from utilities.validate_args import table_exists
 from utilities.validate_args import columns_exist_in_table
 from utilities.validate_args import table_is_empty
-from utilities.validate_args import get_cols_and_types
 from utilities.validate_args import get_expr_type
 
 m4_changequote(`<!', `!>')
-
-
-def _check_groups(tbl1, tbl2, grp_list):
-
-	"""
-	Helper function for joining tables with groups.
-	Args:
-		@param tbl1       Name of the first table
-		@param tbl2       Name of the second table
-		@param grp_list   The list of grouping columns
-	"""
-
-	return ' AND '.join([" {tbl1}.{i} = {tbl2}.{i} ".format(**locals())
-		for i in grp_list])
-
-def _grp_from_table(tbl, grp_list):
-
-	"""
-	Helper function for selecting grouping columns of a table
-	Args:
-		@param tbl        Name of the table
-		@param grp_list   The list of grouping columns
-	"""
-	return ' , '.join([" {tbl}.{i} ".format(**locals())
-		for i in grp_list])
 
 def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 		edge_args, source_vertex, out_table, grouping_cols, **kwargs):
@@ -163,7 +139,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 
 		w_type = get_expr_type(weight,edge_table).lower()
 		init_w = INT_MAX
-		if w_type in ['double precision','float8']:
+		if w_type in ['real','double precision','float8']:
 			init_w = INFINITY
 
 		# We keep a table of every vertex, the minimum cost to that destination
@@ -354,7 +330,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 			# associated min values. Using these values, we identify which edge
 			# is selected.
 
-			# Since using '='' with floats is dangerous we use an epsilon value
+			# Since using '=' with floats is dangerous we use an epsilon value
 			# for comparison.
 
 			# Once we have a list of edges and values (stores as 'message'),
@@ -412,7 +388,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
 			# It is possible that not all groups has negative cycles.
 			else:
 
-				# grp is the string created by collating grouping columns.
+				# negs is the string created by collating grouping columns.
 				# By looking at the oldupdate table we can see which groups
 				# are in a negative cycle.
 
@@ -470,6 +446,7 @@ def graph_sssp_get_path(schema_madlib, sssp_table, dest_vertex, path_table,
         @param dest_vertex  The vertex that will be the destination of the
                             desired path.
         @param path_table   Name of the output table that contains the path.
+
 	"""
 	with MinWarning("warning"):
 		_validate_get_path(sssp_table, dest_vertex, path_table)
@@ -480,9 +457,6 @@ def graph_sssp_get_path(schema_madlib, sssp_table, dest_vertex, path_table,
 		select_grps = ""
 		check_grps_t1 = ""
 		check_grps_t2 = ""
-		check_grps_pt1 = ""
-		check_grps_pt2 = ""
-		checkg_po = ""
 		grp_comma = ""
 		tmp = ""
 
@@ -505,8 +479,6 @@ def graph_sssp_get_path(schema_madlib, sssp_table, dest_vertex, path_table,
 			check_grps_t2 = " AND " + _check_groups(
 				sssp_table,temp2_name,glist)
 
-			checkg_po = " WHERE " + _check_groups(
-				path_table,"oldupdate",glist)
 			grp_comma = grouping_cols + " , "
 
 		if source_vertex == dest_vertex:
@@ -662,7 +634,7 @@ def graph_sssp_help(schema_madlib, message, **kwargs):
 -----------------------------------------------------------------------
 
 Given a graph and a source vertex, single source shortest path (SSSP)
-algorithm finds a path for every vertex such that the the sum of the
+algorithm finds a path for every vertex such that the sum of the
 weights of its constituent edges is minimized.
 
 For more details on function usage:
@@ -670,6 +642,10 @@ For more details on function usage:
             """
 	elif message.lower() in ['usage', 'help', '?']:
 		help_string = """
+Given a graph and a source vertex, single source shortest path (SSSP)
+algorithm finds a path for every vertex such that the sum of the
+weights of its constituent edges is minimized.
+
 {graph_usage}
 
 To retrieve the path for a specific vertex:
