@@ -11,7 +11,7 @@ class Summarizer:
     def __init__(self, schema_madlib, source_table, output_table,
                  target_cols, grouping_cols, distinctify, get_quartiles,
                  xtileify='Exact', ntile_array=None, how_many_mfv=10,
-                 get_mfv_quick=False):
+                 get_mfv_quick=False, n_cols_per_run=15):
         self._schema_madlib = schema_madlib
         self._source_table = source_table
         self._output_table = output_table
@@ -21,8 +21,9 @@ class Summarizer:
         self._get_quartiles = get_quartiles
         self._xtileify = xtileify
         self._ntile_array = ntile_array
-        self._how_many_mfv = how_many_mfv
+        self._how_many_mfv = int(how_many_mfv)
         self._get_mfv_quick = get_mfv_quick
+        self._n_cols_per_run = int(n_cols_per_run)
         self._columns = None
         self._column_names = None
         self._delimiter = '_.*.&.!.!.&.*_'
@@ -32,7 +33,7 @@ class Summarizer:
             lower_target_cols = [each_col.lower() for each_col in self._target_cols
                                  if '"' not in each_col]
             target_selection = "AND attname = ANY({0})".format(
-                    py_list_to_sql_string(lower_target_cols, array_type="text"))
+                py_list_to_sql_string(lower_target_cols, array_type="text"))
         else:
             target_selection = ""
         self._columns = plpy.execute("""
@@ -103,7 +104,9 @@ class Summarizer:
             plpy.error("""
                 Summary -- Invalid parameter: Number of most frequent values
                 required should be positive""")
-
+        if self._n_cols_per_run is None or self._n_cols_per_run <= 0:
+            plpy.error(" Summary -- Invalid parameter: Number of columns per run"
+                       "should be positive")
 
 # ----- End of argument validation functions -----------------------------
 
@@ -367,15 +370,14 @@ class Summarizer:
         #  issues when a lot of columns are computed concurrently
         #  We repeat the query multiple times till computation is complete for
         #  all columns.
-        actual_nCols = len(self._columns)
-        max_nCols = 15
+        actual_n_cols = len(self._columns)
         # ensuring an even spread of columns in each repeated attempt. For eg.
-        #  if max_nCols = 15, to simulate 31 cols we break it down as [11, 11, 9]
+        #  if self._n_cols_per_run = 15, to simulate 31 cols we break it down as [11, 11, 9]
         #  instead of [15, 15, 1]. This ensures low memory usage in each subquery
-        nSplits = math.ceil(float(actual_nCols) / max_nCols)
-        subset_nCols = int(math.ceil(actual_nCols / nSplits))
-        subset_columns = [self._columns[pos: pos + subset_nCols]
-                          for pos in range(0, actual_nCols, subset_nCols)]
+        n_splits = math.ceil(float(actual_n_cols) / self._n_cols_per_run)
+        subset_n_cols = int(math.ceil(actual_n_cols / n_splits))
+        subset_columns = [self._columns[pos: pos + subset_n_cols]
+                          for pos in range(0, actual_n_cols, subset_n_cols)]
         for cols in subset_columns:
             for group_val in self._grouping_cols:
                 # summary treats the comma-separated list of grouping_cols as

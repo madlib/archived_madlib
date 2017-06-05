@@ -7,83 +7,73 @@
 """
 import plpy
 from time import time
-from utilities.utilities import __mad_version
+
+from utilities.control import MinWarning
 from Summarizer import Summarizer
-version_wrapper = __mad_version()
-_get_vector = version_wrapper.select_vecfunc()
+
 
 def summary(schema_madlib, source_table, output_table, target_cols, grouping_cols,
-    get_distinct, get_quartiles, ntile_array, how_many_mfv, get_estimates):
+            get_distinct, get_quartiles, ntile_array, how_many_mfv,
+            get_estimates, n_cols_per_run):
     """
-        Main summary function that is called by SQL to execute summary
+        Main summary function that is called by SQL to compute summary
         statistics on a table.
 
-        @param schema_madlib        Madlib Schema namespace
-        @param source_table         Name of input table
-        @param output_table         Name of output table
-        @param target_cols          Names of specific columns for which to get summary
-        @param grouping_cols        Names of columns on which to group-by
-                                        (no summary is provided for these columns)
-        @param get_distinct         Should summary include distinct count
-        @param get_quartiles        Should summary include quartile information
-        @param ntile_array          Array for quantiles to include in summary
-                                        (each element should be in [0, 1])
-        @param how_many_mfv         How many frequent values to output?
-        @param get_estimates        Should the summmary information be estimated or exact?
+        @param schema_madlib   Madlib Schema namespace
+        @param source_table    Name of input table
+        @param output_table    Name of output table
+        @param target_cols     Names of specific columns for which to get summary
+        @param grouping_cols   Names of columns on which to group-by
+                                   (no summary is provided for these columns)
+        @param get_distinct    Should summary include distinct count
+        @param get_quartiles   Should summary include quartile information
+        @param ntile_array     Array for quantiles to include in summary
+                                   (each element should be in [0, 1])
+        @param how_many_mfv    How many frequent values to output?
+        @param get_estimates   Should the summmary information be estimated or exact?
+        @param n_cols_per_run  Number of columns to compute statistics in a single run
 
     """
 
-    old_msg_level = plpy.execute(
-        """select setting from pg_settings where
-        name='client_min_messages'""")[0]['setting']
-    plpy.execute("set client_min_messages to error")
+    with MinWarning('error'):
+        # 'Estimated', 'Exact', None
+        distinctify = 'Estimated'
+        xtileify = 'Exact'          # 'Estimated' not supported at present
+        get_mfv_quick = True
 
-    # 'Estimated', 'Exact', None
-    distinctify = 'Estimated'
-    xtileify = 'Exact'          # 'Estimated' not supported at present
-    get_mfv_quick = True
+        if not get_estimates:
+            distinctify = 'Exact'
+            # xtileify = 'Exact'
+            get_mfv_quick = False
 
-    if not get_estimates:
-        distinctify = 'Exact'
-        #xtileify = 'Exact'
-        get_mfv_quick = False
+        if not get_distinct:
+            distinctify = 'Skip'
 
-    if not get_distinct:
-        distinctify = 'Skip'
+        # Ensure that ntile_array is a list of floats not a string
+        if ntile_array:
+            try:
+                ntile_array = [float(tile) for tile in ntile_array]
+            except ValueError:
+                plpy.error("""Summary -- Invalid paramter:
+                            Percentile array has non-float data""")
 
-    if (version_wrapper.is_pg_version_less_than('9.4') or
-            version_wrapper.is_gp_version_less_than('4.2.2')):
-        # PERCENTILE_CONT not available in PostgreSQL < 9.4 or GPDB < 4.2.2.
-        # The function is available in HAWQ 1.2.0 (even though HAWQ 1.2.0
-        #   is based on GPDB 4.2.0)
-        xtileify = 'Skip'
+        # convert comma delimited string input to a list of column names
+        (target_cols, grouping_cols) = _analyze_str_inputs(target_cols, grouping_cols)
 
-    # GPDB < 4.2 and PG < 9.0 passes vector as a string.
-    # Ensure that ntile_array is a list of floats not a string
-    if ntile_array:
-        try:
-            ntile_array = [float(tile) for tile in _get_vector(ntile_array)]
-        except ValueError:
-            plpy.error("""Summary -- Invalid paramter:
-                        Percentile array has non-float data""")
+        start = time()
+        summarizer = Summarizer(
+            schema_madlib, source_table, output_table, target_cols, grouping_cols,
+            distinctify, get_quartiles, xtileify, ntile_array, how_many_mfv,
+            get_mfv_quick, n_cols_per_run=n_cols_per_run)
+        summarizer.run()
+        end = time()
 
-    # convert comma delimited string input to a list of column names
-    (target_cols, grouping_cols) = _analyze_str_inputs(target_cols, grouping_cols)
+        row_count = plpy.execute(
+            "SELECT count(*) FROM {output_table}".format(
+                output_table=output_table))[0]['count']
 
-    start = time()
-    summarizer = Summarizer(
-        schema_madlib, source_table, output_table, target_cols, grouping_cols,
-        distinctify, get_quartiles, xtileify, ntile_array, how_many_mfv,
-        get_mfv_quick)
-    summarizer.run()
-    end = time()
-
-    row_count = plpy.execute(
-        "SELECT count(*) FROM {output_table}".format(
-            output_table = output_table))[0]['count']
-
-    plpy.execute("set client_min_messages to " + old_msg_level)
     return (output_table, row_count, end - start)
+
 
 # -----------------------------------------------------------------------
 # Input parameter checks and edits
@@ -102,8 +92,9 @@ def _analyze_str_inputs(target_cols, grouping_cols):
         grouping_cols = [None]
     else:
         grouping_cols = grouping_cols.replace(' ', '').split(',')
-        grouping_cols.append(None) # to return summary on complete table
+        grouping_cols.append(None)  # to return summary on complete table
     return (target_cols, grouping_cols)
+
 
 # -----------------------------------------------------------------------
 # Help messages
@@ -117,7 +108,7 @@ def summary_help_message(schema_madlib, message, **kwargs):
         return """
         Usage:
         -----------------------------------------------------------------------
-        SELECT {schema_madlib}.summary
+        SELECT {madlib}.summary
         (
             source_table            TEXT,       -- Source table name (Required)
             output_table            TEXT,       -- Output table name (Required)
@@ -133,9 +124,12 @@ def summary_help_message(schema_madlib, message, **kwargs):
                                                 --      (Default: NULL - Quantile array is not included in result)
             how_many_mfv            INTEGER,    -- How many most-frequent-values (MFVs) to compute?
                                                 --      (Default: 10)
-            get_estimates           BOOLEAN     -- Should we produce an estimated
+            get_estimates           BOOLEAN,    -- Should we produce an estimated
                                                 -- (as opposed to an exact but slow) value for distincts and MFVs?
-        )                                       --      (Default: True)
+                                                --      (Default: True)
+            n_cols_per_run          INTEGER     -- Number of columns to collect summary statistics in
+                                                -- one pass of the data
+        )
         -----------------------------------------------------------------------
         Output table will be in following format
         (presence of some columns depends on the arguments):
@@ -160,7 +154,7 @@ def summary_help_message(schema_madlib, message, **kwargs):
             - quantile_array        : Percentile values corresponding to ntile_array
             - most_frequent_values  : Most frequent values
             - mfv_frequencies       : Frequency of the most frequent values
-        """.format(schema_madlib = schema_madlib)
+        """.format(madlib=schema_madlib)
     elif message is not None and message.lower() in ('example', 'examples'):
         return """
             DROP TABLE IF EXISTS example_data;
@@ -196,17 +190,17 @@ def summary_help_message(schema_madlib, message, **kwargs):
             SELECT madlib.summary('example_data', 'example_data_output', NULL, NULL, True, True, array[0.1, 0.2, 0.3]);
             SELECT madlib.summary('example_data', 'example_data_output', NULL, NULL, True, True, array[0.1, 0.2, 0.3], 2);
             SELECT madlib.summary('example_data', 'example_data_output', NULL, NULL, True, True, array[0.1, 0.2, 0.3], 2, False);
+            SELECT madlib.summary('example_data', 'example_data_output', NULL, NULL, True, True, array[0.1, 0.2, 0.3], 2, False, 2);
          """
     else:
-       return """
+        return """
             'summary' is a generic function used to produce summary statistics
             of any data table.  The function invokes particular 'methods' from
             the MADlib library to provide an overview of the data.
             -------
             For an overview on usage, run:
-            SELECT {schema_madlib}.summary('usage');
+            SELECT {madlib}.summary('usage');
             -------
             For an example, run:
-            SELECT {schema_madlib}.summary('example')
-            """.format(schema_madlib = schema_madlib)
-
+            SELECT {madlib}.summary('example')
+            """.format(madlib=schema_madlib)

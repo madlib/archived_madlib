@@ -42,7 +42,8 @@ summary ( source_table,
           get_quartiles,
           ntile_array,
           how_many_mfv,
-          get_estimates
+          get_estimates,
+          n_cols_per_run
         )
 </pre>
 The \b summary() function returns a composite type containing three fields:
@@ -162,31 +163,52 @@ following columns:
         <td>Array containing the frequency count for each of the most frequent values. </td>
     </tr>
 </table></dd>
+
 <dt>target_columns (optional)</dt>
 <dd>TEXT, default NULL. A comma-separated list of columns to summarize. If NULL, summaries are produced for all columns.</dd>
+
 <dt>grouping_cols (optional)</dt>
-<dd>TEXT, default: null. A comma-separated list of columns on which to 
+<dd>TEXT, default: null. A comma-separated list of columns on which to
 group results. If NULL, summaries are produced on the complete table.</dd>
-@note Please note that summary statistics are calculated for each grouping 
+@note Please note that summary statistics are calculated for each grouping
 column independently.  That is, grouping columns are not combined together
-as in the regular PostgreSQL style GROUP BY directive.  (This was done 
+as in the regular PostgreSQL style GROUP BY directive.  (This was done
 to reduce long run time and huge output table size which would otherwise
-result in the case of large input tables with a lot of grouping_cols and 
+result in the case of large input tables with a lot of grouping_cols and
 target_cols specified.)
+
 <dt>get_distinct (optional)</dt>
 <dd>BOOLEAN, default TRUE. If true, distinct values are counted.</dd>
+
 <dt>get_quartiles (optional)</dt>
 <dd>BOOLEAN, default TRUE. If TRUE, quartiles are computed.</dd>
+
 <dt>ntile_array (optional)</dt>
 <dd>FLOAT8[], default NULL. An array of quantile values to compute. If NULL, quantile values are not computed.</dd>
-@note Quartile and quantile functions are not available for PostgreSQL 9.3 or 
-lower.  If you are using PostgreSQL 9.3 or lower, the output table will not 
-contain these values, even if you set 'get_quartiles' = TRUE or 
+@note Quartile and quantile functions are not available for PostgreSQL 9.3 or
+lower.  If you are using PostgreSQL 9.3 or lower, the output table will not
+contain these values, even if you set 'get_quartiles' = TRUE or
 provide an array of quantile values for the parameter 'ntile_array'.
+
 <dt>how_many_mfv (optional)</dt>
 <dd>INTEGER, default: 10. The number of most-frequent-values to compute.</dd>
+
 <dt>get_estimates (optional)</dt>
 <dd>BOOLEAN, default TRUE. If TRUE, estimated values are produced for distinct values and most frequent values. If FALSE, exact values are calculated (may take longer to run depending on data size).</dd>
+
+<dt>n_cols_per_run (optional)</dt>
+<dd>INTEGER, default: 15. The number of columns to collect summary statistics in
+one pass of the data.
+This parameter determines the number of passes through the data. For e.g.,
+with a total of 40 columns to summarize and 'n_cols_per_run = 15', there will be
+3 passes through the data, with each pass summarizing a maximum of 15 columns.
+@note This parameter should be used with caution. Increasing this parameter could
+decrease the total run time (if number of passes decreases), but will increase
+the memory consumption during each run. Since Postgresql limits the memory available
+for a single aggregate run, this increased memory consumption could result in
+out-of-memory termination error.
+
+</dd>
 </DL>
 
 
@@ -294,15 +316,15 @@ string should be double-quoted; in this case the input would be '"MyTable"').
     in a slow but exact method. The most frequent values are computed using a
     faithful implementation that preserves the approximation guarantees of
     the Cormode/Muthukrishnan method (more information in \ref grp_mfvsketch).
-- Summary statistics are calculated for each grouping 
+- Summary statistics are calculated for each grouping
 column independently.  That is, grouping columns are not combined together
-as in the regular PostgreSQL style GROUP BY directive.  (This was done 
+as in the regular PostgreSQL style GROUP BY directive.  (This was done
 to reduce long run time and huge output table size which would otherwise
-result in the case of large input tables with a lot of grouping_cols and 
+result in the case of large input tables with a lot of grouping_cols and
 target_cols specified.)
-- Quartile and quantile functions are not available for PostgreSQL 9.3 or 
-lower.  If you are using PostgreSQL 9.3 or lower, the output table will not 
-contain these values, even if you set 'get_quartiles' = TRUE or 
+- Quartile and quantile functions are not available for PostgreSQL 9.3 or
+lower.  If you are using PostgreSQL 9.3 or lower, the output table will not
+contain these values, even if you set 'get_quartiles' = TRUE or
 provide an array of quantile values for the parameter 'ntile_array'.
 
 
@@ -338,6 +360,7 @@ CREATE TYPE MADLIB_SCHEMA.summary_result AS
  * @param ntile_array       Array of percentiles to compute
  * @param how_many_mfv      How many most frequent values to compute?
  * @param get_estimates     Should distinct counts be an estimated (faster) or exact count?
+ * @param n_cols_per_run    Number of columns to use per run of summary
  *
  * @usage
  *
@@ -346,7 +369,7 @@ CREATE TYPE MADLIB_SCHEMA.summary_result AS
  *       '<em>target_cols</em>', '<em>grouping_cols</em>',
  *       '<em>get_distinct</em>', '<em>get_quartiles</em>',
  *       '<em>ntile_array</em>', '<em>how_many_mfv</em>',
- *       '<em>get_estimates</em>'
+ *       '<em>get_estimates</em>', '<em>n_cols_per_run</em>'
  *   );
  *   SELECT * FROM '<em>output_table</em>'
  *  </pre>
@@ -362,14 +385,16 @@ MADLIB_SCHEMA.summary
     get_quartiles           BOOLEAN,    -- Are quartiles required
     ntile_array             FLOAT8[],   -- Array of quantiles to compute
     how_many_mfv            INTEGER,    -- How many most frequent values to compute?
-    get_estimates           BOOLEAN     -- Should we produce exact or estimated
+    get_estimates           BOOLEAN,    -- Should we produce exact or estimated
                                         --      values for distinct computation
+    n_cols_per_run          INTEGER     -- Number of columns to use per run of summary
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     PythonFunctionBodyOnly(`summary', `summary')
     return summary.summary(
         schema_madlib, source_table, output_table, target_cols, grouping_cols,
-        get_distinct, get_quartiles, ntile_array, how_many_mfv, get_estimates)
+        get_distinct, get_quartiles, ntile_array, how_many_mfv,
+        get_estimates, n_cols_per_run)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -386,11 +411,30 @@ MADLIB_SCHEMA.summary
     get_distinct            BOOLEAN,
     get_quartiles           BOOLEAN,
     ntile_array             FLOAT8[],
+    how_many_mfv            INTEGER,
+    get_estimates           BOOLEAN
+)
+RETURNS MADLIB_SCHEMA.summary_result AS $$
+    SELECT MADLIB_SCHEMA.summary(
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, 15)
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION
+MADLIB_SCHEMA.summary
+(
+    source_table            TEXT,
+    output_table            TEXT,
+    target_cols             TEXT,
+    grouping_cols           TEXT,
+    get_distinct            BOOLEAN,
+    get_quartiles           BOOLEAN,
+    ntile_array             FLOAT8[],
     how_many_mfv            INTEGER
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     SELECT MADLIB_SCHEMA.summary(
-        $1, $2, $3, $4, $5, $6, $7, $8, True)
+        $1, $2, $3, $4, $5, $6, $7, $8, True, 15)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -407,7 +451,7 @@ MADLIB_SCHEMA.summary
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     SELECT MADLIB_SCHEMA.summary(
-        $1, $2, $3, $4, $5, $6, $7, 10, True)
+        $1, $2, $3, $4, $5, $6, $7, 10, True, 15)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -423,7 +467,7 @@ MADLIB_SCHEMA.summary
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     SELECT MADLIB_SCHEMA.summary(
-        $1, $2, $3, $4, $5, $6, NULL, 10, True)
+        $1, $2, $3, $4, $5, $6, NULL, 10, True, 15)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -438,7 +482,7 @@ MADLIB_SCHEMA.summary
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     SELECT MADLIB_SCHEMA.summary(
-        $1, $2, $3, $4, $5, True, NULL, 10, True)
+        $1, $2, $3, $4, $5, True, NULL, 10, True, 15)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -452,7 +496,7 @@ MADLIB_SCHEMA.summary
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     SELECT MADLIB_SCHEMA.summary(
-        $1, $2, $3, $4, True, True, NULL, 10, True)
+        $1, $2, $3, $4, True, True, NULL, 10, True, 15)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -465,7 +509,7 @@ MADLIB_SCHEMA.summary
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     SELECT MADLIB_SCHEMA.summary(
-        $1, $2, $3, NULL, True, True, NULL, 10, True)
+        $1, $2, $3, NULL, True, True, NULL, 10, True, 15)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
@@ -477,7 +521,7 @@ MADLIB_SCHEMA.summary
 )
 RETURNS MADLIB_SCHEMA.summary_result AS $$
     SELECT MADLIB_SCHEMA.summary(
-        $1, $2, NULL, NULL, True, True, NULL, 10, True)
+        $1, $2, NULL, NULL, True, True, NULL, 10, True, 15)
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
