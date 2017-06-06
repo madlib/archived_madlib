@@ -15,23 +15,19 @@ m4_include(`SQLCommon.m4')
 @addtogroup grp_sketches
 @brief   A collection of methods to estimate the number of unique values contained in the data.
 
-\warning <em> These MADlib methods are still in early stage development. There may be some 
-issues that will be addressed in future versions. Interface and implementation
-is subject to change. </em>
-
 Sketches (sometimes called "synopsis data structures") are small randomized
 in-memory data structures that capture statistical properties of a large set
 of values (e.g., a column of a table).  Sketches can be formed in a single
 pass of the data, and used to approximate a variety of descriptive statistics.
 
-We implement sketches as SQL User-Defined Aggregates (UDAs). Because they
-are single-pass, small-space and parallelized, a single query can
-use many sketches to gather summary statistics on many columns of a table efficiently.
+We implement sketches as SQL User-Defined Aggregates (UDAs). Because they are
+single-pass, small-space and parallelized, a single query can use many sketches
+to gather summary statistics on many columns of a table efficiently.
 
 This module currently implements user-defined aggregates based on three main sketch methods:
  - <i>Count-Min (CM)</i> sketches, which can be used to approximate a number of descriptive statistics including
-   - <c>COUNT(*)</c> of rows whose column value matches a given value in a set
-   - <c>COUNT(*)</c> of rows whose column value falls in a range (*)
+   - <c>COUNT</c> of rows whose column value matches a given value in a set
+   - <c>COUNT</c> of rows whose column value falls in a range (*)
    - order statistics including <i>median</i> and <i>centiles</i> (*)
    - <i>histograms</i>: both <i>equi-width</i> and <i>equi-depth</i> (*)
  - <i>Flajolet-Martin (FM)</i> sketches for approximating <c>COUNT(DISTINCT)</c>.
@@ -57,11 +53,6 @@ and UDFs (user-defined functions), to be used directly in SQL queries.
 </ul>
 </div>
 
-\warning <em> This MADlib method is still in early stage development. There may be some
-issues that will be addressed in a future version. Interface and implementation
-is subject to change. </em>
-
-
 @brief Implements Flajolet-Martin's distinct count estimation
 as a user-defined aggregate.
 
@@ -78,6 +69,13 @@ Get the number of distinct values in a designated column.
 <pre class="syntax">
 fmsketch_dcount( col_name )
 </pre>
+
+@note This is a [User Defined Aggregate](https://www.postgresql.org/docs/current/static/xaggr.html)
+which returns the results when used in a query. Use "CREATE TABLE AS ", with the
+UDA as subquery if the results are to be stored. This is unlike the usual MADlib
+stored procedure interface which places the results in a table instead of
+returning it.
+
 
 @anchor examples
 @examp
@@ -128,10 +126,6 @@ File sketch.sql_in documenting the SQL function.
 </ul>
 </div>
 
-\warning <em> This MADlib method is still in early stage development. There may be some
-issues that will be addressed in a future version. Interface and implementation
-is subject to change. </em>
-
 @brief Implements Cormode-Mathukrishnan <i>CountMin</i> sketches on integer
 values as a user-defined aggregate.
 
@@ -151,31 +145,27 @@ cmsketch( col_name )
   obtained from <tt>cmsketch</tt>.
 <pre class="syntax">
 cmsketch_count( cmsketch,
-                p
-              )
+                p )
 </pre>
 
 - Get the number of rows where <em>col_name</em> is between <em>m</em> and <em>n</em> inclusive.
 <pre class="syntax">
 cmsketch_rangecount( cmsketch,
                      m,
-                     n
-                   )
+                     n )
 </pre>
 
 - Get the <em>k</em>th percentile of <em>col_name</em> where <em>count</em> specifies number of rows. <em>k</em> should be an integer between 1 to 99.
 <pre class="syntax">
 cmsketch_centile( cmsketch,
                   k,
-                  count
-                )
+                  count )
 </pre>
 
 - Get the median of col_name where <em>count</em> specifies number of rows. This is equivalent to <tt>\ref cmsketch_centile(<em>cmsketch</em>,50,<em>count</em>)</tt>.
 <pre class="syntax">
 cmsketch_median( cmsketch,
-                 count
-               )
+                 count )
 </pre>
 
 - Get an n-bucket histogram for values between min and max for the column where each bucket has approximately the same width. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.
@@ -183,16 +173,20 @@ cmsketch_median( cmsketch,
 cmsketch_width_histogram( cmsketch,
                           min,
                           max,
-                          n
-                        )
+                          n )
 </pre>
 
 - Get an n-bucket histogram for the column where each bucket has approximately the same count. The output is a text string containing triples {lo, hi, count} representing the buckets; counts are approximate.  Note that an equi-depth histogram is equivalent to a spanning set of equi-spaced centiles.
 <pre class="syntax">
 cmsketch_depth_histogram( cmsketch,
-                          n
-                        )
+                          n )
 </pre>
+
+@note This is a [User Defined Aggregate](https://www.postgresql.org/docs/current/static/xaggr.html)
+which returns the results when used in a query. Use "CREATE TABLE AS ", with the
+UDA as subquery if the results are to be stored. This is unlike the usual MADlib
+stored procedure interface which places the results in a table instead of
+returning it.
 
 @anchor examples
 @examp
@@ -207,14 +201,13 @@ INSERT INTO data SELECT 2,5 FROM generate_series(1,1000);
 INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
 </pre>
 
--# Count number of rows where a1 = 2 in each class.
+-# Count number of rows where a1 = 2 in each class. Store results in a table.
 <pre class="example">
+CREATE TABLE sketch_count AS
 SELECT class,
-       cmsketch_count(
-                       cmsketch( a1 ),
-                       2
-                      )
+       cmsketch_count( cmsketch( a1 ), 2 )
 FROM data GROUP BY data.class;
+SELECT * FROM sketch_count;
 </pre>
 Result:
 <pre class="result">
@@ -228,11 +221,7 @@ Result:
 -# Count number of rows where a1 is between 3 and 6.
 <pre class="example">
 SELECT class,
-       cmsketch_rangecount(
-                            cmsketch(a1),
-                            3,
-                            6
-                          )
+       cmsketch_rangecount( cmsketch(a1), 3, 6 )
 FROM data GROUP BY data.class;
 </pre>
 Result:
@@ -246,11 +235,7 @@ Result:
 
 -# Compute the 90th percentile of all of a1.
 <pre class="example">
-SELECT cmsketch_centile(
-                         cmsketch( a1 ),
-                         90,
-                         count(*)
-                       )
+SELECT cmsketch_centile( cmsketch( a1 ), 90, count(*) )
 FROM data;
 </pre>
 Result:
@@ -263,12 +248,7 @@ Result:
 
 -# Produce an equi-width histogram with 2 bins between 0 and 10.
 <pre class="example">
-SELECT cmsketch_width_histogram(
-                                 cmsketch( a1 ),
-                                 0,
-                                 10,
-                                 2
-                               )
+SELECT cmsketch_width_histogram( cmsketch( a1 ), 0, 10, 2 )
 FROM data;
 </pre>
 Result:
@@ -281,10 +261,7 @@ Result:
 
 -# Produce an equi-depth histogram of a1 with 2 bins of approximately equal depth.
 <pre class="example">
-SELECT cmsketch_depth_histogram(
-                                 cmsketch( a1 ),
-                                 2
-                               )
+SELECT cmsketch_depth_histogram( cmsketch( a1 ), 2 )
 FROM data;
 </pre>
 Result:
@@ -321,10 +298,6 @@ Module \ref grp_quantile for a different implementation of quantile function.
 </ul>
 </div>
 
-\warning <em> This MADlib method is still in early stage development. There may be some
-issues that will be addressed in a future version. Interface and implementation
-is subject to change. </em>
-
 @brief Implements the most frequent values variant of the CountMin sketch as a user-defined aggregate.
 
 MFVSketch: Most Frequent Values variant of CountMin sketch, implemented
@@ -335,23 +308,33 @@ most frequent values in the column. The output is an array of doubles {value, co
 in descending order of frequency; counts are approximated via CountMin sketches.
 Ties are handled arbitrarily.
 
-@anchor syntax
 
-<pre class="syntax">
-mfvsketch_top_histogram( col_name,
-                         n
-                       )
-</pre>
+@anchor syntax
 
 The MFV frequent-value UDA comes in two different versions:
 - a faithful implementation that preserves the approximation guarantees
 of Cormode/Muthukrishnan,
+<pre class="syntax">
+mfvsketch_top_histogram( col_name,
+                         n )
+</pre>
 - and a "quick and dirty" version that can do parallel aggregation in Greenplum
 at the expense of missing some of the most frequent values.
+<pre class="syntax">
+mfvsketch_quick_histogram( col_name,
+                           n )
+</pre>
 
 In PostgreSQL the two UDAs are identical. In Greenplum, the quick version should
-produce good results unless the number of values requested is very small,
-or the distribution is very flat.
+produce good results unless the number of values requested is small,
+or the distribution is flat.
+
+@note This is a [User Defined Aggregate](https://www.postgresql.org/docs/current/static/xaggr.html)
+which returns the results when used in a query. Use "CREATE TABLE AS ", with the
+UDA as subquery if the results are to be stored. This is unlike the usual MADlib
+stored procedure interface which places the results in a table instead of
+returning it.
+
 
 @anchor examples
 @examp
@@ -369,9 +352,7 @@ INSERT INTO data SELECT 2,6 FROM generate_series(1,1000);
 -# Produce a histogram of 5 bins and return the most frequent value and associated
 count in each bin.
 <pre class="example">
-SELECT mfvsketch_top_histogram( a1,
-                                5
-                              )
+SELECT mfvsketch_top_histogram( a1, 5 )
 FROM data;
 </pre>
 Result:
