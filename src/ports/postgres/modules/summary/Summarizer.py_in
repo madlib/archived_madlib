@@ -3,6 +3,7 @@ import math
 
 from utilities.validate_args import input_tbl_valid, output_tbl_valid
 from utilities.validate_args import cols_in_tbl_valid
+from utilities.utilities import _assert
 from utilities.utilities import py_list_to_sql_string
 
 
@@ -21,9 +22,9 @@ class Summarizer:
         self._get_quartiles = get_quartiles
         self._xtileify = xtileify
         self._ntile_array = ntile_array
-        self._how_many_mfv = int(how_many_mfv)
+        self._how_many_mfv = how_many_mfv
         self._get_mfv_quick = get_mfv_quick
-        self._n_cols_per_run = int(n_cols_per_run)
+        self._n_cols_per_run = n_cols_per_run
         self._columns = None
         self._column_names = None
         self._delimiter = '_.*.&.!.!.&.*_'
@@ -63,11 +64,9 @@ class Summarizer:
             Validate the required arguments for the summary function
         """
         # source table
-        if self._source_table is None or self._source_table.strip() == '':
-            plpy.error("Summary error: Invalid data table name!")
+        _assert(self._source_table is not None and self._source_table.strip(),
+                "Summary error: Invalid data table name!")
         input_tbl_valid(self._source_table, "Summary")
-
-        # output table
         output_tbl_valid(self._output_table, "Summary")
 
     def _validate_required_cols(self, required_cols):
@@ -77,22 +76,20 @@ class Summarizer:
 
     def _validate_ntile_array(self):
         if self._ntile_array is not None:
-            if len(self._ntile_array) == 0:
-                plpy.error("""
-                    Summary -- Invalid parameter: ntile_array is empty.""")
+            _assert(len(self._ntile_array) > 0,
+                    "Summary - Invalid parameter: ntile_array is empty.")
             for ntile in self._ntile_array:
-                if ntile < 0 or ntile > 1.0:
-                    plpy.error("""
-                        Summary -- Invalid parameter: Values in ntile_array
-                        should be in the range [0.0, 1.0]""")
+                _assert(0 < ntile < 1.0,
+                        "Summary - Invalid parameter: Values in ntile_array "
+                        "should be in the range [0.0, 1.0]")
 
     def _adjust_cols(self):
         # if #cols == 1, then it should not appear in the grouping_cols
-        if len(self._column_names) == 1 and \
-                self._column_names[0] in self._grouping_cols:
+        if (len(self._column_names) == 1 and
+                self._column_names[0] in self._grouping_cols):
             self._grouping_cols.remove(self._column_names[0])
 
-    def _validate_paras(self):
+    def _validate_params(self):
         """
         Validate all parameters in the class
         """
@@ -100,13 +97,14 @@ class Summarizer:
         self._validate_required_cols(self._target_cols)
         self._validate_required_cols(self._grouping_cols)
         self._validate_ntile_array()
-        if self._how_many_mfv is None or self._how_many_mfv <= 0:
-            plpy.error("""
-                Summary -- Invalid parameter: Number of most frequent values
-                required should be positive""")
-        if self._n_cols_per_run is None or self._n_cols_per_run <= 0:
-            plpy.error(" Summary -- Invalid parameter: Number of columns per run"
-                       "should be positive")
+        _assert(self._how_many_mfv is not None and self._how_many_mfv > 0,
+                "Summary - Invalid parameter: Number of most frequent values"
+                "required should be positive")
+        self._how_many_mfv = int(self._how_many_mfv)
+        _assert(self._n_cols_per_run is not None and self._n_cols_per_run > 0,
+                "Summary - Invalid parameter: Number of columns per run"
+                "should be positive")
+        self._n_cols_per_run = int(self._n_cols_per_run)
 
 # ----- End of argument validation functions -----------------------------
 
@@ -354,22 +352,20 @@ class Summarizer:
             ntiles=ntiles)
 
     def run(self):
-        self._validate_paras()
+        self._validate_params()
         self._populate_columns()
-        if not self._columns:
-            plpy.error("Summary error: Invalid column names {0} ".format(self._target_cols))
+        _assert(self._columns,
+                "Summary error: Invalid column names {0} ".format(self._target_cols))
         self._adjust_cols()
         try:
-            plpy.execute('DROP TABLE IF EXISTS {output_table}'.format(
-                output_table=self._output_table))
+            plpy.execute('DROP TABLE IF EXISTS {0}'.format(self._output_table))
             create_table = True
         except Exception:
             plpy.error("Summary error: Invalid output table name " + self._output_table)
 
-        # set a maximum number of columns to avoid out-of-memory
-        #  issues when a lot of columns are computed concurrently
-        #  We repeat the query multiple times till computation is complete for
-        #  all columns.
+        # Set a maximum number of columns to avoid out-of-memory issues when a
+        # lot of columns are computed concurrently. Repeat the query multiple
+        # times till computation is complete for all columns.
         actual_n_cols = len(self._columns)
         # ensuring an even spread of columns in each repeated attempt. For eg.
         #  if self._n_cols_per_run = 15, to simulate 31 cols we break it down as [11, 11, 9]
