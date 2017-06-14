@@ -28,6 +28,7 @@
 		\item[v0.1] Initial version, SSSP only.
 		\item[v0.2] Graph Framework, SSSP implementation details.
         \item[v0.3] PageRank
+        \item[v0.4] APSP
 	\end{modulehistory}
 \end{moduleinfo}
 
@@ -142,9 +143,9 @@ negative cycle in the graph.
 \end{algorithm}
 
 \begin{description}
-\item edge: (src,dest,val). The edges of the graph.
-\item cur: id -> (val,parent). The intermediate SSSP results.
-\item toupdate: iter -> (id -> (val,parent)). The set of updates.
+\item edge: $(src,dest,val)$. The edges of the graph.
+\item cur: $id \rightarrow (val,parent)$. The intermediate SSSP results.
+\item toupdate: $iter \rightarrow (id \rightarrow (val,parent))$. The set of updates.
 \end{description}
 
 Changes from the standard Bellman-Ford algorithm:
@@ -220,14 +221,14 @@ values, find parents, eliminate duplicates and ensure improvement}.
 
 \item We begin our analysis at the innermost subquery, emph{find values}
 (lines 11-16). This subquery takes a set of vertices (in the table
-$old_update$) and finds the reachable vertices. In case a vertex is reachable
+$old\_update$) and finds the reachable vertices. In case a vertex is reachable
 by multiple vertices, only the path that has the minimum cost is considered
 (hence the name find values). There are two important points to note:
 	\begin{itemize}
 	\item The input vertices need the value of their path as well.
 		\begin{itemize}
 		\item In our example, both $v_1$ and $v_2$ can reach $v_3$. We would
-		have to use $v_2$ -> $v_3$ edge since that gives the lowest possible
+		have to use $v_2 \rightarrow v_3$ edge since that gives the lowest possible
 		path value.
 		\end{itemize}
 	\item The subquery is aggregating the rows using the $min$ operator for
@@ -272,6 +273,91 @@ of the algorithm.
 
 Please note that, for ideal performance, \emph{vertex} and \emph{edge} tables
 should be distributed on \emph{vertex id} and \emph{source id} respectively.
+
+\section{All Pairs Shortest Paths} \label{sec:graph:apsp}
+
+Given a graph and a source vertex, all pairs shortest paths (APSP) algorithm
+finds a path for every vertex pair such that the sum of the weights of its
+constituent edges is minimized. Please refer to the
+Section~\ref{sec:graph:sssp} on single source shortest path for the
+mathematical definition of shortest path.
+
+Our implementation has a dynamic programming approach, based on the matrix
+multiplication inspired APSP algorithm \cite{apsp}. The idea is similar to
+the one from SSSP implementation. We start with a naive approximation for the
+cost of every vertex pair (infinite). At each iteration, these values are
+refined based on the edge list and the existing approximations. This
+refinement step is similar to a matrix multiplication. For every vertex pair
+$i,j$, we check every edge $e: j \rightarrow k$ to see if it is possible to
+use $e$ to reduce the cost of path $i \rightarrow k$. If there are no
+refinements at any given step, the algorithm returns the calculated results.
+If the algorithm does not converge in $|V|-1$ iterations, this indicates the
+existence of a negative cycle in the graph.
+
+\begin{algorithm}[APSP$(V,E)$] \label{alg:apsp}
+\alginput{Vertex set $v$, edge set $E$}
+\algoutput{Distance and parent set for every vertex pair}
+\begin{algorithmic}[1]
+
+	\While {$update$ is $True$}
+		\State $update \set False$
+		\For{every vertex pair $i,j$}
+			\For{every edge $j \rightarrow k$}
+		 		\If{$ val(i \rightarrow j) + val(j \rightarrow k) < val(i \rightarrow k)$}
+		 			\State $val(i \rightarrow k) \set  val(i \rightarrow j) + val(j \rightarrow k)$
+		 			\State $parent(i \rightarrow k) \set j$
+		 			\State $update \set True$
+		 		\EndIf
+			\EndFor
+		\EndFor
+	\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Implementation Details}
+
+The implementation details are similar to the SSSP as the requirements and
+restrictions such as finding the parent, distinct updates, etc. are common in
+both cases. This section will mostly focus on the differences in the APSP
+implementation.
+
+\begin{algorithm}[Find Updates$(E,out)$]
+\label{alg:apsp:findu}
+\begin{lstlisting}
+INSERT INTO update
+	SELECT DISTINCT ON (y.src, y.dest) y.src AS src, y.dest AS dest
+		y.val AS val,
+		y.parent AS parent
+	FROM out INNER JOIN (
+			SELECT
+				x.src AS src, x.dest AS dest,
+				x.val AS val, out.dest AS parent
+			FROM out
+				INNER JOIN edge_table
+				ON (edge_table.src = out.dest)
+				INNER JOIN (
+					SELECT out.src AS src, edge_table.dest AS dest,
+						min(out.val + edge_table.weight) AS val
+					FROM out INNER JOIN
+						edge_table ON
+						(edge_table.src=out.dest)
+					GROUP BY out.src, edge_table.dest
+				) x
+				ON (edge_table.src = x.src AND edge_table.dest = x.dest)
+			WHERE ABS(out.val + edge_table.weight - x.val) < EPSILON
+		) AS y ON (y.src = out.src AND y.dest = out.dest)
+	WHERE y.val < out.val
+\end{lstlisting}
+\end{algorithm}
+
+The only major difference comes in the innermost subquery (lines 13-18). The
+\emph{group by} clause ensures that we try to reduce the weight for every
+$out.src$ ($i$) and $edge\_table.dest$ ($k$) pair. The \emph{inner join on}
+clause ensures that there is a connecting edge ($j\rightarrow k$) that can be
+used for the $i,j$ pair. The rest of the changes are mostly trivial as the
+algorithm needs to check for both source and destination during joins (instead
+of just the destination).
+
 
 \section{PageRank} \label{sec:graph:pagerank}
 \begin{figure}[h]
@@ -417,3 +503,5 @@ noted that this is not based on any experimental study. Users of MADlib are
 encouraged to consider this factor when setting a value for threshold, since
 a high $threshold$ value would lead to early termination of PageRank
 computation, thus resulting in incorrect PageRank values.
+
+

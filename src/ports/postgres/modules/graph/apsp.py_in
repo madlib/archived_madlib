@@ -123,8 +123,8 @@ def graph_apsp(schema_madlib, vertex_table, vertex_id, edge_table,
 		checkg_eout = ""
 		checkg_ex = ""
 		checkg_om = ""
-		checkg_o1v_sub = ""
-		checkg_ov_sub = ""
+		checkg_o1t_sub = ""
+		checkg_ot_sub = ""
 		checkg_ot = ""
 		checkg_o1t = ""
 		checkg_vv = ""
@@ -151,8 +151,8 @@ def graph_apsp(schema_madlib, vertex_table, vertex_id, edge_table,
 			checkg_eout = " AND " + _check_groups("edge","out",glist)
 			checkg_ex = " AND " + _check_groups("edge","x",glist)
 			checkg_om = " AND " + _check_groups(out_table,message,glist)
-			checkg_o1v_sub = _check_groups("out",tmp_view,glist)
-			checkg_ov_sub = _check_groups(out_table,tmp_view,glist)
+			checkg_o1t_sub = _check_groups("out",tmp_view,glist)
+			checkg_ot_sub = _check_groups(out_table,tmp_view,glist)
 			checkg_ot = " AND " + _check_groups(out_table,tmp_view,glist)
 			checkg_o1t = " AND " + _check_groups("out","t",glist)
 			checkg_vv = " AND " + _check_groups("v1","v2",glist)
@@ -277,14 +277,26 @@ def graph_apsp(schema_madlib, vertex_table, vertex_id, edge_table,
 				""".format(**locals()))
 
 			# Distance = 1: every edge means there is a path from src to dest
+
+			# There may be multiple edges defined as a->b,
+			# we only need the minimum weighted one.
+
+			plpy.execute(
+				""" CREATE VIEW {tmp_view} AS
+					SELECT {grp_comma} {src}, {dest},
+						min({weight}) AS {weight}
+					FROM {edge_table}
+					GROUP BY {grp_comma} {src}, {dest}
+				""".format(**locals()))
 			plpy.execute(
 				""" UPDATE {out_table} SET
-				{weight} = {edge_table}.{weight}, parent = {edge_table}.{dest}
-				FROM {edge_table}
-				WHERE {out_table}.{src} = {edge_table}.{src}
-				AND {out_table}.{dest} = {edge_table}.{dest}
-				AND {out_table}.{weight} > {edge_table}.{weight} {checkg_eo}
+				{weight} = {tmp_view}.{weight}, parent = {tmp_view}.{dest}
+				FROM {tmp_view}
+				WHERE {out_table}.{src} = {tmp_view}.{src}
+				AND {out_table}.{dest} = {tmp_view}.{dest}
+				AND {out_table}.{weight} > {tmp_view}.{weight} {checkg_ot}
 				""".format(**locals()))
+			plpy.execute("DROP VIEW IF EXISTS {0}".format(tmp_view))
 
 			ot_sql1 = ot_sql.format(**locals())
 			out_table_1 = out_table
@@ -293,7 +305,7 @@ def graph_apsp(schema_madlib, vertex_table, vertex_id, edge_table,
 		# If not done by v_cnt iterations, there is a negative cycle.
 		v_cnt = plpy.execute(
 			""" SELECT max(count) as max FROM (
-					SELECT count({src}) AS count
+					SELECT count(DISTINCT {src}) AS count
 					FROM {out_table_1}
 					{grp_by}) x
 			""".format(**locals()))[0]['max']
@@ -451,7 +463,7 @@ def graph_apsp(schema_madlib, vertex_table, vertex_id, edge_table,
 						WHERE NOT EXISTS(
 							SELECT 1
 							FROM {tmp_view}
-							WHERE {checkg_o1v_sub}
+							WHERE {checkg_o1t_sub}
 							);"""
 					plpy.execute(sql_del.format(**locals()))
 					plpy.execute("DROP VIEW IF EXISTS {0}".format(tmp_view))
@@ -460,7 +472,7 @@ def graph_apsp(schema_madlib, vertex_table, vertex_id, edge_table,
 				else:
 					sql_del = """ DELETE FROM {out_table}
 						USING {tmp_view}
-						WHERE {checkg_ov_sub}"""
+						WHERE {checkg_ot_sub}"""
 					plpy.execute(sql_del.format(**locals()))
 
 				plpy.execute("DROP VIEW IF EXISTS {0}".format(tmp_view))
