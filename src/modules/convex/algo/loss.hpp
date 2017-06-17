@@ -1,4 +1,4 @@
-/* ----------------------------------------------------------------------- *//** 
+/* ----------------------------------------------------------------------- *//**
  *
  * @file loss.hpp
  *
@@ -21,7 +21,7 @@ namespace convex {
 
 // use Eigen
 using namespace madlib::dbal::eigen_integration;
-    
+
 // The reason for using ConstState instead of const State to reduce the
 // template type list: flexibility to high-level for mutability control
 // More: cast<ConstState>(MutableState) may not always work
@@ -42,7 +42,7 @@ void
 Loss<State, ConstState, Task>::transition(state_type &state,
         const tuple_type &tuple) {
     state.algo.loss += Task::loss(
-            state.task.model, 
+            state.task.model,
             tuple.indVar,
             tuple.depVar);
 }

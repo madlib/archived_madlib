@@ -1,0 +1,199 @@
+% Licensed to the Apache Software Foundation (ASF) under one
+% or more contributor license agreements.  See the NOTICE file
+% distributed with this work for additional information
+% regarding copyright ownership.  The ASF licenses this file
+% to you under the Apache License, Version 2.0 (the
+% "License"); you may not use this file except in compliance
+% with the License.  You may obtain a copy of the License at
+
+%   http://www.apache.org/licenses/LICENSE-2.0
+
+% Unless required by applicable law or agreed to in writing,
+% software distributed under the License is distributed on an
+% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+% KIND, either express or implied.  See the License for the
+% specific language governing permissions and limitations
+% under the License.
+
+% When using TeXShop on the Mac, let it know the root document.
+% The following must be one of the first 20 lines.
+% !TEX root = ../design.tex
+
+\chapter{Neural Network}
+
+\begin{moduleinfo}
+\item[Authors] {Xixuan Feng}
+\end{moduleinfo}
+
+% Abstract. What is the problem we want to solve?
+This module implements artificial neural network \cite{ann_wiki}.
+
+\section{Multilayer Perceptron}
+Multilayer perceptron is arguably the most popular model among many neural network models \cite{mlp_wiki}.
+Here, we learn the coefficients by minimizing a least square objective function (\cite{bertsekas1999nonlinear}, example 1.5.3).
+
+% Background. Why can we solve the problem with gradient-based methods?
+\subsection{Solving as a Convex Program}
+Although the objective function is not necessarily convex, gradient descent or incremental gradient descent are still commonly-used algorithms to learn the coefficients.
+To clarify, gradient-based methods are not different from the famous backpropagation, which is essentially a way to compute the gradient value.
+
+\subsection{Formal Description}
+Having the convex programming framework, the main tasks of implementing a learner include:
+(a) choose a subset of algorithms;
+(b) implement the related computation logic for the objective function, e.g., gradient.
+
+For multilayer perceptron, we choose incremental gradient descent (IGD).
+In the remaining part of this section, we will give a formal description of the derivation of objective function and its gradient.
+
+\paragraph{Objective function.}
+We mostly follow the notations in example 1.5.3 from Bertsekas \cite{bertsekas1999nonlinear}, for a multilayer perceptron that has $N$ layers (stages), and the $k$th stage has $n_k$ activation units ($\phi : \mathbb{R} \to \mathbb{R}$), the objective function is given as
+\[f_{(y, z)}(u) = \frac{1}{2} \|h(u, y) - z\|_2^2,\]
+where $y \in \mathbb{R}^{n_0}$ is the input vector, $z \in \mathbb{R}^{n_N}$ is the output vector,
+\footnote{Of course, the objective function can be defined over a set of input-output vector pairs, which is simply given as the addition of the above $f$.}
+and the coefficients are given as
+\[u = \{ u_{k-1}^{sj} \; | \; k = 1,...,N, \: s = 0,...,n_{k-1}, \: j = 1,...,n_k\}\]
+This still leaves $h : \mathbb{R}^{n_0} \to \mathbb{R}^{n_N}$ as an open item.
+Let $x_k \in \mathbb{R}^{n_k}, k = 1,...,N$ be the output vector of the $k$th layer. Then we define $h(u, y) = x_N$, based on setting $x_0 = y$ and the $j$th component of $x_k$ is given in an iterative fashion as
+\footnote{$x_k^0 \equiv 1$ is used to simplified the notations, and $x_k^0$ is not a component of $x_k$, for any $k = 0,...,N$.}
+\[\begin{alignedat}{5}
+    x_k^j = \phi \left( \sum_{s=0}^{n_{k-1}} x_{k-1}^s u_{k-1}^{sj} \right), &\quad k = 1,...,N, \; j = 1,...,n_k
+\end{alignedat}\]
+
+\paragraph{Gradient of the End Layer.}
+Let's first handle $u_{N-1}^{st}, s = 0,...,n_{N-1}, t = 1,...,n_N$.
+Let $z^t$ denote the $t$th component of $z \in \mathbb{R}^{n_N}$, and $h^t$ the $t$th component of output of $h$.
+\[\begin{aligned}
+    \frac{\partial f}{\partial u_{N-1}^{st}}
+    &= \left( h^t(u, y) - z^t \right) \cdot \frac{\partial h^t(u, y)}{\partial u_{N-1}^{st}} \\
+    &= \left( x_N^t - z^t \right) \cdot \frac{\partial x_N^t}{\partial u_{N-1}^{st}} \\
+    &= \left( x_N^t - z^t \right) \cdot \frac{\partial \phi \left( \sum_{s=0}^{n_{N-1}} x_{N-1}^s u_{N-1}^{st} \right)}{\partial u_{N-1}^{st}} \\
+    &= \left( x_N^t - z^t \right) \cdot \phi' \left( \sum_{s=0}^{n_{N-1}} x_{N-1}^s u_{N-1}^{st} \right) \cdot x_{N-1}^s \\
+\end{aligned}\]
+To ease the notation, let the input vector of the $j$th activation unit of the $(k+1)$th layer be
+\[\mathit{net}_k^j =\sum_{s=0}^{n_{k-1}} x_{k-1}^s u_{k-1}^{sj},\]
+where $k = 1,...,N, \; j = 1,...,n_k$, and note that $x_k^j =\phi(\mathit{net}_k^j)$. Finally, the gradient
+\[\frac{\partial f}{\partial u_{N-1}^{st}} = \left( x_N^t - z^t \right) \cdot \phi' ( \mathit{net}_N^t ) \cdot x_{N-1}^s\]
+For any $s = 0,...,n_{N-1}, t =1,...,n_N$, we are given $z^t$, and $x_N^t, \mathit{net}_N^t, x_{N-1}^s$ can be computed by forward iterating the network layer by layer (also called the feed-forward pass). Therefore, we now know how to compute the coefficients for the end layer $u_{N-1}^{st}, s = 0,...,n_{N-1}, t =1,...,n_N$.
+
+\subsubsection{Backpropagation}
+For inner (hidden) layers, it is more difficult to compute the partial derivative over the input of activation units (i.e., $\mathit{net}_k, k = 1,...,N-1$).
+That said, $\frac{\partial f}{\partial \mathit{net}_N^t} = (x_N^t - z^t) \phi'(\mathit{net}_N^t)$ is easy, where $t = 1,...,n_N$, but $\frac{\partial f}{\partial \mathit{net}_k^j}$ is hard, where $k = 1,...,N-1, j = 1,..,n_k$.
+This hard-to-compute statistic is referred to as \textit{delta error}, and let $\delta_k^j = \frac{\partial f}{\partial \mathit{net}_k^j}$, where $k = 1,...,N-1, j = 1,..,n_k$.
+If this is solved, the gradient can be easily computed as follow
+\[\frac{\partial f}{\partial u_{k-1}^{sj}} = \boxed{\frac{\partial f}{\partial \mathit{net}_k^j}} \cdot \frac{\partial \mathit{net}_k^j}{\partial u_{k-1}^{sj}} = \boxed{\delta_k^j} x_{k-1}^s,\]
+where $k = 1,...,N-1, s = 0,...,n_{k-1}, j = 1,..,n_k$.
+To solve this, we introduce the popular backpropagation below.
+
+\paragraph{Error Back Propagation.}
+Since we know how to compute $\delta_N^t, t = 1,...,n_N$, we try to compute $\delta_{k}^j, j = 1,...,n_{k}$, given $\delta_{k+1}^t, t = 1,...,n_{k+1}$, for any $k = 1,...,N-1$.
+First,
+\[
+    \delta_{k}^j
+    = \frac{\partial f}{\partial \mathit{net}_{k}^j}
+    = \frac{\partial f}{\partial x_{k}^j} \cdot \frac{\partial x_{k}^j}{\partial \mathit{net}_{k}^j}
+    = \frac{\partial f}{\partial x_{k}^j} \cdot \phi'(\mathit{net}_{k}^j)
+\]
+And here comes the only equation that is needed but the author, I (Aaron), do not understand but it looks reasonable and repeats in different online notes \cite{mlp_gradient_wisc},
+\[\begin{alignedat}{5}
+    \frac{\partial f}{\partial x_{k}^j} = \sum_{t=1}^{n_{k+1}} \left( \frac{\partial f}{\partial \mathit{net}_{k+1}^t} \cdot \frac{\partial \mathit{net}_{k+1}^t}{\partial x_{k}^j} \right),
+    &\quad k = 1,...,N-1, \: j = 1,...,n_{k}
+\end{alignedat}\]
+Assuming the above equation is true, we can solve delta error backward iteratively
+\[\begin{aligned}
+    \delta_{k}^j
+    &= \frac{\partial f}{\partial x_{k}^j} \cdot \phi'(\mathit{net}_{k}^j) \\
+    &= \sum_{t=1}^{n_{k+1}} \left( \frac{\partial f}{\partial \mathit{net}_{k+1}^t} \cdot \frac{\partial \mathit{net}_{k+1}^t}{\partial x_{k}^j} \right) \cdot \phi'(\mathit{net}_{k}^j) \\
+    &= \sum_{t=1}^{n_{k+1}} \left( \delta_{k+1}^t \cdot \frac{\partial \left( \sum_{s=0}^{n_{k}} x_{k}^s u_{k}^{st} \right) }{\partial x_{k}^j} \right) \cdot \phi'(\mathit{net}_{k}^j) \\
+    &= \sum_{t=1}^{n_{k+1}} \left( \delta_{k+1}^t \cdot u_{k}^{jt} \right) \cdot \phi'(\mathit{net}_{k}^j) \\
+\end{aligned}\]
+To sum up, we need the following equation for error back propagation
+\[\boxed{\delta_{k}^j = \sum_{t=1}^{n_{k+1}} \left( \delta_{k+1}^t \cdot u_{k}^{jt} \right) \cdot \phi'(\mathit{net}_{k}^j)}\]
+where $k = 1,...,N-1$, and $j = 1,...,n_{k}$.
+
+\subsubsection{The $\mathit{Gradient}$ Function}
+\begin{algorithm}[mlp-gradient$(u, y, z)$] \label{alg:mlp-gradient}
+\alginput{Coefficients $u = \{ u_{k-1}^{sj} \; | \; k = 1,...,N, \: s = 0,...,n_{k-1}, \: j = 1,...,n_k\}$,\\
+start vector $y \in \mathbb{R}^{n_0}$,\\
+end vector $z \in \mathbb{R}^{n_N}$,\\
+activation unit $\phi : \mathbb{R} \to \mathbb{R}$}
+\algoutput{Gradient value $\nabla f(u)$ that consists of components $\nabla f(u)_{k-1}^{sj} = \frac{\partial f}{\partial u_{k-1}^{sj}}$}
+\begin{algorithmic}[1]
+    \State $(\mathit{net}, x) \set$ \texttt{feed-forward}$(u, y, \phi)$
+    \State $\delta_N \set$ \texttt{end-layer-delta-error}$(\mathit{net}, x, z, \phi')$
+    \State $\delta \set$ \texttt{error-back-propagation}$(\delta_N, \mathit{net}, u, \phi')$
+    \For{$k = 1,...,N$}
+        \For{$s = 0,...,n_{k-1}$}
+            \For{$j = 1,...,n_k$}
+                \State $\nabla f(u)_{k-1}^{sj} \set \delta_k^j x_{k-1}^s$
+                \Comment{Can be put together with the computation of delta $\delta$}
+            \EndFor
+        \EndFor
+    \EndFor
+    \State \Return $\nabla f(u)$
+\end{algorithmic}
+\end{algorithm}
+
+\paragraph{Activation Units $\phi$.}
+Common examples of activation units are
+\[\begin{alignedat}{3}
+\phi(\xi) &= \frac{1}{1 + e^{-\xi}}, &\quad \text{ (logistic function),}\\
+\phi(\xi) &= \frac{e^{\xi} - e^{-\xi}}{e^{\xi} + e^{-\xi}}, &\quad \text{ (hyperbolic tangent function)}\\
+\end{alignedat}\]
+
+\begin{algorithm}[feed-forward$(u, y, \phi)$] \label{alg:feed-forward}
+\alginput{Coefficients $u = \{ u_{k-1}^{sj} \; | \; k = 1,...,N, \: s = 0,...,n_{k-1}, \: j = 1,...,n_k\}$,\\
+input vector $y \in \mathbb{R}^{n_0}$,\\
+activation unit $\phi : \mathbb{R} \to \mathbb{R}$}
+\algoutput{Input vectors $\mathit{net} = \{\mathit{net}_k^j \; | \; k = 1,...,N, \: j = 1,...,n_k\}$,\\
+output vectors $x = \{x_k^j \; | \; k = 0,...,N, \: j = 0,...,n_k\}$}
+\begin{algorithmic}[1]
+    \For{$k = 0,...,N$}
+        \State $x_k^0 \set 1$
+    \EndFor
+    \State $x_0 \set y$ \Comment{For all components $x_0^j, y^j, \; j = 1,...,n_0$}
+    \For{$k = 1,...,N$}
+        \For{$j = 1,...,n_k$}
+            \State $\mathit{net}_k^j \set 0$
+            \For{$s = 0,...,n_{k-1}$}
+                \State $\mathit{net}_k^j \set \mathit{net}_k^j + x_{k-1}^s u_{k-1}^{sj}$
+            \EndFor
+            \State $x_k^j = \phi(\mathit{net}_k^j)$
+        \EndFor
+    \EndFor
+    \State \Return $(\mathit{net}, x)$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[end-layer-delta-error$(\mathit{net}, x, z, \phi')$] \label{alg:end-layer-delta-error}
+\alginput{Input vectors $\mathit{net} = \{\mathit{net}_k^j \; | \; k = 1,...,N, \: j = 1,...,n_k\}$,\\
+output vectors $x = \{x_k^j \; | \; k = 0,...,N, \: j = 0,...,n_k\}$,\\
+end vector $z \in \mathbb{R}^{n_N}$,\\
+derivative of activation unit $\phi' : \mathbb{R} \to \mathbb{R}$}
+\algoutput{End layer delta $\delta_N = \{\delta_N^t \; | \; t = 1,...,n_N\}$}
+\begin{algorithmic}[1]
+    \For{$t = 1,...,n_N$}
+            \State $\delta_N^t \set (x_N^t - z^t) \phi'(\mathit{net}_N^t)$
+    \EndFor
+    \State \Return $\delta_N$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[error-back-propagation$(\delta_N, \mathit{net}, u, \phi')$] \label{alg:error-back-propagation}
+\alginput{End layer delta $\delta_N = \{\delta_N^t \; | \; t = 1,...,n_N\}$,\\
+input vectors $\mathit{net} = \{\mathit{net}_k^j \; | \; k = 1,...,N, \: j = 1,...,n_k\}$,\\
+coefficients $u = \{ u_{k-1}^{sj} \; | \; k = 1,...,N, \: s = 0,...,n_{k-1}, \: j = 1,...,n_k\}$,\\
+derivative of activation unit $\phi' : \mathbb{R} \to \mathbb{R}$}
+\algoutput{Delta $\delta = \{\delta_k^j \; | \; k = 1,...,N, \: j = 1,...,n_k\}$}
+\begin{algorithmic}[1]
+    \For{$k = N-1,...,1$}
+        \For{$j = 0,...,n_k$}
+            \State $\delta_k^j \set 0$
+            \For{$t = 1,...,n_{k+1}$}
+                \State $\delta_k^j \set \delta_k^j + \delta_{k+1}^t u_k^{jt}$
+            \EndFor
+            \State $\delta_k^j \set \delta_k^j \phi'(\mathit{net}_k^j)$
+        \EndFor
+    \EndFor
+    \State \Return $\delta$
+\end{algorithmic}
+\end{algorithm}

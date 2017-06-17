@@ -1,0 +1,752 @@
+# coding=utf-8
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+"""
+@file mlp_igd.py_in
+
+@brief Multilayer perceptron using IGD: Driver functions
+
+@namespace mlp_igd
+"""
+import plpy
+
+from utilities.control import MinWarning
+from utilities.utilities import add_postfix
+from utilities.utilities import py_list_to_sql_string
+from utilities.utilities import extract_keyvalue_params
+from utilities.utilities import _assert
+from utilities.utilities import unique_string
+from utilities.utilities import strip_end_quotes
+
+from utilities.validate_args import cols_in_tbl_valid
+from utilities.validate_args import input_tbl_valid
+from utilities.validate_args import is_var_valid
+from utilities.validate_args import output_tbl_valid
+from utilities.validate_args import get_expr_type
+from utilities.validate_args import array_col_has_same_dimension
+from utilities.validate_args import array_col_dimension
+
+
+def mlp(schema_madlib, source_table, output_table, independent_varname,
+        dependent_varname, hidden_layer_sizes,
+        optimizer_param_str, activation, is_classification, **kwargs):
+    """
+    Args:
+        @param schema_madlib
+        @param source_table
+        @param output_table
+        @param independent_varname
+        @param dependent_varname
+        @param hidden_layer_sizes
+        @param optimizer_param_str
+
+    Returns:
+        None
+    """
+    with MinWarning('warning'):
+        optimizer_params = _get_optimizer_params(optimizer_param_str or "")
+        summary_table = add_postfix(output_table, "_summary")
+        _validate_args(source_table, output_table, summary_table, independent_varname,
+                       dependent_varname, hidden_layer_sizes,
+                       optimizer_params, is_classification)
+
+        current_iteration = 1
+        prev_state = None
+        tolerance = optimizer_params["tolerance"]
+        n_iterations = optimizer_params["n_iterations"]
+        step_size = optimizer_params["step_size"]
+        n_tries = optimizer_params["n_tries"]
+        activation_name = _get_activation_function_name(activation)
+        activation_index = _get_activation_index(activation_name)
+        num_input_nodes = array_col_dimension(
+            source_table, independent_varname)
+        num_output_nodes = 0
+        classes = []
+        dependent_type = get_expr_type(dependent_varname, source_table)
+        original_dependent_varname = dependent_varname
+
+        if is_classification:
+            dependent_variable_sql = """
+                SELECT DISTINCT {dependent_varname}
+                FROM {source_table}
+                """.format(dependent_varname=dependent_varname,
+                           source_table=source_table)
+            labels = plpy.execute(dependent_variable_sql)
+            one_hot_dependent_varname = 'ARRAY['
+            num_output_nodes = len(labels)
+            for label_obj in labels:
+                label = _format_label(label_obj[dependent_varname])
+                classes.append(label)
+                one_hot_dependent_varname += dependent_varname + \
+                    "=" + str(label) + ","
+            # Remove the last comma
+            one_hot_dependent_varname = one_hot_dependent_varname[:-1]
+            one_hot_dependent_varname += ']::integer[]'
+            dependent_varname = one_hot_dependent_varname
+        else:
+            if "[]" not in dependent_type:
+                dependent_varname = "ARRAY[" + dependent_varname + "]"
+            num_output_nodes = array_col_dimension(
+                source_table, dependent_varname)
+        layer_sizes = [num_input_nodes] + \
+            hidden_layer_sizes + [num_output_nodes]
+
+        while True:
+            if prev_state:
+                prev_state_str = py_list_to_sql_string(
+                    prev_state, array_type="double precision")
+            else:
+                prev_state_str = "(NULL)::DOUBLE PRECISION[]"
+            train_sql = """
+            SELECT
+                {schema_madlib}.mlp_igd_step(
+                    ({independent_varname})::DOUBLE PRECISION[],
+                    ({dependent_varname})::DOUBLE PRECISION[],
+                    {prev_state},
+                    {layer_sizes},
+                    ({step_size})::FLOAT8,
+                    {activation},
+                    {is_classification}) as curr_state
+            FROM {source_table} AS _src
+            """.format(schema_madlib=schema_madlib,
+                       independent_varname=independent_varname,
+                       dependent_varname=dependent_varname,
+                       prev_state=prev_state_str,
+                       # C++ uses double internally
+                       layer_sizes=py_list_to_sql_string(layer_sizes,
+                                                         array_type="double precision"),
+                       step_size=step_size,
+                       source_table=source_table,
+                       activation=activation_index,
+                       is_classification=int(is_classification))
+            curr_state = plpy.execute(train_sql)[0]["curr_state"]
+            dist_sql = """
+                SELECT {schema_madlib}.internal_mlp_igd_distance(
+                        {prev_state},
+                        {curr_state}) as state_dist
+                """.format(schema_madlib=schema_madlib,
+                           prev_state=prev_state_str,
+                           curr_state=py_list_to_sql_string(curr_state, "double precision"))
+            state_dist = plpy.execute(dist_sql)[0]["state_dist"]
+            if ((state_dist and state_dist < tolerance) or
+                    current_iteration > n_iterations):
+                break
+            prev_state = curr_state
+            current_iteration += 1
+        _build_model_table(schema_madlib, output_table,
+                           curr_state, n_iterations)
+        layer_sizes_str = py_list_to_sql_string(
+            layer_sizes, array_type="integer")
+        classes_str = py_list_to_sql_string(
+            [strip_end_quotes(cl, "'") for cl in classes],
+            array_type=dependent_type)
+        summary_table_creation_query = """
+        CREATE TABLE {summary_table}(
+            source_table TEXT,
+            independent_varname TEXT,
+            dependent_varname TEXT,
+            tolerance FLOAT,
+            step_size FLOAT,
+            n_iterations INTEGER,
+            n_tries INTEGER,
+            layer_sizes INTEGER[],
+            activation_function TEXT,
+            is_classification BOOLEAN,
+            classes {dependent_type}[]
+        )""".format(summary_table=summary_table,
+                    dependent_type=dependent_type)
+
+        summary_table_update_query = """
+            INSERT INTO {summary_table} VALUES(
+                '{source_table}',
+                '{independent_varname}',
+                '{original_dependent_varname}',
+                {tolerance},
+                {step_size},
+                {n_iterations},
+                {n_tries},
+                {layer_sizes_str},
+                '{activation_name}',
+                {is_classification},
+                {classes_str}
+            )
+            """.format(**locals())
+        plpy.execute(summary_table_creation_query)
+        plpy.execute(summary_table_update_query)
+# ----------------------------------------------------------------------
+
+
+def _build_model_table(schema_madlib, output_table, final_state, n_iterations):
+    final_state_str = py_list_to_sql_string(
+        final_state, array_type="double precision")
+
+    model_table_query = """
+        CREATE TABLE {output_table} AS
+            SELECT
+                (result).coeff AS coeff,
+                (result).loss  AS loss,
+                {n_iterations} AS num_iterations
+                -- (result).num_rows_processed     AS num_rows_processed,
+                -- n_tuples_including_nulls - (result).num_rows_processed
+            FROM (
+                SELECT
+                    {schema_madlib}.internal_mlp_igd_result(
+                        {final_state_str}
+                    ) AS result
+            ) rel_state_subq
+        """.format(**locals())
+    plpy.execute(model_table_query)
+# ----------------------------------------------------------------------
+
+
+def _get_optimizer_params(param_str):
+    params_defaults = {
+        "step_size": (0.001, float),
+        "n_iterations": (100, int),
+        "n_tries": (1, int),
+        "tolerance": (0.001, float),
+    }
+    param_defaults = dict([(k, v[0]) for k, v in params_defaults.items()])
+    param_types = dict([(k, v[1]) for k, v in params_defaults.items()])
+
+    if not param_str:
+        return param_defaults
+
+    name_value = extract_keyvalue_params(param_str, param_types, param_defaults,
+                                         ignore_invalid=False)
+    return name_value
+# ----------------------------------------------------------------------
+
+
+def _validate_args_classification(source_table, dependent_varname):
+    expr_type = get_expr_type(dependent_varname, source_table)
+    int_types = ['integer', 'smallint', 'bigint']
+    text_types = ['text', 'varchar', 'character varying', 'char', 'character']
+    boolean_types = ['boolean']
+    _assert("[]" in expr_type or expr_type in int_types + text_types + boolean_types,
+            "Dependent variable column should refer to an "
+            "integer, boolean, text, varchar, or character type.")
+# ----------------------------------------------------------------------
+
+
+def _validate_args_regression(source_table, dependent_varname):
+    expr_type = get_expr_type(dependent_varname, source_table)
+    int_types = ['integer', 'smallint', 'bigint']
+    float_types = ['double precision', 'real']
+    _assert("[]" in expr_type or expr_type in int_types + float_types,
+            "Dependent variable column should refer to an array or numeric type")
+    if "[]" in expr_type:
+        _assert(array_col_has_same_dimension(source_table, dependent_varname),
+                "Dependent variable column should refer to arrays of the same length")
+# ----------------------------------------------------------------------
+
+
+def _validate_args(source_table, output_table, summary_table, independent_varname,
+                   dependent_varname, hidden_layer_sizes,
+                   optimizer_params, is_classification):
+    input_tbl_valid(source_table, "MLP")
+    output_tbl_valid(output_table, "MLP")
+    output_tbl_valid(summary_table, "MLP")
+    _assert(is_var_valid(source_table, independent_varname),
+            "MLP error: invalid independent_varname "
+            "('{independent_varname}') for source_table "
+            "({source_table})!".format(independent_varname=independent_varname,
+                                       source_table=source_table))
+
+    _assert(is_var_valid(source_table, dependent_varname),
+            "MLP error: invalid dependent_varname "
+            "('{dependent_varname}') for source_table "
+            "({source_table})!".format(dependent_varname=dependent_varname,
+                                       source_table=source_table))
+    _assert(hidden_layer_sizes is not None,
+            "hidden_layer_sizes may not be null")
+    _assert(isinstance(hidden_layer_sizes, list),
+            "hidden_layer_sizes must be an array of integers")
+    _assert(all(isinstance(value, int) for value in hidden_layer_sizes),
+            "MLP error: Hidden layers sizes must be integers")
+    _assert(all(value >= 0 for value in hidden_layer_sizes),
+            "MLP error: Hidden layers sizes must be greater than 0.")
+    _assert(optimizer_params["tolerance"] >= 0,
+            "MLP error: Tolerance should be greater than or equal to 0.")
+    _assert(optimizer_params["n_tries"] >= 1,
+            "MLP error: Number of tries should be greater than or equal to 1")
+    _assert(optimizer_params["n_iterations"] >= 1,
+            "MLP error: Number of iterations should be greater than or equal to 1")
+    _assert(optimizer_params["step_size"] > 0,
+            "MLP error: Stepsize should be greater than 0.")
+    _assert("[]" in get_expr_type(independent_varname, source_table),
+            "Independent variable column should refer to an array")
+    _assert(array_col_has_same_dimension(source_table, independent_varname),
+            "Independent variable column should refer to arrays of the same length")
+
+    if is_classification:
+        _validate_args_classification(source_table, dependent_varname)
+    else:
+        _validate_args_regression(source_table, dependent_varname)
+# ----------------------------------------------------------------------
+
+
+def _get_activation_function_name(activation_function):
+    if not activation_function:
+        activation_function = 'sigmoid'
+    else:
+        # Add non-linear kernels below after implementing them.
+        supported_activation_function = ['sigmoid', 'tanh', 'relu']
+        try:
+            # allow user to specify a prefix substring of
+            # supported kernels. This works because the supported
+            # kernels have unique prefixes.
+            activation_function = next(x for x in supported_activation_function
+                                       if x.startswith(activation_function))
+        except StopIteration:
+            # next() returns a StopIteration if no element found
+            plpy.error("MLP Error: Invalid activation function: "
+                       "{0}. Supported activation functions are ({1})"
+                       .format(activation_function, ','.join(
+                           sorted(supported_activation_function))))
+    return activation_function
+# ------------------------------------------------------------------------------
+
+
+def _get_activation_index(activation_name):
+    table = {"relu": 0, "sigmoid": 1, "tanh": 2}
+    return table[activation_name]
+
+
+def _format_label(label):
+    if isinstance(label, str):
+        return "'" + label + "'"
+    return label
+# -------------------------------------------------------------------------
+
+
+def mlp_predict(schema_madlib, model_table, data_table,
+                id_col_name, output_table,
+                pred_type='response', **kwargs):
+    """ Score new observations using a trained neural network
+
+    @param schema_madlib Name of the schema where MADlib is installed
+    @param model_table Name of learned model
+    @param data_table Name of table/view containing the data
+                          points to be scored
+    @param id_col_name Name of column in source_table containing
+                       (integer) identifier for data point
+    @param output_table Name of table to store the results
+    @param pred_type: str, The type of output required:
+                    'response' gives the actual response values,
+                    'prob' gives the probability of the classes in a
+                  For regression, only type='response' is defined.
+    """
+    input_tbl_valid(model_table, 'MLP')
+    cols_in_tbl_valid(model_table, ['coeff'], 'MLP')
+    summary_table = add_postfix(model_table, "_summary")
+    input_tbl_valid(summary_table, 'MLP')
+    cols_in_tbl_valid(summary_table,
+                      ['dependent_varname', 'independent_varname',
+                       'activation_function',
+                       'tolerance', 'step_size', 'n_iterations',
+                       'n_tries', 'classes', 'layer_sizes', 'source_table'],
+                      'MLP')
+
+    summary = plpy.execute("SELECT * FROM {0}".format(summary_table))[0]
+    coeff = py_list_to_sql_string(plpy.execute(
+        "SELECT * FROM {0}".format(model_table))[0]["coeff"])
+    dependent_varname = summary['dependent_varname']
+    independent_varname = summary['independent_varname']
+    source_table = summary['source_table']
+    activation_function = _get_activation_index(summary['activation_function'])
+    layer_sizes = py_list_to_sql_string(
+        summary['layer_sizes'], array_type="DOUBLE PRECISION")
+    is_classification = int(summary["is_classification"])
+    is_response = int(pred_type == 'response')
+
+    pred_name = ('"prob_{0}"' if pred_type == "prob" else
+                 '"estimated_{0}"').format(dependent_varname.replace('"', '').strip())
+
+    input_tbl_valid(data_table, 'MLP')
+
+    _assert(is_var_valid(data_table, independent_varname),
+            "MLP Error: independent_varname ('{0}') is invalid for data_table ({1})".
+            format(independent_varname, data_table))
+    _assert(id_col_name is not None, "MLP Error: id_col_name is NULL")
+    _assert(is_var_valid(data_table, id_col_name),
+            "MLP Error: id_col_name ('{0}') is invalid for {1}".
+            format(id_col_name, data_table))
+    output_tbl_valid(output_table, 'MLP')
+
+    with MinWarning("warning"):
+        header = "CREATE TABLE " + output_table + " AS "
+        # Regression
+        if not is_classification:
+            dependent_type = get_expr_type(dependent_varname, source_table)
+            unnest_if_not_array = ""
+            # Return the same type as the user provided.  Internally we always use an array, but
+            # if they provided a scaler, unnest it for the user
+            if "[]" not in dependent_type:
+                unnest_if_not_array = "UNNEST"
+            sql = header + """
+                SELECT {id_col_name},
+                       {unnest_if_not_array}({schema_madlib}.internal_predict_mlp(
+                            {coeff},
+                            {independent_varname}::DOUBLE PRECISION[],
+                            {is_classification},
+                            {activation_function},
+                            {layer_sizes},
+                            {is_response}
+                        )) as {pred_name}
+                FROM {data_table}
+                """
+        else:
+            summary_query = """
+            SELECT classes FROM {0}
+            """.format(summary_table)
+            classes = plpy.execute(summary_query)[0]['classes']
+            if pred_type == "response":
+                # This join is to recover the class name from the summary table,
+                #  as prediction just returns an index
+                classes_with_index_table = unique_string()
+                classes_table = unique_string()
+                sql = header + """
+                        SELECT
+                             q.{id_col_name}
+                            ,(ARRAY{classes})[pred_idx[1]+1] as {pred_name}
+                        FROM (
+                             SELECT
+                                {id_col_name},
+                                {schema_madlib}.internal_predict_mlp(
+                                        {coeff}::DOUBLE PRECISION[],
+                                        {independent_varname}::DOUBLE PRECISION[],
+                                        {is_classification},
+                                        {activation_function},
+                                        {layer_sizes},
+                                        {is_response}
+                                        )
+                               as pred_idx
+                            FROM {data_table}
+                        ) q
+                    """
+            else:
+                # Incomplete
+                intermediate_col = unique_string()
+                score_format = ',\n'.join([
+                    'CAST({interim}[{j}] as DOUBLE PRECISION) as "estimated_prob_{c_str}"'.
+                    format(j=i + 1, c_str=str(c).strip(' "'),
+                           interim=intermediate_col)
+                    for i, c in enumerate(classes)])
+                sql = header + """
+                    SELECT
+                        {id_col_name},
+                        {score_format}
+                        FROM (
+                            SELECT {id_col_name},
+                                   {schema_madlib}.internal_predict_mlp(
+                                       {coeff}::DOUBLE PRECISION[],
+                                       {independent_varname}::DOUBLE PRECISION[],
+                                       {is_classification},
+                                       {activation_function},
+                                       {layer_sizes},
+                                       {is_response}
+                                       )::TEXT[]
+                                            AS {intermediate_col}
+                            FROM {data_table}
+                        ) q
+                    """
+    sql = sql.format(**locals())
+    plpy.execute(sql)
+# ----------------------------------------------------------------------
+
+
+def mlp_help(schema_madlib, message, is_classification):
+    method = 'mlp_classification' if is_classification else 'mlp_regression'
+    int_types = ['integer', 'smallint', 'bigint']
+    text_types = ['text', 'varchar', 'character varying', 'char', 'character']
+    boolean_types = ['boolean']
+    supported_types = " " * 33 + ", ".join(text_types) + "\n" +\
+        " " * 33 + ", ".join(int_types + boolean_types)
+    label_description_classification = "Name of a column which specifies label.\n" +\
+        " " * 33 + "Supported types are:\n" + supported_types
+    label_description_regression = "Dependent variable. May be an array for multiple\n" +\
+        " " * 33 + "regression or the name of a column which is any\n" + " " * 33 +\
+        "numeric type for single regression"
+    label_description = label_description_classification if is_classification\
+        else label_description_regression
+    args = dict(schema_madlib=schema_madlib, method=method,
+                label_description=label_description)
+
+    summary = """
+    ----------------------------------------------------------------
+                            SUMMARY
+    ----------------------------------------------------------------
+    Multilayer Perceptron (MLP) is a model for regression and
+    classification
+
+    Also called "vanilla neural networks", they consist of several
+    fully connected hidden layers with non-linear activation
+    functions.
+
+    For more details on function usage:
+        SELECT {schema_madlib}.{method}('usage')
+
+    For a small example on using the function:
+        SELECT {schema_madlib}.{method}('example')""".format(**args)
+
+    usage = """
+    ---------------------------------------------------------------------------
+                                    USAGE
+    ---------------------------------------------------------------------------
+    SELECT {schema_madlib}.{method}(
+        source_table,         -- name of input table
+        output_table,         -- name of output model table
+        independent_varname,  -- name of independent variable
+        dependent_varname,    -- {label_description}
+        hidden_layer_sizes,   -- Array of integers indicating the
+                                 number of hidden units per layer.
+                                 Length equal to the number of hidden layers.
+        optimizer_params,     -- optional, default NULL
+                                 parameters for optimization in
+                                 a comma-separated string of key-value pairs.
+
+            step_size DOUBLE PRECISION, -- Default: 0.001
+                                           Learning rate
+            n_iterations INTEGER,       -- Default: 100
+                                           Number of iterations per try
+            n_tries INTEGER,            -- Default: 1
+                                           Total number of training cycles,
+                                           with random initializations to avoid
+                                           local minima.
+            tolerance DOUBLE PRECISION, -- Default: 0.001
+                                           If the distance in loss between
+                                           two iterations is less than the
+                                           tolerance training will stop, even if
+                                           n_iterations has not been reached
+
+        activation            -- optional, default: 'sigmoid'.
+                                 supported activations: 'relu', 'sigmoid',
+                                 and 'tanh'
+    );
+
+
+    ---------------------------------------------------------------------------
+                                    OUTPUT
+    ---------------------------------------------------------------------------
+    The model table produced by MLP contains the following columns:
+
+    coeffs             -- Flat array containing the weights of the neural net
+
+    loss               -- The total loss over the training data. Cross entropy
+                          for classification and MSE for regression
+
+    num_iterations     -- The total number of training iterations
+
+    """.format(**args)
+
+    regression_example = """
+    - Create input table
+
+    CREATE TABLE lin_housing_wi (id serial, x float8[], grp_by_col int, y float8);
+    COPY lin_housing_wi (x, grp_by_col, y) FROM STDIN NULL '?' DELIMITER '|';
+    {1,0.00632,18.00,2.310,0,0.5380,6.5750,65.20,4.0900,1,296.0,15.30,396.90,4.98} | 1 | 24.00
+    {1,0.02731,0.00,7.070,0,0.4690,6.4210,78.90,4.9671,2,242.0,17.80,396.90,9.14} | 1 | 21.60
+    {1,0.02729,0.00,7.070,0,0.4690,7.1850,61.10,4.9671,2,242.0,17.80,392.83,4.03} | 1 | 34.70
+    {1,0.03237,0.00,2.180,0,0.4580,6.9980,45.80,6.0622,3,222.0,18.70,394.63,2.94} | 1 | 33.40
+    {1,0.06905,0.00,2.180,0,0.4580,7.1470,54.20,6.0622,3,222.0,18.70,396.90,5.33} | 1 | 36.20
+    {1,0.02985,0.00,2.180,0,0.4580,6.4300,58.70,6.0622,3,222.0,18.70,394.12,5.21} | 1 | 28.70
+    {1,0.08829,12.50,7.870,0,0.5240,6.0120,66.60,5.5605,5,311.0,15.20,395.60,12.43} | 1 | 22.90
+    {1,0.14455,12.50,7.870,0,0.5240,6.1720,96.10,5.9505,5,311.0,15.20,396.90,19.15} | 1 | 27.10
+    {1,0.21124,12.50,7.870,0,0.5240,5.6310,100.00,6.0821,5,311.0,15.20,386.63,29.93} | 1 | 16.50
+    {1,0.17004,12.50,7.870,0,0.5240,6.0040,85.90,6.5921,5,311.0,15.20,386.71,17.10} | 1 | 18.90
+    {1,0.22489,12.50,7.870,0,0.5240,6.3770,94.30,6.3467,5,311.0,15.20,392.52,20.45} | 1 | 15.00
+    {1,0.11747,12.50,7.870,0,0.5240,6.0090,82.90,6.2267,5,311.0,15.20,396.90,13.27} | 1 | 18.90
+    {1,0.09378,12.50,7.870,0,0.5240,5.8890,39.00,5.4509,5,311.0,15.20,390.50,15.71} | 1 | 21.70
+    \.
+
+    - Generate a multilayer perception with a two hidden layers of 5 units
+    each. Use the x column as the independent variables, and use the class
+    column as the classification. Set the tolerance to 0 so that 300
+    iterations will be run. Use a sigmoid activation function.
+    The model will be written to mlp_regress_result.
+
+    SELECT mlp_regression(
+        'lin_housing_wi',           -- Source table
+        'mlp_regress_result',  -- Desination table
+        'x',                        -- Independent variable
+        'y',                        -- Dependent variable
+        ARRAY[5,5],                 -- Number of hidden units per layer
+        'step_size=0.007,
+        n_iterations=300,
+        tolerance=0',
+        'sigmoid');                 -- Activation
+
+    """
+
+    classification_example = """
+    -- Create input table
+
+    CREATE TABLE iris_data(
+        id integer,
+        attributes numeric[],
+        class_text varchar,
+        class integer
+    );
+
+    INSERT INTO iris_data VALUES
+    (1,ARRAY[5.1,3.5,1.4,0.2],'Iris-setosa',1),
+    (2,ARRAY[4.9,3.0,1.4,0.2],'Iris-setosa',1),
+    (3,ARRAY[4.7,3.2,1.3,0.2],'Iris-setosa',1),
+    (4,ARRAY[4.6,3.1,1.5,0.2],'Iris-setosa',1),
+    (5,ARRAY[5.0,3.6,1.4,0.2],'Iris-setosa',1),
+    (6,ARRAY[5.4,3.9,1.7,0.4],'Iris-setosa',1),
+    (7,ARRAY[4.6,3.4,1.4,0.3],'Iris-setosa',1),
+    (8,ARRAY[5.0,3.4,1.5,0.2],'Iris-setosa',1),
+    (9,ARRAY[4.4,2.9,1.4,0.2],'Iris-setosa',1),
+    (10,ARRAY[4.9,3.1,1.5,0.1],'Iris-setosa',1),
+    (11,ARRAY[7.0,3.2,4.7,1.4],'Iris-versicolor',2),
+    (12,ARRAY[6.4,3.2,4.5,1.5],'Iris-versicolor',2),
+    (13,ARRAY[6.9,3.1,4.9,1.5],'Iris-versicolor',2),
+    (14,ARRAY[5.5,2.3,4.0,1.3],'Iris-versicolor',2),
+    (15,ARRAY[6.5,2.8,4.6,1.5],'Iris-versicolor',2),
+    (16,ARRAY[5.7,2.8,4.5,1.3],'Iris-versicolor',2),
+    (17,ARRAY[6.3,3.3,4.7,1.6],'Iris-versicolor',2),
+    (18,ARRAY[4.9,2.4,3.3,1.0],'Iris-versicolor',2),
+    (19,ARRAY[6.6,2.9,4.6,1.3],'Iris-versicolor',2),
+    (20,ARRAY[5.2,2.7,3.9,1.4],'Iris-versicolor',2);
+
+
+    -- Generate a multilayer perception with a single hidden layer of 5 units.
+    Use the attributes column as the independent variables, and use the class
+    column as the classification. Set the tolerance to 0 so that 1000
+    iterations will be run. Use a hyperbolic tangent activation function.
+    The model will be written to mlp_result.
+
+    SELECT {schema_madlib}.mlp_classification(
+        'iris_data',      -- Source table
+        'mlp_model',      -- Destination table
+        'attributes',     -- Input features
+        'class_text',     -- Label
+        ARRAY[5],         -- Number of units per layer
+        'step_size=0.003,
+        n_iterations=5000,
+        tolerance=0',     -- Optimizer params
+        'tanh');          -- Activation function
+
+    """.format(**args)
+    example = classification_example if is_classification else regression_example
+    if not message:
+        return summary
+    elif message.lower() in ('usage', 'help', '?'):
+        return usage
+    elif message.lower() == 'example':
+        return example
+    return """
+        No such option. Use "SELECT {schema_madlib}.{method}()" for help.
+    """.format(**args)
+
+
+def mlp_predict_help(schema_madlib, message):
+    args = dict(schema_madlib=schema_madlib)
+
+    summary = """
+    ----------------------------------------------------------------
+                            SUMMARY
+    ----------------------------------------------------------------
+    Multilayer Perceptron (MLP) is a model for regression and
+    classification
+
+    Also called "vanilla neural networks", they consist of several
+    fully connected hidden layers with non-linear activation
+    functions.
+
+    For more details on function usage:
+        SELECT {schema_madlib}.mlp_predict('usage')
+
+    For a small example on using the function:
+        SELECT {schema_madlib}.mlp_predict('example')""".format(**args)
+
+    usage = """
+    ---------------------------------------------------------------------------
+                                    USAGE
+    ---------------------------------------------------------------------------
+    SELECT {schema_madlib}.mlp_predict(
+        model_table,        -- name of model table
+        data_table,         -- name of data table
+        id_col_name,        -- id column for data table
+        output_table,       -- name of output table
+        pred_type           -- the type of output requested:
+                            -- 'response' gives the actual prediction,
+                            -- 'prob' gives the probability of each class.
+                            -- for regression, only type='response' is defined.
+    );
+
+
+    ---------------------------------------------------------------------------
+                                    OUTPUT
+    ---------------------------------------------------------------------------
+    The model table produced by mlp contains the following columns:
+
+    id                      -- The provided id for the given input vector
+
+    estimated_<COL_NAME>    -- (For pred_type='response') The estimated class
+                               for classification or value for regression, where
+                               <COL_NAME> is the name of the column to be
+                               predicted from training data
+
+    prob_<CLASS>           -- (For pred_type='prob' for classification) The
+                              probability of a given class <CLASS> as given by
+                              softmax. There will be one column for each class
+                              in the training data.
+
+    """.format(**args)
+
+    example = """
+    -- See {schema_madlib}.mlp_classification('example') for test
+    -- and model tables
+
+    -- Predict classes using
+    SELECT {schema_madlib}.mlp_predict(
+        'mlp_model',         -- Model table
+        'iris_data',         -- Test data table
+        'id',                -- Id column in test table
+        'mlp_prediction',    -- Output table for predictions
+        'response'           -- Output classes, not probabilities
+    );
+
+    SELECT * FROM mlp_prediction;
+
+    WITH total_count AS (SELECT count(*) AS c FROM iris_data)
+    SELECT count(*)/((SELECT c FROM total_count)::DOUBLE PRECISION)
+    AS train_accuracy
+    FROM
+        (
+            SELECT iris_data.class_text AS actual_label,
+                mlp_prediction.estimated_class_text AS predicted_label
+            FROM mlp_prediction
+            INNER JOIN iris_data ON iris_data.id=mlp_prediction.id
+        ) q
+    WHERE q.actual_label=q.predicted_label;
+    """.format(**args)
+
+    if not message:
+        return summary
+    elif message.lower() in ('usage', 'help', '?'):
+        return usage
+    elif message.lower() == 'example':
+        return example
+    return """
+        No such option. Use "SELECT {schema_madlib}.mlp_predict()" for help.
+    """.format(**args)
