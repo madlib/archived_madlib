@@ -96,16 +96,14 @@ public:
     double impurity(const ColumnVector & stats) const;
     double impurityGain(const ColumnVector &combined_stats,
                         const uint16_t &stats_per_split) const;
-    bool shouldSplit(const ColumnVector & stats,
+    bool shouldSplit(const uint64_t &total_count,
+                     const uint64_t &true_count,
+                     const uint64_t &false_count,
                      const uint16_t &min_split,
                      const uint16_t &min_bucket,
                      const uint16_t &stats_per_split,
                      const uint16_t &max_depth) const;
 
-    bool shouldSplitWeights(const ColumnVector & stats,
-                            const uint16_t &min_split,
-                            const uint16_t &min_bucket,
-                            const uint16_t &stats_per_split) const;
     template <class Accumulator>
     void pickSurrogates(const Accumulator &state,
                         const MappedMatrix &con_splits);

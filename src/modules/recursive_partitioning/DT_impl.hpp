@@ -446,21 +446,21 @@ DecisionTree<Container>::updatePrimarySplit(
     predictions.row(falseChild(node_index)) = false_stats;
 
     // true_stats and false_stats only include the tuples for which the primary
-    // split is NULL. The number of tuples in these stats need to be stored to
+    // split is not NULL. The number of tuples in these stats need to be stored to
     // compute a majority branch during surrogate training.
     uint64_t true_count = statCount(true_stats);
     uint64_t false_count = statCount(false_stats);
-    nonnull_split_count(node_index*2) = static_cast<double>(true_count);
-    nonnull_split_count(node_index*2 + 1) = static_cast<double>(false_count);
+    nonnull_split_count(trueChild(node_index)) = static_cast<double>(true_count);
+    nonnull_split_count(falseChild(node_index)) = static_cast<double>(false_count);
 
-    // current node's children won't split if,
-    // 1. children are pure (responses are too similar to split further)
-    // 2. children are too small to split further (count < min_split)
-    bool children_wont_split = (isChildPure(true_stats) &&
-                                isChildPure(false_stats) &&
-                                true_count < min_split &&
-                                false_count < min_split
-                                );
+    // current node's each child won't split if,
+    //      1. child is pure (responses are too similar to split further)
+    //      OR
+    //      2. child is too small to split (count < min_split)
+    bool children_wont_split = ((isChildPure(true_stats) ||
+                                    true_count < min_split) &&
+                                (isChildPure(false_stats) ||
+                                    false_count < min_split));
     return children_wont_split;
 }
 // -------------------------------------------------------------------------
@@ -486,10 +486,23 @@ DecisionTree<Container>::expand(const Accumulator &state,
             Index stats_i = static_cast<Index>(state.stats_lookup(i));
             assert(stats_i >= 0);
 
-            // 1. Set the prediction for current node from stats of all rows
-            predictions.row(current) = state.node_stats.row(stats_i);
+            // 1. Update predictions if necessary
+            if (statCount(predictions.row(current)) !=
+                    statCount(state.node_stats.row(stats_i))){
+                // Predictions for each node is set by its parent using stats
+                // recorded while training parent node. These stats do not
+                // include rows that had a NULL value for the primary split
+                // feature. The NULL count is included in 'node_stats' while
+                // training current node.
+                predictions.row(current) = state.node_stats.row(stats_i);
 
-            // 2. Compute the best feature to split current node by
+                // Presence of NULL rows indicate that stats used for deciding
+                // 'children_wont_split' are inaccurate. Hence avoid using the
+                // flag to decide termination.
+                children_wont_split = false;
+            }
+
+            // 2. Compute the best feature to split current node
 
             // if a leaf node exists, compute the gain in impurity for each split
             // pick split  with maximum gain and update node with split value
@@ -533,9 +546,13 @@ DecisionTree<Container>::expand(const Accumulator &state,
                 }
             }
 
-            // 3. Create and update child nodes if splitting current
+            // 3. Create and update children if splitting current
+            uint64_t true_count = statCount(max_stats.segment(0, sps));
+            uint64_t false_count = statCount(max_stats.segment(sps, sps));
+            uint64_t total_count = statCount(predictions.row(current));
             if (max_impurity_gain > 0 &&
-                    shouldSplit(max_stats, min_split, min_bucket, sps, max_depth)) {
+                    shouldSplit(total_count, true_count, false_count,
+                                min_split, min_bucket, sps, max_depth)) {
 
                 double max_threshold;
                 if (max_is_cat)
@@ -761,12 +778,22 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
 
     for (Index i=0; i < state.n_leaf_nodes; i++) {
         Index current = n_non_leaf_nodes + i;
-        Index stats_i = static_cast<Index>(state.stats_lookup(i));
-        assert(stats_i >= 0);
-
         if (feature_indices(current) == IN_PROCESS_LEAF) {
-            // 1. Set the prediction for current node from stats of all rows
-            predictions.row(current) = state.node_stats.row(stats_i);
+            Index stats_i = static_cast<Index>(state.stats_lookup(i));
+            assert(stats_i >= 0);
+
+            if (statCount(predictions.row(current)) !=
+                    statCount(state.node_stats.row(stats_i))){
+                // Predictions for each node is set by its parent using stats
+                // recorded while training parent node. These stats do not include
+                // rows that had a NULL value for the primary split feature.
+                // The NULL count is included in the 'node_stats' while training
+                // current node. Further, presence of NULL rows indicate that
+                // stats used for deciding 'children_wont_split' are inaccurate.
+                // Hence avoid using the flag to decide termination.
+                predictions.row(current) = state.node_stats.row(stats_i);
+                children_wont_split = false;
+            }
 
             for (int j=0; j<total_cat_con_features; j++) {
                 cat_con_feature_indices[j] = j;
@@ -829,9 +856,14 @@ DecisionTree<Container>::expand_by_sampling(const Accumulator &state,
                 }
             }
 
-            // create and update child nodes if splitting current
+            // Create and update child nodes if splitting current
+            uint64_t true_count = statCount(max_stats.segment(0, sps));
+            uint64_t false_count = statCount(max_stats.segment(sps, sps));
+            uint64_t total_count = statCount(predictions.row(current));
+
             if (max_impurity_gain > 0 &&
-                    shouldSplit(max_stats, min_split, min_bucket, sps, max_depth)) {
+                    shouldSplit(total_count, true_count, false_count,
+                                min_split, min_bucket, sps, max_depth)) {
 
                 double max_threshold;
                 if (max_is_cat)
@@ -1024,44 +1056,22 @@ DecisionTree<Container>::isChildPure(const ColumnVector &stats) const{
 template <class Container>
 inline
 bool
-DecisionTree<Container>::shouldSplit(const ColumnVector &combined_stats,
-                                      const uint16_t &min_split,
-                                      const uint16_t &min_bucket,
-                                      const uint16_t &stats_per_split,
-                                      const uint16_t &max_depth) const {
+DecisionTree<Container>::shouldSplit(const uint64_t &total_count,
+                                     const uint64_t &true_count,
+                                     const uint64_t &false_count,
+                                     const uint16_t &min_split,
+                                     const uint16_t &min_bucket,
+                                     const uint16_t &stats_per_split,
+                                     const uint16_t &max_depth) const {
+    // total_count != true_count + false_count if there are rows with NULL values
 
-    // combined_stats is assumed to be of size = stats_per_split
-    // we always want at least 1 tuple going into a child node. Hence the
+    // Always want at least 1 tuple going into a child node. Hence the
     // minimum value for min_bucket is 1
     uint64_t thresh_min_bucket = (min_bucket == 0) ? 1u : min_bucket;
-    uint64_t true_count = statCount(combined_stats.segment(0, stats_per_split));
-    uint64_t false_count = statCount(combined_stats.segment(stats_per_split, stats_per_split));
-    return ((true_count + false_count) >= min_split &&
+    return (total_count >= min_split &&
             true_count >= thresh_min_bucket &&
             false_count >= thresh_min_bucket &&
             tree_depth <= max_depth + 1);
-}
-// ------------------------------------------------------------------------
-
-template <class Container>
-inline
-bool
-DecisionTree<Container>::shouldSplitWeights(const ColumnVector &combined_stats,
-                                      const uint16_t &min_split,
-                                      const uint16_t &min_bucket,
-                                      const uint16_t &stats_per_split) const {
-
-    // combined_stats is assumed to be of size = stats_per_split
-    // number of tuples landing on a node is equal to the sum of weights for
-    // that node. we therefore use statWeightedCount
-    // we always want at least 1 tuple going into a child node. Hence the
-    // minimum value for min_bucket is 1
-    uint64_t thresh_min_bucket = (min_bucket == 0) ? 1u : min_bucket;
-    double true_count = statWeightedCount(combined_stats.segment(0, stats_per_split));
-    double false_count = statWeightedCount(combined_stats.segment(stats_per_split, stats_per_split));
-    return ((true_count + false_count) >= min_split &&
-            true_count >= thresh_min_bucket &&
-            false_count >= thresh_min_bucket);
 }
 // ------------------------------------------------------------------------
 
@@ -1131,15 +1141,12 @@ DecisionTree<Container>::displayLeafNode(
             // can be ignored
             const Index pred_size = predictions.row(id).size() - 1;
             for (Index i = 0; i < pred_size; i += NUM_PER_LINE){
-                uint16_t n_elem;
-                if (i + NUM_PER_LINE <= pred_size) {
+                if (i + NUM_PER_LINE >= pred_size) {
                     // not overflowing the vector
-                    n_elem = NUM_PER_LINE;
+                    display_str << predictions.row(id).segment(i, pred_size - i);
                 } else {
-                    // less than NUM_PER_LINE left, avoid reading past the end
-                    n_elem = static_cast<uint16_t>(pred_size - i);
+                    display_str << predictions.row(id).segment(i, NUM_PER_LINE) << "\n";
                 }
-                display_str << predictions.row(id).segment(i, n_elem) << "\n";
             }
             display_str << "]";
 
@@ -1174,7 +1181,7 @@ DecisionTree<Container>::displayInternalNode(
         label_str << escape_quotes(feature_name) << " <= " << feature_thresholds(id);
     } else {
         feature_name = get_text(cat_features_str, feature_indices(id));
-        label_str << escape_quotes(feature_name) << " <= ";
+        label_str << escape_quotes(feature_name) << " = ";
 
         // Text for all categoricals are stored in a flat array (cat_levels_text);
         // find the appropriate index for this node
@@ -1202,14 +1209,12 @@ DecisionTree<Container>::displayInternalNode(
             // be ignored
             const Index pred_size = predictions.row(id).size() - 1;
             for (Index i = 0; i < pred_size; i += NUM_PER_LINE){
-                uint16_t n_elem;
-                if (i + NUM_PER_LINE <= pred_size) {
+                if (i + NUM_PER_LINE > pred_size) {
                     // not overflowing the vector
-                    n_elem = NUM_PER_LINE;
+                    display_str << predictions.row(id).segment(i, pred_size - i);
                 } else {
-                    n_elem = static_cast<uint16_t>(pred_size - i);
+                    display_str << predictions.row(id).segment(i, NUM_PER_LINE) << "\n";
                 }
-                display_str << predictions.row(id).segment(i, n_elem) << "\n";
             }
             display_str << "]";
         }
@@ -1414,7 +1419,7 @@ DecisionTree<Container>::getCatLabels(Index cat_index,
                                       Index end_value,
                                       ArrayHandle<text*> &cat_levels_text,
                                       ArrayHandle<int> &cat_n_levels) {
-    Index MAX_LABELS = 5;
+    Index MAX_LABELS = 2;
     size_t to_skip = 0;
     for (Index i=0; i < cat_index; i++) {
         to_skip += cat_n_levels[i];
@@ -1431,7 +1436,7 @@ DecisionTree<Container>::getCatLabels(Index cat_index,
             break;
         }
     }
-    cat_levels << get_text(cat_levels_text, index) << "}";
+    cat_levels << get_text(cat_levels_text, to_skip + end_value) << "}";
     return cat_levels.str();
 }
 // -------------------------------------------------------------------------
