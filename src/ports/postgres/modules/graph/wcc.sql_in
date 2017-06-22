@@ -1,0 +1,261 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ *
+ * @file graph.sql_in
+ *
+ * @brief SQL functions for graph analytics
+ * @date June 2017
+ *
+ * @sa Provides various graph algorithms.
+ *
+ *//* ----------------------------------------------------------------------- */
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_wcc
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#wcc">Weakly Connected Components</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#literature">Literature</a></li>
+</ul>
+</div>
+
+@brief Find all weakly connected components of a graph.
+
+Given a directed graph, a weakly connected component is a subgraph of the original
+graph where all vertices are connected to each other by some path, ignoring the
+direction of edges. In case of an undirected graph, a weakly connected component is
+also a strongly connected component.
+
+@anchor wcc
+@par Weakly Connected Components
+<pre class="syntax">
+weakly_connected_components( vertex_table,
+            vertex_id,
+            edge_table,
+            edge_args,
+            out_table,
+            grouping_cols
+          )
+</pre>
+
+\b Arguments
+<dl class="arglist">
+<dt>vertex_table</dt>
+<dd>TEXT. Name of the table containing the vertex data for the graph. Must contain the
+column specified in the 'vertex_id' parameter below.</dd>
+
+<dt>vertex_id</dt>
+<dd>TEXT, default = 'id'. Name of the column in 'vertex_table' containing
+vertex ids.  The vertex ids are of type INTEGER with no duplicates.
+They do not need to be contiguous.</dd>
+
+<dt>edge_table</dt>
+<dd>TEXT. Name of the table containing the edge data. The edge table must
+contain columns for source vertex and destination vertex.</dd>
+
+<dt>edge_args</dt>
+<dd>TEXT. A comma-delimited string containing multiple named arguments of
+the form "name=value". The following parameters are supported for
+this string argument:
+  - src (INTEGER): Name of the column containing the source vertex ids in the edge table.
+                   Default column name is 'src'.
+  - dest (INTEGER): Name of the column containing the destination vertex ids in the edge table.
+                    Default column name is 'dest'.</dd>
+
+<dt>out_table</dt>
+<dd>TEXT. Name of the table to store the component ID associated with each vertex.
+It will contain a row for every vertex from 'vertex_table' with
+the following columns:
+  - vertex_id : The id of a vertex. Will use the input parameter 'vertex_id' for column naming.
+  - component_id : The vertex's component.
+  - grouping_cols : Grouping column (if any) values associated with the vertex_id.</dd>
+
+<dt>grouping_cols (optional)</dt>
+<dd>TEXT, default: NULL. A single column or a list of comma-separated
+columns that divides the input data into discrete groups, resulting in one
+distribution per group. When this value is NULL, no grouping is used and
+a single model is generated for all data.
+@note Grouping is not currently supported at the moment.</dd>
+
+</dl>
+
+@anchor notes
+@par Notes
+
+See the Grail project [1] for more background on graph analytics processing
+in relational databases.
+
+@anchor examples
+@examp
+
+-# Create vertex and edge tables to represent the graph:
+<pre class="syntax">
+DROP TABLE IF EXISTS vertex, edge;
+CREATE TABLE vertex(
+    id INTEGER
+);
+CREATE TABLE edge(
+    src INTEGER,
+    dest INTEGER,
+    user_id INTEGER
+);
+INSERT INTO vertex VALUES
+(0),
+(1),
+(2),
+(3),
+(4),
+(5),
+(6),
+(10),
+(11),
+(12),
+(13),
+(14),
+(15),
+(16);
+INSERT INTO edge VALUES
+(0, 1, 1),
+(0, 2, 1),
+(1, 2, 1),
+(1, 3, 1),
+(2, 3, 1),
+(2, 5, 1),
+(2, 6, 1),
+(3, 0, 1),
+(5, 6, 1),
+(6, 3, 1),
+(10, 11, 2),
+(10, 12, 2),
+(11, 12, 2),
+(11, 13, 2),
+(12, 13, 2),
+(13, 10, 2),
+(15, 16, 2),
+(15, 14, 2);
+</pre>
+
+-# Find all the weakly connected components in the graph:
+<pre class="syntax">
+DROP TABLE IF EXISTS wcc_out;
+SELECT madlib.weakly_connected_components(
+                         'vertex',             -- Vertex table
+                         'id',                 -- Vertix id column
+                         'edge',               -- Edge table
+                         'src=src, dest=dest', -- Comma delimted string of edge arguments
+                         'wcc_out');      -- Output table of weakly connected components
+SELECT * FROM wcc_out ORDER BY component_id, id;
+</pre>
+<pre class="result">
+ id | component_id
+----+--------------
+  0 |            0
+  1 |            0
+  2 |            0
+  3 |            0
+  5 |            0
+  6 |            0
+  4 |            4
+ 10 |           10
+ 11 |           10
+ 12 |           10
+ 13 |           10
+ 14 |           14
+ 15 |           14
+ 16 |           14
+(14 rows)
+</pre>
+
+-# Now all the weakly connected components associated with each user
+using the grouping feature:
+<pre class="syntax">
+DROP TABLE IF EXISTS wcc_out, wcc_out_summary;
+SELECT madlib.weakly_connected_components(
+                         'vertex',             -- Vertex table
+                         'id',                 -- Vertix id column
+                         'edge',               -- Edge table
+                         'src=src, dest=dest', -- Comma delimted string of edge arguments
+                         'wcc_out',       -- Output table of weakly connected components
+                         'user_id');           -- Grouping column name
+SELECT * FROM wcc_out ORDER BY user_id, component_id, id;
+</pre>
+<pre class="result">
+ user_id | id |    component_id
+---------+----+--------------------
+
+</pre>
+
+@anchor literature
+@par Literature
+
+[1] The case against specialized graph analytics engines, J. Fan, G. Soosai Raj,
+and J. M. Patel. CIDR 2015. http://cidrdb.org/cidr2015/Papers/CIDR15_Paper20.pdf
+*/
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.weakly_connected_components(
+    vertex_table            TEXT,
+    vertex_id               TEXT,
+    edge_table              TEXT,
+    edge_args               TEXT,
+    out_table               TEXT,
+    grouping_cols           TEXT
+
+) RETURNS VOID AS $$
+    PythonFunction(graph, wcc, wcc)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.weakly_connected_components(
+    vertex_table            TEXT,
+    vertex_id               TEXT,
+    edge_table              TEXT,
+    edge_args               TEXT,
+    out_table               TEXT
+
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.weakly_connected_components($1, $2, $3, $4, $5, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+
+-- Online help
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.weakly_connected_components(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(graph, wcc, wcc_help)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.weakly_connected_components()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.weakly_connected_components('');
+$$ LANGUAGE sql IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+-------------------------------------------------------------------------------
+
