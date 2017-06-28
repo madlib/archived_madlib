@@ -37,67 +37,77 @@ m4_include(`SQLCommon.m4')
 <div class="toc"><b>Contents</b>
 <ul>
 <li><a href="#strs">Stratified Sampling</a></li>
-<li><a href="#notes">Notes</a></li>
 <li><a href="#examples">Examples</a></li>
 </ul>
 </div>
 
-@brief Provides stratified sampling function.
+@brief A method for independently sampling subpopulations (strata).
 
-Given a table, stratified sampling returns a proportion of records for
-each group (strata). It is possible to use with or without replacement
-sampling methods, specify a set of target columns, and assume the
-whole table is a single strata.
+Stratified sampling is a method for independently sampling
+subpopulations (strata).  It is commonly used to reduce
+sampling error by ensuring that subgroups are adequately
+represented in the sample.
 
 @anchor strs
 @par Stratified Sampling
 
 <pre class="syntax">
-stratified_sample( 	source_table,
-					output_table,
-					proportion,
-					grouping_cols,
-					target_cols,
-					with_replacement
-          		 )
+stratified_sample(  source_table,
+                    output_table,
+                    proportion,
+                    grouping_cols,
+                    target_cols,
+                    with_replacement
+                  )
 </pre>
 
 \b Arguments
 <dl class="arglist">
 <dt>source_table</dt>
-<dd>TEXT. Name of the table containing the input data. Must contain the
-columns specified in the 'groupinhg_cols' and target_cols' parameters
-below.</dd>
+<dd>TEXT. Name of the table containing the input data.</dd>
+
 <dt>output_table</dt>
-<dd>TEXT. Name of the table to store the sampled records.</dd>
+<dd>TEXT. Name of output table that contains the sampled data.
+The output table contains all columns present in the source
+table unless otherwise specified in the 'target_cols'
+parameter below.</dd>
+
 <dt>proportion</dt>
-<dd>FLOAT8. The ratio of sample size to the number of records.</dd>
-<dt>grouping_cols</dt>
-<dd>TEXT. (Default: NULL) The columns to distinguish each strata.</dd>
-<dt>target_cols</dt>
-<dd>TEXT. (Default: NULL) The columns to include in the output.</dd>
-<dt>with_replacement</dt>
-<dd>BOOLEAN. (Default: FALSE) The sampling method.</dd>
+<dd>FLOAT8 in the range (0,1).  Each stratum is sampled
+independently.</dd>
+
+<dt>grouping_cols (optional)</dt>
+<dd>TEXT, default: NULL. A single column or a list of
+comma-separated columns that defines the strata.  When this
+parameter is NULL, no grouping is used so the sampling is
+non-stratified, that is, the whole table is treated as a
+single group.</dd>
+
+<dt>target_cols (optional)</dt>
+<dd>TEXT, default NULL. A comma-separated list of columns
+to appear in the 'output_table'.  If NULL or '*', all
+columns from the 'source_table'  will appear in
+the 'output_table'.</dd>
+
+@anchor note
+@note
+        Do not include 'grouping_cols' in the parameter 'target_cols',
+        because they are always included in the 'output_table'.
+
+<dt>with_replacement  (optional)</dt>
+<dd>BOOLEAN, default FALSE.  Determines whether to sample
+with replacement or without replacement (default).
+With replacement means that it is possible that the
+same row may appear in the sample set more than once.
+Without replacement means a given row can be selected
+only once.</dd>
 </dl>
-@anchor notes
-@par Notes
-
-If grouping_cols is NULL, the whole table is treated as a single group and
-sampled accordingly.
-
-If target_cols is NULL or '*', all of the columns will be included in the
-output table.
-
-If with_replacement is TRUE, each sample is independent (the same row may
-be selected in the sample set more than once). Else (if with_replacement
-is FALSE), a row can be selected at most once.
-);
 
 @anchor examples
 @par Examples
 
-Please note that, due to the random nature of sampling, the output records
-might differ.
+Please note that due to the random nature of sampling, your
+results may look different from those below.
 
 -# Create an input table:
 <pre class="syntax">
@@ -136,10 +146,16 @@ INSERT INTO test VALUES
 (70,70,2,2);
 </pre>
 
--# Sample without replacement
+-# Sample without replacement:
 <pre class="syntax">
 DROP TABLE IF EXISTS out;
-SELECT madlib.stratified_sample('test', 'out', 0.5, 'gr1,gr2', 'id1,id2', FALSE);
+SELECT madlib.stratified_sample(
+                                'test',    -- Source table
+                                'out',     -- Output table
+                                0.5,       -- Sample proportion
+                                'gr1,gr2', -- Strata definition
+                                'id1,id2', -- Columns to output
+                                FALSE);    -- Sample without replacement
 SELECT * FROM out ORDER BY gr1,gr2,id1,id2;
 </pre>
 <pre class="result">
@@ -161,10 +177,16 @@ SELECT * FROM out ORDER BY gr1,gr2,id1,id2;
 (13 rows)
 </pre>
 
--# Sample with replacement
+-# Sample with replacement:
 <pre class="syntax">
 DROP TABLE IF EXISTS out;
-SELECT madlib.stratified_sample('test', 'out', 0.5, 'gr1,gr2', 'id1,id2', TRUE);
+SELECT madlib.stratified_sample(
+                                'test',    -- Source table
+                                'out',     -- Output table
+                                0.5,       -- Sample proportion
+                                'gr1,gr2', -- Strata definition
+                                'id1,id2', -- Columns to output
+                                TRUE);     -- Sample with replacement
 SELECT * FROM out ORDER BY gr1,gr2,id1,id2;
 </pre>
 <pre class="result">
@@ -187,12 +209,12 @@ SELECT * FROM out ORDER BY gr1,gr2,id1,id2;
 */
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.stratified_sample(
-	source_table       TEXT,
-	output_table       TEXT,
-	proportion         FLOAT8,
-	grouping_cols      TEXT,
-	target_cols        TEXT,
-	with_replacement   BOOLEAN
+  source_table       TEXT,
+  output_table       TEXT,
+  proportion         FLOAT8,
+  grouping_cols      TEXT,
+  target_cols        TEXT,
+  with_replacement   BOOLEAN
 ) RETURNS VOID AS $$
     PythonFunction(sample, stratified_sample, stratified_sample)
 $$ LANGUAGE plpythonu VOLATILE
@@ -201,28 +223,28 @@ m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
 -------------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.stratified_sample(
-	source_table       TEXT,
-	output_table       TEXT,
-	proportion         FLOAT8,
-	grouping_cols      TEXT,
-	target_cols        TEXT
+  source_table       TEXT,
+  output_table       TEXT,
+  proportion         FLOAT8,
+  grouping_cols      TEXT,
+  target_cols        TEXT
 ) RETURNS VOID AS $$
      SELECT MADLIB_SCHEMA.stratified_sample($1, $2, $3, $4, $5, FALSE);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.stratified_sample(
-	source_table       TEXT,
-	output_table       TEXT,
-	proportion         FLOAT8,
-	grouping_cols      TEXT
+  source_table       TEXT,
+  output_table       TEXT,
+  proportion         FLOAT8,
+  grouping_cols      TEXT
 ) RETURNS VOID AS $$
      SELECT MADLIB_SCHEMA.stratified_sample($1, $2, $3, $4, NULL, FALSE);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.stratified_sample(
-	source_table       TEXT,
-	output_table       TEXT,
-	proportion         FLOAT8
+  source_table       TEXT,
+  output_table       TEXT,
+  proportion         FLOAT8
 ) RETURNS VOID AS $$
      SELECT MADLIB_SCHEMA.stratified_sample($1, $2, $3, NULL, NULL, FALSE);
 $$ LANGUAGE sql VOLATILE
