@@ -29,6 +29,7 @@
 		\item[v0.2] Graph Framework, SSSP implementation details.
         \item[v0.3] PageRank
         \item[v0.4] APSP
+        \item[v0.5] Weakly Connected Components
 	\end{modulehistory}
 \end{moduleinfo}
 
@@ -504,4 +505,114 @@ encouraged to consider this factor when setting a value for threshold, since
 a high $threshold$ value would lead to early termination of PageRank
 computation, thus resulting in incorrect PageRank values.
 
+
+\section{Weakly Connected Components} \label{sec:graph:wcc}
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/wcc_example.pdf}
+\caption{An example disconnected directed graph}
+\label{wcc:example}
+\end{figure}
+
+Given a directed graph $G$, a weakly connected component is a subgraph
+$G_{sub}$ of $G$, such that there exists a path from every vertex in $G_{sub}$
+to every other vertex in $G_{sub}$, ignoring the direction of the edges.
+
+The weakly connected component module implemented in MADlib is based on
+GRAIL~\cite{grail}. All vertices are initialized with their own vertex
+ID as the component ID, and are considered to be active. In every iteration,
+each active vertex's component ID is updated with the smallest component ID
+value of all its neighbors. Any vertex whose component ID is not updated in
+the current iteration is deemed as an inactive vertex for the next iteration.
+Execution continues until there are no active vertices left. Since each vertex
+is initialized with its own ID as the component ID, and updated based on
+neighboring nodes' component IDs, the final component ID of a component will
+be equal to the smallest vertex ID in the corresponding subgraph.
+Figure~\ref{wcc:example} shows an example directed graph with two disconnected
+subgraphs. The subgraph containing vertices $1$, $2$, $3$, $4$, $5$ and $6$
+forms a weakly connected component, and is assigned component ID 1, while the
+subgraph containing vertices $12$, $14$, $21$ and $23$ forms the second component
+and is assigned component ID 12.
+
+\subsection{Implementation Details} \label{sec:wcc:implementation}
+
+In this section, we discuss the MADlib implementation of weakly connected
+components in depth. We maintain the following tables at every iteration:
+$oldupdate$, $message$ and $newupdate$. In $newupdate$, the component ID
+of each vertex is initialized to infinity, while the component ID of vertices
+in the $message$ table is initialized to their corresponding vertex ID.
+
+\begin{algorithm}[Weakly Connected Components$(V,E)$] \label{alg:wcc:high}
+\begin{algorithmic}[1]
+    \State Create $newupdate$ table with a default component ID of
+            $infinity$ for every vertex
+    \State Create $message$ table with a default component ID of the
+            corresponding $id$ (vertex ID) for every vertex
+    \Repeat
+        \State Update the $oldupdate$ table
+        \State Update $toupdate$ table with active vertices
+        \State Update the $newupdate$ table
+        \State Update $message$ table with potential new component IDs for each vertex
+    \Until {There are no active vertices in $toupdate$ table}
+\end{algorithmic}
+\end{algorithm}
+
+The $message$ table contains the component IDs associated with all its
+immediate neighbors. At each iteration, $oldupdate$ is updated with the
+minimum of all the associated component IDs found for a vertex in $message$.
+
+\begin{algorithm}[Update oldupdate table]
+\begin{lstlisting}
+SELECT id, MIN(message.component_id) as component_id
+FROM message
+GROUP BY id
+\end{lstlisting}
+\end{algorithm}
+
+Table $toupdate$ records all vertices whose component IDs must be updated,
+and are thus marked active.
+
+\begin{algorithm}[Update toupdate table with active vertices]
+\begin{lstlisting}
+-- Find vertices whose component ID must be updated
+CREATE TABLE toupdate AS
+SELECT id, component_id
+FROM oldupdate, newupdate
+WHERE oldupdate.id = newupdate.id AND
+        oldupdate.component_id < newupdate.component_id
+
+-- Update the component IDs
+UPDATE newupdate SET
+component_id = toupdate.component_id
+FROM toupdate
+WHERE newupdate.id = toupdate.id
+\end{lstlisting}
+\end{algorithm}
+
+Finally, the $message$ table is updated with potential new
+component IDs for active vertices using the following query:
+
+\begin{algorithm}[Update oldupdate table]
+\begin{lstlisting}
+CREATE TEMP TABLE message AS
+SELECT id, MIN(component_id) AS component_id
+FROM (
+    SELECT edge.src AS id,
+        toupdate.component_id
+    FROM toupdate, edge
+    WHERE edge.dest = toupdate.id
+    UNION ALL
+    SELECT edge.dest AS id,
+        toupdate.component_id
+    FROM toupdate, edge
+    WHERE edge.src = toupdate.id
+) AS t
+GROUP BY id
+\end{lstlisting}
+\end{algorithm}
+
+At the end of the computation, $newupdate$ will have the component ID
+associated with each vertex in $G$. The component ID of all the vertices
+in a component is equal to the smallest vertex ID in the corresponding
+subgraph.
 
