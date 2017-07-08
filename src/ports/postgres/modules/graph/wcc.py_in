@@ -31,34 +31,37 @@ import plpy
 from utilities.utilities import _assert
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import unique_string, split_quoted_delimited_str
-from utilities.validate_args import columns_exist_in_table, get_cols_and_types
-from graph_utils import *
+from utilities.validate_args import columns_exist_in_table
+from utilities.utilities import is_platform_pg, is_platform_hawq
+from graph_utils import validate_graph_coding, get_graph_usage
 
-m4_changequote(`<!', `!>')
 
 def validate_wcc_args(schema_madlib, vertex_table, vertex_id, edge_table,
-        edge_params, out_table, grouping_cols_list, module_name):
+                      edge_params, out_table, grouping_cols_list, module_name):
     """
     Function to validate input parameters for wcc
     """
     validate_graph_coding(vertex_table, vertex_id, edge_table, edge_params,
-        out_table, module_name)
+                          out_table, module_name)
     if grouping_cols_list:
         # validate the grouping columns. We currently only support grouping_cols
         # to be column names in the edge_table, and not expressions!
         _assert(columns_exist_in_table(edge_table, grouping_cols_list, schema_madlib),
-                "Weakly Connected Components error: One or more grouping columns specified do not exist!")
+                "Weakly Connected Components error: "
+                "One or more grouping columns specified do not exist!")
 
 
 def prefix_tablename_to_colnames(table, cols_list):
     return ' , '.join(["{0}.{1}".format(table, col) for col in cols_list])
 
+
 def get_where_condition(table1, table2, cols_list):
     return ' AND '.join(['{0}.{2}={1}.{2}'.format(table1, table2, col)
-            for col in cols_list])
+                        for col in cols_list])
+
 
 def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
-    out_table, grouping_cols, **kwargs):
+        out_table, grouping_cols, **kwargs):
     """
     Function that computes the wcc
 
@@ -78,8 +81,7 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     plpy.execute('SET client_min_messages TO warning')
     params_types = {'src': str, 'dest': str}
     default_args = {'src': 'src', 'dest': 'dest'}
-    edge_params = extract_keyvalue_params(edge_args,
-            params_types, default_args)
+    edge_params = extract_keyvalue_params(edge_args, params_types, default_args)
 
     # populate default values for optional params if null
     if vertex_id is None:
@@ -89,7 +91,8 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
 
     grouping_cols_list = split_quoted_delimited_str(grouping_cols)
     validate_wcc_args(schema_madlib, vertex_table, vertex_id, edge_table,
-        edge_params, out_table, grouping_cols_list, 'Weakly Connected Components')
+                      edge_params, out_table, grouping_cols_list,
+                      'Weakly Connected Components')
     src = edge_params["src"]
     dest = edge_params["dest"]
 
@@ -99,21 +102,22 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     toupdate = unique_string(desp='toupdate')
     temp_out_table = unique_string(desp='tempout')
 
-    distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
-        <!"DISTRIBUTED BY ({0})".format(vertex_id)!>)
+    distribution = '' if is_platform_pg() else "DISTRIBUTED BY ({0})".format(vertex_id)
     subq_prefixed_grouping_cols = ''
     comma_toupdate_prefixed_grouping_cols = ''
     comma_oldupdate_prefixed_grouping_cols = ''
     old_new_update_where_condition = ''
     new_to_update_where_condition = ''
     edge_to_update_where_condition = ''
-    is_hawq = m4_ifdef(<!__HAWQ__!>, <!True!>, <!False!>)
+    is_hawq = is_platform_hawq()
 
     INT_MAX = 2147483647
     component_id = 'component_id'
+    grouping_cols_comma = '' if not grouping_cols else grouping_cols + ','
+
     if grouping_cols:
-        distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
-        <!"DISTRIBUTED BY ({0},{1})".format(grouping_cols, vertex_id)!>)
+        distribution = ('' if is_platform_pg() else
+                        "DISTRIBUTED BY ({0}, {1})".format(grouping_cols, vertex_id))
         # Update some variables useful for grouping based query strings
         subq = unique_string(desp='subquery')
         distinct_grp_table = unique_string(desp='grptable')
@@ -121,18 +125,20 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 CREATE TABLE {distinct_grp_table} AS
                 SELECT DISTINCT {grouping_cols} FROM {edge_table}
             """.format(**locals()))
-        comma_toupdate_prefixed_grouping_cols = ', ' + prefix_tablename_to_colnames(toupdate,
-            grouping_cols_list)
-        comma_oldupdate_prefixed_grouping_cols = ', ' + prefix_tablename_to_colnames(
-            oldupdate, grouping_cols_list)
-        subq_prefixed_grouping_cols = prefix_tablename_to_colnames(subq,
-            grouping_cols_list)
-        old_new_update_where_condition = ' AND ' + get_where_condition(
-            oldupdate, newupdate, grouping_cols_list)
-        new_to_update_where_condition = ' AND ' + get_where_condition(
-            newupdate, toupdate, grouping_cols_list)
-        edge_to_update_where_condition = ' AND ' + get_where_condition(
-            edge_table, toupdate, grouping_cols_list)
+
+        pttc = prefix_tablename_to_colnames
+        gwc = get_where_condition
+
+        comma_toupdate_prefixed_grouping_cols = ', ' + pttc(toupdate, grouping_cols_list)
+        comma_oldupdate_prefixed_grouping_cols = ', ' + pttc(oldupdate, grouping_cols_list)
+        subq_prefixed_grouping_cols = pttc(subq, grouping_cols_list)
+        old_new_update_where_condition = ' AND ' + gwc(oldupdate, newupdate, grouping_cols_list)
+        new_to_update_where_condition = ' AND ' + gwc(newupdate, toupdate, grouping_cols_list)
+        edge_to_update_where_condition = ' AND ' + gwc(edge_table, toupdate, grouping_cols_list)
+        join_grouping_cols = gwc(subq, distinct_grp_table, grouping_cols_list)
+        group_by_clause = ('' if not grouping_cols else
+                           '{0}, {1}.{2}'.format(subq_prefixed_grouping_cols,
+                                                 subq, vertex_id))
         plpy.execute("""
                 CREATE TABLE {newupdate} AS
                 SELECT {subq}.{vertex_id},
@@ -148,13 +154,9 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 ON {join_grouping_cols}
                 GROUP BY {group_by_clause}
                 {distribution}
-            """.format(select_grouping_cols=','+subq_prefixed_grouping_cols,
-                join_grouping_cols=get_where_condition(subq,
-                    distinct_grp_table, grouping_cols_list),
-                group_by_clause='' if not grouping_cols else
-                    subq_prefixed_grouping_cols+', {0}.{1}'.format(subq, vertex_id),
-                select_grouping_cols_clause='' if not grouping_cols else
-                    grouping_cols+', ', **locals()))
+            """.format(select_grouping_cols=',' + subq_prefixed_grouping_cols,
+                       select_grouping_cols_clause=grouping_cols_comma,
+                       **locals()))
         plpy.execute("""
                 CREATE TEMP TABLE {message} AS
                 SELECT {vertex_id},
@@ -162,8 +164,8 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                         {select_grouping_cols_clause}
                 FROM {newupdate}
                 {distribution}
-            """.format(select_grouping_cols_clause='' if not grouping_cols else
-                    ', '+grouping_cols, **locals()))
+            """.format(select_grouping_cols_clause=grouping_cols_comma,
+                       **locals()))
     else:
         plpy.execute("""
                 CREATE TABLE {newupdate} AS
@@ -186,13 +188,14 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             """.format(**locals()))
     nodes_to_update = 1
     while nodes_to_update > 0:
-        # This idea here is simple. Look at all the neighbors of a node, and
-        # assign the smallest node id among the neighbors as its component_id.
-        # The next table starts off with very high component_id (INT_MAX). The
-        # component_id of all nodes which obtain a smaller component_id after
-        # looking at its neighbors are updated in the next table. At every
-        # iteration update only those nodes whose component_id in the previous
-        # iteration are greater than what was found in the current iteration.
+        # Look at all the neighbors of a node, and assign the smallest node id
+        # among the neighbors as its component_id. The next table starts off
+        # with very high component_id (INT_MAX). The component_id of all nodes
+        # which obtain a smaller component_id after looking at its neighbors are
+        # updated in the next table. At every iteration update only those nodes
+        # whose component_id in the previous iteration are greater than what was
+        # found in the current iteration.
+
         plpy.execute("DROP TABLE IF EXISTS {0}".format(oldupdate))
         plpy.execute("""
             CREATE TEMP TABLE {oldupdate} AS
@@ -202,10 +205,9 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             FROM {message}
             GROUP BY {group_by_clause} {vertex_id}
             {distribution}
-        """.format(grouping_cols_select='' if not grouping_cols else
-                ', {0}'.format(grouping_cols), group_by_clause=''
-                if not grouping_cols else '{0}, '.format(grouping_cols),
-                **locals()))
+        """.format(grouping_cols_select='' if not grouping_cols else ', {0}'.format(grouping_cols),
+                   group_by_clause=grouping_cols_comma,
+                   **locals()))
 
         plpy.execute("DROP TABLE IF EXISTS {0}".format(toupdate))
         plpy.execute("""
@@ -236,8 +238,8 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                         SELECT * FROM {toupdate};
                 """.format(**locals()))
             plpy.execute("DROP TABLE {0}".format(newupdate))
-            plpy.execute("ALTER TABLE {0} RENAME TO {1}".format(temp_out_table,
-                            newupdate))
+            plpy.execute("ALTER TABLE {0} RENAME TO {1}".
+                         format(temp_out_table, newupdate))
             plpy.execute("""
                     CREATE TABLE {temp_out_table} AS
                     SELECT * FROM {newupdate}
@@ -275,9 +277,9 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             ) AS t
             GROUP BY {group_by_clause} {vertex_id}
         """.format(select_grouping_cols='' if not grouping_cols
-                else ', {0}'.format(grouping_cols), group_by_clause=''
-                if not grouping_cols else ' {0}, '.format(grouping_cols),
-                **locals()))
+                   else ', {0}'.format(grouping_cols), group_by_clause=''
+                   if not grouping_cols else ' {0}, '.format(grouping_cols),
+                   **locals()))
 
         plpy.execute("DROP TABLE {0}".format(oldupdate))
         if grouping_cols:
@@ -300,6 +302,7 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     if is_hawq:
         plpy.execute("""DROP TABLE IF EXISTS {0}""".format(temp_out_table))
 
+
 def wcc_help(schema_madlib, message, **kwargs):
     """
     Help function for wcc
@@ -315,11 +318,13 @@ def wcc_help(schema_madlib, message, **kwargs):
     if message is not None and \
             message.lower() in ("usage", "help", "?"):
         help_string = "Get from method below"
-        help_string = get_graph_usage(schema_madlib, 'Weakly Connected Components',
+        help_string = get_graph_usage(
+            schema_madlib,
+            'Weakly Connected Components',
             """out_table     TEXT, -- Output table of weakly connected components
-    grouping_col  TEXT -- Comma separated column names to group on
-                       -- (DEFAULT = NULL, no grouping)
-""")
+            grouping_col  TEXT -- Comma separated column names to group on
+                               -- (DEFAULT = NULL, no grouping)
+            """)
     else:
         if message is not None and \
                 message.lower() in ("example", "examples"):
