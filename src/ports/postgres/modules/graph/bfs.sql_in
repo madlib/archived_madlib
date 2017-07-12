@@ -1,0 +1,471 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ *
+ * @file bfs.sql_in
+ *
+ * @brief SQL functions for graph analytics
+ * @date Jun 2017
+ *
+ * @sa Provides Breadth First Search graph algorithm.
+ *
+ *//* ----------------------------------------------------------------------- */
+m4_include(`SQLCommon.m4')
+/**
+@addtogroup grp_bfs
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#bfs">Breadth-first Search</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#literature">Literature</a></li>
+</ul>
+</div>
+
+@brief Finds the nodes reachable from a given source vertex using a breadth-first approach.
+
+Given a graph and a source vertex, the Breadth-first Search (BFS) algorithm
+finds all nodes reachable from the source vertex by searching / traversing the graph 
+in a breadth-first manner.
+
+@anchor bfs
+@par BFS
+<pre class="syntax">
+graph_bfs( vertex_table,
+           vertex_id,
+           edge_table,
+           edge_args,
+           source_vertex,
+           out_table,
+           max_distance,
+           directed,
+           grouping_cols
+          )
+</pre>
+
+\b Arguments
+<dl class="arglist">
+<dt>vertex_table</dt>
+<dd>TEXT. Name of the table containing the vertex data for the graph. Must contain the
+column specified in the 'vertex_id' parameter below.</dd>
+
+<dt>vertex_id</dt>
+<dd>TEXT, default = 'id'. Name of the column in 'vertex_table' containing
+vertex ids.  The vertex ids are of type INTEGER with no duplicates.
+They do not need to be contiguous.</dd>
+
+<dt>edge_table</dt>
+<dd>TEXT. Name of the table containing the edge data. The edge table must contain 
+columns for source vertex and destination vertex. Column naming convention is 
+described below in the 'edge_args' parameter. 
+In addition to vertex columns, if grouping is used then the columns specified
+in the 'grouping_cols' parameter must be present. </dd>
+
+<dt>edge_args</dt>
+<dd>TEXT. A comma-delimited string containing multiple named arguments of
+the form "name=value". The following parameters are supported for
+this string argument:
+  - src (INTEGER): Name of the column containing the source vertex ids in the edge table. 
+  Default column name is 'src'.
+  (Not to be confused with the source_vertex argument passed to the BFS function)
+  - dest (INTEGER): Name of the column containing the destination vertex ids in 
+  the edge table. Default column name is 'dest'.
+  
+<dt>source_vertex</dt>
+<dd>INTEGER. The source vertex id for the algorithm to start. This vertex id must
+exist in the 'vertex_id' column of 'vertex_table'.</dd>
+
+<dt>out_table</dt>
+<dd>TEXT. Name of the table to store the result of BFS.
+It contains a row for every vertex that is reachable from the source_vertex.
+In the presence of grouping columns, only those edges are used for which there are no NULL values 
+in any grouping column.
+The output table will have the following columns (in addition to the grouping columns):
+  - vertex_id : The id for any node reachable from source_vertex in addition to 
+                the source_vertex. Will use the input parameter 'vertex_id' for 
+                column naming.
+  - dist      : The distance in number of edges (or hops) from the source_vertex 
+                to where this vertex is located. 
+  - parent    : The parent of this vertex in BFS traversal of the graph from source_vertex. 
+                Will use 'parent' for column naming. For the 
+                case where vertex_id = source_vertex, the value for parent is NULL.
+
+A summary table named <out_table>_summary is also created. This is an internal table that keeps a record of the input parameters.
+</dd>
+
+<dt>max_distance</dt>
+<dd>INT, default = NULL. Maximum distance (number of edges) from source_vertex to search through in the graph.</dd>
+
+<dt>directed</dt>
+<dd>BOOLEAN, default = FALSE. If TRUE the graph will be treated as directed, else it will be treated as an undirected graph.</dd>
+
+<dt>grouping_cols</dt>
+<dd>TEXT, default = NULL. A comma-separated list of columns used to group the 
+input into discrete subgraphs. 
+These columns must exist in the edge table. When this value is NULL, no grouping is used 
+and a single BFS result is generated. 
+@note Expressions are not currently supported for 'grouping_cols'.</dd>
+
+</dl>
+
+@anchor notes
+@par Notes
+
+The graph_bfs function is a SQL implementation of the well-known Breadth-first 
+Search algorithm [1] modified appropriately for a relational database. It will 
+find any node in the graph reachable from the source_vertex only once. If a node 
+is reachable by many different paths from the source_vertex (i.e. has more than 
+one parent), then only one of those parents is present in the output table. 
+The BFS result will, in general, be different for different choices of source_vertex.
+
+@anchor examples
+@examp
+
+-# Create vertex and edge tables to represent the graph:
+<pre class="syntax">
+DROP TABLE IF EXISTS vertex, edge;
+CREATE TABLE vertex(
+        id INTEGER
+        );
+CREATE TABLE edge(
+        src INTEGER,
+        dest INTEGER
+        );
+INSERT INTO vertex VALUES
+(0),
+(1),
+(2),
+(3),
+(4),
+(5),
+(6),
+(7),
+(8),
+(9),
+(10),
+(11)
+;
+INSERT INTO edge VALUES
+(0, 5),
+(1, 0),
+(1, 3),
+(2, 6),
+(3, 4),
+(3, 5),
+(4, 2),
+(8, 9),
+(9, 10),
+(9, 11),
+(10, 8)
+;
+</pre>
+
+-# Traverse undirected graph from vertex 3:
+<pre class="syntax">
+DROP TABLE IF EXISTS out, out_summary;
+SELECT madlib.graph_bfs(
+                         'vertex',      -- Vertex table
+                         NULL,          -- Vertix id column (NULL means use default naming)
+                         'edge',        -- Edge table
+                         NULL,          -- Edge arguments (NULL means use default naming)
+                         3,             -- Source vertex for BFS
+                         'out');        -- Output table of nodes reachable from source_vertex
+                         -- Default values used for the other arguments
+SELECT * FROM out ORDER BY dist,id;
+</pre>
+<pre class="result">
+ id | dist | parent 
+----+------+--------
+  3 |    0 |       
+  1 |    1 |      3
+  4 |    1 |      3
+  5 |    1 |      3
+  0 |    2 |      1
+  2 |    2 |      4
+  6 |    3 |      2
+(7 rows)
+</pre>
+<pre class="syntax">
+SELECT * FROM out_summary;
+</pre>
+<pre class="result">
+ vertex_table | vertex_id | edge_table | edge_args | source_vertex | out_table | max_distance | directed | grouping_cols 
+--------------+-----------+------------+-----------+---------------+-----------+--------------+----------+---------------
+ vertex       | NULL      | edge       | NULL      |             3 | out       |              |          | NULL
+(1 row)
+</pre>
+
+-# In this example, we use max_distance to limit the search distance.
+<pre class="syntax">
+DROP TABLE IF EXISTS out_max, out_max_summary;
+SELECT madlib.graph_bfs(
+                         'vertex',      -- Vertex table
+                         NULL,          -- Vertix id column (NULL means use default naming)
+                         'edge',        -- Edge table
+                         NULL,          -- Edge arguments (NULL means use default naming)
+                         3,             -- Source vertex for BFS
+                         'out_max',     -- Output table of nodes reachable from source_vertex
+                         2);            -- Maximum distance to traverse from source_vertex        
+                         -- Default values used for the other arguments
+SELECT * FROM out_max ORDER BY dist,id;
+</pre>
+<pre class="result">
+ id | dist | parent 
+----+------+--------
+  3 |    0 |       
+  1 |    1 |      3
+  4 |    1 |      3
+  5 |    1 |      3
+  0 |    2 |      1
+  2 |    2 |      4
+(6 rows)
+</pre>
+
+-# Now let's do an example using
+different column names in the tables (i.e., not the defaults).
+Create the vertex and edge tables:
+<pre class="syntax">
+DROP TABLE IF EXISTS vertex_alt, edge_alt;
+CREATE TABLE vertex_alt AS SELECT id AS v_id FROM vertex;
+CREATE TABLE edge_alt AS SELECT src AS n1, dest AS n2 FROM edge;
+</pre>
+
+-# Run BFS from vertex 8:
+<pre class="syntax">
+DROP TABLE IF EXISTS out_alt, out_alt_summary;
+SELECT madlib.graph_bfs(
+                         'vertex_alt',                  -- Vertex table
+                         'v_id',                        -- Vertex id column (NULL means use default naming)
+                         'edge_alt',                    -- Edge table
+                         'src=n1, dest=n2',             -- Edge arguments (NULL means use default naming)
+                         8,                             -- Source vertex for BFS
+                         'out_alt');                    -- Output table of nodes reachable from source_vertex
+SELECT * FROM out_alt ORDER BY v_id;
+</pre>
+<pre class="result">
+ v_id | dist | parent 
+------+------+--------
+    8 |    0 |       
+    9 |    1 |      8
+   10 |    1 |      8
+   11 |    2 |      9
+</pre>
+
+-# Now we show an example where the graph is treated as a directed graph.
+<pre class="syntax">
+DROP TABLE IF EXISTS out_alt_dir, out_alt_dir_summary;
+SELECT madlib.graph_bfs(
+                         'vertex_alt',                  -- Vertex table
+                         'v_id',                        -- Vertex id column (NULL means use default naming)
+                         'edge_alt',                    -- Edge table
+                         'src=n1, dest=n2',             -- Edge arguments (NULL means use default naming)
+                         8,                             -- Source vertex for BFS
+                         'out_alt_dir',                 -- Output table of nodes reachable from source_vertex
+                         NULL,                          -- Maximum distance to traverse from source_vertex
+                         TRUE);                         -- Flag for specifying directed graph
+SELECT * FROM out_alt_dir ORDER BY v_id;
+</pre>
+<pre class="result">
+ v_id | dist | parent 
+------+------+--------
+    8 |    0 |       
+    9 |    1 |      8
+   10 |    2 |      9
+   11 |    2 |      9
+(4 rows)
+</pre>
+Notice that, with the graph being treated as directed, the parent of v_id=10 
+is now vertex 9 and not 8 as in the undirected case.
+
+-# Create a graph with 2 groups:
+<pre class="syntax">
+DROP TABLE IF EXISTS edge_gr;
+CREATE TABLE edge_gr(
+                  g1 INTEGER,
+                  g2 TEXT,
+                  src INTEGER,
+                  dest INTEGER
+                );
+INSERT INTO edge_gr VALUES
+(100, 'a', 0, 5),
+(100, 'a', 1, 0),
+(100, 'a', 1, 3),
+(100, 'a', 2, 6),
+(100, 'a', 3, 4),
+(100, 'a', 3, 5),
+(100, 'a', 4, 2),
+(100, 'a', 8, 9),
+(100, 'a', 9, 10),
+(100, 'a', 9, 11),
+(100, 'a', 10, 8),
+(202, 'c', 8, 9),
+(202, 'c', 9, 10),
+(202, 'c', 9, 11),
+(202, 'c', 10, 8)
+;
+</pre>
+
+-# Run BFS for all groups from a given source_vertex.
+<pre class="syntax">
+DROP TABLE IF EXISTS out_gr, out_gr_summary;
+SELECT madlib.graph_bfs(
+                         'vertex',      -- Vertex table
+                         NULL,          -- Vertex id column (NULL means use default naming)
+                         'edge_gr',     -- Edge table
+                         NULL,          -- Edge arguments (NULL means use default naming)
+                         8,             -- Source vertex for BFS
+                         'out_gr',      -- Output table of nodes reachable from source_vertex
+                         NULL,          -- Maximum distance to traverse from source_vertex
+                         NULL,          -- Flag for specifying directed graph
+                         'g1,g2'        -- Grouping columns
+);
+SELECT * FROM out_gr ORDER BY g1,g2,dist,id;
+</pre>
+<pre class="result">
+ g1  | g2 | id | dist | parent 
+-----+----+----+------+--------
+ 100 | a  |  8 |    0 |       
+ 100 | a  |  9 |    1 |      8
+ 100 | a  | 10 |    1 |      8
+ 100 | a  | 11 |    2 |      9
+ 202 | c  |  8 |    0 |       
+ 202 | c  |  9 |    1 |      8
+ 202 | c  | 10 |    1 |      8
+ 202 | c  | 11 |    2 |      9
+(8 rows)
+</pre>
+If source_vertex is not present in
+a group, then that group will not appear in the output table.
+<pre class="syntax">
+DROP TABLE IF EXISTS out_gr, out_gr_summary;
+SELECT madlib.graph_bfs(
+                         'vertex',      -- Vertex table
+                         NULL,          -- Vertex id column (NULL means use default naming)
+                         'edge_gr',     -- Edge table
+                         NULL,          -- Edge arguments (NULL means use default naming)
+                         3,             -- Source vertex for BFS
+                         'out_gr',      -- Output table of nodes reachable from source_vertex
+                         NULL,          -- Maximum distance to traverse from source_vertex
+                         NULL,          -- Flag for specifying directed graph
+                         'g1,g2'        -- Grouping columns
+);
+SELECT * FROM out_gr ORDER BY g1,g2,dist,id;
+</pre>
+<pre class="result">
+ g1  | g2 | id | dist | parent 
+-----+----+----+------+--------
+ 100 | a  |  3 |    0 |       
+ 100 | a  |  1 |    1 |      3
+ 100 | a  |  4 |    1 |      3
+ 100 | a  |  5 |    1 |      3
+ 100 | a  |  0 |    2 |      1
+ 100 | a  |  2 |    2 |      4
+ 100 | a  |  6 |    3 |      2
+(7 rows)
+</pre>
+
+@anchor literature
+@par Literature
+
+[1] Breadth-first Search algorithm. https://en.wikipedia.org/wiki/Breadth-first_search
+*/
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.graph_bfs(
+    vertex_table            TEXT,
+    vertex_id               TEXT,
+    edge_table              TEXT,
+    edge_args               TEXT,
+    source_vertex           INT,
+    out_table               TEXT,
+    max_distance            INT,
+    directed                BOOLEAN,
+    grouping_cols           TEXT
+) RETURNS VOID AS $$
+    PythonFunction(graph, bfs, graph_bfs)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.graph_bfs(
+    vertex_table            TEXT,
+    vertex_id               TEXT,
+    edge_table              TEXT,
+    edge_args               TEXT,
+    source_vertex           INT,
+    out_table               TEXT,
+    max_distance            INT,
+    directed                BOOLEAN
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.graph_bfs($1, $2, $3, $4, $5, $6, $7, $8, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.graph_bfs(
+    vertex_table            TEXT,
+    vertex_id               TEXT,
+    edge_table              TEXT,
+    edge_args               TEXT,
+    source_vertex           INT,
+    out_table               TEXT,
+    max_distance            INT
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.graph_bfs($1, $2, $3, $4, $5, $6, $7, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.graph_bfs(
+    vertex_table            TEXT,
+    vertex_id               TEXT,
+    edge_table              TEXT,
+    edge_args               TEXT,
+    source_vertex           INT,
+    out_table               TEXT
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.graph_bfs($1, $2, $3, $4, $5, $6, NULL, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------
+
+-- Online help
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.graph_bfs(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(graph, bfs, graph_bfs_help)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+--------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.graph_bfs()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.graph_bfs('');
+$$ LANGUAGE sql IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+--------------------------------------------------------------------------------
+
