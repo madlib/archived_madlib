@@ -204,6 +204,7 @@ list(APPEND CMAKE_MODULE_PATH
 include(Utils)
 include(LinuxUtils)
 include(OSXUtils)
+include(Options)
 
 
 # -- Include all parts ---------------------------------------------------------
