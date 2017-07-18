@@ -237,7 +237,7 @@ def forest_train(
         grouping_cols, num_trees, num_random_features,
         importance, num_permutations, max_tree_depth,
         min_split, min_bucket, num_bins,
-        surrogate_params, verbose=False, sample_ratio=None, **kwargs):
+        null_handling_params, verbose=False, sample_ratio=None, **kwargs):
     """ Random forest main training function
 
     Args:
@@ -283,15 +283,19 @@ def forest_train(
                 num_bins = 100 if num_bins is None else num_bins
                 sample_ratio = 1 if sample_ratio is None else sample_ratio
 
-                surrogate_param_dict = extract_keyvalue_params(
-                    surrogate_params,
-                    dict(max_surrogates=int),   # type of variable
-                    dict(max_surrogates=0))     # default value of variable
-                max_n_surr = surrogate_param_dict['max_surrogates']
+                null_handling_dict = extract_keyvalue_params(
+                    null_handling_params,
+                    dict(max_surrogates=int, null_as_category=bool),
+                    dict(max_surrogates=0, null_as_category=False))
+                max_n_surr = null_handling_dict['max_surrogates']
+                null_as_category = null_handling_dict['null_as_category']
+                null_proxy = "__NULL__" if null_as_category else None
+                if null_as_category:
+                    # can't have two ways of handling tuples with NULL values
+                    max_n_surr = 0
                 _assert(max_n_surr >= 0,
                         "Maximum number of surrogates ({0}) should be non-negative".
                         format(max_n_surr))
-
                 ##################################################################
                 # validate arguments
                 _forest_validate_args(training_table_name, output_table_name, id_col_name,
@@ -383,7 +387,7 @@ def forest_train(
                                      cat_features, ordered_cat_features,
                                      con_features, num_bins, dep,
                                      boolean_cats, n_rows, is_classification,
-                                     dep_n_levels, filter_null)
+                                     dep_n_levels, filter_null, null_proxy)
                     # some features may be dropped because they have only one value
                     cat_features = bins['cat_features']
                     bins['grp_key_cat'] = ['']
@@ -421,7 +425,7 @@ def forest_train(
                                           con_features, num_bins, dep,
                                           boolean_cats, grouping_cols,
                                           grouping_array_str, n_rows,
-                                          is_classification, dep_n_levels, filter_null)
+                                          is_classification, dep_n_levels, filter_null, null_proxy)
                     cat_features = bins['cat_features']
 
                 # a table for converting cat_features to integers
@@ -564,7 +568,7 @@ def forest_train(
                             boolean_cats, num_bins, 'poisson_count', dep, min_split,
                             min_bucket, max_tree_depth, filter_null, dep_n_levels,
                             is_classification, split_criterion, True,
-                            num_random_features, max_n_surr)
+                            num_random_features, max_n_surr, null_proxy)
                         tree_states = [dict(tree_state=tree_state['tree_state'],
                                             grp_key='')]
 
@@ -578,7 +582,7 @@ def forest_train(
                             max_tree_depth, filter_null, dep_n_levels,
                             is_classification, split_criterion, True,
                             num_random_features, tree_terminated=tree_terminated,
-                            max_n_surr=max_n_surr)
+                            max_n_surr=max_n_surr, null_proxy=null_proxy)
 
                         # If a tree for a group is terminated (not finished properly),
                         # then we do not need to compute other trees, and can just
@@ -603,7 +607,7 @@ def forest_train(
                         sample_id, id_col_name, cat_features, con_features,
                         boolean_cats, grouping_cols, grp_key_to_grp_cols, dep,
                         num_permutations, is_classification, importance,
-                        num_bins, filter_null)
+                        num_bins, filter_null, null_proxy)
 
                 ###################################################################
                 # evaluating and summerizing random forest
@@ -695,6 +699,7 @@ def forest_predict(schema_madlib, model, source, output, pred_type='response',
     dep_levels = summary_elements["dependent_var_levels"]
     is_classification = summary_elements["is_classification"]
     dep_type = summary_elements['dependent_var_type']
+    null_proxy = summary_elements['null_proxy']
 
     # pred_type='prob' is allowed only for classification
     _assert(is_classification or pred_type == 'response',
@@ -706,7 +711,7 @@ def forest_predict(schema_madlib, model, source, output, pred_type='response',
 
     cat_features_str, con_features_str = get_feature_str(
         schema_madlib, boolean_cats, cat_features, con_features,
-        "cat_levels_in_text", "cat_n_levels")
+        "cat_levels_in_text", "cat_n_levels", null_proxy)
 
     pred_name = ('"prob_{0}"' if pred_type == "prob" else
                  '"estimated_{0}"').format(dep_varname.replace('"', '').strip())
@@ -929,12 +934,12 @@ def _calculate_oob_prediction(
         schema_madlib, model_table, cat_features_info_table, con_splits_table,
         oob_prediction_table, oob_view, sample_id, id_col_name, cat_features,
         con_features, boolean_cats, grouping_cols, grp_key_to_grp_cols, dep,
-        num_permutations, is_classification, importance, num_bins, filter_null):
+        num_permutations, is_classification, importance, num_bins, filter_null, null_proxy=None):
     """Calculate predication for out-of-bag sample"""
 
     cat_features_str, con_features_str = get_feature_str(
         schema_madlib, boolean_cats, cat_features, con_features,
-        "cat_levels_in_text", "cat_n_levels")
+        "cat_levels_in_text", "cat_n_levels", null_proxy)
 
     join_str = "," if grouping_cols is None else "JOIN"
     using_str = "" if grouping_cols is None else "USING (" + grouping_cols + ")"
@@ -1247,7 +1252,8 @@ def _create_summary_table(**kwargs):
                 {n_rows_skipped}::integer       AS total_rows_skipped,
                 {dep_list_str}::text            AS dependent_var_levels,
                 '{dep_type}'::text              AS dependent_var_type,
-                '{indep_type}'::text            AS independent_var_types
+                '{indep_type}'::text            AS independent_var_types,
+                '{null_proxy}'::text            AS null_proxy
         """.format(**kwargs)
     plpy.notice("sql_create_summary_table:\n" + sql_create_summary_table)
     plpy.execute(sql_create_summary_table)

@@ -1181,7 +1181,7 @@ DecisionTree<Container>::displayInternalNode(
         label_str << escape_quotes(feature_name) << " <= " << feature_thresholds(id);
     } else {
         feature_name = get_text(cat_features_str, feature_indices(id));
-        label_str << escape_quotes(feature_name) << " = ";
+        label_str << escape_quotes(feature_name) << " <= ";
 
         // Text for all categoricals are stored in a flat array (cat_levels_text);
         // find the appropriate index for this node

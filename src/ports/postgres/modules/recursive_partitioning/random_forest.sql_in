@@ -34,7 +34,7 @@ constructed using bootstrapped samples from the input data. The results of these
 models are then combined to yield a single prediction, which, at the
 expense of some loss in interpretation, have been found to be highly accurate.
 
-Please also refer to the decision tree user documentation for 
+Please also refer to the decision tree user documentation for
 information relevant to the implementation of random forests in MADlib.
 
 @anchor train
@@ -56,7 +56,7 @@ forest_train(training_table_name,
              min_split,
              min_bucket,
              num_splits,
-             surrogate_params,
+             null_handling_params,
              verbose,
              sample_ratio
              )
@@ -314,7 +314,7 @@ forest_train(training_table_name,
   <DT>importance (optional)</DT>
   <DD>boolean, default: true. Whether or not to calculate variable importance.
   If set to true, variable importance for categorical and continuous features
-  will be output in the group table <em>\<model_table\>_group</em> described 
+  will be output in the group table <em>\<model_table\>_group</em> described
   above.  Will increase run time when variable importance is turned on. </DD>
 
   <DT>num_permutations (optional)</DT>
@@ -331,7 +331,7 @@ forest_train(training_table_name,
   <DT>max_tree_depth (optional)</DT>
   <DD>integer, default: 7. Maximum depth of any node of a tree,
       with the root node counted as depth 0. A deeper tree can
-      lead to better prediction but will also result in 
+      lead to better prediction but will also result in
       longer processing time and higher memory usage.</DD>
 
   <DT>min_split (optional)</DT>
@@ -350,13 +350,27 @@ forest_train(training_table_name,
       Higher number of bins will lead to better prediction,
       but will also result in longer processing time and higher memory usage.</DD>
 
-  <DT>surrogate_params (optional)</DT>
-  <DD>text, Comma-separated string of key-value pairs controlling the behavior
-  of surrogate splits for each node in a tree.
+  <DT>null_handling_params</DT>
+  <DD>TEXT. Comma-separated string of key-value pairs controlling the behavior
+  of various features handling missing values.
     <table class='output'>
     <tr>
       <th>max_surrogates</th>
       <td>Default: 0. Number of surrogates to store for each node.</td>
+      One of the approaches of handling NULLs is to use surrogate splits for each
+      node. A surrogate variable is another predictor variable that is associated
+      (correlated) with the primary split variable. The surrogate
+      variable comes into use when the primary predictior value is NULL.
+    </tr>
+    <tr>
+    <th>null_as_special_cat</th>
+    <td>Default: FALSE. Whether to treat NULL as a special categorical value.
+
+    If this is set to TRUE, NULL values are considered a categorical
+    value and placed at the end of the ordering of categorical levels. Placing it
+    at the end ensures that NULL is never used as a value to split a node on.
+    This parameter is ignored for continuous-valued features.
+    </td>
     </tr>
     </table>
   </DD>
@@ -371,10 +385,10 @@ forest_train(training_table_name,
     is close to 0 may result in trees with only the root node.
     This allows users to experiment with the function in a speedy fashion.</DD>
 </DL>
-    @note The main parameters that affect memory usage are: depth of 
-    tree (‘max_tree_depth’), number of features, number of values per 
-    categorical feature, and number of bins for continuous features (‘num_splits’). 
-    If you are hitting memory limits, consider reducing one or 
+    @note The main parameters that affect memory usage are: depth of
+    tree (‘max_tree_depth’), number of features, number of values per
+    categorical feature, and number of bins for continuous features (‘num_splits’).
+    If you are hitting memory limits, consider reducing one or
     more of these parameters.
 
 @anchor predict
@@ -460,8 +474,8 @@ are NULL, then the majority branch is used to compute the split for a tuple.
 
     <DT>verbose (optional)</DT>
     <DD>boolean, default = FALSE. If true, the dot format output will contain
-    additional information (impurity, sample size, number of weighted rows for 
-    each response variable, classification or prediction if the tree was 
+    additional information (impurity, sample size, number of weighted rows for
+    each response variable, classification or prediction if the tree was
     pruned at this level)</DD>
 </DL>
 
@@ -539,7 +553,7 @@ dependent_varname     | class
 independent_varnames  | "OUTLOOK",windy,temperature,humidity
 cat_features          | "OUTLOOK",windy
 con_features          | temperature,humidity
-grouping_cols         | 
+grouping_cols         |
 num_trees             | 20
 num_random_features   | 2
 max_tree_depth        | 8
@@ -581,21 +595,21 @@ SELECT madlib.get_tree('train_output',1,2);
 </pre>
 Result:
 <pre class="result">
- digraph "Classification tree for dt_golf" {                 
- "0" [label="humidity <= 75", shape=ellipse];                
- "0" -> "1"[label="yes"];                                    
- "1" [label="\"Play\"",shape=box];                           
- "0" -> "2"[label="no"];                                     
- "2" [label="humidity <= 80", shape=ellipse];                
- "2" -> "5"[label="yes"];                                    
- "5" [label="\"Don't Play\"",shape=box];                     
- "2" -> "6"[label="no"];                                     
+ digraph "Classification tree for dt_golf" {
+ "0" [label="humidity <= 75", shape=ellipse];
+ "0" -> "1"[label="yes"];
+ "1" [label="\"Play\"",shape=box];
+ "0" -> "2"[label="no"];
+ "2" [label="humidity <= 80", shape=ellipse];
+ "2" -> "5"[label="yes"];
+ "5" [label="\"Don't Play\"",shape=box];
+ "2" -> "6"[label="no"];
  "6" [label="\"OUTLOOK\" in {overcast,rain}", shape=ellipse];
- "6" -> "13"[label="yes"];                                   
- "13" [label="\"Play\"",shape=box];                          
- "6" -> "14"[label="no"];                                    
- "14" [label="\"Don't Play\"",shape=box];                                                                               
- } //---end of digraph--------- 
+ "6" -> "13"[label="yes"];
+ "13" [label="\"Play\"",shape=box];
+ "6" -> "14"[label="no"];
+ "14" [label="\"Don't Play\"",shape=box];
+ } //---end of digraph---------
 </pre>
 
 -# Obtain a text display of the tree:
@@ -613,13 +627,13 @@ second indented child (2i+2) is the 'False' node.
 &nbsp;- Number of (weighted) rows for each response variable inside [].
 &nbsp;- Order of values = ['"Don\'t Play"', '"Play"']
 &nbsp;-------------------------------------
- (0)[ 4 10]  humidity <= 75                                               
-    (1)[0 7]  * --> "Play"                                                
-    (2)[4 3]  humidity <= 80                                              
-       (5)[3 1]  * --> "Don't Play"                                       
-       (6)[1 2]  "OUTLOOK" in {overcast,rain}                             
-          (13)[0 2]  * --> "Play"                                        
-          (14)[1 0]  * --> "Don't Play"                                   
+ (0)[ 4 10]  humidity <= 75
+    (1)[0 7]  * --> "Play"
+    (2)[4 3]  humidity <= 80
+       (5)[3 1]  * --> "Don't Play"
+       (6)[1 2]  "OUTLOOK" in {overcast,rain}
+          (13)[0 2]  * --> "Play"
+          (14)[1 0]  * --> "Don't Play"
 &nbsp;-------------------------------------
 </pre>
 
@@ -637,7 +651,7 @@ ORDER BY id;
 </pre>
 Result:
 <pre class="result">
-  id | estimated_class |   class    
+  id | estimated_class |   class
 ----+-----------------+------------
   1 | Don't Play      | Don't Play
   2 | Don't Play      | Don't Play
@@ -670,7 +684,7 @@ ORDER BY id;
 </pre>
 Result:
 <pre class="result">
- id | estimated_prob_Play |   class    
+ id | estimated_prob_Play |   class
 ----+---------------------+------------
   1 |                0.05 | Don't Play
   2 |                0.15 | Don't Play
@@ -917,7 +931,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
     min_split                   INTEGER,
     min_bucket                  INTEGER,
     num_splits                  INTEGER,
-    surrogate_params            TEXT,
+    null_handling_params            TEXT,
     verbose                     BOOLEAN,
     sample_ratio                DOUBLE PRECISION
 ) RETURNS VOID AS $$
@@ -939,7 +953,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
         min_split,
         min_bucket,
         num_splits,
-        surrogate_params,
+        null_handling_params,
         verbose,
         sample_ratio
     )
@@ -1179,7 +1193,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
     min_split                   INTEGER,
     min_bucket                  INTEGER,
     num_splits                  INTEGER,
-    surrogate_params            TEXT,
+    null_handling_params            TEXT,
     verbose                     BOOLEAN
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
@@ -1204,7 +1218,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.forest_train(
     min_split                   integer,
     min_bucket                  integer,
     num_splits                  integer,
-    surrogate_params            TEXT
+    null_handling_params            TEXT
 ) RETURNS VOID AS $$
     SELECT MADLIB_SCHEMA.forest_train($1, $2, $3, $4, $5, $6, $7, $8,
             $9, $10, $11, $12, $13, $14, $15, $16, FALSE::BOOLEAN);

@@ -54,7 +54,7 @@ tree_train(
     min_bucket,
     num_splits,
     pruning_params,
-    surrogate_params,
+    null_handling_params,
     verbosity
     )
 </pre>
@@ -186,16 +186,27 @@ tree_train(
     </table>
   </DD>
 
-  <DT>surrogate_params (optional)</DT>
+  <DT>null_handling_params (optional)</DT>
   <DD>TEXT. Comma-separated string of key-value pairs controlling the behavior
-  of surrogate splits for each node. A surrogate variable is another predictor
-  variable that is associated (correlated) with the primary predictor variable
-  for a split. The surrogate variable comes into use when the primary predictior
-  value is NULL. This parameter currently accepts one argument:
+  of various features handling missing values.
     <table class='output'>
     <tr>
       <th>max_surrogates</th>
       <td>Default: 0. Number of surrogates to store for each node.</td>
+      One of the approaches of handling NULLs is to use surrogate splits for each
+      node. A surrogate variable is another predictor variable that is associated
+      (correlated) with the primary split variable. The surrogate
+      variable comes into use when the primary predictior value is NULL.
+    </tr>
+    <tr>
+    <th>null_as_category</th>
+    <td>Default: FALSE. Whether to treat NULL as a special categorical value.
+
+    If this is set to TRUE, NULL values are considered a categorical value and
+    placed at the end of the ordering of categorical levels. Placing it at the
+    end ensures that NULL is never used as a value to split a node on. This
+    parameter is ignored for continuous-valued features.
+    </td>
     </tr>
     </table>
   </DD>
@@ -901,6 +912,85 @@ Result:
 (32 rows)
 </pre>
 
+<h4>NULL handling example</h4>
+
+- Create toy example to illustrate null-as-category handling
+<pre class='example'>
+drop table null_handling_example;
+create table null_handling_example (
+id integer,
+country text,
+city text,
+weather text,
+response text
+);
+&nbsp;
+insert into null_handling_example values
+(1,null,null,null,'a'),
+(2,'US',null,null,'b'),
+(3,'US','NY',null,'c'),
+(4,'US','NY','rainy','d');
+&nbsp;
+DROP TABLE IF EXISTS train_output, train_output_summary;
+SELECT madlib.tree_train('null_handling_example',         -- source table
+                         'train_output',    -- output model table
+                         'id',              -- id column
+                         'response',             -- dependent variable
+                         'country, city, weather',               -- features
+                         NULL,
+                         'gini',             -- split criterion
+                         NULL::text,        -- no grouping
+                         NULL::text,        -- no weights
+                         4,                -- max depth
+                         1,                 -- min split
+                         1,                 -- number of bins per continuous variable
+                         10,                -- number of splits
+                         NULL,              -- pruning parameters
+                         'null_as_category=true' -- null handling
+                         );
+select cat_levels_in_text, cat_n_levels from train_output;
+</pre>
+<pre class='result'>
+            cat_levels_in_text            | cat_n_levels
+------------------------------------------+--------------
+ {US,__NULL__,rainy,__NULL__,NY,__NULL__} | {2,2,2}
+</pre>
+
+- Predict for previously not seen data by assuming NULL value as the default
+<pre class='example'>
+drop table if exists table_test;
+create table table_test (
+id integer,
+country text,
+city text,
+weather text,
+expected_response text
+);
+insert into table_test values
+(1,'IN','MUM','cloudy','a'),
+(2,'US','HOU','humid','b'),
+(3,'US','NY','sunny','c'),
+(4,'US','NY','rainy','d');
+&nbsp;
+DROP TABLE IF EXISTS prediction_results;
+SELECT madlib.tree_predict('train_output',
+                           'table_test',
+                           'prediction_results',
+                           'response');
+SELECT s.id, expected_response, estimated_response
+FROM prediction_results p, table_test s
+where s.id = p.id ORDER BY id;
+</pre>
+<pre class='result'>
+ id | expected_response | estimated_response
+----+-------------------+--------------------
+  1 | a                 | a
+  2 | b                 | b
+  3 | c                 | c
+  4 | d                 | d
+(4 rows)
+</pre>
+
 @anchor literature
 @literature
 [1] Breiman, Leo; Friedman, J. H.; Olshen, R. A.; Stone, C. J. (1984). Classification and regression trees. Monterey, CA: Wadsworth & Brooks/Cole Advanced Books & Software.
@@ -995,7 +1085,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
     min_bucket                  INTEGER,
     n_bins                      INTEGER,
     pruning_params              TEXT,
-    surrogate_params            TEXT,
+    null_handling_params        TEXT,
     verbose_mode                BOOLEAN
 ) RETURNS VOID AS $$
     PythonFunctionBodyOnly(recursive_partitioning, decision_tree)
@@ -1004,7 +1094,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
         id_col_name, dependent_variable, list_of_features,
         list_of_features_to_exclude, split_criterion, grouping_cols,
         weights, max_depth, min_split, min_bucket, n_bins, pruning_params,
-        surrogate_params, verbose_mode)
+        null_handling_params, verbose_mode)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 ------------------------------------------------------------
@@ -1602,7 +1692,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.tree_train(
     min_bucket                  INTEGER,
     n_bins                      INTEGER,
     pruning_params              TEXT,
-    surrogate_params            TEXT
+    null_handling_params        TEXT
 ) RETURNS VOID AS $$
     -- verbose = false
     SELECT MADLIB_SCHEMA.tree_train($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
