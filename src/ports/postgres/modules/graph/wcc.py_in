@@ -31,18 +31,25 @@ import plpy
 from utilities.utilities import _assert
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import unique_string, split_quoted_delimited_str
-from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import columns_exist_in_table, get_expr_type
 from utilities.utilities import is_platform_pg, is_platform_hawq
+from utilities.utilities import add_postfix
+from utilities.validate_args import table_exists
+from utilities.control import MinWarning
 from graph_utils import validate_graph_coding, get_graph_usage
+from graph_utils import validate_output_and_summary_tables
 
 
 def validate_wcc_args(schema_madlib, vertex_table, vertex_id, edge_table,
-                      edge_params, out_table, grouping_cols_list, module_name):
+                      edge_params, out_table, out_table_summary,
+                      grouping_cols_list, module_name):
     """
     Function to validate input parameters for wcc
     """
     validate_graph_coding(vertex_table, vertex_id, edge_table, edge_params,
                           out_table, module_name)
+    _assert(not table_exists(out_table_summary),
+            "Graph {module_name}: Output summary table already exists!".format(**locals()))
     if grouping_cols_list:
         # validate the grouping columns. We currently only support grouping_cols
         # to be column names in the edge_table, and not expressions!
@@ -57,7 +64,7 @@ def prefix_tablename_to_colnames(table, cols_list):
 
 def get_where_condition(table1, table2, cols_list):
     return ' AND '.join(['{0}.{2}={1}.{2}'.format(table1, table2, col)
-                        for col in cols_list])
+                         for col in cols_list])
 
 
 def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
@@ -81,18 +88,24 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     plpy.execute('SET client_min_messages TO warning')
     params_types = {'src': str, 'dest': str}
     default_args = {'src': 'src', 'dest': 'dest'}
-    edge_params = extract_keyvalue_params(edge_args, params_types, default_args)
+    edge_params = extract_keyvalue_params(
+        edge_args, params_types, default_args)
 
-    # populate default values for optional params if null
-    if vertex_id is None:
+    # populate default values for optional params if null, and prepare data
+    # to be written into the summary table (*_st variable names)
+    if not vertex_id:
         vertex_id = "id"
+        v_st = "id"
+    else:
+        v_st = vertex_id
     if not grouping_cols:
         grouping_cols = ''
+    out_table_summary = add_postfix(out_table, "_summary")
 
     grouping_cols_list = split_quoted_delimited_str(grouping_cols)
     validate_wcc_args(schema_madlib, vertex_table, vertex_id, edge_table,
-                      edge_params, out_table, grouping_cols_list,
-                      'Weakly Connected Components')
+                      edge_params, out_table, out_table_summary,
+                      grouping_cols_list, 'Weakly Connected Components')
     src = edge_params["src"]
     dest = edge_params["dest"]
 
@@ -102,7 +115,8 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
     toupdate = unique_string(desp='toupdate')
     temp_out_table = unique_string(desp='tempout')
 
-    distribution = '' if is_platform_pg() else "DISTRIBUTED BY ({0})".format(vertex_id)
+    distribution = '' if is_platform_pg() else \
+        "DISTRIBUTED BY ({0})".format(vertex_id)
     subq_prefixed_grouping_cols = ''
     comma_toupdate_prefixed_grouping_cols = ''
     comma_oldupdate_prefixed_grouping_cols = ''
@@ -118,7 +132,8 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
 
     if grouping_cols:
         distribution = ('' if is_platform_pg() else
-                        "DISTRIBUTED BY ({0}, {1})".format(grouping_cols, vertex_id))
+                        "DISTRIBUTED BY ({0}, {1})".format(grouping_cols,
+                                                           vertex_id))
         # Update some variables useful for grouping based query strings
         subq = unique_string(desp='subquery')
         distinct_grp_table = unique_string(desp='grptable')
@@ -130,16 +145,21 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         pttc = prefix_tablename_to_colnames
         gwc = get_where_condition
 
-        comma_toupdate_prefixed_grouping_cols = ', ' + pttc(toupdate, grouping_cols_list)
-        comma_oldupdate_prefixed_grouping_cols = ', ' + pttc(oldupdate, grouping_cols_list)
+        comma_toupdate_prefixed_grouping_cols = ', ' + \
+            pttc(toupdate, grouping_cols_list)
+        comma_oldupdate_prefixed_grouping_cols = ', ' + \
+            pttc(oldupdate, grouping_cols_list)
         subq_prefixed_grouping_cols = pttc(subq, grouping_cols_list)
-        old_new_update_where_condition = ' AND ' + gwc(oldupdate, newupdate, grouping_cols_list)
-        new_to_update_where_condition = ' AND ' + gwc(newupdate, toupdate, grouping_cols_list)
-        edge_to_update_where_condition = ' AND ' + gwc(edge_table, toupdate, grouping_cols_list)
+        old_new_update_where_condition = ' AND ' + \
+            gwc(oldupdate, newupdate, grouping_cols_list)
+        new_to_update_where_condition = ' AND ' + \
+            gwc(newupdate, toupdate, grouping_cols_list)
+        edge_to_update_where_condition = ' AND ' + \
+            gwc(edge_table, toupdate, grouping_cols_list)
         join_grouping_cols = gwc(subq, distinct_grp_table, grouping_cols_list)
         group_by_clause_newupdate = ('' if not grouping_cols else
-                           '{0}, {1}.{2}'.format(subq_prefixed_grouping_cols,
-                                                 subq, vertex_id))
+                                     '{0}, {1}.{2}'.format(subq_prefixed_grouping_cols,
+                                                           subq, vertex_id))
         plpy.execute("""
                 CREATE TABLE {newupdate} AS
                 SELECT {subq}.{vertex_id},
@@ -206,7 +226,8 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
             FROM {message}
             GROUP BY {group_by_clause} {vertex_id}
             {distribution}
-        """.format(grouping_cols_select='' if not grouping_cols else ', {0}'.format(grouping_cols),
+        """.format(grouping_cols_select='' if not grouping_cols else
+                   ', {0}'.format(grouping_cols),
                    group_by_clause=grouping_cols_comma,
                    **locals()))
 
@@ -298,10 +319,317 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                             """.format(**locals()))[0]["cnt"]
 
     plpy.execute("ALTER TABLE {0} RENAME TO {1}".format(newupdate, out_table))
+    # Create summary table. We only need the vertex_id and grouping columns
+    # in it.
+    plpy.execute("""
+            CREATE TABLE {out_table_summary} (
+                {grouping_cols_summary}
+                vertex_table    TEXT,
+                vertex_id   TEXT,
+                vertex_id_type  TEXT
+            )
+        """.format(grouping_cols_summary='' if not grouping_cols else
+                   'grouping_cols TEXT, ', **locals()))
+    vertex_id_type = get_expr_type(vertex_id, vertex_table)
+    plpy.execute("""
+            INSERT INTO {out_table_summary} VALUES
+            ({grouping_cols_summary} '{vertex_table}', '{vertex_id}',
+            '{vertex_id_type}')
+        """.format(grouping_cols_summary='' if not grouping_cols else
+                   "'{0}', ".format(grouping_cols), **locals()))
     plpy.execute("""DROP TABLE IF EXISTS {0},{1},{2},{3}
         """.format(message, oldupdate, newupdate, toupdate))
     if is_hawq:
         plpy.execute("""DROP TABLE IF EXISTS {0}""".format(temp_out_table))
+
+
+# WCC Helper functions:
+def extract_wcc_summary_cols(wcc_summary_table):
+    """
+    WCC helper function to find all values stored in the summary table.
+    Args:
+        @param wcc_summary_table
+
+    Returns:
+        Dictionary, containing the column names and their values. The
+        keys in the dictionary are 'vertex_id', 'vertex_id_type' and
+        'grouoping_cols' if grouping cols exist.
+    """
+    return plpy.execute("SELECT * FROM {wcc_summary_table} ".format(
+        **locals()))[0]
+
+
+def preprocess_wcc_table_args(wcc_table, out_table):
+    """
+    Validate wcc_table, wcc_table_summary and the output tables. Read
+    the summary table and return a dictionary of the summary table.
+    """
+    validate_output_and_summary_tables(wcc_table, "WCC", out_table)
+    wcc_summary_table = add_postfix(wcc_table, "_summary")
+    return extract_wcc_summary_cols(wcc_summary_table)
+
+def check_input_vertex_validity(wcc_args, vertices):
+    """
+    Function to check if vertices are all valid, i.e., are present
+    in the WCC's original input vertex table. Even if one of the input
+    vertices (when more than one) is not valid, return False
+    Args:
+        @param wcc_args (dict)
+        @param vertices (list)
+    Returns:
+        True if all vertices in the list are present in the original input
+        vertex table, False otherwise.
+    """
+    vertex_table = wcc_args['vertex_table']
+    _assert(table_exists(vertex_table),
+            "Graph WCC: Input vertex table '{0}' does not exist.".format(
+                vertex_table))
+    vertex_col = wcc_args['vertex_id']
+    where_clause = ' OR '.join(["{0}='{1}'".format(vertex_col, v)
+                                for v in vertices])
+    count = plpy.execute("""
+            SELECT COUNT(*) as count FROM (
+                SELECT 1 FROM {vertex_table}
+                WHERE {where_clause}
+            ) t
+        """.format(**locals()))[0]['count']
+    _assert(count == len(vertices),
+            "Graph WCC: Invalid input vertex in {0}.".format(str(vertices)))
+
+def create_component_cnts_table(wcc_table, cnts_out_table,
+                                grouping_cols_comma):
+    """
+    WCC helper function to create a table containing the number of vertices
+    per component.
+
+    Args:
+        @param wcc_table
+        @param cnts_out_table
+        @param grouping_cols_comma
+
+    Returns:
+        Creates a new table called cnts_out_table with necessary content.
+    """
+    plpy.execute("""
+                CREATE TABLE {cnts_out_table} AS
+                SELECT {grouping_cols_select} component_id, COUNT(*) as num_vertices
+                FROM {wcc_table}
+                GROUP BY {group_by_clause} component_id
+            """.format(grouping_cols_select=grouping_cols_comma,
+                       group_by_clause=grouping_cols_comma, **locals()))
+
+
+def graph_wcc_largest_cpt(schema_madlib, wcc_table, largest_cpt_table,
+                          **kwargs):
+    """
+    WCC helper function that computes the largest weakly connected component
+    in each group (if grouping cols are defined)
+
+    Args:
+        @param wcc_table
+        @param largest_cpt_table
+
+    Returns:
+        Creates table largest_cpt_table that contains a column called
+        component_id that refers to the largest component. If grouping_cols
+        are defined, columns corresponding to the grouping_cols are also
+        created, and the largest component is computed with regard to a group.
+    """
+    with MinWarning("warning"):
+        wcc_args = preprocess_wcc_table_args(wcc_table, largest_cpt_table)
+        # Create temp table containing the number of vertices in each
+        # component.
+        tmp_cnt_table = unique_string(desp='tmpcnt')
+        if 'grouping_cols' in wcc_args:
+            grouping_cols = wcc_args['grouping_cols']
+        else:
+            grouping_cols = ''
+        glist = split_quoted_delimited_str(grouping_cols)
+        grouping_cols_comma = '' if not grouping_cols else grouping_cols + ','
+
+        subq = unique_string(desp='q')
+        subt = unique_string(desp='t')
+        create_component_cnts_table(wcc_table, tmp_cnt_table,
+                                    grouping_cols_comma)
+        # Query to find ALL largest components within groups.
+        select_grouping_cols_subq = ''
+        groupby_clause_subt = ''
+        grouping_cols_join = ''
+        if grouping_cols:
+            select_grouping_cols_subq = ', '.join(['{0}.{1}'.format(subq, gcol)
+                                                   for gcol in glist]) + ', '
+            groupby_clause_subt = ' GROUP BY {0}'.format(grouping_cols)
+            grouping_cols_join = ' AND ' + ', '.join(['{0}.{2}={1}.{2}'.format(
+                subq, subt, gcol) for gcol in glist])
+        plpy.execute("""
+                CREATE TABLE {largest_cpt_table} AS
+                SELECT {select_grouping_cols_subq} {subq}.component_id,
+                        {subt}.maxcnt AS num_vertices
+                FROM {tmp_cnt_table} AS {subq}
+                INNER JOIN (
+                    SELECT {grouping_cols_select_subt}
+                            MAX(num_vertices) AS maxcnt
+                    FROM {tmp_cnt_table}
+                    {groupby_clause_subt}
+                ) {subt}
+                ON {subq}.num_vertices={subt}.maxcnt
+                    {grouping_cols_join}
+            """.format(grouping_cols_select_subt=grouping_cols_comma,
+                       **locals()))
+        # Drop temp table
+        plpy.execute("DROP TABLE IF EXISTS {0}".format(tmp_cnt_table))
+
+
+def graph_wcc_histogram(schema_madlib, wcc_table, histogram_table, **kwargs):
+    """
+    Retrieve Histogram of Vertices Per Connected Component
+
+    Args:
+        @param wcc_table
+        @param histogram_table
+
+    Returns:
+        Creates and populates histogram_table with number of vertices per
+        component (represented by column num_vertices). Columns corresponding
+        to grouping_cols are also created if defined.
+    """
+    with MinWarning("warning"):
+        wcc_args = preprocess_wcc_table_args(wcc_table, histogram_table)
+        grouping_cols_comma = ''
+        if 'grouping_cols' in wcc_args:
+            grouping_cols_comma = wcc_args['grouping_cols'] + ', '
+        create_component_cnts_table(wcc_table, histogram_table,
+                                    grouping_cols_comma)
+
+
+def graph_wcc_vertex_check(schema_madlib,  wcc_table, vertex_pair, pair_table,
+                           **kwargs):
+    """
+    WCC helper function to check if two vertices belong to the same component.
+
+    Args:
+        @param wcc_table
+        @param vertex_pair
+        @param pair_table
+
+    Returns:
+        Creates and populates pair_table with all the components that have
+        both the vertices specified in the vertex_pair attribute. There are
+        columns for grouping, if specified.
+    """
+    with MinWarning("warning"):
+        wcc_args = preprocess_wcc_table_args(wcc_table, pair_table)
+        vertices = split_quoted_delimited_str(vertex_pair)
+        _assert(vertices and len(vertices) == 2,
+                "Graph WCC: Invalid vertex pair ({0}) input.".format(
+                    vertex_pair))
+        check_input_vertex_validity(wcc_args, vertices)
+        grouping_cols_comma = ''
+        if 'grouping_cols' in wcc_args:
+            grouping_cols_comma = wcc_args['grouping_cols'] + ', '
+        subq = unique_string(desp='subq')
+        inner_select_clause = " SELECT {0} component_id ".format(
+            grouping_cols_comma)
+        inner_from_clause = " FROM {0} ".format(wcc_table)
+        inner_groupby_clause = " GROUP BY {0} component_id".format(
+            grouping_cols_comma)
+        plpy.execute("""
+                CREATE TABLE {pair_table} AS
+                SELECT {grouping_cols_comma} component_id
+                FROM (
+                    {inner_select_clause}, 1
+                    {inner_from_clause}
+                    WHERE {vertex_id}='{vertex1}'
+                    {inner_groupby_clause}
+                    UNION ALL
+                    {inner_select_clause}, 2
+                    {inner_from_clause}
+                    WHERE {vertex_id}='{vertex2}'
+                    {inner_groupby_clause}
+                ) {subq}
+                GROUP BY {grouping_cols_comma} component_id
+                HAVING COUNT(*)=2
+            """.format(vertex_id=wcc_args['vertex_id'],
+                       vertex1=vertices[0], vertex2=vertices[1], **locals()))
+
+
+def graph_wcc_reachable_vertices(schema_madlib, wcc_table, src,
+                                 reachable_vertices_table, **kwargs):
+    """
+    WCC helper function to retrieve all vertices reachable from a vertex
+
+    Args:
+        @param wcc_table
+        @param src
+        @param reachable_vertices_table
+
+    Results:
+        Creates and populates reachable_vertices_table table with all the
+        vertices reachable from src vertex, where reachability is with
+        regard to a component. There are columns for grouping, if specified.
+    """
+    with MinWarning("warning"):
+        wcc_args = preprocess_wcc_table_args(wcc_table,
+                                             reachable_vertices_table)
+        check_input_vertex_validity(wcc_args, split_quoted_delimited_str(src))
+        grouping_cols_comma = ''
+        grouping_cols = ''
+        if 'grouping_cols' in wcc_args:
+            grouping_cols = wcc_args['grouping_cols']
+            grouping_cols_comma = grouping_cols + ', '
+        vertex_id = wcc_args['vertex_id']
+        subq = unique_string(desp='subq')
+        glist = split_quoted_delimited_str(grouping_cols)
+        grouping_cols_join = '' if not grouping_cols else ' AND ' + \
+            ', '.join(['{0}.{2}={1}.{2}'.format(wcc_table, subq, gcol)
+                       for gcol in glist])
+        subq_grouping_cols = '' if not grouping_cols else ', '.join(
+            ['{0}.{1}'.format(subq, gcol) for gcol in glist]) + ', '
+        plpy.execute("""
+                CREATE TABLE {reachable_vertices_table} AS
+                SELECT {subq_grouping_cols} {subq}.component_id,
+                        {wcc_table}.{vertex_id} AS dest
+                FROM {wcc_table}
+                INNER JOIN (
+                    SELECT {grouping_cols_comma} component_id, {vertex_id}
+                    FROM {wcc_table}
+                    GROUP BY {vertex_id}, {grouping_cols_comma} component_id
+                    HAVING {vertex_id}='{src}'
+                ) {subq}
+                ON {wcc_table}.component_id={subq}.component_id
+                    {grouping_cols_join}
+                WHERE {wcc_table}.{vertex_id} != '{src}'
+            """.format(**locals()))
+
+
+def graph_wcc_num_cpts(schema_madlib, wcc_table, count_table, **kwargs):
+    """
+    WCC helper function to count the number of connected components
+
+    Args:
+        @param: wcc_table
+        @param: count_table
+
+    Results:
+        Creates and populates the count_table table with the total number
+        of components. If grouping_cols is involved, number of components
+        are computed with regard to a group.
+    """
+    with MinWarning("warning"):
+        wcc_args = preprocess_wcc_table_args(wcc_table, count_table)
+        grouping_cols = ''
+        grouping_cols_comma = ''
+        if 'grouping_cols' in wcc_args:
+            grouping_cols = wcc_args['grouping_cols']
+            grouping_cols_comma = grouping_cols + ', '
+        plpy.execute("""
+                CREATE TABLE {count_table} AS
+                SELECT {grouping_cols_comma}
+                        COUNT(DISTINCT component_id) AS num_components
+                FROM {wcc_table}
+                {grp_by_clause}
+            """.format(grp_by_clause='' if not grouping_cols else
+                       ' GROUP BY {0}'.format(grouping_cols), **locals()))
 
 
 def wcc_help(schema_madlib, message, **kwargs):
@@ -322,10 +650,51 @@ def wcc_help(schema_madlib, message, **kwargs):
         help_string = get_graph_usage(
             schema_madlib,
             'Weakly Connected Components',
-            """out_table     TEXT, -- Output table of weakly connected components
-            grouping_col  TEXT -- Comma separated column names to group on
-                               -- (DEFAULT = NULL, no grouping)
-            """)
+            """out_table   TEXT, -- Output table of weakly connected components
+        grouping_col  TEXT -- Comma separated column names to group on
+                           -- (DEFAULT = NULL, no grouping)
+            """) + """
+
+    Once the above function is used to obtain the out_table, it can be used to
+    call several other helper functions based on weakly connected components:
+
+    (1) To retrieve the largest connected component:
+    SELECT {schema_madlib}.graph_wcc_largest_cpt(
+        wcc_table  TEXT,        -- Name of the table that contains the WCC output.
+        largest_cpt_table  TEXT -- Name of the output table that contains the
+                                -- largest components details.
+    );
+
+    (2) To retrieve the histogram of vertices per connected component:
+    SELECT {schema_madlib}.graph_wcc_histogram(
+        wcc_table  TEXT,       -- Name of the table that contains the WCC output.
+        histogram_table  TEXT  -- Name of the output table that contains the
+                               -- histogram of vertices per connected component.
+    );
+
+    (3) To check if two vertices belong to the same component:
+    SELECT {schema_madlib}.graph_wcc_vertex_check(
+        wcc_table   TEXT,   -- Name of the table that contains the WCC output.
+        vertex_pair TEXT,   -- Pair of vertex IDs, separated by a comma.
+        pair_table  TEXT    -- Name of the output table that contains the all
+                            -- components that contain the two vertices.
+    );
+
+    (4) To retrieve all vertices reachable from a vertex:
+    SELECT {schema_madlib}.graph_wcc_reachable_vertices(
+        wcc_table   TEXT,   -- Name of the table that contains the WCC output.
+        src         TEXT,   -- Initial source vertex.
+        reachable_vertices_table  TEXT  -- Name of the output table that
+                                        -- contains all vertices in a
+                                        -- component reachable from src.
+    );
+
+    (5) To count the number of connected components:
+    SELECT {schema_madlib}.graph_wcc_num_cpts(
+        wcc_table  TEXT,   -- Name of the table that contains the WCC output.
+        count_table  TEXT  -- Name of the output table that contains the count
+                           -- of number of components.
+    );"""
     else:
         if message is not None and \
                 message.lower() in ("example", "examples"):
@@ -404,6 +773,46 @@ SELECT madlib.weakly_connected_components(
 -- View the component ID associated with each vertex within the sub-graph
 -- associated with each user:
 SELECT * FROM wcc_out ORDER BY user_id, component_id;
+
+-- Retrieve the largest connected component
+DROP TABLE IF EXISTS largest_cpt_table;
+SELECT madlib.graph_wcc_largest_cpt(
+             'wcc_out',             -- WCC's output table
+             'largest_cpt_table');  -- output table with largest component IDs
+DROP TABLE largest_cpt_table;
+
+-- There are several helper functions to use after wcc_out is obtained:
+-- Retrieve Histogram of Vertices Per Connected Component
+DROP TABLE IF EXISTS histogram_table;
+SELECT madlib.graph_wcc_histogram(
+             'wcc_out',           -- WCC's output table
+             'histogram_table');  -- output table containing the histogram of vertices
+DROP TABLE histogram_table;
+
+-- Check if Two Vertices Belong to the Same Component
+DROP TABLE IF EXISTS vc_table;
+SELECT madlib.graph_wcc_vertex_check(
+             'wcc_out',    -- WCC's output table
+             '14,15',      -- Pair of vertex IDs
+             'vc_table');  -- output table containing components that contain the
+                           -- two vertices
+DROP TABLE vc_table;
+
+-- Retrieve All Vertices Reachable from a Vertex
+DROP TABLE IF EXISTS reach_table;
+SELECT madlib.graph_wcc_reachable_vertices(
+             'wcc_out',         -- WCC's output table
+             '0',               -- source vertex
+             'reach_table');    -- output table containing all vertices reachable from
+                                -- source vertex
+DROP TABLE reach_table;
+
+-- Count of Connected Components
+DROP TABLE IF EXISTS count_table;
+SELECT madlib.graph_wcc_num_cpts(
+             'wcc_out',       -- WCC's output table
+             'count_table');  -- output table containing number of components per group
+DROP TABLE count_table;
 """
         else:
             help_string = """
