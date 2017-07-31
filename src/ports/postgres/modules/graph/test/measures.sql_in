@@ -1,0 +1,150 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ */
+/* ----------------------------------------------------------------------- */
+
+-- Create vertex and edge tables to represent the graph:
+DROP TABLE IF EXISTS vertex, edge;
+CREATE TABLE vertex(
+        id INTEGER,
+        name TEXT
+        );
+CREATE TABLE edge(
+        src_id INTEGER,
+        dest_id INTEGER,
+        edge_weight FLOAT8
+        );
+INSERT INTO vertex VALUES
+(0, 'A'),
+(1, 'B'),
+(2, 'C'),
+(3, 'D'),
+(4, 'E'),
+(5, 'F'),
+(6, 'G'),
+(7, 'H');
+INSERT INTO edge VALUES
+(0, 1, 1.0),
+(0, 2, 1.0),
+(0, 4, 10.0),
+(1, 2, 2.0),
+(1, 3, 10.0),
+(2, 3, 1.0),
+(2, 5, 1.0),
+(2, 6, 3.0),
+(3, 0, 1.0),
+(4, 0, -2.0),
+(5, 6, 1.0),
+(6, 7, 1.0);
+
+-- Calculate the all-pair shortest paths:
+DROP TABLE IF EXISTS out_apsp, out_apsp_summary;
+SELECT graph_apsp('vertex',      -- Vertex table
+                  'id',          -- Vertix id column (NULL means use default naming)
+                  'edge',        -- Edge table
+                  'src=src_id, dest=dest_id, weight=edge_weight',
+                                 -- Edge arguments (NULL means use default naming)
+                  'out_apsp');   -- Output table of shortest paths
+
+-- Compute the closeness measure for all nodes:
+DROP TABLE IF EXISTS out_closeness;
+SELECT graph_closeness('out_apsp', 'out_closeness');
+SELECT * FROM out_closeness;
+
+SELECT assert(relative_error(inverse_sum_dist, 0.04347) < 1e-2 and
+              relative_error(inverse_avg_dist, 0.3043) < 1e-2 and
+              relative_error(sum_inverse_dist, 3.6833) < 1e-2 and
+              k_degree = 7,
+              'Incorrect value for closeness')
+FROM out_closeness
+WHERE src_id = 0;
+
+-- Compute the diameter measure for graph
+DROP TABLE IF EXISTS out_diameter;
+SELECT graph_diameter('out_apsp', 'out_diameter');
+SELECT * FROM out_diameter;
+SELECT assert(diameter=14, 'Invalid value for diameter') FROM out_diameter;
+
+-- Compute the average path length measure for graph
+DROP TABLE IF EXISTS out_avg_path_length;
+SELECT graph_avg_path_length('out_apsp', 'out_avg_path_length');
+SELECT * FROM out_avg_path_length;
+SELECT assert(relative_error(avg_path_length, 2.0178) < 1e-2,
+              'Invalid value for avg_path_length') FROM out_avg_path_length;
+
+-- Compute the in and out degrees
+DROP TABLE IF EXISTS out_degrees;
+SELECT graph_vertex_degrees('vertex',      -- Vertex table
+                     'id',          -- Vertix id column (NULL means use default naming)
+                     'edge',        -- Edge table
+                     'src=src_id, dest=dest_id, weight=edge_weight',
+                                 -- Edge arguments (NULL means use default naming)
+                     'out_degrees');
+SELECT * FROM out_degrees;
+SELECT assert(indegree = 2 and outdegree = 3, 'Invalid value for degrees')
+FROM out_degrees
+WHERE id = 0;
+-------------------------------------------------------------------------
+-- Grouping -----------------------------------------------------------
+------------------------------------------------------------------------------
+
+-- Create a graph with 2 groups and find APSP for each group:
+DROP TABLE IF EXISTS edge_gr;
+CREATE TABLE edge_gr AS
+(
+  SELECT *, 0 AS grp FROM edge
+  UNION
+  SELECT *, 1 AS grp FROM edge WHERE src_id < 6 AND dest_id < 6
+);
+INSERT INTO edge_gr VALUES
+(4,5,-20,1);
+
+-- Find APSP for all groups:
+DROP TABLE IF EXISTS out_apsp, out_apsp_summary;
+SELECT graph_apsp('vertex',      -- Vertex table
+                  'id',          -- Vertex id column (NULL means use default naming)
+                  'edge_gr',     -- Edge table
+                  'src=src_id, dest=dest_id, weight=edge_weight',
+                  'out_apsp',      -- Output table of shortest paths
+                  'grp'          -- Grouping columns
+);
+
+DROP TABLE IF EXISTS out_closeness;
+SELECT graph_closeness('out_apsp', 'out_closeness');
+SELECT * FROM out_closeness ORDER BY grp, src_id;
+
+DROP TABLE IF EXISTS out_diameter;
+SELECT graph_diameter('out_apsp', 'out_diameter');
+SELECT * FROM out_diameter ORDER BY grp;
+
+-- Compute the closeness measure for all nodes:
+DROP TABLE IF EXISTS out;
+SELECT graph_avg_path_length('out_apsp', 'out');
+SELECT * FROM out ORDER BY grp;
+
+-- Compute the closeness measure for all nodes:
+DROP TABLE IF EXISTS out_degrees;
+SELECT graph_vertex_degrees('vertex',      -- Vertex table
+                     'id',          -- Vertix id column (NULL means use default naming)
+                     'edge_gr',        -- Edge table
+                     'src=src_id, dest=dest_id, weight=edge_weight',
+                     'out_degrees',
+                     'grp');
+SELECT * FROM out_degrees ORDER BY grp, id;
