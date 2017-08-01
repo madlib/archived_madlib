@@ -35,6 +35,7 @@ from graph_utils import _check_groups
 from utilities.control import MinWarning
 
 from utilities.utilities import _assert
+from utilities.utilities import add_postfix
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import unique_string
 from utilities.utilities import split_quoted_delimited_str
@@ -82,17 +83,19 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
                                               default_args)
 
         # Prepare the input for recording in the summary table
-        if vertex_id is None:
-            v_st = "NULL"
+        if not vertex_id:
+            v_st = ''
             vertex_id = "id"
         else:
             v_st = vertex_id
-        if edge_args is None:
-            e_st = "NULL"
+
+        if not edge_args:
+            e_st = ''
         else:
             e_st = edge_args
-        if grouping_cols is None:
-            g_st = "NULL"
+
+        if not grouping_cols:
+            g_st = ''
             glist = None
         else:
             g_st = grouping_cols
@@ -124,7 +127,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
         checkg_om = ""
         group_by = ""
 
-        if grouping_cols is not None:
+        if grouping_cols:
             comma_grp = " , " + grouping_cols
             group_by = " , " + _grp_from_table(edge_table, glist)
             comma_grp_e = " , " + _grp_from_table(edge_table, glist)
@@ -154,7 +157,8 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
         # We keep a summary table to keep track of the parameters used for this
         # SSSP run. This table is used in the path finding function to eliminate
         # the need for repetition.
-        plpy.execute(""" CREATE TABLE {out_table}_summary  (
+        summary_table = add_postfix(out_table, "_summary")
+        plpy.execute(""" CREATE TABLE {summary_table}  (
             vertex_table            TEXT,
             vertex_id               TEXT,
             edge_table              TEXT,
@@ -163,7 +167,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
             out_table               TEXT,
             grouping_cols           TEXT)
             """.format(**locals()))
-        plpy.execute(""" INSERT INTO {out_table}_summary VALUES
+        plpy.execute(""" INSERT INTO {summary_table} VALUES
             ('{vertex_table}', '{v_st}', '{edge_table}', '{e_st}',
             {source_vertex}, '{out_table}', '{g_st}')
             """.format(**locals()))
@@ -207,7 +211,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
         # Example:
         # Assume there are two grouping columns g1 and g2
         # g1 values are 0 and 1. g2 values are 5 and 6
-        if grouping_cols is not None:
+        if grouping_cols:
 
             distinct_grp_table = unique_string(desp='grp')
             plpy.execute("DROP TABLE IF EXISTS {distinct_grp_table}".
@@ -378,9 +382,9 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
         # The algorithm should converge in less than |V| iterations.
         # Otherwise there is a negative cycle in the graph.
         if i == v_cnt:
-            if grouping_cols is None:
+            if not grouping_cols:
                 plpy.execute("DROP TABLE IF EXISTS {0},{1},{2}".
-                             format(out_table, out_table + "_summary", oldupdate))
+                             format(out_table, summary_table, oldupdate))
                 if is_hawq:
                     plpy.execute("DROP TABLE IF EXISTS {0}".format(temp_table))
                 plpy.error("Graph SSSP: Detected a negative cycle in the graph.")
@@ -423,7 +427,7 @@ def graph_sssp(schema_madlib, vertex_table, vertex_id, edge_table,
                 # drop the output table as well.
                 if table_is_empty(out_table):
                     plpy.execute("DROP TABLE IF EXISTS {0},{1}".
-                                 format(out_table, out_table + "_summary"))
+                                 format(out_table, summary_table))
 
                 plpy.warning(
                     """Graph SSSP: Detected a negative cycle in the """ +
@@ -460,18 +464,19 @@ def graph_sssp_get_path(schema_madlib, sssp_table, dest_vertex, path_table,
         grp_comma = ""
         tmp = ""
 
-        summary = plpy.execute("SELECT * FROM {0}_summary".format(sssp_table))
+        summary_table = add_postfix(sssp_table, "_summary")
+        summary = plpy.execute("SELECT * FROM {0}".format(summary_table))
         vertex_id = summary[0]['vertex_id']
         source_vertex = summary[0]['source_vertex']
 
-        if vertex_id == "NULL":
+        if not vertex_id:
             vertex_id = "id"
 
         grouping_cols = summary[0]['grouping_cols']
-        if grouping_cols == "NULL":
+        if not grouping_cols:
             grouping_cols = None
 
-        if grouping_cols is not None:
+        if grouping_cols:
             glist = split_quoted_delimited_str(grouping_cols)
             select_grps = _grp_from_table(sssp_table, glist) + " , "
             check_grps_t1 = " AND " + _check_groups(
@@ -583,7 +588,8 @@ def _validate_sssp(vertex_table, vertex_id, edge_table, edge_params,
         plpy.error("Graph SSSP: Source vertex table {vertex_table} "
                    "contains duplicate vertex id's.".format(**locals()))
 
-    _assert(not table_exists(out_table + "_summary"),
+    summary_table = add_postfix(out_table, "_summary")
+    _assert(not table_exists(summary_table),
             "Graph SSSP: Output summary table already exists!")
 
     if glist is not None:
@@ -602,11 +608,11 @@ def _validate_get_path(sssp_table, dest_vertex, path_table, **kwargs):
     _assert(not table_is_empty(sssp_table),
             "Graph SSSP: SSSP table ({0}) is empty!".format(sssp_table))
 
-    summary = sssp_table + "_summary"
-    _assert(table_exists(summary),
-            "Graph SSSP: SSSP summary table ({0}) is missing!".format(summary))
-    _assert(not table_is_empty(summary),
-            "Graph SSSP: SSSP summary table ({0}) is empty!".format(summary))
+    summary_table = add_postfix(sssp_table, "_summary")
+    _assert(table_exists(summary_table),
+            "Graph SSSP: SSSP summary table ({0}) is missing!".format(summary_table))
+    _assert(not table_is_empty(summary_table),
+            "Graph SSSP: SSSP summary table ({0}) is empty!".format(summary_table))
 
     _assert(not table_exists(path_table),
             "Graph SSSP: Output path table already exists!")

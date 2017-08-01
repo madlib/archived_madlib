@@ -33,6 +33,7 @@ from graph_utils import get_graph_usage
 from graph_utils import _grp_null_checks
 from utilities.control import MinWarning
 from utilities.utilities import _assert
+from utilities.utilities import add_postfix
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import split_quoted_delimited_str
 from utilities.validate_args import table_exists
@@ -47,8 +48,8 @@ def _validate_bfs(vertex_table, vertex_id, edge_table, edge_params,
         out_table,'BFS')
 
     _assert((max_distance >= 0) and isinstance(max_distance,int),
-        """Graph BFS: Invalid max_distance type or value ({0}), must be integer, 
-        be greater than or equal to 0 and be less than max allowable integer 
+        """Graph BFS: Invalid max_distance type or value ({0}), must be integer,
+        be greater than or equal to 0 and be less than max allowable integer
         (2147483647).""".
         format(max_distance))
 
@@ -64,7 +65,7 @@ def _validate_bfs(vertex_table, vertex_id, edge_table, edge_params,
         """.format(**locals()))
     if src_exists.nrows() == 0:
         plpy.error(
-            """Graph BFS: Source vertex {source_vertex} is not present in the 
+            """Graph BFS: Source vertex {source_vertex} is not present in the
             vertex table {vertex_table}.""".
             format(**locals()))
 
@@ -76,16 +77,17 @@ def _validate_bfs(vertex_table, vertex_id, edge_table, edge_params,
             HAVING count(*) > 1 """.format(**locals()))
     if vt_error.nrows() != 0:
         plpy.error(
-            """Graph BFS: Source vertex table {vertex_table} contains duplicate 
+            """Graph BFS: Source vertex table {vertex_table} contains duplicate
             vertex id's.""".
             format(**locals()))
 
-    _assert(not table_exists(out_table+"_summary"),
+    summary_table = add_postfix(out_table, "_summary")
+    _assert(not table_exists(summary_table),
         "Graph BFS: Output summary table already exists!")
 
     if grouping_cols_list is not None:
         _assert(columns_exist_in_table(edge_table, grouping_cols_list),
-            """Graph BFS: Not all columns from {grouping_cols_list} are present 
+            """Graph BFS: Not all columns from {grouping_cols_list} are present
             in edge table ({edge_table}).""".
             format(**locals()))
 
@@ -107,7 +109,7 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
         @param source_vertex   The source vertex id for the algorithm to start.
         @param out_table       Name of the table to store the result of BFS.
         @param max_distance    Maximum distance from the source_vertex to search for.
-        @param directed        Graph will be treated as directed if this boolean flag 
+        @param directed        Graph will be treated as directed if this boolean flag
                                is set to TRUE. Graph is treated as undirected by default.
         @param grouping_cols   The list of grouping columns.
 
@@ -125,35 +127,39 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
                                             default_args)
 
         # Prepare the input for recording in the summary table
-        if vertex_id is None:
-            v_st= "NULL"
+        if not vertex_id:
+            v_st = ''
             vertex_id = "id"
         else:
             v_st = vertex_id
-        if edge_args is None:
-            e_st = "NULL"
+
+        if not edge_args:
+            e_st = ''
         else:
             e_st = edge_args
-        if max_distance is None:
-            d_st= "NULL"
-            max_distance = INT_MAX
-        else:
-            d_st = max_distance
-        if directed is None:
-            dir_st= "NULL"
-            directed = False
-        else:
-            dir_st = directed
-        if grouping_cols is None or grouping_cols is '':
-            g_st = "NULL"
+
+        if not grouping_cols:
+            g_st = ''
             glist = None
         else:
             g_st = grouping_cols
             glist = split_quoted_delimited_str(grouping_cols)
 
+        if max_distance is None:
+            d_st= "NULL"
+            max_distance = INT_MAX
+        else:
+            d_st = max_distance
+
+        if directed is None:
+            dir_st= "NULL"
+            directed = False
+        else:
+            dir_st = directed
+
         src = edge_params["src"]
         dest = edge_params["dest"]
-        
+
         distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
             <!"DISTRIBUTED BY ({0})".format(vertex_id)!>)
         local_distribution = m4_ifdef(<!__POSTGRESQL__!>, <!''!>,
@@ -166,10 +172,10 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
         grp_comma = ""
         and_grp_null_checks = ""
 
-        if grouping_cols is not None and grouping_cols is not '':
+        if grouping_cols and grouping_cols is not '':
             grp_comma = grouping_cols + ", "
             and_grp_null_checks = " AND " + _grp_null_checks(glist)
-            
+
         # We keep a table of every vertex, the distance to that vertex from source
         # and the parent in the path to the vertex.
         # This table will be updated throughout the execution.
@@ -179,20 +185,21 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
 
         # Creating the output table with the appropriate columns and data types
         plpy.execute("""
-            CREATE TABLE {out_table} AS ( 
+            CREATE TABLE {out_table} AS (
                 SELECT
-                    {grp_comma} 
-                    {src} AS {vertex_id}, 
+                    {grp_comma}
+                    {src} AS {vertex_id},
                     {curr_dist_val}::INT AS {dist_col},
                     {src} AS {parent_col}
-                FROM {edge_table} 
+                FROM {edge_table}
                 LIMIT 0
             ) {distribution}""".format(**locals()))
 
         # We keep a summary table to keep track of the parameters used for this
         # BFS run
-        plpy.execute( """ 
-            CREATE TABLE {out_table}_summary  (
+        summary_table = add_postfix(out_table, "_summary")
+        plpy.execute( """
+            CREATE TABLE {summary_table}  (
                 vertex_table            TEXT,
                 vertex_id               TEXT,
                 edge_table              TEXT,
@@ -204,13 +211,13 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
                 grouping_cols           TEXT
             )""".format(**locals()))
 
-        plpy.execute(""" 
-            INSERT INTO {out_table}_summary VALUES
+        plpy.execute("""
+            INSERT INTO {summary_table} VALUES
                 ('{vertex_table}', '{v_st}', '{edge_table}', '{e_st}',
                 {source_vertex}, '{out_table}', {d_st}, {dir_st}, '{g_st}')
             """.format(**locals()))
 
-        
+
         # The queries for directed and undirected graphs share a common section.
         # There are additional clauses added to the undirected graph queries.
         # In the undirected case edges can be considered to go from {src} to
@@ -225,11 +232,11 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
                 """.format(**locals())
 
             count_qry_undirected = """ OR (
-                    ({grp_comma} {dest}) IN ( 
-                        SELECT {grp_comma} {vertex_id} FROM {out_table} 
+                    ({grp_comma} {dest}) IN (
+                        SELECT {grp_comma} {vertex_id} FROM {out_table}
                         WHERE {dist_col}={{curr_dist_val}}
-                    ) 
-                    AND 
+                    )
+                    AND
                     ({grp_comma} {src}) NOT IN (
                         SELECT {grp_comma} {vertex_id} FROM {out_table}
                     )
@@ -237,30 +244,30 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
             """.format(**locals())
 
             insert_qry_undirected_loop = """ UNION
-                SELECT {grp_comma} 
-                    {src} AS {vertex_id}, 
-                    {{curr_dist_val}}+1 AS {dist_col}, 
+                SELECT {grp_comma}
+                    {src} AS {vertex_id},
+                    {{curr_dist_val}}+1 AS {dist_col},
                     {dest} AS {parent_col}
-                FROM {edge_table} 
+                FROM {edge_table}
                 WHERE (
                     ({grp_comma} {dest}) IN (
-                        SELECT {grp_comma} {vertex_id} FROM {out_table} 
+                        SELECT {grp_comma} {vertex_id} FROM {out_table}
                         WHERE {dist_col}={{curr_dist_val}}
-                    ) 
-                    AND 
+                    )
+                    AND
                     ({grp_comma} {src}) NOT IN (
                         SELECT {grp_comma} {vertex_id} FROM {out_table}
                     )
                 )
             """.format(**locals())
 
-        # This step inserts into the output table the source vertex for each 
+        # This step inserts into the output table the source vertex for each
         # group in which it is present. Grouping behavior is not predictable
         # when there are NULLs in any grouping column. Therefore those rows
         # are explicitly removed from analysis
         insert_qry_init = """
             INSERT INTO {out_table}
-            SELECT {grp_comma} 
+            SELECT {grp_comma}
                 {source_vertex} AS {vertex_id},
                 {curr_dist_val} AS {dist_col},
                 NULL AS {parent_col}
@@ -272,17 +279,17 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
         plpy.execute(insert_qry_init.format(**locals()))
 
         # After initialization of the output table, number of nodes connected
-        # by edges to the source vertex in each group is counted. This is also used 
+        # by edges to the source vertex in each group is counted. This is also used
         # below in the BFS iteration while-loop
         count_qry = """
-            SELECT COUNT(*) 
-            FROM {edge_table} 
+            SELECT COUNT(*)
+            FROM {edge_table}
             WHERE (
-                ({grp_comma} {src}) IN ( 
-                    SELECT {grp_comma} {vertex_id} FROM {out_table} 
+                ({grp_comma} {src}) IN (
+                    SELECT {grp_comma} {vertex_id} FROM {out_table}
                     WHERE {dist_col}={{curr_dist_val}}
-                ) 
-                AND 
+                )
+                AND
                 ({grp_comma} {dest}) NOT IN (
                     SELECT {grp_comma} {vertex_id} FROM {out_table}
                 )
@@ -291,24 +298,24 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
 
         vct = plpy.execute(count_qry.format(**locals()))[0]['count']
 
-        # This insert statement is executed within the BFS iteration while-loop 
-        # below. It is used to discover and store all nodes (not already found) 
+        # This insert statement is executed within the BFS iteration while-loop
+        # below. It is used to discover and store all nodes (not already found)
         # connected to those found in the immediate previous iteration.
         insert_qry_loop = """
             INSERT INTO {out_table}
             SELECT {grp_comma} {vertex_id}, {dist_col}, min({parent_col})
             FROM (
-                SELECT {grp_comma} 
-                    {dest} AS {vertex_id}, 
-                    {{curr_dist_val}}+1 AS {dist_col}, 
+                SELECT {grp_comma}
+                    {dest} AS {vertex_id},
+                    {{curr_dist_val}}+1 AS {dist_col},
                     {src} AS {parent_col}
-                FROM {edge_table} 
+                FROM {edge_table}
                 WHERE (
                     ({grp_comma} {src}) IN (
-                        SELECT {grp_comma} {vertex_id} FROM {out_table} 
+                        SELECT {grp_comma} {vertex_id} FROM {out_table}
                         WHERE {dist_col}={{curr_dist_val}}
-                    ) 
-                    AND 
+                    )
+                    AND
                     ({grp_comma} {dest}) NOT IN (
                         SELECT {grp_comma} {vertex_id} FROM {out_table}
                     )
@@ -321,41 +328,41 @@ def graph_bfs(schema_madlib, vertex_table, vertex_id, edge_table,
         # Main loop for traversing the graph
         while vct > 0 and curr_dist_val < max_distance:
             # The loop consists of two steps:
-            # 1) Disover and store all nodes that are linked to nodes found in 
-            #    the immediate previous iteration of the loop that have not already 
-            #    been found in all previous iterations  
+            # 1) Disover and store all nodes that are linked to nodes found in
+            #    the immediate previous iteration of the loop that have not already
+            #    been found in all previous iterations
             # 2) Check for any nodes linked to those discovered in Step 1 above
             #    that have not yet been discovered
-            # 
-            # If a node has multiple possible parents then the parent with the 
+            #
+            # If a node has multiple possible parents then the parent with the
             # smallest ID is chosen for output
 
-            # In the directed graph case only nodes in the {dest} column of 
-            # the edge table are searched to find new nodes reachable from 
+            # In the directed graph case only nodes in the {dest} column of
+            # the edge table are searched to find new nodes reachable from
             # previously discovered nodes
 
-            # In the undirected graph case edges are treated as non-directional 
-            # (or bidirectional). Nodes in both the {src} and {dest} columns of 
-            # the edge table are searched to find new nodes reachable from 
+            # In the undirected graph case edges are treated as non-directional
+            # (or bidirectional). Nodes in both the {src} and {dest} columns of
+            # the edge table are searched to find new nodes reachable from
             # previously discovered nodes.
             #
             # This approach does NOT require the user to provide a forward edge
-            # and a reverse edge between the same two nodes to indicate the 
+            # and a reverse edge between the same two nodes to indicate the
             # graph's undirected nature. However, it will work in that scenario
             # as well.
 
-            # Discover and store all nodes (not already found) connected to 
+            # Discover and store all nodes (not already found) connected to
             # those found in the immediate previous iteration
             plpy.execute(insert_qry_loop.format(**locals()))
 
             # Update distance value for next iteration
             curr_dist_val = curr_dist_val + 1
 
-            # Count / find any nodes that are connected to those discovered and 
+            # Count / find any nodes that are connected to those discovered and
             # stored in this iteration. This is used to check if the iterations
             # need to continue.
             vct = plpy.execute(count_qry.format(**locals()))[0]['count']
-    
+
     return None
 
 def graph_bfs_help(schema_madlib, message, **kwargs):
@@ -392,18 +399,18 @@ finds all nodes reachable from the source vertex.
 ----------------------------------------------------------------------------
                             OUTPUT
 ----------------------------------------------------------------------------
-The output of BFS ('out_table' above) contains a row for every vertex of that is 
-reachable from the source_vertex. In the presence of grouping columns, only those 
+The output of BFS ('out_table' above) contains a row for every vertex of that is
+reachable from the source_vertex. In the presence of grouping columns, only those
 edges are used for which there are no NULL values in any grouping column.
-The output table will have the following columns (in addition to the 
+The output table will have the following columns (in addition to the
 grouping columns):
-  - vertex_id : The id for any node reachable from source_vertex in addition to 
-                the source_vertex. Will use the input parameter 'vertex_id' for 
+  - vertex_id : The id for any node reachable from source_vertex in addition to
+                the source_vertex. Will use the input parameter 'vertex_id' for
                 column naming.
-  - dist      : The distance in number of edges (or hops) from the source_vertex 
-                to where this vertex is located. 
-  - parent    : The parent of this vertex in BFS traversal of the graph from 
-                source_vertex. Will use 'parent' for column naming. For the 
+  - dist      : The distance in number of edges (or hops) from the source_vertex
+                to where this vertex is located.
+  - parent    : The parent of this vertex in BFS traversal of the graph from
+                source_vertex. Will use 'parent' for column naming. For the
                 case where vertex_id = source_vertex, the value for parent is NULL.
 """
     elif message.lower() in ("example", "examples"):
@@ -457,7 +464,7 @@ SELECT madlib.graph_bfs(
                          NULL,          -- Edge arguments (NULL means use default naming)
                          3,             -- Source vertex for BFS
                          'out'          -- Output table of nodes reachable from source_vertex
-                        );        
+                        );
                         -- Default values used for the other arguments
 SELECT * FROM out ORDER BY dist,id;
 
