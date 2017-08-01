@@ -19,8 +19,13 @@
 #####################################################################################
 workdir=`pwd`
 user_name=`whoami`
-echo "Build by user $user_name in directory $workdir"
-echo "-------------------------------"
+reponame=incubator-madlib
+
+echo "======================================================================"
+echo "Build user: $user_name"
+echo "Work directory: $workdir"
+echo "Git reponame: $reponame"
+echo "----------------------------------------------------------------------"
 echo "ls -la"
 ls -la
 echo "-------------------------------"
@@ -45,9 +50,9 @@ docker pull madlib/postgres_9.6:jenkins
 # Launch docker container with volume mounted from workdir
 echo "-------------------------------"
 cat <<EOF
-docker run -d --name madlib -v "${workdir}/incubator-madlib":/incubator-madlib madlib/postgres_9.6:jenkins | tee logs/docker_setup.log
+docker run -d --name madlib -v "${workdir}/${reponame}":/madlib madlib/postgres_9.6:jenkins | tee logs/docker_setup.log
 EOF
-docker run -d --name madlib -v "${workdir}/incubator-madlib":/incubator-madlib madlib/postgres_9.6:jenkins | tee logs/docker_setup.log
+docker run -d --name madlib -v "${workdir}/${reponame}":/madlib madlib/postgres_9.6:jenkins | tee logs/docker_setup.log
 echo "-------------------------------"
 
 ## This sleep is required since it takes a couple of seconds for the docker
@@ -57,9 +62,9 @@ sleep 5
 echo "---------- Building package -----------"
 # cmake, make, make install, and make package
 cat <<EOF
-docker exec madlib bash -c 'rm -rf /build; mkdir /build; cd /build; cmake ../incubator-madlib; make clean; make; make install; make package' | tee $workdir/logs/madlib_compile.log
+docker exec madlib bash -c 'rm -rf /build; mkdir /build; cd /build; cmake ../madlib; make clean; make; make install; make package' | tee $workdir/logs/madlib_compile.log
 EOF
-docker exec madlib bash -c 'rm -rf /build; mkdir /build; cd /build; cmake ../incubator-madlib; make clean; make; make install; make package' | tee $workdir/logs/madlib_compile.log
+docker exec madlib bash -c 'rm -rf /build; mkdir /build; cd /build; cmake ../madlib; make clean; make; make install; make package' | tee $workdir/logs/madlib_compile.log
 
 echo "---------- Installing and running install-check --------------------"
 # Install MADlib and run install check
@@ -92,6 +97,6 @@ echo "-------------------------------"
 
 # convert install-check test results to junit format for reporting
 cat <<EOF
-python incubator-madlib/tool/jenkins/junit_export.py $workdir/logs/madlib_install_check.log $workdir/logs/madlib_install_check.xml
+python ${reponame}/tool/jenkins/junit_export.py $workdir/logs/madlib_install_check.log $workdir/logs/madlib_install_check.xml
 EOF
-python incubator-madlib/tool/jenkins/junit_export.py $workdir $workdir/logs/madlib_install_check.log $workdir/logs/madlib_install_check.xml
+python ${reponame}/tool/jenkins/junit_export.py $workdir $workdir/logs/madlib_install_check.log $workdir/logs/madlib_install_check.xml

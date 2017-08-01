@@ -195,5 +195,5 @@ echo "        This will install MADlib objects into a Greenplum database named \
 echo "        running on server \"mdw\" on port 5432. Installer will try to login as \"gpadmin\""
 echo "        and will prompt for password. The target schema will be \"madlib\"."
 echo "For additional options run: madpack --help"
-echo "Release notes and additional documentation can be found at http://madlib.incubator.apache.org/"
+echo "Release notes and additional documentation can be found at http://madlib.apache.org/"
 

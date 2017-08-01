@@ -22,15 +22,16 @@
 set -exu
 
 workdir=`pwd`
+reponame=incubator-madlib
 
 # Check if NOTICE file year is current
-grep "Copyright 2016-$(date +"%Y") The Apache Software Foundation" "${workdir}/incubator-madlib/NOTICE"
+grep "Copyright 2016-$(date +"%Y") The Apache Software Foundation" "${workdir}/${reponame}/NOTICE"
 
 # Check if pom.xml file version is current
 # With below grep, it's possible to get a "False Positive" (i.e. no error when it should have)
 # but won't give a "False Negative" (i.e. if it fails then there's definitely a problem)
-grep "<version>$(cat "${workdir}/incubator-madlib/src/config/Version.yml" | cut -d" " -f2)</version>" \
-    "${workdir}/incubator-madlib/pom.xml"
+grep "<version>$(cat "${workdir}/${reponame}/src/config/Version.yml" | cut -d" " -f2)</version>" \
+    "${workdir}/${reponame}/pom.xml"
 
 set +x
 
@@ -39,7 +40,7 @@ badfiles_found=false
 
 for extension in ${badfile_extentions}; do
     echo "Searching for ${extension} files:"
-    badfile_count=$(find . -name "${workdir}/incubator-madlib/*.${extension}" | wc -l)
+    badfile_count=$(find . -name "${workdir}/${reponame}/*.${extension}" | wc -l)
     if [ ${badfile_count} != 0 ]; then
         echo "----------------------------------------------------------------------"
         echo "FATAL: ${extension} files should not exist"
@@ -47,7 +48,7 @@ for extension in ${badfile_extentions}; do
         echo "binary (jar) files as users have a hard time verifying their"
         echo "contents."
 
-        find . -name "${workdir}/incubator-madlib/*.${extension}"
+        find . -name "${workdir}/${reponame}/*.${extension}"
         echo "----------------------------------------------------------------------"
         badfiles_found=true
     else

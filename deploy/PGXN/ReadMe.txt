@@ -1,17 +1,17 @@
-Apache MADlib (incubating) Read Me
+Apache MADlib Read Me
 --------------
 
 MADlib is an open-source library for scalable in-database analytics.
 It provides data-parallel implementations of mathematical, statistical
 and machine learning methods for structured and unstructured data.
 
-See the project web site located at http://madlib.incubator.apache.org/ for
+See the project web site located at http://madlib.apache.org/ for
 links to the latest binary and source packages.
 
 For installation and contribution guides, please see the MADlib wiki at
 https://cwiki.apache.org/confluence/display/MADLIB.
 
-The latest documentation of MADlib modules can be found at http://madlib.incubator.apache.org/docs
+The latest documentation of MADlib modules can be found at http://madlib.apache.org/docs
 or can be accessed directly from the MADlib installation directory by opening
 doc/user/html/index.html.
 
@@ -24,7 +24,7 @@ Bundled with source code:
   http://snowballstem.org/
 - m_widen_init "allows compilation with recent versions of gcc with runtime
   dependencies from earlier versions of libstdc++"
-  https://github.com/apache/incubator-madlib/blob/master/licenses/third_party/_M_widen_init.txt
+  https://github.com/apache/madlib/blob/master/licenses/third_party/_M_widen_init.txt
 - PyYAML 3.10 "is a YAML parser and emitter for Python"
   http://pyyaml.org/wiki/PyYAML
 - argparse 1.2.1 "provides an easy, declarative interface for creating command
@@ -60,16 +60,3 @@ upgrading to the next major version:
     individual optimizer parameters (max_iter, optimizer, tolerance).  These
     parameters have been replaced with a single optimizer parameter.
     - All overloaded functions 'margins_logregr'.
-
-
-Apache MADlib is an effort undergoing incubation at the Apache Software
-Foundation (ASF), sponsored by the Apache Incubator PMC.
-
-Incubation is required of all newly accepted projects until a further
-review indicates that the infrastructure, communications, and decision
-making process have stabilized in a manner consistent with other
-successful ASF projects.
-
-While incubation status is not necessarily a reflection of the
-completeness or stability of the code, it does indicate that the
-project has yet to be fully endorsed by the ASF.

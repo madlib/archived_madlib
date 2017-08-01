@@ -695,7 +695,7 @@ def _db_upgrade(schema, dbrev):
                 _info("""Dependency on 'linregr_result' could be due to objects
                         created from the output of the aggregate 'linregr'.
                         Please refer to the Linear Regression documentation
-                        <http://madlib.incubator.apache.org/docs/latest/group__grp__linreg.html#warning>
+                        <http://madlib.apache.org/docs/latest/group__grp__linreg.html#warning>
                         for the recommended solution.
                         """, False)
             abort = True

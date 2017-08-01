@@ -9,7 +9,7 @@ machine learning methods for structured and unstructured data.
 
 Installation and Contribution
 ==============================
-See the project website  [`MADlib Home`](http://madlib.incubator.apache.org/) for links to the
+See the project website  [`MADlib Home`](http://madlib.apache.org/) for links to the
 latest binary and source packages. For installation and contribution guides,
 and other useful information
 please refer to the [`MADlib Wiki`](https://cwiki.apache.org/confluence/display/MADLIB/)
@@ -27,12 +27,12 @@ docker pull madlib/postgres_9.6:latest
 ## 2) Launch a container corresponding to the MADlib image, mounting the
 ##    source code folder to the container:
 docker run -d -it --name madlib \
-    -v (path to incubator-madlib directory):/incubator-madlib/ madlib/postgres_9.6
-# where incubator-madlib is the directory where the MADlib source code resides.
+    -v (path to madlib directory):/madlib/ madlib/postgres_9.6
+# where madlib is the directory where the MADlib source code resides.
 
 ################################# * WARNING * #################################
 # Please be aware that when mounting a volume as shown above, any changes you
-# make in the "incubator-madlib" folder inside the Docker container will be
+# make in the "madlib" folder inside the Docker container will be
 # reflected on your local disk (and vice versa). This means that deleting data
 # in the mounted volume from a Docker container will delete the data from your
 # local disk also.
@@ -40,8 +40,8 @@ docker run -d -it --name madlib \
 
 ## 3) When the container is up, connect to it and build MADlib:
 docker exec -it madlib bash
-mkdir /incubator-madlib/build-docker
-cd /incubator-madlib/build-docker
+mkdir /madlib/build-docker
+cd /madlib/build-docker
 cmake ..
 make
 make doc
@@ -68,7 +68,7 @@ Detailed build instructions are available in [`ReadMe_Build.txt`](ReadMe_Build.t
 User and Developer Documentation
 ==================================
 The latest documentation of MADlib modules can be found at [`MADlib
-Docs`](http://madlib.incubator.apache.org/docs/latest/index.html).
+Docs`](http://madlib.apache.org/docs/latest/index.html).
 
 
 Architecture
