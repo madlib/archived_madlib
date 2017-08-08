@@ -11,6 +11,7 @@ m4_changequote(`<!', `!>')
 @brief driver functions shared by modules
 """
 
+from distutils.util import strtobool
 import plpy
 
 from utilities import __mad_version
@@ -24,59 +25,77 @@ HAS_FUNCTION_PROPERTIES = m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!True!>, <!
 UDF_ON_SEGMENT_NOT_ALLOWED = m4_ifdef(<!__UDF_ON_SEGMENT_NOT_ALLOWED__!>, <!True!>, <!False!>)
 
 
-class EnableOptimizer(object):
+class OptimizerControl(object):
 
     """
     @brief: A wrapper that enables/disables the optimizer and
         then sets it back to the original value on exit
+
+    This context manager accesses two GUCs:
+        optimizer: GUC to control the optimizer used in Greenplum and HAWQ platforms
+
+        optimizer_control: Used to check if 'optimizer' GUC can be updated by MADlib.
+                            This is assumed to be True if the GUC is not available
     """
 
-    def __init__(self, to_enable=True):
-        self.to_enable = to_enable
-        self.optimizer_enabled = False
-        # we depend on the fact that all GPDB/HAWQ versions that have the
+    def __init__(self, enable=True, error_on_fail=False):
+        self.to_enable = enable
+        self.error_on_fail = error_on_fail
+
+        # use the fact that all GPDB/HAWQ versions that have the
         # optimizer also define function properties
         self.guc_exists = True if HAS_FUNCTION_PROPERTIES else False
 
     def __enter__(self):
-        # we depend on the fact that all GPDB/HAWQ versions that have the ORCA
-        # optimizer also define function properties
         if self.guc_exists:
-            optimizer = plpy.execute("show optimizer")[0]["optimizer"]
-            self.optimizer_enabled = True if optimizer == 'on' else False
-            plpy.execute("set optimizer={0}".format(('off', 'on')[self.to_enable]))
+            # check if allowed to change the GUC
+            try:
+                self.optimizer_control = bool(strtobool(
+                    plpy.execute("show optimizer_control")[0]["optimizer_control"]))
+            except plpy.SPIError:
+                self.optimizer_control = True
+
+            if self.optimizer_control:
+                self.optimizer_enabled = bool(strtobool(
+                    plpy.execute("show optimizer")[0]["optimizer"]))
+                new_optimizer = 'on' if self.to_enable else 'off'
+                plpy.execute("set optimizer={0}".format(new_optimizer))
+            else:
+                if self.error_on_fail:
+                    plpy.error("Unable to change 'optimizer' value. "
+                               "Set 'optimizer_control = on' to proceed.")
 
     def __exit__(self, *args):
         if args and args[0]:
-            # an exception was raised in code. We return False so that any
+            # an exception was raised in code, return False so that any
             # exception is re-raised after exit. The transaction will not
-            # commit leading to reset of client_min_messages.
+            # commit leading to reset of any change to parameter.
             return False
         else:
-            if self.guc_exists:
+            if self.guc_exists and self.optimizer_control:
                 plpy.execute("set optimizer={0}".
                              format(('off', 'on')[self.optimizer_enabled]))
 
 
-class EnableHashagg(object):
+class HashaggControl(object):
 
     """
     @brief: A wrapper that enables/disables the hashagg and then sets it back
         to the original value on exit
     """
 
-    def __init__(self, to_enable=True):
-        self.to_enable = to_enable
+    def __init__(self, enable=True):
+        self.to_enable = enable
         self.hashagg_enabled = False
         self.guc_exists = True
 
     def __enter__(self):
         try:
             enable_hashagg = plpy.execute("show enable_hashagg")[0]["enable_hashagg"]
-            self.hashagg_enabled = True if enable_hashagg == 'on' else False
+            self.hashagg_enabled = bool(strtobool(enable_hashagg))
             plpy.execute("set enable_hashagg={0}".
                          format(('off', 'on')[self.to_enable]))
-        except:
+        except plpy.SPIError:
             self.guc_exists = False
         finally:
             return self
@@ -85,7 +104,7 @@ class EnableHashagg(object):
         if args and args[0]:
             # an exception was raised in code. We return False so that any
             # exception is re-raised after exit. The transaction will not
-            # commit leading to reset of client_min_messages.
+            # commit leading to reset of parameter value.
             return False
         else:
             if self.guc_exists:
@@ -218,7 +237,7 @@ class IterationController:
         # For GPDB 4.3 we disable the optimizer (ORCA) for the query planner
         # since currently ORCA has a bug for left outer joins (MPP-21868).
         # This should be removed when the issue is fixed in ORCA.
-        with EnableOptimizer(False):
+        with OptimizerControl(False):
             if STATE_IN_MEM:
                 eval_plan = plpy.prepare("""
                     SELECT ({expression}) AS expression
@@ -346,7 +365,7 @@ class IterationController2D(IterationController):
         # We disable the optimizer (ORCA) for the query planning
         # since ORCA has a bug for left outer joins (MPP-21868).
         # This should be removed when the issue is fixed in ORCA.
-        with EnableOptimizer(False):
+        with OptimizerControl(False):
             if STATE_IN_MEM:
                 eval_plan = plpy.prepare("""
                     SELECT ({expression}) AS expression

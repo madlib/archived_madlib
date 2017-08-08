@@ -10,11 +10,11 @@ LDA: Driver and auxiliary functions
 """
 
 import plpy
-import time
+# import time
 
 # use mad_vec to process arrays passed as strings in GPDB < 4.1 and PG < 9.0
-from utilities.control import EnableOptimizer
-from utilities.control import EnableHashagg
+from utilities.control import OptimizerControl
+from utilities.control import HashaggControl
 from utilities.utilities import __mad_version, _assert, warn
 from utilities.validate_args import output_tbl_valid
 from utilities.validate_args import input_tbl_valid
@@ -102,7 +102,7 @@ class LDATrainer:
             """.format(output_data_table=self.output_data_table))
 
     def init_random(self):
-        stime = time.time()
+        # stime = time.time()
         # plpy.notice('initializing topics randomly ...')
 
         plpy.execute('TRUNCATE TABLE ' + self.work_table_0)
@@ -117,11 +117,11 @@ class LDATrainer:
                        topic_num=self.topic_num,
                        data_table=self.data_table))
 
-        etime = time.time()
+        # etime = time.time()
         # plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
     def gen_output_data_table(self):
-        stime = time.time()
+        # stime = time.time()
         # plpy.notice('\t\tgenerating output data table ...')
 
         work_table_final = self.work_table_1
@@ -139,11 +139,11 @@ class LDATrainer:
             """.format(output_data_table=self.output_data_table,
                        topic_num=self.topic_num,
                        work_table_final=work_table_final))
-        etime = time.time()
+        # etime = time.time()
         # plpy.notice('\t\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
     def iteration(self, it):
-        stime = time.time()
+        # stime = time.time()
 
         work_table_in = self.work_table_0
         if it % 2 == 0:
@@ -158,7 +158,7 @@ class LDATrainer:
 
         plpy.execute('TRUNCATE TABLE ' + self.model_table)
         if version_wrapper.is_gp43() or version_wrapper.is_hawq():
-            with EnableOptimizer(True):
+            with OptimizerControl(True):
                 plpy.execute("""
                     INSERT INTO {model_table}
                     SELECT
@@ -183,7 +183,7 @@ class LDATrainer:
                                work_table_in=work_table_in))
         else:
             # work around insertion memory error (MPP-25561)
-            # by taking the model in Python temporarily
+            # by copying the model to Python temporarily
             model = plpy.execute("""
                 SELECT
                     {schema_madlib}.__lda_count_topic_agg(
@@ -215,7 +215,7 @@ class LDATrainer:
         # For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
         # planner since currently ORCA doesn't support InitPlan. This would have
         # to be fixed when ORCA is the only available query planner.
-        with EnableOptimizer(False):
+        with OptimizerControl(False):
             # plpy.notice('\t\tsampling ...')
             plpy.execute('TRUNCATE TABLE ' + work_table_out)
             query = """
@@ -238,23 +238,23 @@ class LDATrainer:
                            work_table_in=work_table_in)
             plpy.execute(query)
 
-        etime = time.time()
+        # etime = time.time()
         # plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
     def run(self):
-        stime = time.time()
+        # stime = time.time()
         # plpy.notice('start training process ...')
 
         self.init_random()
-        sstime = time.time()
+        # sstime = time.time()
         for it in range(1, self.iter_num + 1):
             self.iteration(it)
-        eetime = time.time()
+        # eetime = time.time()
         # plpy.notice('\t\titeration done, time elapsed: %.2f seconds' % (eetime - sstime))
 
         self.gen_output_data_table()
 
-        etime = time.time()
+        # etime = time.time()
         # plpy.notice('finished, time elapsed: %.2f seconds' % (etime - stime))
 # ------------------------------------------------------------------------------
 
@@ -330,7 +330,7 @@ class LDAPredictor:
             """.format(doc_topic=self.doc_topic))
 
     def init_random(self):
-        stime = time.time()
+        # stime = time.time()
         # plpy.notice('initializing topics randomly ...')
 
         plpy.execute('TRUNCATE TABLE ' + self.work_table_0)
@@ -345,7 +345,7 @@ class LDAPredictor:
                        topic_num=self.topic_num,
                        data_table=self.test_table))
 
-        etime = time.time()
+        # etime = time.time()
         # plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
     def gen_output_table(self):
@@ -361,13 +361,13 @@ class LDAPredictor:
                        work_table_out=self.work_table_1))
 
     def infer(self):
-        stime = time.time()
+        # stime = time.time()
         # plpy.notice('infering ...')
 
         # For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
         # planner since currently ORCA doesn't support InitPlan. This would have
         # to be fixed when ORCA is the only available query planner.
-        with EnableOptimizer(False):
+        with OptimizerControl(False):
             query = """
                 INSERT INTO {work_table_out}
                 SELECT
@@ -391,18 +391,18 @@ class LDAPredictor:
                            iter_num=self.iter_num)
         plpy.execute(query)
 
-        etime = time.time()
+        # etime = time.time()
         # plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
     def run(self):
-        stime = time.time()
+        # stime = time.time()
         # plpy.notice('start prediction process ...')
 
         self.init_random()
         self.infer()
         self.gen_output_table()
 
-        etime = time.time()
+        # etime = time.time()
         # plpy.notice('finished, time elapsed: %.2f seconds' % (etime - stime))
 # ------------------------------------------------------------------------------
 
@@ -707,7 +707,7 @@ def get_perplexity(schema_madlib, model_table, output_data_table):
     # For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
     # planner since currently ORCA doesn't support InitPlan. This would have
     # to be fixed when ORCA is the only available query planner.
-    with EnableOptimizer(False):
+    with OptimizerControl(False):
         query = """
             SELECT exp(-part_perp/total_word) AS perp
             FROM
@@ -894,8 +894,8 @@ def _convert_data_table(schema_madlib, data_table):
         DISTRIBUTED BY (docid)')
         """.format(convt_table=convt_table))
 
-    with EnableOptimizer(False):
-        with EnableHashagg(False):
+    with OptimizerControl(False):
+        with HashaggControl(False):
             plpy.execute("""
                 INSERT INTO {convt_table}
                 SELECT

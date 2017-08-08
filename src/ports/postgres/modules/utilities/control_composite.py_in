@@ -17,7 +17,7 @@ from utilities import __mad_version
 version_wrapper = __mad_version()
 from utilities import unique_string
 _unique_string = unique_string
-from control import MinWarning, EnableOptimizer
+from control import MinWarning
 
 STATE_IN_MEM = m4_ifdef(<!__HAWQ__!>, <!True!>, <!False!>)
 HAS_FUNCTION_PROPERTIES = m4_ifdef(<!__HAS_FUNCTION_PROPERTIES__!>, <!True!>, <!False!>)
@@ -115,39 +115,35 @@ class IterationControllerComposite:
         @return None if \c expression evaluates to NULL, otherwise the value of
             \c expression
         """
-        # We disable the optimzer (ORCA) for the query planning
-        # since ORCA has a bug for left outer joins (MPP-21868).
-        # This should be removed when the issue is fixed in ORCA.
-        with EnableOptimizer(False):
-            if STATE_IN_MEM:
-                cast_str = "CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4, $5) AS {schema_madlib}.kmeans_state)".format(**self.kwargs)
-                cast_type = ["DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION[]",
-                             "DOUBLE PRECISION", "DOUBLE PRECISION"]
-                cast_para = [None if self.new_state is None else self.new_state[i]
-                             for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
-                                       'objective_fn', 'frac_reassigned')]
-                eval_plan = plpy.prepare("""
-                    SELECT ({expression}) AS expression
-                    FROM {{rel_args}} AS _args
-                        LEFT OUTER JOIN (
-                            SELECT {{schema_madlib}}.array_to_2d($1) AS _state
-                        ) AS _state ON True
-                    """.format(expression=expression).
-                        format(iteration=self.iteration,
-                               curr_state=cast_str, **self.kwargs), cast_type)
-                resultObject = plpy.execute(eval_plan, cast_para)
-            else:
-                resultObject = self.runSQL("""
-                    SELECT ({expression}) AS expression
-                    FROM {{rel_args}} AS _args
-                        LEFT OUTER JOIN (
-                            SELECT *
-                            FROM {{rel_state}} AS _state
-                            WHERE _state._iteration = {{iteration}}
-                        ) AS _state ON True
-                    """.format(expression=expression).
-                        format(iteration=self.iteration,
-                               **self.kwargs))
+        if STATE_IN_MEM:
+            cast_str = "CAST (({schema_madlib}.array_to_2d($1), $2, $3, $4, $5) AS {schema_madlib}.kmeans_state)".format(**self.kwargs)
+            cast_type = ["DOUBLE PRECISION[]", "INTEGER[]", "DOUBLE PRECISION[]",
+                         "DOUBLE PRECISION", "DOUBLE PRECISION"]
+            cast_para = [None if self.new_state is None else self.new_state[i]
+                         for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
+                                   'objective_fn', 'frac_reassigned')]
+            eval_plan = plpy.prepare("""
+                SELECT ({expression}) AS expression
+                FROM {{rel_args}} AS _args
+                    LEFT OUTER JOIN (
+                        SELECT {{schema_madlib}}.array_to_2d($1) AS _state
+                    ) AS _state ON True
+                """.format(expression=expression).
+                    format(iteration=self.iteration,
+                           curr_state=cast_str, **self.kwargs), cast_type)
+            resultObject = plpy.execute(eval_plan, cast_para)
+        else:
+            resultObject = self.runSQL("""
+                SELECT ({expression}) AS expression
+                FROM {{rel_args}} AS _args
+                    LEFT OUTER JOIN (
+                        SELECT *
+                        FROM {{rel_state}} AS _state
+                        WHERE _state._iteration = {{iteration}}
+                    ) AS _state ON True
+                """.format(expression=expression).
+                    format(iteration=self.iteration,
+                           **self.kwargs))
 
         if resultObject.nrows() == 0:
             return None
@@ -207,9 +203,9 @@ class IterationControllerComposite:
 
             cast_para = [None if self.new_state is None else self.new_state[i]
                          for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
-                                    'objective_fn', 'frac_reassigned')]
+                                   'objective_fn', 'frac_reassigned')]
             cast_para.extend([None if self.old_state is None else self.old_state[i]
-                             for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
+                              for i in ('centroids', 'old_centroid_ids', 'cluster_variance',
                                         'objective_fn', 'frac_reassigned')])
 
             updateKwargs.update(curr_state=cast_str, old_state=cast_str_old)
