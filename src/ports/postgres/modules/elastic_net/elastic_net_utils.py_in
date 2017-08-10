@@ -129,18 +129,27 @@ def _compute_log_likelihood(coef, intercept, **args):
     Compute the log-likelihood at the end of calculation
     """
     if args["family"] == "gaussian":  # linear models
+        loss_query = """
+        select
+            {method}(({col_dep_var_new} - {schema_madlib}.elastic_net_gaussian_predict(
+               '{coefficients}'::double precision[],
+               {intercept}::double precision,
+               {col_ind_var_new}))^2)/({denominator})
+            as loss
+        from
+            {tbl_used}
+        """
+        # See jira 1094, avg experiences numerical instability
+        denominator = "2."
+        method = "avg"
+        if not args["normalization"]:
+            method = "sum"
+            denominator = "count(*) * 2."
         loss = plpy.execute(
-            """
-            select
-                avg(({col_dep_var_new} - {schema_madlib}.elastic_net_gaussian_predict(
-                   '{coefficients}'::double precision[],
-                   {intercept}::double precision,
-                   {col_ind_var_new}))^2) / 2.
-                as loss
-            from
-                {tbl_used}
-            """.format(coefficients=_array_to_string(coef),
+            loss_query.format(coefficients=_array_to_string(coef),
                        intercept=intercept,
+                       method=method,
+                       denominator=denominator,
                        **args))[0]["loss"]
     elif args["family"] == "binomial":  # logistic models
         loss = plpy.execute(
@@ -192,8 +201,18 @@ def _elastic_net_validate_args(tbl_source, col_ind_var, col_dep_var,
 
     return None
 # ------------------------------------------------------------------------
+def _compute_scales(args):
+    if args["grouping_col"]:
+        _compute_data_scales_grouping(args)
+    else:
+        _compute_data_scales(args)
 
 def _compute_data_scales_grouping(args):
+    # When grouping_col is defined, we must find an array containing
+    # the mean of every dimension in the independent variable (x), the
+    # mean of dependent variable (y) and the standard deviation for them
+    # specific to groups. Store these results in temp tables x_mean_table
+    # and y_mean_table.
     __utils_ind_var_scales_grouping(args["tbl_source"], args["col_ind_var"],
         args["dimension"], args["schema_madlib"], args["grouping_col"],
         args["x_mean_table"])
@@ -227,13 +246,13 @@ def _normalize_data(args):
     The output is stored in tbl_data_scaled
     """
     y_decenter = True if args["family"] == "gaussian" else False
+    _compute_scales(args)
     if args["grouping_col"]:
         # When grouping_col is defined, we must find an array containing
         # the mean of every dimension in the independent variable (x), the
         # mean of dependent variable (y) and the standard deviation for them
         # specific to groups. Store these results in temp tables x_mean_table
         # and y_mean_table.
-        _compute_data_scales_grouping(args)
         # __utils_normalize_data_grouping reads the various means and stds
         # from the tables.
         __utils_normalize_data_grouping(y_decenter=y_decenter,
@@ -251,7 +270,6 @@ def _normalize_data(args):
         # When no grouping_col is defined, the mean and std for both 'x' and
         # 'y' can be defined using strings, stored in x_mean_str, x_std_str
         # etc. We don't need a table like how we needed for grouping.
-        _compute_data_scales(args)
         __utils_normalize_data(y_decenter=y_decenter,
                                tbl_data=args["tbl_source"],
                                col_ind_var=args["col_ind_var"],
