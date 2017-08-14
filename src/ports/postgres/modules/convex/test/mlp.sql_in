@@ -28,7 +28,7 @@
 -- Classification
 
 
-SELECT setseed(0.5);
+SELECT setseed(0.6);
 DROP TABLE IF EXISTS iris_data, iris_test, mlp_class, mlp_class_summary CASCADE;
 CREATE TABLE iris_data(
     id integer,
@@ -191,21 +191,27 @@ INSERT INTO iris_data VALUES
 
 
 SELECT mlp_classification(
-    'iris_data',      -- Source table
+    'iris_data',    -- Source table
     'mlp_class',    -- Desination table
-    'attributes',     -- Input features
-    'class',   -- Label
-    ARRAY[5],     -- Number of units per layer
-    'step_size=0.001,
-    n_iterations=1000,
+    'attributes',   -- Input features
+    'class',        -- Label
+    ARRAY[5],   -- Number of units per layer
+    'learning_rate_init=0.1,
+    learning_rate_policy=constant,
+    n_iterations=800,
+    n_tries=2,
     tolerance=0',
-    'tanh');
+    'sigmoid',
+    '',
+    FALSE,
+    TRUE
+);
 
 
 SELECT assert(
     -- Loss will improve much more if more iterations are run
-    loss < 30,
-    'MLP: Loss is too high (> 30). Wrong result.'
+    loss < 0.1,
+    'MLP: Loss is too high (> 0). Wrong result.'
 ) FROM mlp_class;
 
 DROP TABLE IF EXISTS mlp_prediction;
@@ -239,9 +245,8 @@ SELECT mlp_predict(
     'mlp_prediction',
     'response');
 
-select * from mlp_prediction;
+SELECT * FROM mlp_prediction;
 SELECT assert(
-    -- Accuracy greater than 90%
     COUNT(*)/150.0 > 0.95,
     'MLP: Accuracy is too low (< 95%). Wrong result.'
 ) FROM
@@ -766,65 +771,30 @@ COPY lin_housing_wi (x, grp_by_col, y) FROM STDIN NULL '?' DELIMITER '|';
 {1,0.04741,0.00,11.930,0,0.5730,6.0300,80.80,2.5050,1,273.0,21.00,396.90,7.88} | 2 | 11.90
 \.
 
--- Normalize the columns
-CREATE TEMPORARY TABLE maxs as(
-    SELECT
-    max(x[1]) m1,
-    max(x[2]) m2,
-    max(x[3]) m3,
-    max(x[4]) m4,
-    max(x[5]) m5,
-    max(x[6]) m6,
-    max(x[7]) m7,
-    max(x[8]) m8,
-    max(x[9]) m9,
-    max(x[10]) m10,
-    max(x[11]) m11,
-    max(x[12]) m12,
-    max(x[13]) m13,
-    max(x[14]) m14
-    from lin_housing_wi
-);
 
-CREATE TABLE lin_housing_wi_scaled AS
-SELECT ARRAY[
-    x[1]/(SELECT m1 from maxs),
-    x[2]/(SELECT m2 from maxs),
-    x[3]/(SELECT m3 from maxs),
-    x[4]/(SELECT m4 from maxs),
-    x[5]/(SELECT m5 from maxs),
-    x[6]/(SELECT m6 from maxs),
-    x[7]/(SELECT m7 from maxs),
-    x[8]/(SELECT m8 from maxs),
-    x[9]/(SELECT m9 from maxs),
-    x[10]/(SELECT m10 from maxs),
-    x[11]/(SELECT m11 from maxs),
-    x[12]/(SELECT m12 from maxs),
-    x[13]/(SELECT m13 from maxs),
-    x[14]/(SELECT m14 from maxs)] as x,
-    id,y
-FROM lin_housing_wi;
-
-DROP TABLE IF EXISTS maxs;
 DROP TABLE IF EXISTS mlp_regress;
 DROP TABLE IF EXISTS mlp_regress_summary;
 
 
 SELECT setseed(0);
 SELECT mlp_regression(
-    'lin_housing_wi_scaled',           -- Source table
+    'lin_housing_wi',           -- Source table
     'mlp_regress',              -- Desination table
     'x',                        -- Input features
     'y',                        -- Dependent variable
-    ARRAY[5,5],                 -- Number of units per layer
-    'step_size=0.005,
-    n_iterations=800,
+    ARRAY[40],                 -- Number of units per layer
+    'learning_rate_init=0.015,
+    learning_rate_policy=inv,
+    n_iterations=300,
     tolerance=0',
-    'sigmoid');
+    'sigmoid',
+    '',
+    False,
+    TRUE);
 
 
 SELECT assert(
-    loss < 10,
+    loss < 2,
     'MLP: Loss is too high (> 10). Wrong result.'
 ) FROM mlp_regress;
 
@@ -832,14 +802,14 @@ SELECT assert(
 DROP TABLE IF EXISTS mlp_prediction_regress;
 SELECT mlp_predict(
     'mlp_regress',
-    'lin_housing_wi_scaled',
+    'lin_housing_wi',
     'id',
     'mlp_prediction_regress',
     'output');
 SELECT assert(
-    0.5*SUM(pow(mlp_prediction_regress.estimated_y-lin_housing_wi_scaled.y,2.0))/506 < 10.0,
+    0.5*SUM(pow(mlp_prediction_regress.estimated_y-lin_housing_wi.y,2.0))/506 < 2.0,
     'MLP: Predict MSE is too high (> 10). Wrong result'
 )
-FROM mlp_prediction_regress JOIN lin_housing_wi_scaled
-ON mlp_prediction_regress.id = lin_housing_wi_scaled.id;
-DROP TABLE IF EXISTS lin_housing_wi_scaled;
+FROM mlp_prediction_regress JOIN lin_housing_wi
+ON mlp_prediction_regress.id = lin_housing_wi.id;
+DROP TABLE IF EXISTS lin_housing_wi;

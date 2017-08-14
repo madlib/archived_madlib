@@ -29,23 +29,23 @@
 m4_include(`SQLCommon.m4')
 
 /**
-@addtogroup grp_mlp
+@addtogroup grp_nn
 
 <div class="toc"><b>Contents</b><ul>
 <li class="level1"><a href="#mlp_classification">Classification</a></li>
 <li class="level1"><a href="#mlp_regression">Regression</a></li>
-<li class="level1"><a href="#optimization_params">Optimizer Parameters</a></li>
-<li class="level1"><a href="#predict">Prediction Functions/a></li>
+<li class="level1"><a href="#optimizer_params">Optimizer Parameters</a></li>
+<li class="level1"><a href="#predict">Prediction Functions</a></li>
 <li class="level1"><a href="#example">Examples</a></li>
 <li class="level1"><a href="#background">Technical Background</a></li>
 <li class="level1"><a href="#literature">Literature</a></li>
 <li class="level1"><a href="#related">Related Topics</a></li>
 </ul></div>
 
-Multilayer Perceptron (MLP) is a model for regression and
-classification.
+Multilayer Perceptron (MLP) is a type of neural network that can be
+used for regression and classification.
 
-Also called "vanilla neural networks", they consist of several
+Also called "vanilla neural networks", MLPs consist of several
 fully connected hidden layers with non-linear activation
 functions.  In the case of classification, the final layer of the
 neural net has as many nodes as classes, and the output of the
@@ -67,13 +67,15 @@ mlp_classification(
     dependent_varname,
     hidden_layer_sizes,
     optimizer_params,
-    activation
+    activation,
+    weights
     )
 </pre>
 \b Arguments
 <DL class="arglist">
   <DT>source_table</DT>
   <DD>TEXT. Name of the table containing the training data.</DD>
+
 
   <DT>output_table</DT>
   <DD>TEXT. Name of the output table containing the model. Details of the output
@@ -83,19 +85,22 @@ mlp_classification(
   <DT>independent_varname</DT>
   <DD>TEXT. Expression list to evaluate for the
     independent variables. An intercept variable should not be included as part
-    of this expression. Please note that expression should be able to be cast
-    to DOUBLE PRECISION[].
+    of this expression. <b>Please note that expression should be encoded properly.</b>
+    All values are cast to DOUBLE PRECISION, so categorical variables should be
+    one-hot or dummy encoded.  See <a href="group__grp__encode__categorical.html">here</a>
+    for more details.
   </DD>
+
 
   <DT>dependent_varname</DT>
   <DD> TEXT. Name of the dependent variable column. For classification, supported types are:
   text, varchar, character varying, char, character
   integer, smallint, bigint, and boolean.  </DD>
 
-  <DT>hidden_layer_sizes (optional)</DT>
-  <DD>INTEGER[], default: ARRAY[].
+  <DT>hidden_layer_sizes </DT>
+  <DD>INTEGER[]
   The number of neurons in each hidden layer.  The length of this array will
-  determine the number of hidden layers.  Empty for no hidden layers.
+  determine the number of hidden layers.  NULL for no hidden layers.
   </DD>
 
 
@@ -111,6 +116,25 @@ mlp_classification(
     'relu', and 'tanh'. The text can be any prefix of the three
     strings; for e.g., activation='s' will use the sigmoid activation.
   </DD>
+
+
+  <DT>weights (optional)</DT>
+  <DD>TEXT, default: NULL.
+    Weights for input rows. Column name which specifies the weight for each input row.
+    This weight will be incorporated into the update during SGD, and will not be used
+    for loss calculations. If not specified, weight for each row will default to 1.
+    Column should be a numeric type.
+  </DD>
+
+  <DT>warm_start (optional)</DT>
+  <DD>BOOLEAN, default: FALSE.
+    Initalize weights with the coefficients from the last call.  If true, weights will
+    be initialized from output_table. Note that all parameters other than optimizer_params,
+    and verbose must remain constant between calls to warm_start.
+  </DD>
+
+  <DT>verbose (optional)</DT>
+  <DD>BOOLEAN, default: FALSE. Provides verbose output of the results of training.</DD>
 </DL>
 
 <b>Output tables</b>
@@ -142,24 +166,28 @@ A summary table named \<output_table\>_summary is also created, which has the fo
         <td>The source table.</td>
     </tr>
     <tr>
-        <th>dependent_varname</th>
-        <td>The dependent variable.</td>
-    </tr>
-    <tr>
         <th>independent_varname</th>
         <td>The independent variables.</td>
+    </tr>
+    <tr>
+        <th>dependent_varname</th>
+        <td>The dependent variable.</td>
     </tr>
     <tr>
         <th>tolerance</th>
         <td>The tolerance as given in optimizer_params.</td>
     </tr>
     <tr>
-        <th>step_size</th>
-        <td>The step size as given in optimizer_params.</td>
+        <th>learning_rate_init</th>
+        <td>The initial learning rate as given in optimizer_params.</td>
+    </tr>
+    <tr>
+        <th>learning_rate_policy</th>
+        <td>The learning rate policy as given in optimizer_params.</td>
     </tr>
     <tr>
         <th>n_iterations</th>
-        <td>The number of iterations run</td>
+        <td>The number of iterations run.</td>
     </tr>
     <tr>
         <th>n_tries</th>
@@ -170,17 +198,29 @@ A summary table named \<output_table\>_summary is also created, which has the fo
         <td>The number of units in each layer including the input and output layer.</td>
     </tr>
     <tr>
-        <th>activation_function</th>
+        <th>activation</th>
         <td>The activation function.</td>
     </tr>
     <tr>
         <th>is_classification</th>
         <td>True if the model was trained for classification, False if it was trained
-        for regression</td>
+        for regression.</td>
     </tr>
     <tr>
         <th>classes</th>
-        <td>The classes which were trained against (empty for regression)</td>
+        <td>The classes which were trained against (empty for regression).</td>
+    </tr>
+    <tr>
+        <th>weights</th>
+        <td>The weight column used during training.</td>
+    </tr>
+    <tr>
+        <th>x_means</th>
+        <td>The mean for all input features (used for normalization).</td>
+    </tr>
+    <tr>
+        <th>x_stds</th>
+        <td>The standard deviation for all input features (used for normalization).</td>
     </tr>
 
    </table>
@@ -197,7 +237,9 @@ mlp_regression(source_table,
     dependent_varname,
     hidden_layer_sizes,
     optimizer_params,
-    activation
+    activation,
+    weights,
+    verbose
     )
 </pre>
 
@@ -205,7 +247,7 @@ mlp_regression(source_table,
 
 Specifications for regression are largely the same as for classification. In the
 model table, the loss will refer to mean square error instead of cross entropy. In the
-summary table, there is classes column. The following
+summary table, there is no classes column. The following
 arguments have specifications which differ from mlp_classification:
 <DL class="arglist">
 <DT>dependent_varname</DT>
@@ -226,7 +268,7 @@ the parameter is ignored.
 
 
 <pre class="syntax">
-  'step_size = &lt;value>,
+  'learning_rate_init = &lt;value>,
    n_iterations = &lt;value>,
    n_tries = &lt;value>,
    tolerance = &lt;value>'
@@ -234,27 +276,57 @@ the parameter is ignored.
 \b Optimizer Parameters
 <DL class="arglist">
 
-<DT>step_size</dt>
-<DD>Default: [0.001].
+<DT>learning_rate_init</dt>
+<DD>Default: 0.001.
 Also known as the learning rate. A small value is usually desirable to
 ensure convergence, while a large value provides more room for progress during
 training. Since the best value depends on the condition number of the data, in
 practice one often tunes this parameter.
 </DD>
 
+<DT>learning_rate_policy</dt>
+<DD>Default: constant.
+One of 'constant', 'exp', 'inv' or 'step' or any prefix of these.
+'constant': learning_rate = learning_rate_init
+'exp': learning_rate = learning_rate_init * gamma^(iter)
+'inv': learning_rate = learning_rate_init * (iter+1)^(-power)
+'step': learning_rate = learning_rate_init * gamma^(floor(iter/iterations_per_step))
+Where iter is the current iteration of SGD.
+</DD>
+
+<DT>gamma</dt>
+<DD>Default: 0.1.
+Decay rate for learning rate when learning_rate_policy is 'exp' or 'step'.
+</DD>
+
+<DT>power</dt>
+<DD>Default: 0.5.
+Exponent for learning_rate_policy = 'inv'.
+</DD>
+
+<DT>iterations_per_step</dt>
+<DD>Default: 100.
+Number of iterations to run before decreasing the learning rate by
+a factor of gamma.  Valid for learning rate policy = 'step'.
+</DD>
 
 <DT>n_iterations</dt>
 <DD>Default: [100]. The maximum number of iterations allowed.
 </DD>
+
 <DT>n_tries</dt>
 <DD>Default: [1]. Number of times to retrain the network with randomly initialized
-weights
+weights.
+</DD>
+
+<DT>lambda</dt>
+<DD>Default: 0. The regularization coefficient for L2 regularization.
 </DD>
 
 <DT>tolerance</dt>
 <DD>Default: 0.001. The criterion to end iterations. The training stops whenever
-<the difference between the training models of two consecutive iterations is
-<smaller than \e tolerance or the iteration number is larger than \e max_iter.
+the difference between the training models of two consecutive iterations is
+smaller than \e tolerance or the iteration number is larger than \e max_iter.
 </DD>
 
 </DL>
@@ -293,19 +365,19 @@ table name is already in use, then an error is returned.  Table contains:</DD>
         <td>Gives the 'id' for each prediction, corresponding to each row from the data_table.</td>
       </tr>
       <tr>
-        <th>estimated_<COL_NAME></th>
+        <th>estimated_COL_NAME</th>
         <td>
         (For pred_type='response') The estimated class
          for classification or value for regression, where
-         <COL_NAME> is the name of the column to be
-         predicted from training data
+         COL_NAME is the name of the column to be
+         predicted from training data.
         </td>
       </tr>
       <tr>
-        <th>prob_<CLASS></th>
+        <th>prob_CLASS</th>
         <td>
         (For pred_type='prob' for classification) The
-        probability of a given class <CLASS> as given by
+        probability of a given class CLASS as given by
         softmax. There will be one column for each class
         in the training data.
         </td>
@@ -315,10 +387,10 @@ table name is already in use, then an error is returned.  Table contains:</DD>
   <DT>pred_type</DT>
   <DD>TEXT.
 
-the type of output requested:
+The type of output requested:
 'response' gives the actual prediction,
 'prob' gives the probability of each class.
-for regression, only type='response' is defined.
+For regression, only type='response' is defined.
 The name of the id column in the input table.</DD>
 </DL>
 </table>
@@ -363,30 +435,36 @@ The model will be written to mlp_model.
 <pre class="example">
 DROP TABLE IF EXISTS mlp_model;
 DROP TABLE IF EXISTS mlp_model_summary;
+-- Set seed so results are reproducible
+SELECT setseed(0);
 SELECT madlib.mlp_classification(
     'iris_data',      -- Source table
     'mlp_model',      -- Destination table
     'attributes',     -- Input features
     'class_text',     -- Label
     ARRAY[5],         -- Number of units per layer
-    'step_size=0.003,
-    n_iterations=5000,
+    'learning_rate_init=0.003,
+    n_iterations=500,
     tolerance=0',     -- Optimizer params
-    'tanh');          -- Activation function
+    'tanh',           -- Activation function
+    NULL,             -- Default weight (1)
+    FALSE,            -- No warm start
+    TRUE              -- Verbose
+);
 </pre>
 -# View the result for the model.
 <pre class="example">
 -- Set extended display on for easier reading of output
 \\x ON
--- Neural net Initialization is non-deterministic, so your results may vary
+-- Results may vary depending on platform
 SELECT * FROM mlp_model;
 </pre>
 Result:
 <pre class="result">
--[ RECORD 1 ]--+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-coeff          | {1,1,1,1,1,0.136374930803,0.188739676875,0.662387810001,-1.03381622734,-0.469961067046,0.0614006983397,0.0811504589436,0.299008228258,-0.47391918521,-0.215098143699,0.10519213944,0.145844617525,0.511683525606,-0.800215552382,-0.36417142683,0.120751709056,0.167531106521,0.587074895969,-0.916946198095,-0.417055067449,0.0539541885146,0.0694359704131,0.262598585854,-0.419234805076,-0.189915344282,1,1,1,1,1,1,0.105645702152,1.46247470474,0.484457903226,0.965962824478,1.19361986431,0.419805760087,-0.105696503487,-1.46245956666,-0.484427811691,-0.965730981426,-1.19365280555,-0.419973628863}
-loss           | 0.0184092375519
-num_iterations | 5000
+-[ RECORD 1 ]--+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+coeff          | {-0.172392477419,-0.0836446652758,-0.0162194484142,-0.647268294231,-0.504884325538,0.184825723596,0.351728174731,-0.601148967035,0.720999542651,0.26521898248,0.245760922013,0.264645322438,-0.349957739904,0.797653395667,0.725747963566,-0.344498001796,0.261481840947,0.329074383545,0.379503434339,-0.267398086353,-0.0238069072658,0.330239268187,-0.178736289201,-0.0563356339946,-0.0333791780453,0.262137386864,0.491390436498,-1.02635831573,-1.29541478382,0.246017274,-0.0623575215434,0.0826297373887,-0.671671189842,0.853494672576,1.21671423502,0.296424359217,0.15294606861}
+loss           | 0.0136695756314
+num_iterations | 500
 </pre>
 -# Next train a regression example.  First create some test data.  This dataset
 contains housing prices data.
@@ -419,30 +497,36 @@ COPY lin_housing (x, grp_by_col, y) FROM STDIN NULL '?' DELIMITER '|';
 <pre class="example">
 DROP TABLE IF EXISTS mlp_regress;
 DROP TABLE IF EXISTS mlp_regress_summary;
+SELECT setseed(0);
 SELECT madlib.mlp_regression(
-    'lin_housing',            -- Source table
-    'mlp_regress',              -- Desination table
-    'x',                        -- Input features
-    'y',                        -- Dependent variable
-    ARRAY[5,5],                 -- Number of units per layer
-    'step_size=0.000007,
-    n_iterations=10000,
+    'lin_housing',         -- Source table
+    'mlp_regress',         -- Desination table
+    'x',                   -- Input features
+    'y',                   -- Dependent variable
+    ARRAY[25,25],            -- Number of units per layer
+    'learning_rate_init=0.001,
+    n_iterations=500,
+    lambda=0.001,
     tolerance=0',
-    'relu');
+    'relu',
+    NULL,             -- Default weight (1)
+    FALSE,            -- No warm start
+    TRUE              -- Verbose
+);
 </pre>
 -# Check the results of the model
 <pre class="example">
--- Set extended display on for easier reading of output
+-- Set extended display on for easier reading of output.
 \\x ON
--- Neural net Initialization is non-deterministic, so your results may vary
+-- Results may vary depending on platform.
 SELECT * FROM mlp_regress;
 </pre>
 Result:
 <pre class="result">
--[ RECORD 1 ]--+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-coeff          | {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2.79506311399e-05,3.56715008915e-05,-6.09333559685e-05,0.000251228318768,-0.000224772841379,-3.71863030857e-05,-3.5757865148e-06,5.27936784854e-05,-2.48474166186e-05,6.19731184294e-05,3.07638968743e-05,6.8964698578e-06,0.000106016701083,-1.71484730318e-05,1.18691881812e-05,-0.000163975464208,0.000170026304906,3.11688265279e-05,0.000177050148787,-1.58265976603e-05,2.70144422657e-05,0.000112667883422,3.77575139073e-05,8.12474658795e-05,-7.90458917626e-05,0.000107566386158,-2.63771171506e-06,2.47996880915e-05,-0.00012642310887,0.000203827391081,0.000139315565565,4.86147243454e-05,-0.000176126471913,-6.47820782916e-05,-8.51592776447e-06,-6.60601176758e-05,2.91421874156e-05,6.3556873752e-05,0.000197557443129,0.000220531367259,0.000135036310289,0.000143735913975,-4.75034117786e-05,-0.000179547345838,-1.6919846786e-05,0.000162784312994,0.000268595819851,-0.000460066553287,8.69756071591e-05,-0.00311762727057,0.000126024763103,0.000205988242921,0.003463432426,-0.00729789075286,0.00151625867549,-0.000890852767597,-0.00525016037249,0.0031043106659,0.00798041103839,-0.00552693050079,0.0232180415786,0.0230489850143,-0.0437890272341,0.0165765426407,-0.248554261758,-7.81336427846e-05,0.00558145591752,0.283465844585,-0.571699956182,0.133474351994,-0.0785181945605,-0.419269930709,0.249547772912,0.631761009875,-0.431305975666,1,1,1,1,1,1,0.0158747497572,-9.02809160806e-05,0.00015574347618,4.10805373863e-06,0.00121532434965,0.101790351335,0.0647558401493,-0.00013654998677,-9.92872075948e-06,-5.5319694394e-05,0.00519320756484,0.412736586036,0.0011998026977,-1.53688189815e-05,1.94817888201e-05,-4.63111489966e-05,7.24547899029e-05,0.00880394144485,5.45309822095e-05,-0.000140943219275,-7.96211486227e-05,-1.04337307472e-05,0.000161936762028,0.00136273797767,-4.54737243585e-05,-3.4083840736e-05,3.69286883662e-05,9.9047243188e-08,3.75014011824e-06,-9.45366086368e-08,1,1,1,1,1,1,6.67488547054,0.102754199001,0.41668912471,0.00886867296479,0.00136206007228,-9.88642499013e-05}
-loss           | 144.965776158
-num_iterations | 10000
+[ RECORD 1 ]--+-----------------------------------------------------------------------------------
+coeff          | {-0.135647108464,0.0315402969485,-0.117580589352,-0.23084537701,-0.10868726702...
+loss           | 0.114125125042
+num_iterations | 500
 </pre>
 -# Now let's look at the prediction functions. In the following examples we will
 use the training data set for prediction as well, which is not usual but serves to
@@ -458,8 +542,6 @@ SELECT madlib.mlp_predict(
          'mlp_prediction',    -- Output table for predictions
          'response'           -- Output classes, not probabilities
      );
--# View results
-<pre class="example">
 SELECT * FROM mlp_prediction JOIN iris_data USING (id);
 </pre>
 Result for the classification model:
@@ -487,7 +569,7 @@ Result for the classification model:
  19 | Iris-versicolor      | {6.6,2.9,4.6,1.3} | Iris-versicolor |     2
  20 | Iris-versicolor      | {5.2,2.7,3.9,1.4} | Iris-versicolor |     2
 </pre>
-Prediction using the regression model:
+-# Prediction using the regression model:
 <pre class="example">
 DROP TABLE IF EXISTS mlp_regress_prediction;
 SELECT madlib.mlp_predict(
@@ -498,34 +580,35 @@ SELECT madlib.mlp_predict(
          'response'                   -- Output values, not probabilities
      );
 </pre>
--# View results
+View results
 <pre class="example">
 SELECT * FROM lin_housing JOIN mlp_regress_prediction USING (id);
 </pre>
 Result for the regression model:
 <pre class="result">
- id |                                    x                                    | grp_by_col |  y   |    estimated_y
-----+-------------------------------------------------------------------------+------------+------+--------------------
- 1 | {1,0.00632,18,2.31,0,0.538,6.575,65.2,4.09,1,296,15.3,396.9,4.98}       |          1 |   24 | {23.2627062018087}
- 2 | {1,0.02731,0,7.07,0,0.469,6.421,78.9,4.9671,2,242,17.8,396.9,9.14}      |          1 | 21.6 | {25.7088419115781}
- 3 | {1,0.02729,0,7.07,0,0.469,7.185,61.1,4.9671,2,242,17.8,392.83,4.03}     |          1 | 34.7 | {27.5587003901404}
- 4 | {1,0.03237,0,2.18,0,0.458,6.998,45.8,6.0622,3,222,18.7,394.63,2.94}     |          1 | 33.4 | {31.1812237427816}
- 5 | {1,0.06905,0,2.18,0,0.458,7.147,54.2,6.0622,3,222,18.7,396.9,5.33}      |          1 | 36.2 | {30.3696873085477}
- 6 | {1,0.02985,0,2.18,0,0.458,6.43,58.7,6.0622,3,222,18.7,394.12,5.21}      |          1 | 28.7 | {29.5290259241882}
- 7 | {1,0.08829,12.5,7.87,0,0.524,6.012,66.6,5.5605,5,311,15.2,395.6,12.43}  |          1 | 22.9 | {21.1576051716888}
- 8 | {1,0.14455,12.5,7.87,0,0.524,6.172,96.1,5.9505,5,311,15.2,396.9,19.15}  |          1 | 27.1 | {17.6194200563055}
- 9 | {1,0.21124,12.5,7.87,0,0.524,5.631,100,6.0821,5,311,15.2,386.63,29.93}  |          1 | 16.5 | {15.1366297774139}
-10 | {1,0.17004,12.5,7.87,0,0.524,6.004,85.9,6.5921,5,311,15.2,386.71,17.1}  |          1 | 18.9 | {17.6528662199369}
-11 | {1,0.22489,12.5,7.87,0,0.524,6.377,94.3,6.3467,5,311,15.2,392.52,20.45} |          1 |   15 | {17.2017487668181}
-12 | {1,0.11747,12.5,7.87,0,0.524,6.009,82.9,6.2267,5,311,15.2,396.9,13.27}  |          1 | 18.9 | {19.4893860319992}
-13 | {1,0.09378,12.5,7.87,0,0.524,5.889,39,5.4509,5,311,15.2,390.5,15.71}    |          1 | 21.7 | {23.2917226708039}
-14 | {1,0.62976,0,8.14,0,0.538,5.949,61.8,4.7075,4,307,21,396.9,8.26}        |          1 | 20.4 | {22.8904812605193}
-15 | {1,0.63796,0,8.14,0,0.538,6.096,84.5,4.4619,4,307,21,380.02,10.26}      |          1 | 18.2 | {18.2386754423677}
-16 | {1,0.62739,0,8.14,0,0.538,5.834,56.5,4.4986,4,307,21,395.62,8.47}       |          1 | 19.9 | {23.28949550874}
-17 | {1,1.05393,0,8.14,0,0.538,5.935,29.3,4.4986,4,307,21,386.85,6.58}       |          1 | 23.1 | {25.3288762085473}
-18 | {1,0.7842,0,8.14,0,0.538,5.99,81.7,4.2579,4,307,21,386.75,14.67}        |          1 | 17.5 | {19.0203738118451}
-19 | {1,0.80271,0,8.14,0,0.538,5.456,36.6,3.7965,4,307,21,288.99,11.69}      |          1 | 20.2 | {12.3162005347545}
-20 | {1,0.7258,0,8.14,0,0.538,5.727,69.5,3.7965,4,307,21,390.95,11.28}       |          1 | 18.2 | {21.0902211848747}
+ id |                                    x                                    | grp_by_col |  y   |   estimated_y
+----+-------------------------------------------------------------------------+------------+------+------------------
+  1 | {1,0.00632,18,2.31,0,0.538,6.575,65.2,4.09,1,296,15.3,396.9,4.98}       |          1 |   24 |  23.973628645041
+  2 | {1,0.02731,0,7.07,0,0.469,6.421,78.9,4.9671,2,242,17.8,396.9,9.14}      |          1 | 21.6 | 21.6389086856109
+  3 | {1,0.02729,0,7.07,0,0.469,7.185,61.1,4.9671,2,242,17.8,392.83,4.03}     |          1 | 34.7 | 34.6766441639675
+  4 | {1,0.03237,0,2.18,0,0.458,6.998,45.8,6.0622,3,222,18.7,394.63,2.94}     |          1 | 33.4 | 33.4521871118756
+  5 | {1,0.06905,0,2.18,0,0.458,7.147,54.2,6.0622,3,222,18.7,396.9,5.33}      |          1 | 36.2 | 36.2899491706428
+  6 | {1,0.02985,0,2.18,0,0.458,6.43,58.7,6.0622,3,222,18.7,394.12,5.21}      |          1 | 28.7 | 28.6994076427827
+  7 | {1,0.08829,12.5,7.87,0,0.524,6.012,66.6,5.5605,5,311,15.2,395.6,12.43}  |          1 | 22.9 | 22.4882117113923
+  8 | {1,0.14455,12.5,7.87,0,0.524,6.172,96.1,5.9505,5,311,15.2,396.9,19.15}  |          1 | 27.1 | 26.5148927040405
+  9 | {1,0.21124,12.5,7.87,0,0.524,5.631,100,6.0821,5,311,15.2,386.63,29.93}  |          1 | 16.5 | 16.0669778867327
+ 10 | {1,0.17004,12.5,7.87,0,0.524,6.004,85.9,6.5921,5,311,15.2,386.71,17.1}  |          1 | 18.9 | 17.4237448788601
+ 11 | {1,0.22489,12.5,7.87,0,0.524,6.377,94.3,6.3467,5,311,15.2,392.52,20.45} |          1 |   15 | 14.5944028616784
+ 12 | {1,0.11747,12.5,7.87,0,0.524,6.009,82.9,6.2267,5,311,15.2,396.9,13.27}  |          1 | 18.9 | 19.6071061560237
+ 13 | {1,0.09378,12.5,7.87,0,0.524,5.889,39,5.4509,5,311,15.2,390.5,15.71}    |          1 | 21.7 | 21.7585638578804
+ 14 | {1,0.62976,0,8.14,0,0.538,5.949,61.8,4.7075,4,307,21,396.9,8.26}        |          1 | 20.4 | 20.2832271533629
+ 15 | {1,0.63796,0,8.14,0,0.538,6.096,84.5,4.4619,4,307,21,380.02,10.26}      |          1 | 18.2 | 18.3440540662206
+ 16 | {1,0.62739,0,8.14,0,0.538,5.834,56.5,4.4986,4,307,21,395.62,8.47}       |          1 | 19.9 | 20.0246074554594
+ 17 | {1,1.05393,0,8.14,0,0.538,5.935,29.3,4.4986,4,307,21,386.85,6.58}       |          1 | 23.1 | 23.1458505146148
+ 18 | {1,0.7842,0,8.14,0,0.538,5.99,81.7,4.2579,4,307,21,386.75,14.67}        |          1 | 17.5 | 17.4602306566804
+ 19 | {1,0.80271,0,8.14,0,0.538,5.456,36.6,3.7965,4,307,21,288.99,11.69}      |          1 | 20.2 | 20.1785296856357
+ 20 | {1,0.7258,0,8.14,0,0.538,5.727,69.5,3.7965,4,307,21,390.95,11.28}       |          1 | 18.2 | 18.1810300625137
+(20 rows)
 </pre>
 Note that the results you get for all examples may vary with the platform you are using.
 
@@ -561,6 +644,10 @@ File mlp.sql_in documenting the training function
 
 */
 
+CREATE TYPE MADLIB_SCHEMA.mlp_step_result AS (
+        state    DOUBLE PRECISION[],
+        loss     DOUBLE PRECISION
+);
 
 CREATE TYPE MADLIB_SCHEMA.mlp_result AS (
         coeff    DOUBLE PRECISION[],
@@ -571,14 +658,22 @@ CREATE TYPE MADLIB_SCHEMA.mlp_result AS (
 -- create SQL functions for IGD optimizer
 --------------------------------------------------------------------------
 CREATE FUNCTION MADLIB_SCHEMA.mlp_igd_transition(
-        state           DOUBLE PRECISION[],
-        start_vec       DOUBLE PRECISION[],
-        end_vec         DOUBLE PRECISION[],
-        previous_state  DOUBLE PRECISION[],
-        layer_sizes     DOUBLE PRECISION[],
-        stepsize        DOUBLE PRECISION,
-        activation      INTEGER,
-        is_classification INTEGER)
+        state              DOUBLE PRECISION[],
+        ind_var            DOUBLE PRECISION[],
+        dep_var            DOUBLE PRECISION[],
+        previous_state     DOUBLE PRECISION[],
+        layer_sizes        DOUBLE PRECISION[],
+        learning_rate_init DOUBLE PRECISION,
+        activation         INTEGER,
+        is_classification  INTEGER,
+        weight             DOUBLE PRECISION,
+        warm_start         BOOLEAN,
+        warm_start_coeff   DOUBLE PRECISION[],
+        n_tuples           INTEGER,
+        lambda             DOUBLE PRECISION,
+        x_means            DOUBLE PRECISION[],
+        x_stds             DOUBLE PRECISION[]
+    )
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE;
@@ -592,7 +687,7 @@ LANGUAGE C IMMUTABLE STRICT;
 
 CREATE FUNCTION MADLIB_SCHEMA.mlp_igd_final(
         state DOUBLE PRECISION[])
-RETURNS DOUBLE PRECISION[]
+RETURNS MADLIB_SCHEMA.mlp_step_result
 AS 'MODULE_PATHNAME'
 LANGUAGE C IMMUTABLE STRICT;
 
@@ -601,16 +696,24 @@ LANGUAGE C IMMUTABLE STRICT;
  * @brief Perform one iteration of backprop
  */
 CREATE AGGREGATE MADLIB_SCHEMA.mlp_igd_step(
-        /* start_vec*/        DOUBLE PRECISION[],
-        /* end_vec */         DOUBLE PRECISION[],
-        /* previous_state */  DOUBLE PRECISION[],
-        /* layer_sizes */     DOUBLE PRECISION[],
-        /* stepsize */        DOUBLE PRECISION,
-        /* activation */      INTEGER,
-        /* is_classification */ INTEGER )(
+        /* ind_var */             DOUBLE PRECISION[],
+        /* dep_var */             DOUBLE PRECISION[],
+        /* previous_state */      DOUBLE PRECISION[],
+        /* layer_sizes */         DOUBLE PRECISION[],
+        /* learning_rate_init */  DOUBLE PRECISION,
+        /* activation */          INTEGER,
+        /* is_classification */   INTEGER,
+        /* weight */              DOUBLE PRECISION,
+        /* warm_start */          BOOLEAN,
+        /* warm_start_coeff */    DOUBLE PRECISION[],
+        /* n_tuples */            INTEGER,
+        /* lambda */              DOUBLE PRECISION,
+        /* x_means */             DOUBLE PRECISION[],
+        /* x_stds */              DOUBLE PRECISION[]
+        )(
     STYPE=DOUBLE PRECISION[],
     SFUNC=MADLIB_SCHEMA.mlp_igd_transition,
-    m4_ifdef(`GREENPLUM',`prefunc=MADLIB_SCHEMA.mlp_igd_merge,')
+    m4_ifdef(`__POSTGRESQL__', `', `prefunc=MADLIB_SCHEMA.mlp_igd_merge,')
     FINALFUNC=MADLIB_SCHEMA.mlp_igd_final,
     INITCOND='{0,0,0,0,0,0,0,0}'
 );
@@ -631,13 +734,16 @@ LANGUAGE c IMMUTABLE STRICT;
 -------------------------------------------------------------------------
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_classification(
-    source_table      VARCHAR,
-    output_table      VARCHAR,
-    independent_varname    VARCHAR,
-    dependent_varname   VARCHAR,
-    hidden_layer_sizes         INTEGER[],
-    optimizer_params   VARCHAR,
-    activation      VARCHAR
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR,
+    weights              VARCHAR,
+    warm_start           BOOLEAN,
+    verbose              BOOLEAN
 ) RETURNS VOID AS $$
     PythonFunctionBodyOnly(`convex', `mlp_igd')
     mlp_igd.mlp(
@@ -649,34 +755,183 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_classification(
         hidden_layer_sizes,
         optimizer_params,
         activation,
-        True
+        True,
+        weights,
+        warm_start,
+        verbose
+    )
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_classification(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR,
+    weights              VARCHAR,
+    warm_start           BOOLEAN
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_classification($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_classification(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR,
+    weights              VARCHAR
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_classification($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_classification(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_classification($1, $2, $3, $4, $5, $6, $7, NULL, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_classification(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_classification($1, $2, $3, $4, $5, $6, NULL, NULL, NULL, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_classification(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[]
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_classification($1, $2, $3, $4, $5, NULL, NULL, NULL, FALSE, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_regression(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR,
+    weights              VARCHAR,
+    warm_start           BOOLEAN,
+    verbose              BOOLEAN
+) RETURNS VOID AS $$
+    PythonFunctionBodyOnly(`convex', `mlp_igd')
+    mlp_igd.mlp(
+        schema_madlib,
+        source_table,
+        output_table,
+        independent_varname,
+        dependent_varname,
+        hidden_layer_sizes,
+        optimizer_params,
+        activation,
+        False,
+        weights,
+        warm_start,
+        verbose
     )
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_regression(
-    source_table      VARCHAR,
-    output_table      VARCHAR,
-    independent_varname    VARCHAR,
-    dependent_varname   VARCHAR,
-    hidden_layer_sizes         INTEGER[],
-    optimizer_params   VARCHAR,
-    activation      VARCHAR
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR,
+    weights              VARCHAR,
+    warm_start           BOOLEAN
 ) RETURNS VOID AS $$
-    PythonFunctionBodyOnly(`convex', `mlp_igd')
-    mlp_igd.mlp(
-        schema_madlib,
-        source_table,
-        output_table,
-        independent_varname,
-        dependent_varname,
-        hidden_layer_sizes,
-        optimizer_params,
-        activation,
-        False
-    )
-$$ LANGUAGE plpythonu VOLATILE
-m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+    SELECT MADLIB_SCHEMA.mlp_regression($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_regression(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR,
+    weights              VARCHAR
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_regression($1, $2, $3, $4, $5, $6, $7, $8, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_regression(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR,
+    activation           VARCHAR
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_regression($1, $2, $3, $4, $5, $6, $7, NULL, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_regression(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[],
+    optimizer_params     VARCHAR
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_regression($1, $2, $3, $4, $5, $6, NULL, NULL, NULL, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
+
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_regression(
+    source_table         VARCHAR,
+    output_table         VARCHAR,
+    independent_varname  VARCHAR,
+    dependent_varname    VARCHAR,
+    hidden_layer_sizes   INTEGER[]
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.mlp_regression($1, $2, $3, $4, $5, NULL, NULL, NULL, FALSE, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA');
 
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.mlp_predict(
     model_table      VARCHAR,
@@ -700,9 +955,11 @@ CREATE FUNCTION MADLIB_SCHEMA.internal_predict_mlp(
         coeff DOUBLE PRECISION[],
         independent_varname DOUBLE PRECISION[],
         is_classification DOUBLE PRECISION,
-        activation_function DOUBLE PRECISION,
+        activation DOUBLE PRECISION,
         layer_sizes DOUBLE PRECISION[],
-        is_response INTEGER
+        is_response INTEGER,
+        x_means DOUBLE PRECISION[],
+        x_stds DOUBLE PRECISION[]
     )
 RETURNS DOUBLE PRECISION[]
 AS 'MODULE_PATHNAME'

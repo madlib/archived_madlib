@@ -629,6 +629,9 @@ public:
         return 1                        // numberOfStages = N
             + (inNumberOfStages + 1)    // numbersOfUnits: size is (N + 1)
             + 1                         // stepsize
+            + 1                         // lambda
+            + 1                         // is_classification
+            + 1                         // activation
             + sizeOfModel               // model
 
             + 1                         // numRows
@@ -645,17 +648,16 @@ private:
      * - 0: numberOfStages (number of stages (layers), design doc: N)
      * - 1: numbersOfUnits (numbers of activation units, design doc: n_0,...,n_N)
      * - N + 2: stepsize (step size of gradient steps)
-     * - N + 3: is_classification (do classification)
-     * - N + 4: activation (activation function)
-     * - N + 5: coeff (coefficients, design doc: u)
+     * - N + 3: lambda (regularization term)
+     * - N + 4: is_classification (do classification)
+     * - N + 5: activation (activation function)
+     * - N + 6: coeff (coefficients, design doc: u)
      *
      * Intra-iteration components (updated in transition step):
      *   sizeOfModel = # of entries in u + 2, (\sum_1^N n_{k-1} n_k)
-     * - N + 3 + sizeOfModel: numRows (number of rows processed in this iteration)
-     * - N + 4 + sizeOfModel: loss (loss value, the sum of squared errors)
-     * - N + 5 + sizeOfModel: is_classification (do classification)
-     * - N + 6 + sizeOfModel: activation (activation function)
-     * - N + 7 + sizeOfModel: coeff (volatile model for incrementally update)
+     * - N + 6 + sizeOfModel: coeff (volatile model for incrementally update)
+     * - N + 6 + 2*sizeOfModel: numRows (number of rows processed in this iteration)
+     * - N + 7 + 2*sizeOfModel: loss (loss value, the sum of squared errors)
      */
     void rebind() {
         task.numberOfStages.rebind(&mStorage[0]);
@@ -663,13 +665,14 @@ private:
         task.numbersOfUnits =
             reinterpret_cast<dimension_pointer_type>(&mStorage[1]);
         task.stepsize.rebind(&mStorage[N + 2]);
-        uint32_t sizeOfModel = task.model.rebind(&mStorage[N + 3],&mStorage[N + 4],&mStorage[N + 5],
+        task.lambda.rebind(&mStorage[N + 3]);
+        uint32_t sizeOfModel = task.model.rebind(&mStorage[N + 4],&mStorage[N + 5],&mStorage[N + 6],
                 task.numberOfStages, task.numbersOfUnits);
 
-        algo.numRows.rebind(&mStorage[N + 5 + sizeOfModel]);
-        algo.loss.rebind(&mStorage[N + 6 + sizeOfModel]);
-        algo.incrModel.rebind(&mStorage[N + 3],&mStorage[N + 4],&mStorage[N + 7 + sizeOfModel],
+        algo.incrModel.rebind(&mStorage[N + 4],&mStorage[N + 5],&mStorage[N + 6 + sizeOfModel],
                 task.numberOfStages, task.numbersOfUnits);
+        algo.numRows.rebind(&mStorage[N + 6 + 2*sizeOfModel]);
+        algo.loss.rebind(&mStorage[N + 7 + 2*sizeOfModel]);
 
     }
 
@@ -685,13 +688,14 @@ public:
         dimension_type numberOfStages;
         dimension_pointer_type numbersOfUnits;
         numeric_type stepsize;
+        numeric_type lambda;
         MLPModel<Handle> model;
     } task;
 
     struct AlgoState {
+        MLPModel<Handle> incrModel;
         count_type numRows;
         numeric_type loss;
-        MLPModel<Handle> incrModel;
     } algo;
 };
 

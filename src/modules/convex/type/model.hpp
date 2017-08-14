@@ -121,51 +121,9 @@ struct MLPModel {
         const double *n = inNumbersOfUnits;
         size_t k;
         for (k = 1; k <= N; k ++) {
-            size += (n[k-1] + 1) * (n[k] + 1);
+            size += (n[k-1] + 1) * (n[k]);
         }
-        return 1 +       // is_classification
-               1 +       // activation
-               size;     // weights (u)
-    }
-
-    /**
-     * @brief Initialize the model randomly
-     */
-    void initialize(int is_classification_in, int activation_in) {
-        is_classification = is_classification_in;
-        activation = activation_in;
-        // using madlib::dbconnector::$database::NativeRandomNumberGenerator
-        NativeRandomNumberGenerator rng;
-
-        // Scaling factor for weight initialization
-        double epsilon = 0.0001;
-
-
-        double base = rng.min();
-        double span = rng.max() - base;
-
-        uint16_t N = u.size(); // assuming nu. of layers >= 1
-        uint16_t k, s, j;
-
-        std::vector<uint16_t> n; n.clear(); //nu. of units in each layer
-
-        n.push_back(u[0].rows() - 1);
-        for (k = 1; k <= N; k ++) {
-            n.push_back(u[k-1].cols() - 1);
-        }
-
-        for (k=1; k <= N; k++){
-            for (s=0; s <= n[k-1]; s++){
-                u[k-1](s,0)=1;
-                for (j=1; j <= n[k]; j++){
-                    // Generate normal(0,epsilon) value using Box-Muller transform
-                    double u1 = (rng()-base)/span;
-                    double u2 = (rng()-base)/span;
-                    double z = std::sqrt(-2*std::log(u1))*std::cos(2*M_PI*u2);
-                    u[k-1](s,j) = epsilon*z;
-                }
-            }
-        }
+        return size;     // weights (u)
     }
 
     uint32_t rebind(const double *is_classification_in,
@@ -185,20 +143,38 @@ struct MLPModel {
         for (k = 1; k <= N; k ++) {
             u.push_back(Eigen::Map<Matrix >(
                     const_cast<double*>(data + sizeOfU),
-                    n[k-1] + 1, n[k] + 1));
-            sizeOfU += (n[k-1] + 1) * (n[k] + 1);
+                    n[k-1] + 1, n[k]));
+            sizeOfU += (n[k-1] + 1) * (n[k]);
         }
 
         return sizeOfU;
+    }
+
+    double norm() const {
+        double norm = 0.;
+        size_t k;
+        for (k = 0; k < u.size(); k ++) {
+            norm+=u[k].bottomRows(u[k].rows()-1).squaredNorm();
+        }
+        return std::sqrt(norm);
+    }
+
+    void setZero(){
+        size_t k;
+        for (k = 1; k <= u.size(); k ++) {
+            u[k-1].setZero();
+        }
     }
 
     /*
      *  Some operator wrappers for u.
      */
     MLPModel &operator*=(const double &c) {
+        // Note that when scaling the model, you should
+        // not update the bias.
         size_t k;
         for (k = 1; k <= u.size(); k ++) {
-            u[k-1] *= c;
+           u[k-1] *= c;
         }
 
         return *this;
