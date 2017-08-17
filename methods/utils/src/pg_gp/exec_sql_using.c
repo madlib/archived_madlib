@@ -4,6 +4,9 @@
 #include <catalog/pg_proc.h>
 #include <catalog/pg_type.h>
 #include <utils/builtins.h>
+#if PG_VERSION_NUM >= 100000
+#include <utils/regproc.h>
+#endif
 #include <utils/datum.h>
 #include <utils/lsyscache.h>
 #include <utils/syscache.h>

@@ -32,7 +32,12 @@
 #include <utils/elog.h>
 #include <utils/builtins.h>
 #include <utils/lsyscache.h>
+#include <pg_config.h>
+#if PG_VERSION_NUM >= 100000
+#include <common/md5.h>
+#else
 #include <libpq/md5.h>
+#endif
 #include <nodes/execnodes.h>
 #include <fmgr.h>
 #include <ctype.h>
@@ -174,7 +179,7 @@ Datum __fmsketch_count_distinct_c(bytea *);
 Datum __fmsketch_trans(PG_FUNCTION_ARGS);
 Datum __fmsketch_count_distinct(PG_FUNCTION_ARGS);
 Datum __fmsketch_merge(PG_FUNCTION_ARGS);
-void big_or(bytea *bitmap1, bytea *bitmap2, bytea *out);
+void big_or_internal(bytea *bitmap1, bytea *bitmap2, bytea *out);
 bytea *fmsketch_sortasort_insert(bytea *, Datum, size_t);
 bytea *fm_new(fmtransval *);
 
@@ -478,8 +483,8 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
         tblob_big = fm_new(transval1);
         newval = (fmtransval *)VARDATA(tblob_big);
 
-        big_or((bytea *)transval1->storage, (bytea *)transval2->storage,
-                (bytea *)newval->storage);
+        big_or_internal((bytea *)transval1->storage, (bytea *)transval2->storage,
+                        (bytea *)newval->storage);
 
         PG_RETURN_DATUM(PointerGetDatum(tblob_big));
     }
@@ -542,8 +547,19 @@ Datum __fmsketch_merge(PG_FUNCTION_ARGS)
     PG_RETURN_DATUM(PointerGetDatum(tblob_big));
 }
 
+PG_FUNCTION_INFO_V1(big_or);
+Datum
+big_or(PG_FUNCTION_ARGS)
+{
+
+  big_or_internal(PG_GETARG_BYTEA_PP(0), PG_GETARG_BYTEA_PP(1), PG_GETARG_BYTEA_PP(2));
+
+  PG_RETURN_VOID();
+}
+  
+  
 /*! OR of two big bitmaps, for gathering sketches computed in parallel. */
-void big_or(bytea *bitmap1, bytea *bitmap2, bytea *out)
+void big_or_internal(bytea *bitmap1, bytea *bitmap2, bytea *out)
 {
     uint32  i;
 

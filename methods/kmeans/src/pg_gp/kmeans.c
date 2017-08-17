@@ -1,6 +1,10 @@
 #include <postgres.h>
 #include <nodes/memnodes.h>
+#if PG_VERSION_NUM >= 100000
+#include <utils/regproc.h>
+#else
 #include <utils/builtins.h>
+#endif
 #include <utils/memutils.h>
 #include <math.h>
 #include "../../../svec/src/pg_gp/sparse_vector.h"

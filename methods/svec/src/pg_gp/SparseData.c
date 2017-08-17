@@ -19,6 +19,9 @@
 #include <float.h>
 #include "SparseData.h"
 #include "utils/builtins.h"
+#if PG_VERSION_NUM >= 100000
+#include "utils/varlena.h"
+#endif
 #include "utils/syscache.h"
 #include "parser/parse_func.h"
 #include "access/htup.h"

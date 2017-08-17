@@ -42,7 +42,11 @@
 #include <nodes/execnodes.h>
 #include <fmgr.h>
 #include <utils/builtins.h>
+#if PG_VERSION_NUM >= 100000
+#include <common/md5.h>
+#else
 #include <libpq/md5.h>
+#endif
 #include <utils/lsyscache.h>
 #include "sketch_support.h"
 
