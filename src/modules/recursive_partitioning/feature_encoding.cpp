@@ -184,21 +184,31 @@ map_catlevel_to_int::run(AnyType &args){
     ArrayHandle<text*> cat_values = args[0].getAs<ArrayHandle<text*> >();
     ArrayHandle<text*> cat_levels = args[1].getAs<ArrayHandle<text*> >();
     ArrayHandle<int> n_levels = args[2].getAs<ArrayHandle<int> >();
+    bool null_as_category = args[3].getAs<bool>();
 
     MutableArrayHandle<int> cat_int = allocateArray<int>(n_levels.size());
     int pos = 0;
     for (size_t i = 0; i < n_levels.size(); i++) {
         // linear search to find a match
-        int match = -1;  // if cat_values contains any not present in cat_levels,
-                         // then the mapped integer is -1. If cat_values contains
-                         // a known cat_level, then the mapped integer is
-                         // the index of that value in cat_levels
-        for (int j = 0; j < n_levels[i]; j++)
+
+        // if cat_values contains any not present in cat_levels, then the mapped
+        // integer is -1. If cat_values contains a known cat_level, then the
+        // mapped integer is the index of that value in cat_levels.
+        int match = -1;
+        for (int j = 0; j < n_levels[i]; j++){
             if (cmp_text(cat_values[i], cat_levels[pos + j])) {
                 match = j;
                 break;
             }
-        cat_int[i] = match;
+        }
+
+        // If null_as_category is True, then match is set to the last index
+        // instead of -1 since the last index is expected to represent NULL.
+        if (match == -1 and null_as_category){
+            cat_int[i] = n_levels[i] - 1;
+        } else {
+            cat_int[i] = match;
+        }
         pos += static_cast<int>(n_levels[i]);
     }
     return cat_int;
