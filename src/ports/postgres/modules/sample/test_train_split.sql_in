@@ -1,0 +1,319 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ *
+ * @file test_train_split.sql_in
+ *
+ * @brief SQL functions for test train split.
+ * @date 07/19/2017
+ *
+ * @sa Given a table, test train split returns a proportion of records
+ * for each group (strata).
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_test_train_split
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#strs">test train split</a></li>
+<li><a href="#examples">Examples</a></li>
+</ul>
+</div>
+
+@brief A method for independently sampling subpopulations (strata).
+
+test_train_split is a utility to create test and
+training data set as subsets of a single table.
+
+@anchor strs
+@par test train split
+
+<pre class="syntax">
+test_train_split(   source_table,
+                    output_table,
+                    train_proportion,
+                    test_proportion,
+                    grouping_cols,
+                    target_cols,
+                    with_replacement
+                )
+</pre>
+
+\b Arguments
+<dl class="arglist">
+<dt>source_table</dt>
+<dd>TEXT. Name of the table containing the input data.</dd>
+
+<dt>output_table</dt>
+<dd>Name of output table.   A new INTEGER column on the right
+called 'split' will identify 1 for train set and 0 for test set,
+unless the 'separate_output_tables' parameter below is TRUE,
+in which case two output tables will be created using
+the 'output_table' name with the suffixes '_train' and '_test'.
+The output table contains all the  columns present in the source
+table unless otherwise specified  in the 'target_cols' parameter below. </dd>
+
+<dt>train_proportion</dt>
+<dd>FLOAT8 in the range (0,1).  Proportion of the dataset to include
+in the train split.  If the 'grouping_col' parameter is specified below,
+each group will be sampled independently using the
+train proportion, i.e., in a stratified fashion.</dd>
+
+<dt>test_proportion</dt>
+<dd>FLOAT8 in the range (0,1).  Proportion of the dataset to include
+in the test split.  Default is the complement to the train
+proportion (1-'train_proportion').  If the 'grouping_col'
+parameter is specified below,  each group will be sampled
+independently using the  train proportion,
+i.e., in a stratified fashion.</dd>
+
+<dt>grouping_cols (optional)</dt>
+<dd>TEXT, default: NULL. A single column or a list of comma-separated columns
+ that defines how to stratify.  When this parameter is NULL,
+the train-test split is not stratified.</dd>
+
+<dt>target_cols (optional)</dt>
+<dd>TEXT, default NULL. A comma-separated list of columns
+to appear in the 'output_table'.  If NULL or '*', all
+columns from the 'source_table'  will appear in
+the 'output_table'.</dd>
+
+@anchor note
+@note
+        Do not include 'grouping_cols' in the parameter 'target_cols',
+        because they are always included in the 'output_table'.
+
+<dt>with_replacement (optional)</dt>
+<dd>BOOLEAN, default FALSE.  Determines whether to sample
+with replacement or without replacement (default).
+With replacement means that it is possible that the
+same row may appear in the sample set more than once.
+Without replacement means a given row can be selected
+only once.</dd>
+</dl>
+
+<dt>separate_output_tables (optional)</dt>
+<dd>BOOLEAN, default FALSE.  If TRUE, two output tables will be created using
+the 'output_table' name with the suffixes '_train' and '_test'.</dd>
+</dl>
+
+
+@anchor examples
+@par Examples
+
+Please note that due to the random nature of sampling, your
+results may look different from those below.
+
+-# Create an input table:
+<pre class="syntax">
+DROP TABLE IF EXISTS test;
+CREATE TABLE test(
+    id1 INTEGER,
+    id2 INTEGER,
+    gr1 INTEGER,
+    gr2 INTEGER
+);
+INSERT INTO test VALUES
+(1,0,1,1),
+(2,0,1,1),
+(3,0,1,1),
+(4,0,1,1),
+(5,0,1,1),
+(6,0,1,1),
+(7,0,1,1),
+(8,0,1,1),
+(9,0,1,1),
+(9,0,1,1),
+(9,0,1,1),
+(9,0,1,1),
+(0,1,1,2),
+(0,2,1,2),
+(0,3,1,2),
+(0,4,1,2),
+(0,5,1,2),
+(0,6,1,2),
+(10,10,2,2),
+(20,20,2,2),
+(30,30,2,2),
+(40,40,2,2),
+(50,50,2,2),
+(60,60,2,2),
+(70,70,2,2);
+</pre>
+
+-# Sample without replacement:
+<pre class="syntax">
+DROP TABLE IF EXISTS out;
+SELECT madlib.test_train_split(
+                                'test',    -- Source table
+                                'out',     -- Output table
+                                0.5,       -- Sample proportion
+                                0.5,       -- Sample proportion
+                                'gr1,gr2', -- Strata definition
+                                'id1,id2', -- Columns to output
+                                FALSE,     -- Sample without replacement
+                                FALSE);    -- Do not separate output tables
+SELECT * FROM out ORDER BY split,gr1,gr2,id1,id2;
+</pre>
+<pre class="result">
+ gr1 | gr2 | id1 | id2 | split
+-----+-----+-----+-----+-------
+   1 |   1 |   1 |   0 |     0
+   1 |   1 |   4 |   0 |     0
+   1 |   1 |   6 |   0 |     0
+   1 |   1 |   9 |   0 |     0
+   1 |   1 |   9 |   0 |     0
+   1 |   1 |   9 |   0 |     0
+   1 |   2 |   0 |   3 |     0
+   1 |   2 |   0 |   4 |     0
+   1 |   2 |   0 |   5 |     0
+   2 |   2 |  10 |  10 |     0
+   2 |   2 |  30 |  30 |     0
+   2 |   2 |  40 |  40 |     0
+   2 |   2 |  60 |  60 |     0
+   1 |   1 |   2 |   0 |     1
+   1 |   1 |   3 |   0 |     1
+   1 |   1 |   5 |   0 |     1
+   1 |   1 |   7 |   0 |     1
+   1 |   1 |   8 |   0 |     1
+   1 |   1 |   9 |   0 |     1
+   1 |   2 |   0 |   1 |     1
+   1 |   2 |   0 |   2 |     1
+   1 |   2 |   0 |   6 |     1
+   2 |   2 |  20 |  20 |     1
+   2 |   2 |  50 |  50 |     1
+   2 |   2 |  70 |  70 |     1
+(25 rows)
+</pre>
+
+-# Sample with replacement:
+<pre class="syntax">
+DROP TABLE IF EXISTS out_train, out_test;
+SELECT madlib.test_train_split(
+                                'test',    -- Source table
+                                'out',     -- Output table
+                                0.5,       -- train_proportion
+                                NULL,      -- Default = 1 - train_proportion = 0.5
+                                'gr1,gr2', -- Strata definition
+                                'id1,id2', -- Columns to output
+                                TRUE,      -- Sample with replacement
+                                TRUE);     -- Separate output tables
+SELECT * FROM out_train ORDER BY gr1,gr2,id1,id2;
+</pre>
+<pre class="result">
+ gr1 | gr2 | id1 | id2
+-----+-----+-----+-----
+   1 |   1 |   1 |   0
+   1 |   1 |   2 |   0
+   1 |   1 |   4 |   0
+   1 |   1 |   7 |   0
+   1 |   1 |   8 |   0
+   1 |   1 |   9 |   0
+   1 |   2 |   0 |   4
+   1 |   2 |   0 |   5
+   1 |   2 |   0 |   6
+   2 |   2 |  40 |  40
+   2 |   2 |  50 |  50
+   2 |   2 |  50 |  50
+(12 rows)
+</pre>
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+  source_table           TEXT,
+  output_table           TEXT,
+  train_proportion       FLOAT8,
+  test_proportion        FLOAT8,
+  grouping_cols          TEXT,
+  target_cols            TEXT,
+  with_replacement       BOOLEAN,
+  separate_output_tables BOOLEAN
+) RETURNS VOID AS $$
+    PythonFunction(sample, test_train_split, test_train_split)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+  source_table       TEXT,
+  output_table       TEXT,
+  train_proportion   FLOAT8,
+  test_proportion    FLOAT8,
+  grouping_cols      TEXT,
+  target_cols        TEXT,
+  with_replacement   BOOLEAN
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, $5, $6, $7, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+  source_table       TEXT,
+  output_table       TEXT,
+  train_proportion   FLOAT8,
+  test_proportion    FLOAT8,
+  grouping_cols      TEXT,
+  target_cols        TEXT
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, $5, $6, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+  source_table       TEXT,
+  output_table       TEXT,
+  train_proportion   FLOAT8,
+  test_proportion    FLOAT8,
+  grouping_cols      TEXT
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, $5, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+  source_table       TEXT,
+  output_table       TEXT,
+  train_proportion   FLOAT8,
+  test_proportion    FLOAT8
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------------
+
+-- Online help
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(sample, test_train_split, test_train_split_help)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.test_train_split('');
+$$ LANGUAGE sql IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+-------------------------------------------------------------------------------
