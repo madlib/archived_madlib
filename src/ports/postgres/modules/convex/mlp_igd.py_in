@@ -67,7 +67,8 @@ def mlp(schema_madlib, source_table, output_table, independent_varname,
     optimizer_params = _get_optimizer_params(optimizer_param_str or "")
     summary_table = add_postfix(output_table, "_summary")
     weights = '1' if not weights or not weights.strip() else weights.strip()
-    hidden_layer_sizes = hidden_layer_sizes or []
+    if hidden_layer_sizes is None:
+        hidden_layer_sizes = [100]
     activation = _get_activation_function_name(activation)
     learning_rate_policy = _get_learning_rate_policy_name(
         optimizer_params["learning_rate_policy"])
@@ -136,20 +137,6 @@ def mlp(schema_madlib, source_table, output_table, independent_varname,
         hidden_layer_sizes + [num_output_nodes]
 
     # Need layers sizes before validating for warm_start
-    coeff = []
-    for i in range(len(layer_sizes) - 1):
-        fan_in = layer_sizes[i]
-        fan_out = layer_sizes[i + 1]
-        # Initalize according to Glorot and Bengio (2010)
-        # See design doc for more info
-        span = math.sqrt(6.0 / (fan_in + fan_out))
-        dim = (layer_sizes[i] + 1) * layer_sizes[i + 1]
-        rand = plpy.execute("""SELECT array_agg({span}*(random()-0.5))
-                               AS random
-                               FROM generate_series(0,{dim})
-                """.format(span=span, dim=dim))[0]["random"]
-        coeff += rand
-
     if warm_start:
         coeff, x_means, x_stds = _validate_warm_start(
                 source_table, output_table, summary_table, independent_varname,
@@ -162,6 +149,21 @@ def mlp(schema_madlib, source_table, output_table, independent_varname,
     prev_loss = float('inf')
     loss = None
     for _ in range(n_tries):
+        if not warm_start:
+            coeff = []
+            for i in range(len(layer_sizes) - 1):
+                fan_in = layer_sizes[i]
+                fan_out = layer_sizes[i + 1]
+                # Initalize according to Glorot and Bengio (2010)
+                # See design doc for more info
+                span = math.sqrt(6.0 / (fan_in + fan_out))
+                dim = (layer_sizes[i] + 1) * layer_sizes[i + 1]
+                rand = plpy.execute("""SELECT array_agg({span}*(random()-0.5))
+                                       AS random
+                                       FROM generate_series(0,{dim})
+                        """.format(span=span, dim=dim))[0]["random"]
+                coeff += rand
+
         while True:
             if prev_state:
                 prev_state_str = py_list_to_sql_string(
@@ -724,40 +726,55 @@ def mlp_help(schema_madlib, message, is_classification):
         output_table,         -- TEXT. name of output model table
         independent_varname,  -- TEXT. name of independent variable
         dependent_varname,    -- TEXT. {label_description}
-        hidden_layer_sizes,   -- INTEGER[]. Array of integers indicating the
-                                 number of hidden units per layer.
-                                 Length equal to the number of hidden layers.
+        hidden_layer_sizes,   -- INTEGER[]. optional, default ARRAY[100]
+                                 The number of neurons in each hidden layer
+                                 The length of this array will
+                                 determine the number of hidden layers.
+                                 For example, ARRAY[5,10] means 2 hidden
+                                 layers, one with 5 neurons and the other
+                                 with 10 neurons.  Use ARRAY[]::INTEGER[]
+                                 for no hidden layers.
         optimizer_params,     -- TEXT. optional, default NULL
                                  parameters for optimization in
                                  a comma-separated string of key-value pairs.
                                  To find out more:
-
                       SELECT {schema_madlib}.{method}('optimizer_params')
-
         activation            -- TEXT. optional, default: 'sigmoid'.
                                  supported activations: 'relu', 'sigmoid',
                                  and 'tanh'
-
-        weights               -- TEXT. optional, default: NULL.
+        weights               -- TEXT. optional, default: 1.
                                  Weights for input rows. Column name which
                                  specifies the weight for each input row.
-                                 This weight will be incorporated into the
-                                 update during SGD, and will not be used
-                                 for loss calculations. If not specified,
-                                 weight for each row will default to 1.
-                                 Column should be a numeric type.
-
+                                 This weight will be incorporated into
+                                 the update during stochastic gradient
+                                 descent (SGD), but will not be used for
+                                 loss calculations. If not specified,
+                                 weight for each row will default to 1 (equal
+                                 weights). Column should be a numeric type
         warm_start            -- BOOLEAN. optional, default: FALSE.
-                                 Initalize weights with the coefficients from
-                                 the last call.  If true, weights will
-                                 be initialized from output_table. Note that
-                                 all parameters other than optimizer_params,
-                                 and verbose must remain constant between calls
-                                 to warm_start.
-
+                                 Initalize weights with the coefficients
+                                 from the last call of the training function.
+                                 If set to true, weights will be initialized
+                                 from the output_table generated by the
+                                 previous run. Note that all parameters
+                                 other than optimizer_params and verbose must
+                                 remain constant
+                                 between calls when warm_start is used.
+                                 Note that the warm start feature works based
+                                 on the name of the output_table.
+                                 When using warm start, do not drop the output
+                                 table or the output table summary
+                                 before calling the training function, since
+                                 these are needed to obtain the weights
+                                 from the previous run.
+                                 If you are not using warm start, the output
+                                 table and the output table
+                                 summary must be dropped in the usual way before
+                                 calling the training function.
         verbose               -- BOOLEAN. optional, default: FALSE
                                  Provides verbose output of the results of
-                                 training.
+                                 training, including the value of the loss at
+                                 each iteration
     );
 
 
@@ -766,13 +783,15 @@ def mlp_help(schema_madlib, message, is_classification):
     ---------------------------------------------------------------------------
     The model table produced by MLP contains the following columns:
 
-    coeffs             -- Flat array containing the weights of the neural net
+    coeffs             -- Flat array containing the weights of the neural net.
 
     loss               -- The total loss over the training data. Cross entropy
-                          for classification and MSE for regression
+                          for classification and MSE for regression.
 
-    num_iterations     -- The total number of training iterations
-
+    num_iterations     -- Number of iterations completed by the stochastic
+                          gradient descent algorithm. The algorithm either
+                          converged in this number of iterations or hit the
+                          maximum number specified in the optimization parameters.
     """.format(**args)
 
     regression_example = """
@@ -972,14 +991,14 @@ def mlp_predict_help(schema_madlib, message):
     ---------------------------------------------------------------------------
                                     OUTPUT
     ---------------------------------------------------------------------------
-    The model table produced by mlp contains the following columns:
+    The model table produced by MLP contains the following columns:
 
-    id                      -- The provided id for the given input vector
+    id                      -- The provided id for the given input vector.
 
     estimated_<COL_NAME>    -- (For pred_type='response') The estimated class
                                for classification or value for regression, where
                                <COL_NAME> is the name of the column to be
-                               predicted from training data
+                               predicted from training data.
 
     prob_<CLASS>           -- (For pred_type='prob' for classification) The
                               probability of a given class <CLASS> as given by
@@ -1003,17 +1022,8 @@ def mlp_predict_help(schema_madlib, message):
 
     SELECT * FROM mlp_prediction;
 
-    WITH total_count AS (SELECT count(*) AS c FROM iris_data)
-    SELECT count(*)/((SELECT c FROM total_count)::DOUBLE PRECISION)
-    AS train_accuracy
-    FROM
-        (
-            SELECT iris_data.class_text AS actual_label,
-                mlp_prediction.estimated_class_text AS predicted_label
-            FROM mlp_prediction
-            INNER JOIN iris_data ON iris_data.id=mlp_prediction.id
-        ) q
-    WHERE q.actual_label=q.predicted_label;
+    SELECT COUNT(*) FROM mlp_prediction JOIN iris_data USING (id)
+    WHERE mlp_prediction.estimated_class_text != iris_data.class_text;
     """.format(**args)
 
     if not message:
