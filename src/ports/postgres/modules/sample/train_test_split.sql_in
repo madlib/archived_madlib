@@ -18,7 +18,7 @@
  * under the License.
  *
  *
- * @file test_train_split.sql_in
+ * @file train_test_split.sql_in
  *
  * @brief SQL functions for test train split.
  * @date 07/19/2017
@@ -32,25 +32,25 @@ m4_include(`SQLCommon.m4')
 
 
 /**
-@addtogroup grp_test_train_split
+@addtogroup grp_train_test_split
 
 <div class="toc"><b>Contents</b>
 <ul>
-<li><a href="#strs">test train split</a></li>
+<li><a href="#strs">Train-Test Split</a></li>
 <li><a href="#examples">Examples</a></li>
 </ul>
 </div>
 
-@brief A method for independently sampling subpopulations (strata).
+@brief A method for splitting a data set into separate training and testing sets.
 
-test_train_split is a utility to create test and
-training data set as subsets of a single table.
+Train-test split is a utility to create training and
+testing sets from a single data set.
 
 @anchor strs
-@par test train split
+@par Train-Test Split
 
 <pre class="syntax">
-test_train_split(   source_table,
+train_test_split(   source_table,
                     output_table,
                     train_proportion,
                     test_proportion,
@@ -80,7 +80,7 @@ in the train split.  If the 'grouping_col' parameter is specified below,
 each group will be sampled independently using the
 train proportion, i.e., in a stratified fashion.</dd>
 
-<dt>test_proportion</dt>
+<dt>test_proportion (optional)</dt>
 <dd>FLOAT8 in the range (0,1).  Proportion of the dataset to include
 in the test split.  Default is the complement to the train
 proportion (1-'train_proportion').  If the 'grouping_col'
@@ -111,7 +111,6 @@ With replacement means that it is possible that the
 same row may appear in the sample set more than once.
 Without replacement means a given row can be selected
 only once.</dd>
-</dl>
 
 <dt>separate_output_tables (optional)</dt>
 <dd>BOOLEAN, default FALSE.  If TRUE, two output tables will be created using
@@ -165,7 +164,7 @@ INSERT INTO test VALUES
 -# Sample without replacement:
 <pre class="syntax">
 DROP TABLE IF EXISTS out;
-SELECT madlib.test_train_split(
+SELECT madlib.train_test_split(
                                 'test',    -- Source table
                                 'out',     -- Output table
                                 0.5,       -- Sample proportion
@@ -207,10 +206,10 @@ SELECT * FROM out ORDER BY split,gr1,gr2,id1,id2;
 (25 rows)
 </pre>
 
--# Sample with replacement:
+-# Sample with replacement and create separate train and test tables:
 <pre class="syntax">
 DROP TABLE IF EXISTS out_train, out_test;
-SELECT madlib.test_train_split(
+SELECT madlib.train_test_split(
                                 'test',    -- Source table
                                 'out',     -- Output table
                                 0.5,       -- train_proportion
@@ -238,9 +237,30 @@ SELECT * FROM out_train ORDER BY gr1,gr2,id1,id2;
    2 |   2 |  50 |  50
 (12 rows)
 </pre>
+<pre class="syntax">
+SELECT * FROM out_test ORDER BY gr1,gr2,id1,id2;
+</pre>
+<pre class="result">
+ gr1 | gr2 | id1 | id2
+-----+-----+-----+-----
+   1 |   1 |   1 |   0
+   1 |   1 |   1 |   0
+   1 |   1 |   3 |   0
+   1 |   1 |   4 |   0
+   1 |   1 |   5 |   0
+   1 |   1 |   9 |   0
+   1 |   2 |   0 |   1
+   1 |   2 |   0 |   5
+   1 |   2 |   0 |   6
+   2 |   2 |  20 |  20
+   2 |   2 |  20 |  20
+   2 |   2 |  20 |  20
+   2 |   2 |  70 |  70
+(13 rows)
+</pre>
 */
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split(
   source_table           TEXT,
   output_table           TEXT,
   train_proportion       FLOAT8,
@@ -250,13 +270,13 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
   with_replacement       BOOLEAN,
   separate_output_tables BOOLEAN
 ) RETURNS VOID AS $$
-    PythonFunction(sample, test_train_split, test_train_split)
+    PythonFunction(sample, train_test_split, train_test_split)
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
 
 -------------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split(
   source_table       TEXT,
   output_table       TEXT,
   train_proportion   FLOAT8,
@@ -265,10 +285,10 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
   target_cols        TEXT,
   with_replacement   BOOLEAN
 ) RETURNS VOID AS $$
-     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, $5, $6, $7, FALSE);
+     SELECT MADLIB_SCHEMA.train_test_split($1, $2, $3, $4, $5, $6, $7, FALSE);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split(
   source_table       TEXT,
   output_table       TEXT,
   train_proportion   FLOAT8,
@@ -276,44 +296,51 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
   grouping_cols      TEXT,
   target_cols        TEXT
 ) RETURNS VOID AS $$
-     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, $5, $6, FALSE);
+     SELECT MADLIB_SCHEMA.train_test_split($1, $2, $3, $4, $5, $6, FALSE, FALSE);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split(
   source_table       TEXT,
   output_table       TEXT,
   train_proportion   FLOAT8,
   test_proportion    FLOAT8,
   grouping_cols      TEXT
 ) RETURNS VOID AS $$
-     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, $5, NULL);
+     SELECT MADLIB_SCHEMA.train_test_split($1, $2, $3, $4, $5, NULL, FALSE, FALSE);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split(
   source_table       TEXT,
   output_table       TEXT,
   train_proportion   FLOAT8,
   test_proportion    FLOAT8
 ) RETURNS VOID AS $$
-     SELECT MADLIB_SCHEMA.test_train_split($1, $2, $3, $4, NULL);
+     SELECT MADLIB_SCHEMA.train_test_split($1, $2, $3, $4, NULL, NULL, FALSE, FALSE);
 $$ LANGUAGE sql VOLATILE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
-
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split(
+  source_table       TEXT,
+  output_table       TEXT,
+  train_proportion   FLOAT8
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.train_test_split($1, $2, $3, NULL, NULL, NULL, FALSE, FALSE);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
 -------------------------------------------------------------------------------
 
 -- Online help
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split(
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split(
     message VARCHAR
 ) RETURNS VARCHAR AS $$
-    PythonFunction(sample, test_train_split, test_train_split_help)
+    PythonFunction(sample, train_test_split, train_test_split_help)
 $$ LANGUAGE plpythonu IMMUTABLE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 
 -------------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.test_train_split()
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.train_test_split()
 RETURNS VARCHAR AS $$
-    SELECT MADLIB_SCHEMA.test_train_split('');
+    SELECT MADLIB_SCHEMA.train_test_split('');
 $$ LANGUAGE sql IMMUTABLE
 m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
 -------------------------------------------------------------------------------
