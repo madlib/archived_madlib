@@ -1,7 +1,7 @@
-
 import plpy
 import re
 import string
+
 
 # Postgresql naming restrictions
 """
@@ -467,7 +467,6 @@ def array_col_dimension(tbl, col):
         plpy.error('Input error: Table name (NULL) is invalid')
     if col is None:
         plpy.error('Input error: Column name is invalid')
-
     dim = plpy.execute("""
                            SELECT max(array_upper({col}, 1)) AS dim
                            FROM {tbl}
@@ -538,6 +537,30 @@ def array_col_has_no_null(tbl, col):
     return True
 # -------------------------------------------------------------------------
 
+def _tbl_dimension_rownum(schema_madlib, tbl_source, col_ind_var):
+    """
+    Measure the dimension and row number of source data table
+    """
+    # independent variable array length
+    dimension = plpy.execute("""
+                     SELECT array_upper({col_ind_var},1) AS dimension
+                     FROM {tbl_source} LIMIT 1
+                 """.format(tbl_source=tbl_source,
+                        col_ind_var=col_ind_var))[0]["dimension"]
+    # total row number of data source table
+    # The WHERE clause here ignores rows in the table that contain one or more
+    # NULLs in the independent variable (x). There is no NULL check made for
+    # the dependent variable (y), since one of the hard assumptions of the
+    # input data to elastic_net is that the dependent variable cannot be NULL.
+    row_num = plpy.execute("""
+                   SELECT COUNT(*) FROM {tbl_source}
+                   WHERE NOT {schema_madlib}.array_contains_null({col_ind_var})
+               """.format(tbl_source=tbl_source,
+                          schema_madlib=schema_madlib,
+                          col_ind_var=col_ind_var))[0]["count"]
+
+    return (dimension, row_num)
+# ------------------------------------------------------------------------
 
 def is_var_valid(tbl, var, order_by=None):
     """

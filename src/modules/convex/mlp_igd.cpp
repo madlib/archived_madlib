@@ -91,8 +91,7 @@ mlp_igd_transition::run(AnyType &args) {
             const int is_classification = args[7].getAs<int>();
 
             const bool warm_start = args[9].getAs<bool>();
-            const int n_tuples = args[11].getAs<int>();
-            const double lambda = args[12].getAs<double>();
+            const double lambda = args[11].getAs<double>();
             state.task.lambda = lambda;
             MLPTask::lambda = lambda;
             double is_classification_double = (double) is_classification;
@@ -110,13 +109,11 @@ mlp_igd_transition::run(AnyType &args) {
     const uint16_t N = state.task.numberOfStages;
     const double *n = state.task.numbersOfUnits;
 
-    MappedColumnVector x_means = args[13].getAs<MappedColumnVector>();
-    MappedColumnVector x_stds = args[14].getAs<MappedColumnVector>();
     // tuple
     ColumnVector indVar;
     MappedColumnVector depVar;
     try {
-        indVar = (args[1].getAs<MappedColumnVector>()-x_means).cwiseQuotient(x_stds);
+        indVar = args[1].getAs<MappedColumnVector>();
         MappedColumnVector y = args[2].getAs<MappedColumnVector>();
         depVar.rebind(y.memoryHandle(), y.size());
     } catch (const ArrayWithNullException &e) {
@@ -170,11 +167,7 @@ mlp_igd_final::run(AnyType &args) {
     state.algo.loss = state.algo.loss/static_cast<double>(state.algo.numRows);
     state.algo.loss += L2<MLPModelType>::loss(state.task.model);
     MLPIGDAlgorithm::final(state);
-
-    AnyType tuple;
-    tuple << state
-          << (double)state.algo.loss;
-    return tuple;
+    return state;
 }
 
 /**

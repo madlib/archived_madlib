@@ -7,6 +7,8 @@
 #include "modules/shared/HandleTraits.hpp"
 #include "utils_regularization.hpp"
 
+#include <float.h>
+
 namespace madlib {
 namespace modules {
 namespace convex {
@@ -75,6 +77,12 @@ class ScalesState
 };
 
 // ------------------------------------------------------------------------
+bool close_to_zero(double number) {
+    if(fabs(number - 0.0) <= DBL_EPSILON*fabs(number)) {
+        return true;
+    }
+    return false;
+}
 
 AnyType utils_var_scales_transition::run (AnyType& args)
 {
@@ -143,6 +151,37 @@ AnyType utils_var_scales_final::run (AnyType& args)
 }
 
 // ------------------------------------------------------------------------
+/*
+This final function is used when we want to have a standard deviation
+of 1.0 instead of 0.0 for any dimension. This is most likely to be used
+by neural networks, since in other modules such as elastic_net, a std value
+of 0.0 results in setting the corresponding coefficient value to 0.0 as well.
+But in neural networks, we will end up using a std value of 1.0 instead.
+*/
+AnyType utils_var_scales_non_zero_std_final::run (AnyType& args)
+{
+    ScalesState<MutableArrayHandle<double> > state = args[0];
+
+    if (state.numRows == 0) return Null();
+
+    state.mean /= static_cast<double>(state.numRows);
+    state.std /= static_cast<double>(state.numRows);
+    for (uint32_t i = 0; i < state.dimension; i++) {
+        if (state.numRows == 1) {
+            state.mean(i) = 0.0;
+            state.std(i) = 1.0;
+        }
+        else {
+            state.std(i) = sqrt(state.std(i) - state.mean(i) * state.mean(i));
+            if(close_to_zero(state.std(i)))
+                state.std(i) = 1.0;
+        }
+    }
+
+    return state;
+}
+
+// ------------------------------------------------------------------------
 
 AnyType __utils_var_scales_result::run (AnyType& args)
 {
@@ -169,7 +208,7 @@ AnyType utils_normalize_data::run (AnyType& args)
 
     for (int i = 0; i < x.size(); i++)
     {
-        if (std(i) == 0)
+        if(close_to_zero(std(i)))
             x(i) = x(i) - mean(i);
         else
             x(i) = (x(i) - mean(i)) / std(i);

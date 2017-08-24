@@ -8,7 +8,6 @@ from kernel_approximation import create_kernel, load_kernel
 
 from utilities.control import MinWarning
 from utilities.in_mem_group_control import GroupIterationController
-from utilities.validate_args import explicit_bool_to_text
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import preprocess_keyvalue_params
 from utilities.utilities import add_postfix
@@ -19,10 +18,12 @@ from utilities.utilities import unique_string
 from utilities.utilities import num_features, num_samples
 
 from utilities.validate_args import cols_in_tbl_valid
-from utilities.validate_args import input_tbl_valid
-from utilities.validate_args import output_tbl_valid
-from utilities.validate_args import is_var_valid
+from utilities.validate_args import explicit_bool_to_text
 from utilities.validate_args import get_expr_type
+from utilities.utilities import get_grouping_col_str
+from utilities.validate_args import input_tbl_valid
+from utilities.validate_args import is_var_valid
+from utilities.validate_args import output_tbl_valid
 
 from validation.internal.cross_validation import CrossValidator
 
@@ -96,37 +97,6 @@ def _verify_table(source_table, model_table, dependent_varname,
     output_tbl_valid(model_table, 'SVM')
     summary_table = add_postfix(model_table, "_summary")
     output_tbl_valid(summary_table, 'SVM')
-# ------------------------------------------------------------------------------
-
-
-def _get_grouping_col_str(schema_madlib, source_table, grouping_col):
-    if grouping_col and grouping_col.lower() != 'null':
-        cols_in_tbl_valid(source_table,
-                          _string_to_array_with_quotes(grouping_col),
-                          'SVM')
-        intersect = frozenset(
-            _string_to_array(grouping_col)).intersection(
-                frozenset(
-                    ('coef', 'random_feature_data',
-                     'random_feature_data', 'loss'
-                     'num_rows_processed', 'num_rows_skipped',
-                     'norm_of_gradient', 'num_iterations')))
-        _assert(len(intersect) == 0,
-                "SVM error: Conflicting grouping column name.\n"
-                "Some predefined keyword(s) ({0}) are not allowed "
-                "for grouping column names!".format(', '.join(intersect)))
-
-        grouping_list = [i + "::text"
-                         for i in explicit_bool_to_text(
-                             source_table,
-                             _string_to_array_with_quotes(grouping_col),
-                             schema_madlib)]
-        grouping_str = ','.join(grouping_list)
-    else:
-        grouping_str = "Null"
-        grouping_col = None
-
-    return grouping_str, grouping_col
 # ------------------------------------------------------------------------------
 
 
@@ -413,8 +383,14 @@ def svm_one_class(schema_madlib, source_table, model_table, independent_varname,
     with MinWarning(verbosity_level):
         _verify_table(source_table, model_table,
                       dependent_varname, independent_varname, verify_dep=False)
-        grouping_str, grouping_col = _get_grouping_col_str(schema_madlib,
-                                                           source_table, grouping_col)
+        reserved_cols =['coef', 'random_feature_data',
+                     'random_feature_data', 'loss'
+                     'num_rows_processed', 'num_rows_skipped',
+                     'norm_of_gradient', 'num_iterations']
+        grouping_str, grouping_col = get_grouping_col_str(schema_madlib, 'SVM',
+                                                          reserved_cols,
+                                                          source_table,
+                                                          grouping_col)
         if not kernel_func:
             kernel_func = 'gaussian'
         else:
@@ -975,8 +951,13 @@ def svm(schema_madlib, source_table, model_table,
     with MinWarning(verbosity_level):
         _verify_table(source_table, model_table,
                       dependent_varname, independent_varname)
+        reserved_cols =['coef', 'random_feature_data',
+                     'random_feature_data', 'loss'
+                     'num_rows_processed', 'num_rows_skipped',
+                     'norm_of_gradient', 'num_iterations']
         grouping_str, grouping_col = \
-            _get_grouping_col_str(schema_madlib, source_table, grouping_col)
+            get_grouping_col_str(schema_madlib, 'SVM', reserved_cols,
+                                 source_table, grouping_col)
         kernel_func = _get_kernel_name(kernel_func)
         transformer = _transform_w_kernel(schema_madlib, source_table,
                                           dependent_varname, independent_varname,
@@ -1272,7 +1253,12 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
         grouping_col = None if grouping_col == 'NULL' else grouping_col
 
         input_tbl_valid(new_data_table, 'SVM')
-        grouping_str, grouping_col = _get_grouping_col_str(schema_madlib,
+        reserved_cols =['coef', 'random_feature_data',
+                     'random_feature_data', 'loss'
+                     'num_rows_processed', 'num_rows_skipped',
+                     'norm_of_gradient', 'num_iterations']
+        grouping_str, grouping_col = get_grouping_col_str(schema_madlib,
+                                                           'SVM', reserved_cols,
                                                            new_data_table,
                                                            grouping_col)
         _assert(is_var_valid(new_data_table, independent_varname),

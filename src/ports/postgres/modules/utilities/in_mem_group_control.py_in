@@ -401,6 +401,66 @@ class GroupIterationController:
     def __exit__(self, type, value, tb):
         self.in_with = False
 
+    def get_state_size(self):
+        """
+            Return the size of the state. Greenplum does not have the
+            array_length() method yet, hence this work-around.
+        """
+        if self.is_state_type_bytea8:
+            unnest_str_current = "unnest($3) AS {col_grp_key}, unnest($4) AS _state_current".format(**self.kwargs)
+            grouped_state_type = "{schema_madlib}.bytea8[]".format(**self.kwargs)
+        else:
+            unnest_str_current = "grp_key AS {col_grp_key}, state AS _state_current FROM {schema_madlib}._gen_state($3, NULL, $4)".format(**self.kwargs)
+            grouped_state_type = "float8[]"
+        eval_plan = plpy.prepare("""
+                SELECT _state_current
+                FROM (
+                    SELECT {unnest_str_current}
+                ) subq1
+            """.format(unnest_str_current=unnest_str_current, **self.kwargs),
+                       ["text[]", grouped_state_type] * 2)
+        state_size = len(plpy.execute(eval_plan,
+                           [self.old_states.keys,
+                            self.old_states.values,
+                            self.new_states.keys,
+                            self.new_states.values])[0]['_state_current'])
+        return state_size
+
+    def get_param_value_per_group(self, select_col):
+        """
+            Return desired values from the current state.
+            Example:
+            to return the value in the last index of the state, the 'select_col'
+            can be set to '_state_current[array_length(_state_current,1)] AS last'
+
+            This is especially useful when there is grouping and we want to find
+            some specific state value (such as loss) for each group.
+        """
+        # Check convex/mlp_igd.py_in for an example of how this is useful.
+        if self.is_state_type_bytea8:
+            unnest_str_current = "unnest($3) AS {col_grp_key}, unnest($4) AS _state_current".format(**self.kwargs)
+            grouped_state_type = "{schema_madlib}.bytea8[]".format(**self.kwargs)
+        else:
+            unnest_str_current = "grp_key AS {col_grp_key}, state AS _state_current FROM {schema_madlib}._gen_state($3, NULL, $4)".format(**self.kwargs)
+            grouped_state_type = "float8[]"
+
+        eval_plan = plpy.prepare("""
+            SELECT
+                {select_col},
+                {col_grp_key}
+            FROM (
+                SELECT {unnest_str_current}
+            ) subq1
+            """.format(select_col=select_col,
+                       unnest_str_current=unnest_str_current, **self.kwargs),
+            ["text[]", grouped_state_type] * 2)
+        res = plpy.execute(eval_plan,
+                           [self.old_states.keys,
+                            self.old_states.values,
+                            self.new_states.keys,
+                            self.new_states.values])
+        return res
+
     def test(self, condition):
         """
         Return True if the given expression is TRUE for all in-progress groups.
@@ -480,9 +540,7 @@ class GroupIterationController:
             condition: <tt>[...] WHERE _state._iteration = {iteration}</tt>
 
         This updates the current inter-iteration state to the result of
-        evaluating \c newState. If <tt>self.truncAfterIteration</tt> is true,
-        this will replace the old state, otherwise the history of all old states
-        is kept.
+        evaluating \c newState.
         """
         newState = newState.format(**self.kwargs)
         self.iteration = self.iteration + 1
@@ -513,6 +571,7 @@ class GroupIterationController:
             select_rel_state=group_param.select_rel_state,
             select_n_tuples=group_param.select_n_tuples,
             **self.kwargs)
+
         update_plan = plpy.prepare(run_sql,
                                    ["text[]", group_param.grouped_state_type,
                                     "text[]", "integer[]"])

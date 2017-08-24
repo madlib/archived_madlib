@@ -6,6 +6,7 @@ from validation.cv_utils import __cv_split_data_using_id_col_compute
 from validation.cv_utils import __cv_split_data_using_id_tbl_compute
 from validation.cv_utils import __cv_generate_random_id
 from utilities.utilities import __mad_version
+from utilities.utilities import _check_groups
 from utilities.utilities import split_quoted_delimited_str
 
 version_wrapper = __mad_version()
@@ -13,39 +14,93 @@ mad_vec = version_wrapper.select_vecfunc()
 
 # ========================================================================
 
-def __utils_ind_var_scales(tbl_data, col_ind_var, dimension, schema_madlib):
+def __utils_ind_var_scales(tbl_data, col_ind_var, dimension, schema_madlib,
+                           x_mean_table=None, set_zero_std_to_one=False):
     """
     The mean and standard deviation for each dimension of an array stored
     in a column.
+    @param:
+        tbl_data,
+        col_ind_var,
+        dimension,
+        schema_madlib,
+        x_mean_table, (optional, default is None. If set to a valid string
+                     the output will be dumped to a temp table)
+        set_zero_std_to_one (optional, default is False. If set to true
+                     0.0 standard deviation values will be set to 1.0)
 
     Returns:
         Dictionary with keys 'mean' and 'std' each with a value of an array of
         the mean and std. dev values respectively.
 
     """
-    x_scales = plpy.execute(
-        """
+    create_table = ""
+    if x_mean_table:
+        create_table = "CREATE TEMP TABLE {0} AS ".format(x_mean_table)
+    # If we want to set features that have standard deviation value of 0
+    # to 1, we must call a different UDA. We must set standard deviation
+    # of 0 to 1 for algorithms such as neural networks. But for algorithms
+    # such as elastic_net, we don't have to do that since the corresponding
+    # coefficient itself is set to 0 (thus ignoring that particular feature
+    # altogether).
+    if set_zero_std_to_one:
+        scaling_uda_name = 'utils_var_scales_non_zero_std'
+    else:
+        scaling_uda_name = 'utils_var_scales'
+    query = """
+        {create_table}
         SELECT (f).*
         FROM (
             SELECT
                 {schema_madlib}.__utils_var_scales_result(
-                    {schema_madlib}.utils_var_scales({col_ind_var}, {dimension})) as f
+                    {schema_madlib}.{scaling_uda_name}({col_ind_var}, {dimension})) as f
             FROM
                 {tbl_data}
-        ) q2
-        """.format(**locals()))[0]
-    x_scales["mean"] = mad_vec(x_scales["mean"], text=False)
-    x_scales["std"] = mad_vec(x_scales["std"], text=False)
-    return x_scales
+        ) q2"""
+    x_scales = plpy.execute(query.format(**locals()))
+    if x_mean_table:
+        x_scales = plpy.execute("""
+                SELECT * FROM {x_mean_table}
+            """.format(**locals()))
+    x_scaled_vals = dict()
+    x_scaled_vals["mean"] = mad_vec(x_scales[0]["mean"], text=False)
+    x_scaled_vals["std"] = mad_vec(x_scales[0]["std"], text=False)
+    return x_scaled_vals
+
 # ========================================================================
 
 def __utils_ind_var_scales_grouping(tbl_data, col_ind_var, dimension,
-        schema_madlib, grouping_col, x_mean_table):
+                                    schema_madlib, grouping_col, x_mean_table,
+                                    set_zero_std_to_one=False):
     """
     The mean and standard deviation for each dimension of an array stored in
     a column. Creates a table containing the mean (array) and std of each
     dimension of the independent variable, for each group.
+        @param:
+        tbl_data,
+        col_ind_var,
+        dimension,
+        schema_madlib,
+        grouping_col,
+        x_mean_table,
+        set_zero_std_to_one (optional, default is False. If set to true
+                     0.0 standard deviation values will be set to 1.0)
+
+    Returns:
+        Dictionary with keys 'mean' and 'std' each with a value of an array of
+        the mean and std. dev values respectively, for each group.
     """
+
+    # If we want to set features that have standard deviation value of 0
+    # to 1, we must call a different UDA. We must set standard deviation
+    # of 0 to 1 for algorithms such as neural networks. But for algorithms
+    # such as elastic_net, we don't have to do that since the corresponding
+    # coefficient itself is set to 0 (thus ignoring that particular feature
+    # altogether).
+    if set_zero_std_to_one:
+        scaling_uda_name = 'utils_var_scales_non_zero_std'
+    else:
+        scaling_uda_name = 'utils_var_scales'
     group_col = _cast_if_null(grouping_col, unique_string('grp_col'))
     x_scales = plpy.execute(
         """
@@ -54,7 +109,7 @@ def __utils_ind_var_scales_grouping(tbl_data, col_ind_var, dimension,
         FROM (
             SELECT {group_col},
                 {schema_madlib}.__utils_var_scales_result(
-                {schema_madlib}.utils_var_scales({col_ind_var}, {dimension})) as f
+                {schema_madlib}.{scaling_uda_name}({col_ind_var}, {dimension})) as f
             FROM
                 {tbl_data}
             GROUP BY {group_col}
@@ -63,7 +118,7 @@ def __utils_ind_var_scales_grouping(tbl_data, col_ind_var, dimension,
 # ========================================================================
 
 def __utils_dep_var_scale(schema_madlib, tbl_data, col_ind_var,
-        col_dep_var):
+                          col_dep_var):
     """
     The mean and standard deviation for each element of the dependent variable,
     which is a scalar in ridge and lasso.
@@ -87,7 +142,8 @@ def __utils_dep_var_scale(schema_madlib, tbl_data, col_ind_var,
 # ========================================================================
 
 def __utils_dep_var_scale_grouping(y_mean_table, tbl_data, grouping_col,
-        family, schema_madlib=None, col_ind_var=None, col_dep_var=None):
+                                   family, schema_madlib=None,
+                                   col_ind_var=None, col_dep_var=None):
     """
     The mean and standard deviation for each element of the dependent variable,
     w.r.t a group, which is a scalar in ridge and lasso.
@@ -156,14 +212,21 @@ def __utils_normalize_data_grouping(y_decenter=True, **kwargs):
     """
     group_col = kwargs.get('grouping_col')
     group_col_list = split_quoted_delimited_str(group_col)
-    group_where_x = ' AND '.join(['{tbl_data}.{grp}=__x__.{grp}'.format(grp=grp,
-        **kwargs) for grp in group_col_list])
-    group_where_y = ' AND '.join(['{tbl_data}.{grp}=__y__.{grp}'.format(grp=grp,
-        **kwargs) for grp in group_col_list])
+    x_mean_join_clause = ''
+    y_mean_join_clause = ''
+    if kwargs.get('x_mean_table'):
+        group_where_x = _check_groups(kwargs.get('tbl_data'), '__x__',
+                                      group_col_list)
+        x_mean_join_clause = "INNER JOIN {0} AS __x__ ON {1}".format(
+                                kwargs.get('x_mean_table'), group_where_x)
+    if kwargs.get('y_mean_table'):
+        group_where_y = _check_groups(kwargs.get('tbl_data'), '__y__',
+                                      group_col_list)
+        y_mean_join_clause = "INNER JOIN {0} AS __y__ ON {1}".format(
+                                kwargs.get('y_mean_table'), group_where_y)
     ydecenter_str = "- __y__.mean".format(**kwargs) if y_decenter else ""
-    plpy.execute(
-        """
-        CREATE TEMP TABLE {tbl_data_scaled} AS
+    plpy.execute("""
+            CREATE TEMP TABLE {tbl_data_scaled} AS
             SELECT
                 ({schema_madlib}.utils_normalize_data({col_ind_var},
                                             __x__.mean::double precision[],
@@ -172,10 +235,11 @@ def __utils_normalize_data_grouping(y_decenter=True, **kwargs):
                 ({col_dep_var} {ydecenter_str})  AS {col_dep_var_norm_new},
                 {tbl_data}.{group_col}
             FROM {tbl_data}
-            INNER JOIN {x_mean_table} AS __x__ ON {group_where_x}
-            INNER JOIN {y_mean_table} AS __y__ ON {group_where_y}
+            {x_mean_join_clause}
+            {y_mean_join_clause}
         """.format(ydecenter_str=ydecenter_str, group_col=group_col,
-            group_where_x=group_where_x, group_where_y=group_where_y, **kwargs))
+                    x_mean_join_clause=x_mean_join_clause,
+                    y_mean_join_clause=y_mean_join_clause, **kwargs))
     return None
 # ========================================================================
 
@@ -205,7 +269,7 @@ def __utils_normalize_data(y_decenter=True, **kwargs):
     ydecenter_str = "- {y_mean}".format(**kwargs) if y_decenter else ""
     plpy.execute(
         """
-        CREATE TEMP TABLE {tbl_data_scaled} AS
+            CREATE TEMP TABLE {tbl_data_scaled} AS
             SELECT
                 ({schema_madlib}.utils_normalize_data({col_ind_var},
                                             '{x_mean_str}'::double precision[],
