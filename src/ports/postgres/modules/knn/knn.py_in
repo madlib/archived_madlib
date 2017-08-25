@@ -17,8 +17,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-m4_changequote(`<!', `!>')
-
 """
 @file knn.py_in
 
@@ -29,204 +27,154 @@ m4_changequote(`<!', `!>')
 """
 
 import plpy
-from utilities.validate_args import table_exists
-from utilities.validate_args import table_is_empty
-from utilities.validate_args import columns_exist_in_table
-from utilities.validate_args import columns_exist_in_table
+from utilities.validate_args import input_tbl_valid, output_tbl_valid
+from utilities.validate_args import cols_in_tbl_valid
 from utilities.validate_args import is_col_array
 from utilities.validate_args import array_col_has_no_null
-from utilities.validate_args import get_cols_and_types
+from utilities.validate_args import get_expr_type
 from utilities.utilities import unique_string
 from utilities.control import MinWarning
 
 
 def knn_validate_src(schema_madlib, point_source, point_column_name,
-    label_column_name, test_source, test_column_name, id_column_name,
-    output_table, operation, k, **kwargs):
+                     label_column_name, test_source, test_column_name,
+                     id_column_name, output_table, operation, k, **kwargs):
 
     if not operation or operation not in ['c', 'r']:
-        plpy.error(("kNN Error: operation='{0}' is an invalid value, has to be"
-            + " 'r' for regression OR 'c' for classification.").format(
-                operation))
-    if not point_source:
-        plpy.error("kNN Error: Invalid training table name.")
-    if not table_exists(point_source):
-        plpy.error("kNN Error: Training table '{0}' does not exist.".format(
-            point_source))
-    if table_is_empty(point_source):
-        plpy.error("kNN Error: Training table '{0}' is empty.".format(
-            point_source))
-
-    if not test_source:
-        plpy.error("kNN Error: Invalid test table name.")
-    if not table_exists(test_source):
-        plpy.error("kNN Error: Test table '{0}' does not exist.".format(
-            test_source))
-    if table_is_empty(test_source):
-        plpy.error("kNN Error: Test table '{0}' is empty.".format(
-            test_source))
-
-    for c in (label_column_name, point_column_name):
-        if not c:
-            plpy.error("kNN Error: Invalid column name in training table.")
-        if not columns_exist_in_table(point_source, [c]):
-            plpy.error("kNN Error: Column '{0}' does not exist in {1}.".format(
-                c, point_source))
-
-    for c in (test_column_name, id_column_name):
-        if not c:
-            plpy.error("kNN Error: Invalid column name in test table.")
-        if not columns_exist_in_table(test_source, [c]):
-            plpy.error("kNN Error: Column '{0}' does not exist in {1}.".format(
-                c, test_source))
+        plpy.error("kNN Error: operation='{0}' is an invalid value, has to be"
+                   " 'r' for regression OR 'c' for classification.".
+                   format(operation))
+    input_tbl_valid(point_source, 'kNN')
+    input_tbl_valid(test_source, 'kNN')
+    output_tbl_valid(output_table, 'kNN')
+    cols_in_tbl_valid(point_source, (label_column_name, point_column_name), 'kNN')
+    cols_in_tbl_valid(test_source, (test_column_name, id_column_name), 'kNN')
 
     if not is_col_array(point_source, point_column_name):
-        plpy.error(("kNN Error: Feature column '{0}' in train table is not"
-            + " an array.").format(point_column_name))
+        plpy.error("kNN Error: Feature column '{0}' in train table is not"
+                   " an array.").format(point_column_name)
     if not is_col_array(test_source, test_column_name):
-        plpy.error(("kNN Error: Feature column '{0}' in test table is not"
-            + " an array.").format(test_column_name))
+        plpy.error("kNN Error: Feature column '{0}' in test table is not"
+                   " an array.").format(test_column_name)
 
     if not array_col_has_no_null(point_source, point_column_name):
-        plpy.error(("kNN Error: Feature column '{0}' in train table has some"
-            + " NULL values.").format(point_column_name))
+        plpy.error("kNN Error: Feature column '{0}' in train table has some"
+                   " NULL values.".format(point_column_name))
     if not array_col_has_no_null(test_source, test_column_name):
-        plpy.error(("kNN Error: Feature column '{0}' in test table has some"
-            + " NULL values.").format(test_column_name))
-
-    if not output_table:
-        plpy.error("kNN Error: Invalid output table name")
-    if table_exists(output_table):
-        plpy.error(("kNN Error: Table '{0}' already exists, cannot use it as"
-            + " output table.").format(output_table))
+        plpy.error("kNN Error: Feature column '{0}' in test table has some"
+                   " NULL values.".format(test_column_name))
 
     if k is None:
         k = 1
-    if k<=0:
-        plpy.error(("kNN Error: k='{0}' is an invalid value, must be greater"
-            + "than 0.").format(k))
-    bound = plpy.execute("""SELECT {k} <= count(*)
-            AS bound FROM {tbl}""".format(k=k,
-            point_column_name=point_column_name, tbl=point_source))[0]['bound']
+    if k <= 0:
+        plpy.error("kNN Error: k={0} is an invalid value, must be greater"
+                   "than 0.".format(k))
+    bound = plpy.execute("SELECT {k} <= count(*) AS bound FROM {tbl}".
+                         format(k=k, tbl=point_source))[0]['bound']
     if not bound:
-        plpy.error(("kNN Error: k='{0}' is greater than number of rows in"
-            + " training table.").format(k))
+        plpy.error("kNN Error: k={0} is greater than number of rows in"
+                   " training table.".format(k))
 
-    colTypesList = get_cols_and_types(point_source)
-    colType = ''
-    for type in colTypesList:
-        if type[0] == label_column_name:
-            colType = type[1]
-            break
-    if colType not in ['INTEGER','integer','double precision',
-        'DOUBLE PRECISION','float','FLOAT','boolean','BOOLEAN']:
-        plpy.error(("kNN Error: Data type '{0}' is not a valid type for"
-            + " column '{1}' in table '{2}'.").format(
-                colType, label_column_name, point_source))
+    col_type = get_expr_type(label_column_name, point_source).lower()
+    if col_type not in ['integer', 'double precision', 'float', 'boolean']:
+        plpy.error("kNN error: Data type '{0}' is not a valid type for"
+                   " column '{1}' in table '{2}'.".
+                   format(col_type, label_column_name, point_source))
 
-    colTypesTestList = get_cols_and_types(test_source)
-    colType = ''
-    for type in colTypesTestList:
-        if type[0] == id_column_name:
-            colType = type[1]
-            break
-    if colType not in ['INTEGER','integer']:
-        plpy.error(("kNN Error: Data type '{0}' is not a valid type for"
-            + " column '{1}' in table '{2}'.").format(
-                colType, id_column_name, test_source))
+    col_type_test = get_expr_type(id_column_name, test_source).lower()
+    if col_type_test not in ['integer']:
+        plpy.error("kNN Error: Data type '{0}' is not a valid type for"
+                   " column '{1}' in table '{2}'.".
+                   format(col_type_test, id_column_name, test_source))
     return k
+# ------------------------------------------------------------------------------
+
 
 def knn(schema_madlib, point_source, point_column_name, label_column_name,
-    test_source, test_column_name, id_column_name, output_table, operation, k):
-
+        test_source, test_column_name, id_column_name, output_table,
+        operation, k):
     """
         KNN function to find the K Nearest neighbours
         Args:
-            @param schema_madlib       	Name of the Madlib Schema
-            @param point_source        	Training data table
-            @param point_column_name   	Name of the column with training data
-            							points.
-            @param label_column_name   	Name of the column with labels/values
-            							of training data points.
-            @param test_source         	Name of the table containing the test
-            							data points.
-            @param test_column_name    	Name of the column with testing data
-            							points.
-            @param id_column_name      	Name of the column having ids of data
-            							points in test data table.
-            @param output_table        	Name of the table to store final
-            							results.
-            @param operation           	Flag for the operation:
-            							'c' for classification and
-            							'r' for regression
-            @param k                   	default: 1. Number of nearest
-            							neighbors to consider
+            @param schema_madlib        Name of the Madlib Schema
+            @param point_source         Training data table
+            @param point_column_name    Name of the column with training data
+                                        points.
+            @param label_column_name    Name of the column with labels/values
+                                        of training data points.
+            @param test_source          Name of the table containing the test
+                                        data points.
+            @param test_column_name     Name of the column with testing data
+                                        points.
+            @param id_column_name       Name of the column having ids of data
+                                        points in test data table.
+            @param output_table         Name of the table to store final
+                                        results.
+            @param operation            Flag for the operation:
+                                        'c' for classification and
+                                        'r' for regression
+            @param k                    default: 1. Number of nearest
+                                        neighbors to consider
         Returns:
             VARCHAR                     Name of the output table.
     """
     with MinWarning('warning'):
         k_val = knn_validate_src(schema_madlib, point_source,
-                    point_column_name, label_column_name, test_source,
-                    test_column_name, id_column_name,
-                    output_table, operation, k)
+                                 point_column_name, label_column_name,
+                                 test_source, test_column_name, id_column_name,
+                                 output_table, operation, k)
 
         x_temp_table = unique_string(desp='x_temp_table')
         y_temp_table = unique_string(desp='y_temp_table')
-        label_column_name_unique = unique_string(
-        	desp='label_column_name_unique')
+        label_col_temp = unique_string(desp='label_col_temp')
         test_id = unique_string(desp='test_id')
 
-        convert_boolean_to_int = ''
-        isClassification = False
-        if operation == 'c':
-            convert_boolean_to_int = '::INTEGER'
-            isClassification = True
-        madlib_knn_interm = unique_string(desp='madlib_knn_interm')
-        plpy.execute("""
-        	DROP TABLE IF EXISTS {madlib_knn_interm}
-        	""".format(**locals()))
+        is_classification = operation == 'c'
+        interim_table = unique_string(desp='interim_table')
         plpy.execute(
-        """
-        CREATE TEMP TABLE {madlib_knn_interm} AS
-        SELECT * FROM
-            (
-            SELECT row_number() over
-                    (partition by {test_id} order by dist) AS r,
-                    {x_temp_table}.*
-            FROM
-                (
-                SELECT test.{id_column_name} AS {test_id} ,
-                    {schema_madlib}.squared_dist_norm2(
-                    	train.{point_column_name},
-                        test.{test_column_name})
-        			AS dist,
-                    train.{label_column_name} {convert_boolean_to_int}
-                        AS {label_column_name_unique}
-                    FROM {point_source} AS train, {test_source} AS test
-                ) {x_temp_table}
-            ) {y_temp_table}
-        WHERE {y_temp_table}.r <= {k_val}""".format(**locals()))
-
-        if isClassification:
-            plpy.execute(
             """
-            CREATE TABLE {output_table} AS
-            SELECT {test_id} AS id, {test_column_name},
-                {schema_madlib}.mode({label_column_name_unique}) AS prediction
-            FROM {madlib_knn_interm} JOIN {test_source} ON
-                {test_id} = {id_column_name}
-            GROUP BY {test_id}, {test_column_name}""".format(**locals()))
+            CREATE TEMP TABLE {interim_table} AS
+            SELECT * FROM
+                (
+                SELECT row_number() over
+                        (partition by {test_id} order by dist) AS r,
+                        {x_temp_table}.*
+                FROM
+                    (
+                    SELECT test.{id_column_name} AS {test_id} ,
+                        {schema_madlib}.squared_dist_norm2(
+                            train.{point_column_name},
+                            test.{test_column_name})
+                        AS dist,
+                        train.{label_column_name}{cast_to_int}
+                            AS {label_col_temp}
+                        FROM {point_source} AS train, {test_source} AS test
+                    ) {x_temp_table}
+                ) {y_temp_table}
+            WHERE {y_temp_table}.r <= {k_val}
+            """.format(cast_to_int='::INTEGER' if is_classification else '',
+                       **locals()))
+
+        if is_classification:
+            plpy.execute(
+                """
+                CREATE TABLE {output_table} AS
+                SELECT {test_id} AS id, {test_column_name},
+                       {schema_madlib}.mode({label_col_temp}) AS prediction
+                FROM {interim_table} JOIN {test_source}
+                     ON {test_id} = {id_column_name}
+                GROUP BY {test_id}, {test_column_name}
+                """.format(**locals()))
         else:
             plpy.execute(
-            """
-            CREATE TABLE {output_table} AS
-            SELECT {test_id} AS id, {test_column_name},
-            	AVG({label_column_name_unique}) AS prediction
-            FROM
-                {madlib_knn_interm} JOIN {test_source}
-                	ON {test_id} = {id_column_name}
-            GROUP BY {test_id}, {test_column_name}
-            ORDER BY {test_id}""".format(**locals()))
-
-        plpy.execute("""DROP TABLE IF EXISTS {madlib_knn_interm}
-        	""".format(**locals()))
+                """
+                CREATE TABLE {output_table} AS
+                SELECT {test_id} AS id, {test_column_name},
+                       AVG({label_col_temp}) AS prediction
+                FROM
+                    {interim_table} JOIN {test_source}
+                    ON {test_id} = {id_column_name}
+                GROUP BY {test_id}, {test_column_name}
+                """.format(**locals()))
+        plpy.execute("DROP TABLE IF EXISTS {0}".format(interim_table))
+# ------------------------------------------------------------------------------
