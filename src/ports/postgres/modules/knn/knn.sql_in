@@ -358,6 +358,7 @@ $$ LANGUAGE plpgsql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 
 
+
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
     point_source VARCHAR,
     point_column_name VARCHAR,
@@ -369,79 +370,20 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
     operation VARCHAR,
     k INTEGER
 ) RETURNS VARCHAR AS $$
-DECLARE
-    l FLOAT;
-    id INTEGER;
-    vector DOUBLE PRECISION[];
-    cur_pid integer;
-    oldClientMinMessages VARCHAR;
-    returnstring VARCHAR;
-    x_temp_table VARCHAR;
-    y_temp_table VARCHAR;
-    k_val INTEGER;
-    label_column_name_unique VARCHAR;
-    test_id VARCHAR;
-    convert_boolean_to_int VARCHAR;
-BEGIN
-    oldClientMinMessages :=
-        (SELECT setting FROM pg_settings WHERE name = 'client_min_messages');
-    EXECUTE 'SET client_min_messages TO warning';
-    SELECT * FROM MADLIB_SCHEMA.__knn_validate_src(point_source, point_column_name, label_column_name, test_source, test_column_name, id_column_name, output_table, operation, k) INTO k_val;
-    PERFORM MADLIB_SCHEMA.create_schema_pg_temp();
-    x_temp_table := 'knn_'||md5('knn_'||now()::text||random()::text)||'_temp';
-    y_temp_table := 'knn_'||md5('knn_'||now()::text||random()::text)||'_temp';
-    label_column_name_unique := 'label'||md5('knn_'||now()::text||random()::text)||'_name';
-    test_id := 'id'||md5('knn_'||now()::text||random()::text)||'_name';
-
-    convert_boolean_to_int := '';
-    IF (operation = 'c') THEN
-        convert_boolean_to_int := '::INTEGER';
-    END IF;
-
-    EXECUTE
-        $sql$
-	DROP TABLE IF EXISTS pg_temp.madlib_knn_interm;
-	CREATE TABLE pg_temp.madlib_knn_interm AS
-	SELECT *
-    FROM
-        (
-        SELECT row_number() over (partition by $sql$ || test_id || $sql$ order by dist) AS r, $sql$ || x_temp_table || $sql$.*
-        FROM
-            (
-                SELECT test.$sql$ || id_column_name || $sql$ AS $sql$ || test_id || $sql$, MADLIB_SCHEMA.squared_dist_norm2(train.$sql$ || point_column_name || $sql$,test.$sql$ || test_column_name || $sql$) AS dist, train.$sql$ || label_column_name || $sql$ $sql$ || convert_boolean_to_int || $sql$ AS $sql$ || label_column_name_unique || $sql$
-                FROM $sql$ || textin(regclassout(point_source)) || $sql$ AS train, $sql$ || textin(regclassout(test_source)) || $sql$ AS test
-            )$sql$ || x_temp_table || $sql$
-        )$sql$ || y_temp_table || $sql$
-    WHERE $sql$ || y_temp_table || $sql$.r <= $sql$ || k_val;
-
-    IF (operation = 'c') THEN
-    	EXECUTE
-        $sql$
-    	CREATE TABLE $sql$ || output_table || $sql$ AS
-        SELECT $sql$ || test_id || $sql$ AS id, $sql$ || test_column_name || $sql$, MADLIB_SCHEMA.mode($sql$ || label_column_name_unique || $sql$) AS prediction
-        FROM pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$ ON $sql$ || test_id || $sql$=$sql$ || id_column_name || $sql$
-        GROUP BY $sql$ || test_id || $sql$, $sql$ || test_column_name;
-    ELSE
-        EXECUTE
-        $sql$
-	    CREATE TABLE $sql$ || output_table || $sql$ AS
-        SELECT $sql$ || test_id || $sql$ AS id, $sql$ || test_column_name || $sql$, avg($sql$ || label_column_name_unique || $sql$) AS prediction
-        FROM
-            pg_temp.madlib_knn_interm join $sql$ || textin(regclassout(test_source)) || $sql$ on $sql$ || test_id || $sql$=$sql$ || id_column_name || $sql$
-        GROUP BY $sql$ || test_id || $sql$, $sql$ || test_column_name || $sql$
-        ORDER BY $sql$ || test_id || $sql$ $sql$;
-    END IF;
-
-   EXECUTE 'SET client_min_messages TO ' || oldClientMinMessages;
-   IF (operation = 'c') THEN
-   	returnstring := 'The classification results have been written to output table '||output_table;
-   ELSE
-        returnstring := 'The regression results have been written to output table '||output_table;
-   END IF;
-   DROP TABLE pg_temp.madlib_knn_interm;
-   RETURN returnstring;
-END;
-$$ LANGUAGE plpgsql VOLATILE
+    PythonFunctionBodyOnly(`knn', `knn')
+    return knn.knn(
+        schema_madlib,
+        point_source,
+        point_column_name,
+        label_column_name,
+        test_source,
+        test_column_name,
+        id_column_name,
+        output_table,
+        operation,
+        k
+    )
+$$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 
 
@@ -463,4 +405,3 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
-
