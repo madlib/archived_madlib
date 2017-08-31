@@ -19,7 +19,7 @@
 #####################################################################################
 workdir=`pwd`
 user_name=`whoami`
-reponame=incubator-madlib
+reponame=${REPONAME:=madlib}
 
 echo "======================================================================"
 echo "Build user: $user_name"
