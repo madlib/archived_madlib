@@ -1,0 +1,328 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ *
+ * @file graph.sql_in
+ *
+ * @brief SQL functions for graph analytics
+ * @date Nov 2016
+ *
+ * @sa Provides various graph algorithms.
+ *
+ *//* ----------------------------------------------------------------------- */
+m4_include(`SQLCommon.m4')
+
+/**
+@addtogroup grp_hits
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#hits">HITS</a></li>
+<li><a href="#notes">Notes</a></li>
+<li><a href="#examples">Examples</a></li>
+<li><a href="#literature">Literature</a></li>
+</ul>
+</div>
+
+@brief Find the HITS scores(Authority and Hub) of all vertices in a directed graph.
+
+Given a graph, the HITS (Hyperlink-Induced Topic Search) algorithm outputs the 
+authority score and hub score of every vertex, where authority estimates the 
+value of the content of the page and hub estimates the value of its links to
+other pages. This algorithm was developed by Jon Kleinberg to rate web pages.
+
+@anchor hits
+@par HITS
+<pre class="syntax">
+hits( vertex_table,
+        vertex_id,
+        edge_table,
+        edge_args,
+        out_table,
+        max_iter,
+        threshold,
+        grouping_cols
+          )
+</pre>
+
+\b Arguments
+<dl class="arglist">
+<dt>vertex_table</dt>
+<dd>TEXT. Name of the table containing the vertex data for the graph. Must 
+    contain the column specified in the 'vertex_id' parameter below.</dd>
+
+<dt>vertex_id</dt>
+<dd>TEXT, default = 'id'. Name of the column in 'vertex_table' containing 
+    vertex ids. The vertex ids are of type INTEGER with no duplicates. They 
+    do not need to be contiguous.</dd>
+
+<dt>edge_table</dt>
+<dd>TEXT. Name of the table containing the edge data. The edge table must   
+contain columns for source vertex and destination vertex.</dd>
+
+<dt>edge_args</dt>
+<dd>TEXT. A comma-delimited string containing multiple named arguments of
+the form "name=value". The following parameters are supported for
+this string argument:
+  - src (INTEGER): Name of the column containing the source vertex ids in 
+                   the edge table. Default column name is 'src'.
+  - dest (INTEGER): Name of the column containing the destination vertex 
+                    ids in the edge table. Default column name is 'dest'.</dd>
+
+<dt>out_table</dt>
+<dd>TEXT. Name of the table to store the result of HITS. It will contain 
+    a row for every vertex from 'vertex_table' with the following columns:
+    - vertex_id : The id of a vertex. Will use the input parameter 'vertex_id' 
+                  for column naming.
+    - authority : The vertex's Authority score.
+    - hub : The vertex's Hub score.</dd>
+
+A summary table is also created that contains information 
+regarding the number of iterations required for convergence.
+It is named by adding the suffix '_summary' to the 'out_table' 
+parameter.
+
+<dt>max_iter (optional) </dt>
+<dd>INTEGER, default: 100. The maximum number of iterations allowed. An 
+    iteration consists of both Authority and Hub phases.</dd>
+
+<dt>threshold (optional) </dt>
+<dd>FLOAT8, default: (1/number of vertices * 1000). If the difference 
+    between the values of both scores (Authority and Hub) for every vertex of 
+    two consecutive iterations is smaller than 'threshold', or the iteration 
+    number is larger than 'max_iter', the computation stops. If you set the 
+    threshold to zero, then you will force the algorithm to run for the full 
+    number of iterations specified in 'max_iter'. Threshold need to be set to 
+    a value equal or less than 1 since both values (Authority and Hub) of nodes
+    are initialized as 1. Note that both Authority and Hub value difference 
+    must be below threshold for the algorithm to stop.</dd>
+
+<dt>grouping_cols (optional)[not support yet]</dt>
+<dd>TEXT, default: NULL. A single column or a list of comma-separated columns 
+    that divides the input data into discrete groups, resulting in one 
+    distribution per group. When this value is NULL, no grouping is used and a
+    single model is generated for all data.
+    @note Expressions are not currently supported for 'grouping_cols'.
+    The grouping support will be added later.</dd>
+
+</dl>
+
+@anchor notes
+@par Notes
+
+1. The HITS algorithm is based on Kleinberg's paper [1].
+2. This algorithm supports multigraph, and duplicated edges do count for multiple
+   times while calculating authority and hub scores. 
+
+@anchor examples
+@examp
+
+-# Create vertex and edge tables to represent the graph:
+<pre class="syntax">
+DROP TABLE IF EXISTS vertex, edge;
+CREATE TABLE vertex(
+        id INTEGER
+        );
+CREATE TABLE edge(
+        src INTEGER,
+        dest INTEGER,
+        user_id INTEGER
+        );
+INSERT INTO vertex VALUES
+(0),
+(1),
+(2),
+(3),
+(4),
+(5),
+(6);
+INSERT INTO edge VALUES
+(0, 1, 1),
+(0, 2, 1),
+(0, 4, 1),
+(1, 2, 1),
+(1, 3, 1),
+(2, 3, 1),
+(2, 5, 1),
+(2, 6, 1),
+(3, 0, 1),
+(4, 0, 1),
+(5, 6, 1),
+(6, 3, 1);
+</pre>
+
+-# Compute the HITS scores:
+<pre class="syntax">
+DROP TABLE IF EXISTS hits_out, hits_out_summary;
+SELECT madlib.hits(
+             'vertex',             -- Vertex table
+             'id',                 -- Vertex id column
+             'edge',               -- Edge table
+             'src=src, dest=dest', -- Comma delimited string of edge arguments
+             'hits_out');          -- Output table of HITS
+SELECT * FROM hits_out ORDER BY id;
+</pre>
+<pre class="result">
+ id |      authority       |         hub
+----+----------------------+----------------------
+  0 | 8.43871829094767e-07 |    0.338306115082446
+  1 |    0.158459587238488 |    0.527865350447717
+  2 |      0.4056279696903 |    0.675800764727121
+  3 |    0.721775835522934 | 3.95111934817192e-07
+  4 |    0.158459587238488 | 3.95111934817192e-07
+  5 |    0.316385413093535 |    0.189719957843093
+  6 |    0.405199928761725 |    0.337944978189023
+(7 rows)
+</pre>
+<pre class="syntax">
+SELECT * FROM hits_out_summary;
+</pre>
+<pre class="result">
+ __iterations__
+-----------------+
+              17
+(1 row)
+</pre>
+-# Running HITS with a max_iter of 3 results in different final values:
+<pre class="syntax">
+DROP TABLE IF EXISTS hits_out, hits_out_summary;
+SELECT madlib.hits(
+             'vertex',             -- Vertex table
+             'id',                 -- Vertex id column
+             'edge',               -- Edge table
+             'src=src, dest=dest', -- Comma delimited string of edge arguments
+             'hits_out',           -- Output table of HITS
+             3);                   -- Max iteration
+SELECT * FROM hits_out ORDER BY id;
+</pre>
+<pre class="result">
+ id |    authority    |        hub
+----+-----------------+--------------------
+  0 | 0.0865332738776 |  0.375721659592658
+  1 | 0.1838832069899 |  0.533118571043637
+  2 |  0.432666369388 |   0.65497424442504
+  3 | 0.7030828502555 | 0.0406185577938009
+  4 | 0.1838832069899 | 0.0406185577938009
+  5 | 0.3028664585716 |  0.182783510072104
+  6 | 0.3893997324492 |  0.330025782074632
+(7 rows)
+</pre>
+<pre class="syntax">
+SELECT * FROM hits_out_summary;
+</pre>
+<pre class="result">
+ __iterations__
+-----------------+
+              3
+(1 row)
+</pre>
+
+-# Running HITS with a threshold of 0.01 results in different final values:
+<pre class="syntax">
+DROP TABLE IF EXISTS hits_out, hits_out_summary;
+SELECT madlib.hits(
+             'vertex',             -- Vertex table
+             'id',                 -- Vertex id column
+             'edge',               -- Edge table
+             'src=src, dest=dest', -- Comma delimited string of edge arguments
+             'hits_out',           -- Output table of HITS
+             NULL,
+             0.01);                -- Threshold
+SELECT * FROM hits_out ORDER BY id;
+</pre>
+<pre class="result">
+ id |      authority      |         hub
+----+---------------------+---------------------
+  0 | 0.00732986181947514 |   0.351368354456342
+  1 |   0.167097943665847 |   0.530913722392824
+  2 |   0.416198716437073 |   0.668522269025145
+  3 |   0.717639283762987 | 0.00343216951849906
+  4 |   0.167097943665847 | 0.00343216951849906
+  5 |   0.311633656418623 |    0.18657058991966
+  6 |   0.398446707343031 |   0.336030846920549
+(7 rows)
+</pre>
+<pre class="syntax">
+SELECT * FROM hits_out_summary;
+</pre>
+<pre class="result">
+ __iterations__
+-----------------+
+              6
+(1 row)
+</pre>
+@anchor literature
+@par Literature
+
+[1] HITS algorithm https://www.cs.cornell.edu/home/kleinber/auth.pdf
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hits(
+    vertex_table    TEXT,
+    vertex_id       TEXT,
+    edge_table      TEXT,
+    edge_args       TEXT,
+    out_table       TEXT,
+    max_iter        INTEGER,
+    threshold       FLOAT8
+) RETURNS VOID AS $$
+    PythonFunction(graph, hits, hits)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hits(
+    vertex_table    TEXT,
+    vertex_id       TEXT,
+    edge_table      TEXT,
+    edge_args       TEXT,
+    out_table       TEXT,
+    max_iter        INTEGER
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.hits($1, $2, $3, $4, $5, $6,NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hits(
+    vertex_table    TEXT,
+    vertex_id       TEXT,
+    edge_table      TEXT,
+    edge_args       TEXT,
+    out_table       TEXT
+) RETURNS VOID AS $$
+    SELECT MADLIB_SCHEMA.hits($1, $2, $3, $4, $5, 100, NULL)
+$$ LANGUAGE SQL
+m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
+-------------------------------------------------------------------------
+
+-- Online help
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hits(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(graph, hits, hits_help)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.hits()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.hits('');
+$$ LANGUAGE sql IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+-------------------------------------------------------------------------
