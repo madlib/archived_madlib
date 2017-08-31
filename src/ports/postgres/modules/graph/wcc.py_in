@@ -29,6 +29,8 @@
 
 import plpy
 from utilities.utilities import _assert
+from utilities.utilities import _check_groups
+from utilities.utilities import _grp_from_table
 from utilities.utilities import extract_keyvalue_params
 from utilities.utilities import unique_string, split_quoted_delimited_str
 from utilities.validate_args import columns_exist_in_table, get_expr_type
@@ -56,16 +58,6 @@ def validate_wcc_args(schema_madlib, vertex_table, vertex_id, edge_table,
         _assert(columns_exist_in_table(edge_table, grouping_cols_list, schema_madlib),
                 "Weakly Connected Components error: "
                 "One or more grouping columns specified do not exist!")
-
-
-def prefix_tablename_to_colnames(table, cols_list):
-    return ' , '.join(["{0}.{1}".format(table, col) for col in cols_list])
-
-
-def get_where_condition(table1, table2, cols_list):
-    return ' AND '.join(['{0}.{2}={1}.{2}'.format(table1, table2, col)
-                         for col in cols_list])
-
 
 def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
         out_table, grouping_cols, **kwargs):
@@ -144,21 +136,18 @@ def wcc(schema_madlib, vertex_table, vertex_id, edge_table, edge_args,
                 SELECT DISTINCT {grouping_cols} FROM {edge_table}
             """.format(**locals()))
 
-        pttc = prefix_tablename_to_colnames
-        gwc = get_where_condition
-
         comma_toupdate_prefixed_grouping_cols = ', ' + \
-            pttc(toupdate, grouping_cols_list)
+            _grp_from_table(toupdate, grouping_cols_list)
         comma_oldupdate_prefixed_grouping_cols = ', ' + \
-            pttc(oldupdate, grouping_cols_list)
-        subq_prefixed_grouping_cols = pttc(subq, grouping_cols_list)
+            _grp_from_table(oldupdate, grouping_cols_list)
+        subq_prefixed_grouping_cols = _grp_from_table(subq, grouping_cols_list)
         old_new_update_where_condition = ' AND ' + \
-            gwc(oldupdate, newupdate, grouping_cols_list)
+            _check_groups(oldupdate, newupdate, grouping_cols_list)
         new_to_update_where_condition = ' AND ' + \
-            gwc(newupdate, toupdate, grouping_cols_list)
+            _check_groups(newupdate, toupdate, grouping_cols_list)
         edge_to_update_where_condition = ' AND ' + \
-            gwc(edge_table, toupdate, grouping_cols_list)
-        join_grouping_cols = gwc(subq, distinct_grp_table, grouping_cols_list)
+            _check_groups(edge_table, toupdate, grouping_cols_list)
+        join_grouping_cols = _check_groups(subq, distinct_grp_table, grouping_cols_list)
         group_by_clause_newupdate = ('' if not grouping_cols else
                                      '{0}, {1}.{2}'.format(subq_prefixed_grouping_cols,
                                                            subq, vertex_id))
@@ -460,11 +449,10 @@ def graph_wcc_largest_cpt(schema_madlib, wcc_table, largest_cpt_table,
         groupby_clause_subt = ''
         grouping_cols_join = ''
         if grouping_cols:
-            select_grouping_cols_subq = ', '.join(['{0}.{1}'.format(subq, gcol)
-                                                   for gcol in glist]) + ', '
+            select_grouping_cols_subq = _grp_from_table(subq, glist) + ','
             groupby_clause_subt = ' GROUP BY {0}'.format(grouping_cols)
-            grouping_cols_join = ' AND ' + ', '.join(['{0}.{2}={1}.{2}'.format(
-                subq, subt, gcol) for gcol in glist])
+            grouping_cols_join = ' AND ' + _check_groups (subq, subt, glist)
+
         plpy.execute("""
                 CREATE TABLE {largest_cpt_table} AS
                 SELECT {select_grouping_cols_subq} {subq}.component_id,
@@ -585,10 +573,9 @@ def graph_wcc_reachable_vertices(schema_madlib, wcc_table, src,
         subq = unique_string(desp='subq')
         glist = split_quoted_delimited_str(grouping_cols)
         grouping_cols_join = '' if not grouping_cols else ' AND ' + \
-            ', '.join(['{0}.{2}={1}.{2}'.format(wcc_table, subq, gcol)
-                       for gcol in glist])
-        subq_grouping_cols = '' if not grouping_cols else ', '.join(
-            ['{0}.{1}'.format(subq, gcol) for gcol in glist]) + ', '
+            _check_groups(wcc_table, subq, glist)
+        subq_grouping_cols = '' if not grouping_cols else \
+            _grp_from_table(subq, glist) + ', '
         plpy.execute("""
                 CREATE TABLE {reachable_vertices_table} AS
                 SELECT {subq_grouping_cols} {subq}.component_id,
