@@ -18,14 +18,32 @@ Development with Docker
 =======================
 We provide a Docker image with necessary dependencies required to compile and test MADlib on PostgreSQL 9.6. You can view the dependency Docker file at ./tool/docker/base/Dockerfile_postgres_9_6. The image is hosted on Docker Hub at madlib/postgres_9.6:latest. Later we will provide a similar Docker image for Greenplum Database.
 
-Some useful commands to use the docker file:
+We provide a script to quickly run this docker image at ./tool/docker_start.sh, which will mount your local madlib directory, build MADlib and run install check on this Docker image. At the end, it will `docker exec` as postgres user. Note that you have to run this script from inside your madlib directory, and you can specify your docker CONTAINER_NAME (default is madlib) and IMAGE_TAG (default is latest). Here is an example:
+
+```
+CONTAINER_NAME=my_madlib IMAGE_TAG=LaTex ./tool/docker_start.sh
+```
+Notice that this script only needs to be run once. After that, you will have a local docker container with CONTAINER_NAME running. To get access to the container, run the following command and you can keep working on it.
+
+```
+docker exec -it CONTAINER_NAME bash
+```
+
+To kill this docker container, run:
+
+```
+docker kill CONTAINER_NAME
+docker rm CONTAINER_NAME
+```
+
+You can also manually run those commands to do the same thing:
 
 ```
 ## 1) Pull down the `madlib/postgres_9.6:latest` image from docker hub:
 docker pull madlib/postgres_9.6:latest
 
-## 2) Launch a container corresponding to the MADlib image, mounting the
-##    source code folder to the container:
+## 2) Launch a container corresponding to the MADlib image, name it
+##    madlib, mounting the source code folder to the container:
 docker run -d -it --name madlib \
     -v (path to madlib directory):/madlib/ madlib/postgres_9.6
 # where madlib is the directory where the MADlib source code resides.
@@ -40,8 +58,8 @@ docker run -d -it --name madlib \
 
 ## 3) When the container is up, connect to it and build MADlib:
 docker exec -it madlib bash
-mkdir /madlib/build-docker
-cd /madlib/build-docker
+mkdir /madlib/build_docker
+cd /madlib/build_docker
 cmake ..
 make
 make doc
@@ -61,6 +79,16 @@ src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres reinsta
 ## 6) Kill and remove containers (after exiting the container):
 docker kill madlib
 docker rm madlib
+```
+
+Instruction for building design pdf on Docker:
+
+For users who wants to build design pdf, make sure you use the `IMAGE_TAG=LaTex` parameter when running the script. After launching your docker container, run the following to get `design.pdf`:
+
+```
+cd /madlib/build_docker
+make design_pdf
+cd doc/design
 ```
 
 Detailed build instructions are available in [`ReadMe_Build.txt`](ReadMe_Build.txt)
