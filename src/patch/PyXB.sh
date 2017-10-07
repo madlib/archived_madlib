@@ -221,8 +221,3 @@ patch -N -p1 <<'EOF'
                        , 'Intended Audience :: Developers'
                        , 'License :: OSI Approved :: Apache Software License'
 EOF
-
-echo "PyXB: Removing GPL component from code base"
-echo "PyXB: see https://github.com/pabigot/pyxb/issues/77 for details"
-rm -f doc/extapi.py
-rm -f doc/extapi.pyc
