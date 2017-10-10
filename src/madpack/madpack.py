@@ -512,7 +512,9 @@ def _plpy_check(py_min_ver):
         try:
             _internal_run_query("CREATE LANGUAGE plpythonu;", True)
         except:
-            _error('Cannot create language plpythonu. Stopping installation...', False)
+            _error("""Cannot create language plpythonu. Please check if you
+                have configured and installed portid (your platform) with
+                `--with-python` option. Stopping installation...""", False)
             raise Exception
 
     # Check PL/Python version
