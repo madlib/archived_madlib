@@ -71,13 +71,14 @@ neighbors of the given test point.
 <pre class="syntax">
 knn( point_source,
      point_column_name,
+     point_id,
      label_column_name,
      test_source,
      test_column_name,
-     id_column_name,
+     test_id,
      output_table,
-     operation,
-     k
+     k,
+     output_neighbors
    )
 </pre>
 
@@ -93,8 +94,17 @@ in a column of type <tt>DOUBLE PRECISION[]</tt>.
 <dt>point_column_name</dt>
 <dd>TEXT. Name of the column with training data points.</dd>
 
+<dt>point_id</dt>
+<dd>TEXT. Name of the column in 'point_source’ containing source data ids.
+The ids are of type INTEGER with no duplicates. They do not need to be contiguous. 
+This parameter must be used if the list of nearest neighbors are to be output, i.e., 
+if the parameter 'output_neighbors' below is TRUE or if 'label_column_name' is NULL.
+
 <dt>label_column_name</dt>
-<dd>TEXT. Name of the column with labels/values of training data points.</dd>
+<dd>TEXT. Name of the column with labels/values of training data points.
+If Boolean, integer or text types will run knn classification, else if 
+double precision values will run knn regression.  
+If you set this to NULL will return neighbors only without doing classification or regression.</dd>
 
 <dt>test_source</dt>
 <dd>TEXT. Name of the table containing the test data points.
@@ -106,7 +116,7 @@ in a column of type <tt>DOUBLE PRECISION[]</tt>.
 <dt>test_column_name</dt>
 <dd>TEXT. Name of the column with testing data points.</dd>
 
-<dt>id_column_name</dt>
+<dt>test_id</dt>
 <dd>TEXT. Name of the column having ids of data points in test data table.</dd>
 
 <dt>output_table</dt>
@@ -117,7 +127,12 @@ in a column of type <tt>DOUBLE PRECISION[]</tt>.
 
 <dt>k (optional)</dt>
 <dd>INTEGER. default: 1. Number of nearest neighbors to consider.
-For classification, should be an odd number to break ties.</dd>
+For classification, should be an odd number to break ties.
+otherwise result may depend on ordering of the input data.</dd>
+
+<dt>output_neighbors (optional) </dt>
+<dd>BOOLEAN default: FALSE. Outputs the list of k-nearest 
+neighbors that were used in the voting/averaging.</dd>
 
 </dl>
 
@@ -145,15 +160,35 @@ The output of the KNN module is a table with the following columns:
 @anchor examples
 @examp
 
--#  Prepare some training data:
+-#  Prepare some training data for classification:
 <pre class="example">
 DROP TABLE IF EXISTS knn_train_data;
 CREATE TABLE knn_train_data (
                     id integer, 
                     data integer[], 
-                    label float
+                    label integer
                     );
 INSERT INTO knn_train_data VALUES
+(1, '{1,1}', 1),
+(2, '{2,2}', 1),
+(3, '{3,3}', 1),
+(4, '{4,4}', 1),
+(5, '{4,5}', 1),
+(6, '{20,50}', 0),
+(7, '{10,31}', 0),
+(8, '{81,13}', 0),
+(9, '{1,111}', 0);
+</pre>
+
+-#  Prepare some training data for regression:
+<pre class="example">
+DROP TABLE IF EXISTS knn_train_data_reg;
+CREATE TABLE knn_train_data_reg (
+                    id integer, 
+                    data integer[], 
+                    label float
+                    );
+INSERT INTO knn_train_data_reg VALUES
 (1, '{1,1}', 1.0),
 (2, '{2,2}', 1.0),
 (3, '{3,3}', 1.0),
@@ -187,26 +222,27 @@ DROP TABLE IF EXISTS madlib_knn_result_classification;
 SELECT * FROM madlib.knn( 
                 'knn_train_data',      -- Table of training data
                 'data',                -- Col name of training data
+                'id',                  -- Col Name of id in train data 
                 'label',               -- Training labels
                 'knn_test_data',       -- Table of test data
                 'data',                -- Col name of test data
                 'id',                  -- Col name of id in test data 
                 'madlib_knn_result_classification',  -- Output table
-                'c',                   -- Classification
                  3                     -- Number of nearest neighbours
+                 True                  -- True if you want to show Nearest-Neighbors, False otherwise
                 );
 SELECT * from madlib_knn_result_classification ORDER BY id;
 </pre>
 Result:
 <pre class="result">
- id |  data   | prediction 
-----+---------+------------
-  1 | {2,1}   |          1
-  2 | {2,6}   |          1
-  3 | {15,40} |          0
-  4 | {12,1}  |          1
-  5 | {2,90}  |          0
-  6 | {50,45} |          0
+ id |  data   | prediction | k_nearest_neighbours 
+----+---------+------------+----------------------
+  1 | {2,1}   |          1 | {1,2,3}
+  2 | {2,6}   |          1 | {5,4,3}
+  3 | {15,40} |          0 | {7,6,5}
+  4 | {12,1}  |          1 | {4,5,3}
+  5 | {2,90}  |          0 | {9,6,7}
+  6 | {50,45} |          0 | {6,7,8}
 (6 rows)
 </pre>
 
@@ -214,28 +250,29 @@ Result:
 <pre class="example">
 DROP TABLE IF EXISTS madlib_knn_result_regression;
 SELECT * FROM madlib.knn( 
-                'knn_train_data',      -- Table of training data
+                'knn_train_data_reg',  -- Table of training data
                 'data',                -- Col name of training data
+                'id',                  -- Col Name of id in train data 
                 'label',               -- Training labels
                 'knn_test_data',       -- Table of test data
                 'data',                -- Col name of test data
                 'id',                  -- Col name of id in test data 
                 'madlib_knn_result_regression',  -- Output table
-                'r',                   -- Regressions
-                 3                     -- Number of nearest neighbours
+                 3,                    -- Number of nearest neighbours
+                True                   -- True if you want to show Nearest-Neighbors, False otherwise
                 );
 SELECT * from madlib_knn_result_regression ORDER BY id;
 </pre>
 Result:
 <pre class="result">
- id |  data   |    prediction     
-----+---------+-------------------
-  1 | {2,1}   |                 1
-  2 | {2,6}   |                 1
-  3 | {15,40} | 0.333333333333333
-  4 | {12,1}  |                 1
-  5 | {2,90}  |                 0
-  6 | {50,45} |                 0
+ id |  data   |    prediction     | k_nearest_neighbours 
+----+---------+-------------------+----------------------
+  1 | {2,1}   |                 1 | {1,2,3}
+  2 | {2,6}   |                 1 | {5,4,3}
+  3 | {15,40} | 0.333333333333333 | {7,6,5}
+  4 | {12,1}  |                 1 | {4,5,3}
+  5 | {2,90}  |                 0 | {9,6,7}
+  6 | {50,45} |                 0 | {6,7,8}
 (6 rows)
 </pre>
 
@@ -281,7 +318,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__knn_validate_src(
     label_column_name VARCHAR,
     test_source VARCHAR,
     test_column_name VARCHAR,
-    id_column_name VARCHAR,
+    test_id VARCHAR,
     output_table VARCHAR,
     operation VARCHAR,
     k INTEGER
@@ -294,7 +331,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.__knn_validate_src(
         label_column_name,
         test_source,
         test_column_name,
-        id_column_name,
+        test_id,
         output_table,
         operation,
         k
@@ -308,7 +345,7 @@ CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
 ) RETURNS VOID AS $$
 BEGIN
     IF arg1 = 'help' OR arg1 = 'usage' OR arg1 = '?' THEN
-	RAISE NOTICE
+    RAISE NOTICE
 '
 -----------------------------------------------------------------------
                             USAGE
@@ -316,13 +353,14 @@ BEGIN
 SELECT {schema_madlib}.knn(
     point_source,       -- Training data table having training features as vector column and labels
     point_column_name,  -- Name of column having feature vectors in training data table
+    point_id,           -- Name of column having feature vector Ids in train data table
     label_column_name,  -- Name of column having actual label/vlaue for corresponding feature vector in training data table
     test_source,        -- Test data table having features as vector column. Id of features is mandatory
     test_column_name,   -- Name of column having feature vectors in test data table
-    id_column_name,     -- Name of column having feature vector Ids in test data table
+    test_id,     -- Name of column having feature vector Ids in test data table
     output_table,       -- Name of output table
-    operation,          -- c for classification task, r for regression task
-    k                   -- value of k. Default will go as 1
+    k,                  -- value of k. Default will go as 1
+    output_neighbors    -- Outputs the list of k-nearest neighbors that were used in the voting/averaging.
     );
 
 -----------------------------------------------------------------------
@@ -333,6 +371,7 @@ The output of the KNN module is a table with the following columns:
 id                  The ids of test data points.
 test_column_name    The test data points.
 prediction          The output of KNN- label in case of classification, average value in case of regression.
+k_nearest_neighbours The list of k-nearest neighbors that were used in the voting/averaging.
 ';
     END IF;
 END;
@@ -362,26 +401,28 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `READS SQL DATA', `');
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
     point_source VARCHAR,
     point_column_name VARCHAR,
+    point_id VARCHAR,
     label_column_name VARCHAR,
     test_source VARCHAR,
     test_column_name VARCHAR,
-    id_column_name VARCHAR,
+    test_id VARCHAR,
     output_table VARCHAR,
-    operation VARCHAR,
-    k INTEGER
+    k INTEGER,
+    output_neighbors Boolean
 ) RETURNS VARCHAR AS $$
     PythonFunctionBodyOnly(`knn', `knn')
     return knn.knn(
         schema_madlib,
         point_source,
         point_column_name,
+        point_id,
         label_column_name,
         test_source,
         test_column_name,
-        id_column_name,
+        test_id,
         output_table,
-        operation,
-        k
+        k,
+        output_neighbors
     )
 $$ LANGUAGE plpythonu VOLATILE
 m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
@@ -390,17 +431,18 @@ m4_ifdef(`__HAS_FUNCTION_PROPERTIES__', `MODIFIES SQL DATA', `');
 CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.knn(
     point_source VARCHAR,
     point_column_name VARCHAR,
+    point_id VARCHAR,
     label_column_name VARCHAR,
     test_source VARCHAR,
     test_column_name VARCHAR,
-    id_column_name VARCHAR,
+    test_id VARCHAR,
     output_table VARCHAR,
-    operation VARCHAR
+    output_neighbors Boolean
 ) RETURNS VARCHAR AS $$
 DECLARE
     returnstring VARCHAR;
 BEGIN
-    returnstring = MADLIB_SCHEMA.knn($1,$2,$3,$4,$5,$6,$7,$8,1);
+    returnstring = MADLIB_SCHEMA.knn($1,$2,$3,$4,$5,$6,$7,$8,1,$9);
     RETURN returnstring;
 END;
 $$ LANGUAGE plpgsql VOLATILE
