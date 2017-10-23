@@ -661,10 +661,11 @@ DecisionTree<Container>::pickSurrogates(
     for (Index i=0; i < n_surr_nodes; i++){
         Index curr_node = n_ancestors + i;
         assert(curr_node >= 0 && curr_node < feature_indices.size());
-        Index stats_i = static_cast<Index>(state.stats_lookup(i));
-        assert(stats_i >= 0);
 
         if (feature_indices(curr_node) >= 0){
+            Index stats_i = static_cast<Index>(state.stats_lookup(i));
+            assert(stats_i >= 0);
+
             // 1. Compute the max count and corresponding split threshold for
             // each categorical and continuous feature
             ColumnVector cat_max_thres = ColumnVector::Zero(n_cats);
