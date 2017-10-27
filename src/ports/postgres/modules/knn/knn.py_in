@@ -113,15 +113,10 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
                                         points in test data table.
             @param output_table         Name of the table to store final
                                         results.
-            @param operation            Flag for the operation:
-                                        'c' for classification and
-                                        'r' for regression
             @param k                    default: 1. Number of nearest
                                         neighbors to consider
             @output_neighbours          Outputs the list of k-nearest neighbors
                                         that were used in the voting/averaging.
-        Returns:
-            VARCHAR                     Name of the output table.
     """
     with MinWarning('warning'):
         k_val = knn_validate_src(schema_madlib, point_source,
@@ -134,106 +129,74 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
         label_col_temp = unique_string(desp='label_col_temp')
         test_id_temp = unique_string(desp='test_id_temp')
 
-        if output_neighbors is None or '':
-            output_neighbors = False
+        if output_neighbors is None:
+            output_neighbors = True
 
         interim_table = unique_string(desp='interim_table')
 
-        if label_column_name is None or label_column_name == '':
-            plpy.execute(
-                """
-                CREATE TEMP TABLE {interim_table} AS
-                SELECT * FROM
-                    (
+        pred_out = ""
+        knn_neighbors = ""
+        label_out = ""
+        cast_to_int = ""
+
+        if output_neighbors:
+            knn_neighbors = (", array_agg(knn_temp.train_id ORDER BY "
+                                "knn_temp.dist ASC) AS k_nearest_neighbours ")
+        if label_column_name:
+            is_classification = False
+            label_column_type = get_expr_type(
+                label_column_name, point_source).lower()
+            if label_column_type in ['boolean', 'integer', 'text']:
+                is_classification = True
+                cast_to_int = '::INTEGER'
+
+            pred_out = ", avg({label_col_temp})".format(**locals())
+            if is_classification:
+                pred_out = (", {schema_madlib}.mode({label_col_temp})"
+                            ).format(**locals())
+            pred_out += " AS prediction"
+            label_out = (", train.{label_column_name}{cast_to_int}"
+                            " AS {label_col_temp}").format(**locals())
+
+        if not label_column_name and not output_neighbors:
+
+            plpy.error("kNN error: Either label_column_name or "
+                   "output_neighbors has to be non-NULL.")
+
+        plpy.execute("""
+            CREATE TEMP TABLE {interim_table} AS
+                SELECT * FROM (
                     SELECT row_number() over
                             (partition by {test_id_temp} order by dist) AS r,
                             {x_temp_table}.*
-                    FROM
-                        (
+                    FROM (
                         SELECT test.{test_id} AS {test_id_temp} ,
                             train.{point_id} as train_id ,
                             {schema_madlib}.squared_dist_norm2(
                                 train.{point_column_name},
                                 test.{test_column_name})
-                            AS dist
-                            FROM {point_source} AS train, {test_source} AS test
+                            AS dist {label_out}
+                            FROM {point_source} AS train,
+                                {test_source} AS test
                         ) {x_temp_table}
                     ) {y_temp_table}
-                WHERE {y_temp_table}.r <= {k_val}
-                """.format(**locals()))
-            plpy.execute(
-                """
-                CREATE TABLE {output_table} AS
-                    SELECT {test_id_temp} AS id, {test_column_name} ,
-                        CASE WHEN {output_neighbors}
-                        THEN array_agg(knn_temp.train_id)
-                        ELSE NULL END  AS k_nearest_neighbours
-                    FROM pg_temp.{interim_table} AS knn_temp
-                    join
-                        {test_source} AS knn_test ON
-                        knn_temp.{test_id_temp} = knn_test.{test_id}
-                    GROUP BY {test_id_temp}  ,  {test_column_name}
-                """.format(**locals()))
-            return
-
-        is_classification = False
-        label_column_type = get_expr_type(
-            label_column_name, point_source).lower()
-        if label_column_type in ['boolean', 'integer', 'text']:
-            is_classification = True
-            convert_boolean_to_int = '::INTEGER'
-        else:
-            is_classification = False
+            WHERE {y_temp_table}.r <= {k_val}
+            """.format(**locals()))
 
         plpy.execute(
             """
-            CREATE TEMP TABLE {interim_table} AS
-            SELECT * FROM
-                (
-                SELECT row_number() over
-                        (partition by {test_id_temp} order by dist) AS r,
-                        {x_temp_table}.*
-                FROM
-                    (
-                    SELECT test.{test_id} AS {test_id_temp} ,
-                        train.{point_id} as train_id ,
-                        {schema_madlib}.squared_dist_norm2(
-                            train.{point_column_name},
-                            test.{test_column_name})
-                        AS dist,
-                        train.{label_column_name}{cast_to_int}
-                            AS {label_col_temp}
-                        FROM {point_source} AS train, {test_source} AS test
-                    ) {x_temp_table}
-                ) {y_temp_table}
-            WHERE {y_temp_table}.r <= {k_val}
-            """.format(cast_to_int='::INTEGER' if is_classification else '',
-                       **locals()))
+            CREATE TABLE {output_table} AS
+                SELECT {test_id_temp} AS id, {test_column_name}
+                    {pred_out}
+                    {knn_neighbors}
+                FROM pg_temp.{interim_table} AS knn_temp
+                    JOIN
+                    {test_source} AS knn_test ON
+                    knn_temp.{test_id_temp} = knn_test.{test_id}
+                GROUP BY {test_id_temp} , {test_column_name}
+            """.format(**locals()))
 
-        knn_create_table = 'CREATE TABLE ' + output_table + ' AS '  \
-            'SELECT ' + test_id_temp + ' AS id,' + test_column_name + ','
-        knn_pred_class = schema_madlib + \
-            '.mode(' + label_col_temp + ') AS prediction'
-        knn_pred_reg = 'avg(' + label_col_temp + ') AS prediction'
-        knn_neighbours = ', array_agg(knn_temp.train_id) AS k_nearest_neighbours '
-        knn_group_by = 'FROM pg_temp.' + interim_table + ' AS knn_temp join ' \
-            + test_source + ' AS knn_test ON  knn_temp.' + test_id_temp + '= knn_test.' \
-            + test_id + ' GROUP BY ' + test_id_temp + ', ' + test_column_name
-
-        if is_classification:
-            if output_neighbors:
-                plpy.execute("""{knn_create_table}{knn_pred_class}
-                    {knn_neighbours}{knn_group_by}""".format(**locals()))
-            else:
-                plpy.execute(""" {knn_create_table}{knn_pred_class}
-                    {knn_group_by}""".format(**locals()))
-        else:
-            if output_neighbors:
-                plpy.execute(""" {knn_create_table}{knn_pred_reg}
-                    {knn_neighbours}{knn_group_by}""".format(**locals()))
-            else:
-                plpy.execute("""{knn_create_table}{knn_pred_reg}
-                    {knn_group_by}""".format(**locals()))
 
         plpy.execute("DROP TABLE IF EXISTS {0}".format(interim_table))
+        return
 # ------------------------------------------------------------------------------
