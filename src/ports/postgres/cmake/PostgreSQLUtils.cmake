@@ -71,6 +71,8 @@ function(determine_target_versions OUT_VERSIONS)
                 # implying we only need 1 folder for same major versions
                 if(${${PORT_UC}_VERSION_MAJOR} EQUAL 5)
                     set(VERSION "5")
+                elseif(${${PORT_UC}_VERSION_MAJOR} EQUAL 6)
+                    set(VERSION "6")
 
                 # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
                 # MADlib treat 4.3.5+ as DB version that is different from 4.3
