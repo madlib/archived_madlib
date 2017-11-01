@@ -11,6 +11,7 @@
 """
 
 from utilities.control import IterationController2S
+from utilities.control import OptimizerControl
 
 def compute_lmf_igd(schema_madlib, rel_args, rel_state, rel_source,
     col_row, col_column, col_value, **kwargs):
@@ -33,40 +34,45 @@ def compute_lmf_igd(schema_madlib, rel_args, rel_state, rel_source,
     @return The iteration number (i.e., the key) with which to look up the
         result in \c rel_state
     """
-    iterationCtrl = IterationController2S(
-        rel_args = rel_args,
-        rel_state = rel_state,
-        stateType = "DOUBLE PRECISION[]",
-        truncAfterIteration = False,
-        schema_madlib = schema_madlib, # Identifiers start here
-        rel_source = rel_source,
-        col_row = col_row,
-        col_column = col_column,
-        col_value = col_value)
-    with iterationCtrl as it:
-        it.iteration = 0
-        while True:
-            it.update("""
-                SELECT
-                    {schema_madlib}.lmf_igd_step(
-                        (_src.{col_row})::integer,
-                        (_src.{col_column})::integer,
-                        (_src.{col_value})::integer,
-                        m4_ifdef(`__HAWQ__', `{{__state__}}', `
-                        (SELECT _state FROM {rel_state}
-                            WHERE _iteration = {iteration})'),
-                        (_args.row_dim)::integer,
-                        (_args.column_dim)::integer,
-                        (_args.max_rank)::integer,
-                        (_args.stepsize)::FLOAT8,
-                        (_args.scale_factor)::FLOAT8)
-                FROM {rel_source} AS _src, {rel_args} AS _args
-                """)
-            if it.test("""
-                {iteration} > _args.num_iterations OR
-                {schema_madlib}.internal_lmf_igd_distance(
-                    _state_previous, _state_current) < _args.tolerance
-                """):
-                break
-    return iterationCtrl.iteration
+
+    # We disable ORCA since this function creates an edge case where
+    # the performance is worse than the planner. (MADLIB-1170)
+
+    with OptimizerControl(False):
+        iterationCtrl = IterationController2S(
+            rel_args = rel_args,
+            rel_state = rel_state,
+            stateType = "DOUBLE PRECISION[]",
+            truncAfterIteration = False,
+            schema_madlib = schema_madlib, # Identifiers start here
+            rel_source = rel_source,
+            col_row = col_row,
+            col_column = col_column,
+            col_value = col_value)
+        with iterationCtrl as it:
+            it.iteration = 0
+            while True:
+                it.update("""
+                    SELECT
+                        {schema_madlib}.lmf_igd_step(
+                            (_src.{col_row})::integer,
+                            (_src.{col_column})::integer,
+                            (_src.{col_value})::integer,
+                            m4_ifdef(`__HAWQ__', `{{__state__}}', `
+                            (SELECT _state FROM {rel_state}
+                                WHERE _iteration = {iteration})'),
+                            (_args.row_dim)::integer,
+                            (_args.column_dim)::integer,
+                            (_args.max_rank)::integer,
+                            (_args.stepsize)::FLOAT8,
+                            (_args.scale_factor)::FLOAT8)
+                    FROM {rel_source} AS _src, {rel_args} AS _args
+                    """)
+                if it.test("""
+                    {iteration} > _args.num_iterations OR
+                    {schema_madlib}.internal_lmf_igd_distance(
+                        _state_previous, _state_current) < _args.tolerance
+                    """):
+                    break
+        return iterationCtrl.iteration
 
