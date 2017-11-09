@@ -53,7 +53,7 @@ logregr_train( source_table,
 \b Arguments
 <DL class="arglist">
   <DT>source_table</DT>
-  <DD>TEXT. The name of the table containing the training data.</DD>
+  <DD>TEXT. Name of the table containing the training data.</DD>
 
   <DT>out_table</DT>
   <DD>TEXT. Name of the generated table containing the output model.
@@ -63,8 +63,8 @@ logregr_train( source_table,
     <table class="output">
       <tr>
         <th>&lt;...&gt;</th>
-        <td>Text. Grouping columns, if provided in input. This could be multiple columns
-          depending on the \c grouping_col input.</td>
+        <td>TEXT. Grouping columns, if provided in input. This could be multiple columns
+          depending on the \c grouping_cols input.</td>
       </tr>
 
       <tr>
@@ -108,25 +108,38 @@ logregr_train( source_table,
       </tr>
 
       <tr>
+        <th>num_rows_processed</th>
+        <td>INTEGER. The number of rows actually processed, which is equal to the total
+            number of rows in the source table minus the number of skipped rows.</td>
+      </tr>
+
+      <tr>
+        <th>num_missing_rows_skipped</th>
+        <td>INTEGER. The number of rows skipped during the training. 
+        A row will be skipped if the independent_varname is NULL or 
+        contains NULL values.</td>
+      </tr>
+
+      <tr>
         <th>num_iterations</th>
         <td>INTEGER. The number of iterations actually completed. This would be different
           from the \c nIterations argument if a \c tolerance parameter is provided and the
           algorithm converges before all iterations are completed.</td>
       </tr>
+
       <tr>
-        <th>num_rows_processed</th>
-        <td>INTEGER. The number of rows actually processed, which is equal to the total
-            number of rows in the source table minus the number of skipped rows.</td>
-      </tr>
-      <tr>
-        <th>num_missing_rows_skipped</th>
-        <td>INTEGER. The number of rows skipped during the training. A row will be skipped
-    if the independent_varname is NULL or contains NULL values.</td>
+        <th>variance_covariance</th>
+        <td>FLOAT[]. Variance/covariance matrix.</td>
       </tr>
     </table>
 
     A summary table named \<out_table\>_summary is also created at the same time, which has the following columns:
      <table class="output">
+    <tr>
+    <th>method</th>
+    <td>'logregr' for logistic regression.</td>
+    </tr>
+
     <tr>
     <th>source_table</th>
     <td>The data source table name.</td>
@@ -139,17 +152,18 @@ logregr_train( source_table,
 
     <tr>
     <th>dependent_varname</th>
-    <td>The dependent variable.</td>
+    <td>The dependent variable name.</td>
     </tr>
 
     <tr>
     <th>independent_varname</th>
-    <td>The independent variables</td>
+    <td>The independent variable names.</td>
     </tr>
 
     <tr>
     <th>optimizer_params</th>
-    <td>A string that contains all the optimizer parameters, and has the form of 'optimizer=..., max_iter=..., tolerance=...'</td>
+    <td>A string that contains all the optimizer parameters, and 
+    has the form of 'optimizer=..., max_iter=..., tolerance=...'</td>
     </tr>
 
     <tr>
@@ -159,28 +173,33 @@ logregr_train( source_table,
 
     <tr>
     <th>num_failed_groups</th>
-    <td>How many groups' fitting processes failed.</td>
+    <td>How many groups failed in training.</td>
     </tr>
 
     <tr>
     <th>num_rows_processed</th>
-    <td>The total number of rows usd in the computation.</td>
+    <td>The total number of rows used in the computation.</td>
     </tr>
 
     <tr>
     <th>num_missing_rows_skipped</th>
     <td>The total number of rows skipped.</td>
     </tr>
+
+    <tr>
+    <th>grouping_cols</th>
+    <td>Names of the grouping columns.</td>
+    </tr>
    </table>
   </DD>
 
   <DT>dependent_varname</DT>
   <DD>TEXT. Name of the dependent variable column (of type BOOLEAN) in the
-    training data or an expression evaluating to a BOOLEAN.</DD>
+    training data, or an expression evaluating to a BOOLEAN.</DD>
 
   <DT>independent_varname</DT>
   <DD>TEXT. Expression list to evaluate for the
-    independent variables. An intercept variable is not assumed. It is common to
+    independent variables. An intercept variable is not assumed so it is common to
     provide an explicit intercept term by including a single constant \c 1 term in
     the independent variable list.</DD>
 
@@ -188,10 +207,10 @@ logregr_train( source_table,
   <DD>TEXT, default: NULL. An expression list used to group
     the input dataset into discrete groups, running one regression per group.
     Similar to the SQL "GROUP BY" clause. When this value is NULL, no
-    grouping is used and a single result model is generated.</DD>
+    grouping is used and a single model is generated for the whole data set.</DD>
 
   <DT>max_iter (optional)</DT>
-  <DD>INTEGER, default: 20. The maximum number of iterations that are allowed.</DD>
+  <DD>INTEGER, default: 20. The maximum number of iterations allowed.</DD>
 
   <DT>optimizer (optional)</DT>
   <DD>TEXT, default: 'irls'. The name of the optimizer to use:
@@ -213,16 +232,17 @@ logregr_train( source_table,
 
   <DT>tolerance (optional)</DT>
   <DD>FLOAT8, default: 0.0001. The difference between
-    log-likelihood values in successive iterations that should indicate
+    log-likelihood values in successive iterations that indicate
     convergence. A zero disables the convergence criterion, so that execution
-    stops after \c n iterations have completed.</DD>
+    stops after the maximum iterations have completed, as set in the 'max_iter' 
+    parameter above.</DD>
 
   <DT>verbose (optional)</DT>
   <DD>BOOLEAN, default: FALSE. Provides verbose output of the results of training.</DD>
 </DL>
 
 @note For p-values, we just return the computation result directly.
-Other statistical packages, like 'R', produce the same result, but on printing the
+Other statistical packages like 'R' produce the same result, but on printing the
 result to screen, another format function is used and any p-value that is
 smaller than the machine epsilon (the smallest positive floating-point number
 'x' such that '1 + x != 1') will be printed on screen as "< xxx" (xxx is the
@@ -232,9 +252,9 @@ in fact the same.
 
 @anchor predict
 @par Prediction Function
-Two prediction functions are provided to either predict the boolean value of the
-dependent variable or the probability of the value of dependent variable being
-'True', both functions using the same syntax.
+Two prediction functions are provided.   One predicts the boolean value of the
+dependent variable, and the other predicts the probability of the value of the
+dependent variable being 'True'.  Syntax is the same for both functions.
 
 The function to predict the boolean value (True/False) of the dependent variable
 has the following syntax:
@@ -244,7 +264,7 @@ logregr_predict(coefficients,
                )
 </pre>
 
-The function to predict the probability of the dependent variable being True
+The function to predict the probability of the dependent variable being 'True'
 has the following syntax:
 <pre class="syntax">
 logregr_predict_prob(coefficients,
@@ -255,60 +275,62 @@ logregr_predict_prob(coefficients,
 \b Arguments
 <DL class="arglist">
   <DT>coefficients</DT>
-  <DD>DOUBLE PRECISION[]. Model coefficients obtained from \ref logregr_train().</DD>
+  <DD>DOUBLE PRECISION[]. Model coefficients obtained from training \ref logregr_train().</DD>
 
   <DT>ind_var</DT>
-  <DD>Independent variables, as a DOUBLE array. This should be the same length
+  <DD>Independent variables expressed as a DOUBLE array. This should be the same length
   as the array obtained by evaluation of the 'independent_varname' argument in
   \ref logregr_train().</DD>
 </DL>
 
 @anchor examples
 @examp
--# Create the training data table.
+-# Create the training data table.  This data set is related to predicting
+a second heart attack given treatment and health factors.
 <pre class="example">
+DROP TABLE IF EXISTS patients;
 CREATE TABLE patients( id INTEGER NOT NULL,
                        second_attack INTEGER,
                        treatment INTEGER,
-                       trait_anxiety INTEGER);
-COPY patients FROM STDIN WITH DELIMITER '|';
-  1 |             1 |         1 |            70
-  3 |             1 |         1 |            50
-  5 |             1 |         0 |            40
-  7 |             1 |         0 |            75
-  9 |             1 |         0 |            70
- 11 |             0 |         1 |            65
- 13 |             0 |         1 |            45
- 15 |             0 |         1 |            40
- 17 |             0 |         0 |            55
- 19 |             0 |         0 |            50
-  2 |             1 |         1 |            80
-  4 |             1 |         0 |            60
-  6 |             1 |         0 |            65
-  8 |             1 |         0 |            80
- 10 |             1 |         0 |            60
- 12 |             0 |         1 |            50
- 14 |             0 |         1 |            35
- 16 |             0 |         1 |            50
- 18 |             0 |         0 |            45
- 20 |             0 |         0 |            60
-\\.
+                       trait_anxiety INTEGER);                        
+INSERT INTO patients VALUES 
+(1,  1, 1, 70),
+(2,  1, 1, 80),
+(3,  1, 1, 50),
+(4,  1, 0, 60),
+(5,  1, 0, 40),
+(6,  1, 0, 65),
+(7,  1, 0, 75),
+(8,  1, 0, 80),
+(9,  1, 0, 70),
+(10, 1, 0, 60),
+(11, 0, 1, 65),
+(12, 0, 1, 50),
+(13, 0, 1, 45),
+(14, 0, 1, 35),
+(15, 0, 1, 40),
+(16, 0, 1, 50),
+(17, 0, 0, 55),
+(18, 0, 0, 45),
+(19, 0, 0, 50),
+(20, 0, 0, 60);
 </pre>
 -# Train a regression model.
 <pre class="example">
-SELECT madlib.logregr_train( 'patients',
-                             'patients_logregr',
-                             'second_attack',
-                             'ARRAY[1, treatment, trait_anxiety]',
-                             NULL,
-                             20,
-                             'irls'
+DROP TABLE IF EXISTS patients_logregr, patients_logregr_summary;
+SELECT madlib.logregr_train( 'patients',                             -- Source table
+                             'patients_logregr',                     -- Output table
+                             'second_attack',                        -- Dependent variable
+                             'ARRAY[1, treatment, trait_anxiety]',   -- Feature vector
+                             NULL,                                   -- Grouping
+                             20,                                     -- Max iterations
+                             'irls'                                  -- Optimizer to use
                            );
 </pre>
-(Note that in this example we are dynamically creating the array of independent variables 
+Note that in the example above we are dynamically creating the array of independent variables 
 from column names.  If you have large numbers of independent variables beyond the PostgreSQL 
-limit of maximum columns per table, you would pre-build the arrays and store them in a 
-single column.)
+limit of maximum columns per table, you would typically pre-build the arrays and store them in a 
+single column.
 -# View the regression results.
 <pre class="example">
 -- Set extended display on for easier reading of output
@@ -317,14 +339,17 @@ SELECT * from patients_logregr;
 </pre>
 Result:
 <pre class="result">
-coef           | {5.59049410898112,2.11077546770772,-0.237276684606453}
-log_likelihood | -467.214718489873
-std_err        | {0.318943457652178,0.101518723785383,0.294509929481773}
-z_stats        | {17.5281667482197,20.7919819024719,-0.805666162169712}
-p_values       | {8.73403463417837e-69,5.11539430631541e-96,0.420435365338518}
-odds_ratios    | {267.867942976278,8.2546400100702,0.788773016471171}
-condition_no   | 179.186118573205
-num_iterations | 9
+coef                     | {-6.36346994178192,-1.02410605239327,0.119044916668607}
+log_likelihood           | -9.41018298388876
+std_err                  | {3.21389766375099,1.17107844860319,0.0549790458269317}
+z_stats                  | {-1.97998524145757,-0.874498248699539,2.16527796868916}
+p_values                 | {0.0477051870698145,0.381846973530455,0.0303664045046183}
+odds_ratios              | {0.00172337630923221,0.359117354054956,1.12642051220895}
+condition_no             | 326.081922791575
+num_rows_processed       | 20
+num_missing_rows_skipped | 0
+num_iterations           | 5
+variance_covariance      | {{10.329138193064,-0.474304665195738,-0.171995901260057}, ...
 </pre>
 
 -# Alternatively, unnest the arrays in the results for easier reading of output:
@@ -338,8 +363,17 @@ SELECT unnest(array['intercept', 'treatment', 'trait_anxiety']) as attribute,
        unnest(odds_ratios) as odds_ratio
     FROM patients_logregr;
 </pre>
+Result:
+<pre class="result">
+   attribute   |    coefficient    |   standard_error   |       z_stat       |       pvalue       |     odds_ratio      
+---------------+-------------------+--------------------+--------------------+--------------------+---------------------
+ intercept     | -6.36346994178192 |   3.21389766375099 |  -1.97998524145757 | 0.0477051870698145 | 0.00172337630923221
+ treatment     | -1.02410605239327 |   1.17107844860319 | -0.874498248699539 |  0.381846973530455 |   0.359117354054956
+ trait_anxiety | 0.119044916668607 | 0.0549790458269317 |   2.16527796868916 | 0.0303664045046183 |    1.12642051220895
+(3 rows)
+</pre>
 
--# Predicting dependent variable using the logistic regression model.
+-# Predict the dependent variable using the logistic regression model.
 (This example uses the original data table to perform the prediction. Typically
 a different test dataset with the same features as the original training dataset
 would be used for prediction.)
@@ -347,20 +381,72 @@ would be used for prediction.)
 \\x off
 -- Display prediction value along with the original value
 SELECT p.id, madlib.logregr_predict(coef, ARRAY[1, treatment, trait_anxiety]),
-       p.second_attack
+       p.second_attack::BOOLEAN
 FROM patients p, patients_logregr m
 ORDER BY p.id;
 </pre>
+Result:
+<pre class="result">
+  id | logregr_predict | second_attack 
+----+-----------------+---------------
+  1 | t               | t
+  2 | t               | t
+  3 | f               | t
+  4 | t               | t
+  5 | f               | t
+  6 | t               | t
+  7 | t               | t
+  8 | t               | t
+  9 | t               | t
+ 10 | t               | t
+ 11 | t               | f
+ 12 | f               | f
+ 13 | f               | f
+ 14 | f               | f
+ 15 | f               | f
+ 16 | f               | f
+ 17 | t               | f
+ 18 | f               | f
+ 19 | f               | f
+ 20 | t               | f
+(20 rows)
+</pre>
 
--# Predicting the probability of the dependent variable being TRUE.
+-# Predict the probability of the dependent variable being TRUE.
 <pre class="example">
 \\x off
 -- Display prediction value along with the original value
-SELECT p.id, madlib.logregr_predict_prob(coef, ARRAY[1, treatment, trait_anxiety])
+SELECT p.id, madlib.logregr_predict_prob(coef, ARRAY[1, treatment, trait_anxiety]),
+       p.second_attack::BOOLEAN
 FROM patients p, patients_logregr m
 ORDER BY p.id;
 </pre>
-
+Result:
+<pre class="result">
+ id | logregr_predict_prob | second_attack 
+----+----------------------+---------------
+  1 |    0.720223028941527 | t
+  2 |    0.894354902502048 | t
+  3 |    0.192269541755171 | t
+  4 |    0.685513072239347 | t
+  5 |    0.167747881508857 | t
+  6 |     0.79809810891514 | t
+  7 |    0.928568075752503 | t
+  8 |    0.959305763693571 | t
+  9 |    0.877576117431452 | t
+ 10 |    0.685513072239347 | t
+ 11 |    0.586700895943317 | f
+ 12 |    0.192269541755171 | f
+ 13 |    0.116032010632994 | f
+ 14 |   0.0383829143134982 | f
+ 15 |   0.0674976224147597 | f
+ 16 |    0.192269541755171 | f
+ 17 |    0.545870774302621 | f
+ 18 |    0.267675422387132 | f
+ 19 |    0.398618639285111 | f
+ 20 |    0.685513072239347 | f
+(20 rows)
+</pre>
 
 @anchor notes
 @par Notes
@@ -461,8 +547,8 @@ than 1000) indicates the presence of significant multicollinearity.
 @anchor literature
 @literature
 
-A somewhat random selection of nice write-ups, with valuable pointers into
-further literature.
+A selection of references pertaining to logistic regression, 
+with some good pointers to other literature.
 
 [1] Cosma Shalizi: Statistics 36-350: Data Mining, Lecture Notes, 18 November
     2009, http://www.stat.cmu.edu/~cshalizi/350/lectures/26/lecture-26.pdf
