@@ -3,6 +3,8 @@ import yaml
 from collections import defaultdict
 import os
 
+from utilities import is_rev_gte
+from utilities import get_rev_num
 
 def run_sql(sql, portid, con_args):
     """
@@ -141,12 +143,14 @@ class ChangeHandler(UpgradeBase):
         @brief Load the configuration file
         """
 
+        rev = get_rev_num(self._mad_dbrev)
+
         # _mad_dbrev = 1.9.1
-        if self._mad_dbrev.split('.') < '1.10.0'.split('.'):
+        if is_rev_gte([1,9,1],rev):
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist_1.9.1_1.12.yaml')
         # _mad_dbrev = 1.10.0
-        elif self._mad_dbrev.split('.') < '1.11'.split('.'):
+        elif is_rev_gte([1,10],rev):
             filename = os.path.join(self._maddir, 'madpack',
                                     'changelist_1.10.0_1.12.yaml')
         # _mad_dbrev = 1.11

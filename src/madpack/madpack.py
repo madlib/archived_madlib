@@ -18,8 +18,8 @@ from upgrade_util import ChangeHandler
 from upgrade_util import ViewDependency
 from upgrade_util import TableDependency
 from upgrade_util import ScriptCleaner
-
-from itertools import izip_longest
+from utilities import is_rev_gte
+from utilities import get_rev_num
 
 # Required Python version
 py_min_ver = [2, 6]
@@ -389,90 +389,6 @@ def _check_db_port(portid):
     return False
 # ------------------------------------------------------------------------------
 
-
-def _is_rev_gte(left, right):
-    """ Return if left >= right
-
-    Args:
-        @param left: list. Revision numbers in a list form (as returned by
-                           _get_rev_num).
-        @param right: list. Revision numbers in a list form (as returned by
-                           _get_rev_num).
-
-    Returns:
-        Boolean
-
-    If left and right are all numeric then regular list comparison occurs.
-    If either one contains a string, then comparison occurs till both have int.
-        First list to have a string is considered smaller
-        (including if the other does not have an element in corresponding index)
-
-    Examples:
-        [1, 9, 0] >= [1, 9, 0]
-        [1, 9, 1] >= [1, 9, 0]
-        [1, 9, 1] >= [1, 9]
-        [1, 10] >= [1, 9, 1]
-        [1, 9, 0] >= [1, 9, 0, 'dev']
-        [1, 9, 1] >= [1, 9, 0, 'dev']
-        [1, 9, 0] >= [1, 9, 'dev']
-        [1, 9, 'rc'] >= [1, 9, 'dev']
-        [1, 9, 'rc', 0] >= [1, 9, 'dev', 1]
-        [1, 9, 'rc', '1'] >= [1, 9, 'rc', '1']
-    """
-    def all_numeric(l):
-        return not l or all(isinstance(i, int) for i in l)
-
-    if all_numeric(left) and all_numeric(right):
-        return left >= right
-    else:
-        for i, (l_e, r_e) in enumerate(izip_longest(left, right)):
-            if isinstance(l_e, int) and isinstance(r_e, int):
-                if l_e == r_e:
-                    continue
-                else:
-                    return l_e > r_e
-            elif isinstance(l_e, int) or isinstance(r_e, int):
-                #  [1, 9, 0] > [1, 9, 'dev']
-                #  [1, 9, 0] > [1, 9]
-                return isinstance(l_e, int)
-            else:
-                # both are not int
-                if r_e is None:
-                    # [1, 9, 'dev'] < [1, 9]
-                    return False
-                else:
-                    return l_e is None or left[i:] >= right[i:]
-        return True
-# ----------------------------------------------------------------------
-
-
-def _get_rev_num(rev):
-    """
-    Convert version string into number for comparison
-        @param rev version text
-                It is expected to follow Semantic Versioning (semver.org)
-                Valid inputs:
-                    1.9.0, 1.10.0, 2.5.0
-                    1.0.0-alpha, 1.0.0-alpha.1, 1.0.0-0.3.7, 1.0.0-x.7.z.92
-                    1.0.0+20130313144700, 1.0.0-beta+exp.sha.5114f85
-    """
-    try:
-        rev_parts = re.split('[-+_]', rev)
-        # get numeric part of the version string
-        num = [int(i) for i in rev_parts[0].split('.')]
-        num += [0] * (3 - len(num))  # normalize num to be of length 3
-        # get identifier part of the version string
-        if len(rev_parts) > 1:
-            num.extend(map(str, rev_parts[1:]))
-        if not num:
-            num = [0]
-        return num
-    except:
-        # invalid revision
-        return [0]
-# ------------------------------------------------------------------------------
-
-
 def _print_revs(rev, dbrev, con_args, schema):
     """
     Print version information
@@ -491,7 +407,6 @@ def _print_revs(rev, dbrev, con_args, schema):
                   % (dbrev, con_args['host'], con_args['database'], schema), True)
     return
 # ------------------------------------------------------------------------------
-
 
 def _plpy_check(py_min_ver):
     """
@@ -552,7 +467,7 @@ def _db_install(schema, dbrev, testcase):
     """
     _info("Installing MADlib into %s schema..." % schema.upper(), True)
 
-    temp_schema = schema + '_v' + ''.join(map(str, _get_rev_num(dbrev)))
+    temp_schema = schema + '_v' + ''.join(map(str, get_rev_num(dbrev)))
     # Check the status of MADlib objects in database
     madlib_exists = False if dbrev is None else True
 
@@ -655,13 +570,13 @@ def _db_upgrade(schema, dbrev):
         @param schema MADlib schema name
         @param dbrev DB-level MADlib version
     """
-    if _is_rev_gte(_get_rev_num(dbrev), _get_rev_num(rev)):
+    if is_rev_gte(get_rev_num(dbrev), get_rev_num(rev)):
         _info("Current MADlib version already up to date.", True)
         return
 
-    if _is_rev_gte([1,8],_get_rev_num(dbrev)):
+    if is_rev_gte([1,9],get_rev_num(dbrev)):
         _error("""
-            MADlib versions prior to v1.9 are not supported for upgrade.
+            MADlib versions prior to v1.9.1 are not supported for upgrade.
             Please try upgrading to v1.9.1 and then upgrade to this version.
             """, True)
         return
@@ -1145,7 +1060,7 @@ def main(argv):
         global dbver
         dbver = _get_dbver()
         global is_hawq2
-        if portid == "hawq" and _is_rev_gte(_get_rev_num(dbver), _get_rev_num('2.0')):
+        if portid == "hawq" and is_rev_gte(get_rev_num(dbver), get_rev_num('2.0')):
             is_hawq2 = True
         else:
             is_hawq2 = False
@@ -1181,23 +1096,23 @@ def main(argv):
                 # HAWQ (starting 2.0) and GPDB (starting 5.0) uses semantic versioning,
                 # which implies all HAWQ 2.x or GPDB 5.x versions will have binary
                 # compatibility. Hence, we can keep single folder for all 2.X / 5.X.
-                if (_is_rev_gte(_get_rev_num(dbver), _get_rev_num('2.0')) and
-                        not _is_rev_gte(_get_rev_num(dbver), _get_rev_num('3.0'))):
+                if (is_rev_gte(get_rev_num(dbver), get_rev_num('2.0')) and
+                        not is_rev_gte(get_rev_num(dbver), get_rev_num('3.0'))):
                     is_hawq2 = True
                     dbver = '2'
             elif portid == 'greenplum':
                 # similar to HAWQ above, collapse all 5.X versions
-                if (_is_rev_gte(_get_rev_num(dbver), _get_rev_num('5.0')) and
-                        not _is_rev_gte(_get_rev_num(dbver), _get_rev_num('6.0'))):
+                if (is_rev_gte(get_rev_num(dbver), get_rev_num('5.0')) and
+                        not is_rev_gte(get_rev_num(dbver), get_rev_num('6.0'))):
                     dbver = '5'
-                elif (_is_rev_gte(_get_rev_num(dbver), _get_rev_num('6.0')) and
-                        not _is_rev_gte(_get_rev_num(dbver), _get_rev_num('7.0'))):
+                elif (is_rev_gte(get_rev_num(dbver), get_rev_num('6.0')) and
+                        not is_rev_gte(get_rev_num(dbver), get_rev_num('7.0'))):
                     dbver = '6'
                 # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
                 # MADlib treats 4.3.5+ as DB version 4.3ORCA which is different
                 # from 4.3. The name is suffixed with ORCA since optimizer (ORCA) is
                 # 'on' by default in 4.3.5
-                elif _is_rev_gte(_get_rev_num(dbver), _get_rev_num('4.3.4')):
+                elif is_rev_gte(get_rev_num(dbver), get_rev_num('4.3.4')):
                     dbver = '4.3ORCA'
                 else:
                     # only need the first two digits for <= 4.3.4
@@ -1236,8 +1151,8 @@ def main(argv):
 
     # Parse COMMAND argument and compare with Ports.yml
     # Debugging...
-    # print "OS rev: " + str(rev) + " > " + str(_get_rev_num(rev))
-    # print "DB rev: " + str(dbrev) + " > " + str(_get_rev_num(dbrev))
+    # print "OS rev: " + str(rev) + " > " + str(get_rev_num(rev))
+    # print "DB rev: " + str(dbrev) + " > " + str(get_rev_num(dbrev))
 
     # Make sure we have the necessary parameters to continue
     if args.command[0] != 'version':
@@ -1255,7 +1170,7 @@ def main(argv):
         _error("madpack uninstall is currently not available for HAWQ", True)
 
     if args.command[0] in ('uninstall', 'reinstall') and (portid != 'hawq' or is_hawq2):
-        if _get_rev_num(dbrev) == [0]:
+        if get_rev_num(dbrev) == [0]:
             _info("Nothing to uninstall. No version found in schema %s." % schema.upper(), True)
             return
 
@@ -1326,7 +1241,7 @@ def main(argv):
         # 1) Compare OS and DB versions.
         # noop if OS <= DB.
         _print_revs(rev, dbrev, con_args, schema)
-        if _is_rev_gte(_get_rev_num(dbrev), _get_rev_num(rev)):
+        if is_rev_gte(get_rev_num(dbrev), get_rev_num(rev)):
             _info("Current MADlib version already up to date.", True)
             return
         # proceed to create objects if nothing installed in DB or for HAWQ < 2.0
@@ -1361,7 +1276,7 @@ def main(argv):
 
         # 2) Compare OS and DB versions. Continue if OS > DB.
         _print_revs(rev, dbrev, con_args, schema)
-        if _is_rev_gte(_get_rev_num(dbrev), _get_rev_num(rev)):
+        if is_rev_gte(get_rev_num(dbrev), get_rev_num(rev)):
             _info("Current MADlib version is already up-to-date.", True)
             return
 
@@ -1385,7 +1300,7 @@ def main(argv):
     if args.command[0] == 'install-check':
 
         # 1) Compare OS and DB versions. Continue if OS = DB.
-        if _get_rev_num(dbrev) != _get_rev_num(rev):
+        if get_rev_num(dbrev) != get_rev_num(rev):
             _print_revs(rev, dbrev, con_args, schema)
             _info("Versions do not match. Install-check stopped.", True)
             return
@@ -1531,45 +1446,45 @@ class RevTest(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def test_get_rev_num(self):
+    def testget_rev_num(self):
         # not using assertGreaterEqual to keep Python 2.6 compatibility
-        self.assertTrue(_get_rev_num('4.3.10') >= _get_rev_num('4.3.5'))
-        self.assertTrue(_get_rev_num('1.9.10-dev') >= _get_rev_num('1.9.9'))
-        self.assertNotEqual(_get_rev_num('1.9.10-dev'), _get_rev_num('1.9.10'))
-        self.assertEqual(_get_rev_num('1.9.10'), [1, 9, 10])
-        self.assertEqual(_get_rev_num('1.0.0+20130313144700'), [1, 0, 0, '20130313144700'])
-        self.assertNotEqual(_get_rev_num('1.0.0+20130313144700'),
-                            _get_rev_num('1.0.0-beta+exp.sha.5114f85'))
+        self.assertTrue(get_rev_num('4.3.10') >= get_rev_num('4.3.5'))
+        self.assertTrue(get_rev_num('1.9.10-dev') >= get_rev_num('1.9.9'))
+        self.assertNotEqual(get_rev_num('1.9.10-dev'), get_rev_num('1.9.10'))
+        self.assertEqual(get_rev_num('1.9.10'), [1, 9, 10])
+        self.assertEqual(get_rev_num('1.0.0+20130313144700'), [1, 0, 0, '20130313144700'])
+        self.assertNotEqual(get_rev_num('1.0.0+20130313144700'),
+                            get_rev_num('1.0.0-beta+exp.sha.5114f85'))
 
-    def test_is_rev_gte(self):
+    def testis_rev_gte(self):
         # 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta <
         #       1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
-        self.assertTrue(_is_rev_gte([], []))
-        self.assertTrue(_is_rev_gte([1, 9], [1, None]))
-        self.assertFalse(_is_rev_gte([1, None], [1, 9]))
+        self.assertTrue(is_rev_gte([], []))
+        self.assertTrue(is_rev_gte([1, 9], [1, None]))
+        self.assertFalse(is_rev_gte([1, None], [1, 9]))
 
-        self.assertTrue(_is_rev_gte(_get_rev_num('4.3.10'), _get_rev_num('4.3.5')))
-        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0'), _get_rev_num('1.9.0')))
-        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9.0')))
-        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9')))
-        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0'), _get_rev_num('1.9.0-dev')))
-        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.9-dev')))
-        self.assertTrue(_is_rev_gte(_get_rev_num('1.9.0-dev'), _get_rev_num('1.9.0-dev')))
-        self.assertTrue(_is_rev_gte([1, 9, 'rc', 1], [1, 9, 'dev', 0]))
+        self.assertTrue(is_rev_gte(get_rev_num('4.3.10'), get_rev_num('4.3.5')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.0'), get_rev_num('1.9.0')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9.0')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.0'), get_rev_num('1.9.0-dev')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9-dev')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.0-dev'), get_rev_num('1.9.0-dev')))
+        self.assertTrue(is_rev_gte([1, 9, 'rc', 1], [1, 9, 'dev', 0]))
 
-        self.assertFalse(_is_rev_gte(_get_rev_num('1.9.1'), _get_rev_num('1.10')))
-        self.assertFalse(_is_rev_gte([1, 9, 'dev', 1], [1, 9, 'rc', 0]))
-        self.assertFalse(_is_rev_gte([1, 9, 'alpha'], [1, 9, 'alpha', 0]))
-        self.assertFalse(_is_rev_gte([1, 9, 'alpha', 1], [1, 9, 'alpha', 'beta']))
-        self.assertFalse(_is_rev_gte([1, 9, 'alpha.1'], [1, 9, 'alpha.beta']))
-        self.assertFalse(_is_rev_gte([1, 9, 'beta', 2], [1, 9, 'beta', 4]))
-        self.assertFalse(_is_rev_gte([1, 9, 'beta', '1'], [1, 9, 'rc', '0']))
-        self.assertFalse(_is_rev_gte([1, 9, 'rc', 1], [1, 9, 0]))
-        self.assertFalse(_is_rev_gte([1, 9, '0.2'], [1, 9, '0.3']))
-        self.assertFalse(_is_rev_gte([1, 9, 'build2'], [1, 9, 'build3']))
+        self.assertFalse(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.10')))
+        self.assertFalse(is_rev_gte([1, 9, 'dev', 1], [1, 9, 'rc', 0]))
+        self.assertFalse(is_rev_gte([1, 9, 'alpha'], [1, 9, 'alpha', 0]))
+        self.assertFalse(is_rev_gte([1, 9, 'alpha', 1], [1, 9, 'alpha', 'beta']))
+        self.assertFalse(is_rev_gte([1, 9, 'alpha.1'], [1, 9, 'alpha.beta']))
+        self.assertFalse(is_rev_gte([1, 9, 'beta', 2], [1, 9, 'beta', 4]))
+        self.assertFalse(is_rev_gte([1, 9, 'beta', '1'], [1, 9, 'rc', '0']))
+        self.assertFalse(is_rev_gte([1, 9, 'rc', 1], [1, 9, 0]))
+        self.assertFalse(is_rev_gte([1, 9, '0.2'], [1, 9, '0.3']))
+        self.assertFalse(is_rev_gte([1, 9, 'build2'], [1, 9, 'build3']))
 
-        self.assertFalse(_is_rev_gte(_get_rev_num('1.0.0+20130313144700'),
-                                     _get_rev_num('1.0.0-beta+exp.sha.5114f85')))
+        self.assertFalse(is_rev_gte(get_rev_num('1.0.0+20130313144700'),
+                                     get_rev_num('1.0.0-beta+exp.sha.5114f85')))
 
 
 # ------------------------------------------------------------------------------
