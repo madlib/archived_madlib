@@ -21,8 +21,10 @@
 # Madpack utilities
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
-import re
 from itertools import izip_longest
+import re
+import unittest
+
 
 def is_rev_gte(left, right):
     """ Return if left >= right
@@ -89,6 +91,17 @@ def get_rev_num(rev):
                     1.9.0, 1.10.0, 2.5.0
                     1.0.0-alpha, 1.0.0-alpha.1, 1.0.0-0.3.7, 1.0.0-x.7.z.92
                     1.0.0+20130313144700, 1.0.0-beta+exp.sha.5114f85
+    Returns:
+        List. The numeric parts of version string are converted to int and
+        non-numeric parts are returned as is.
+        Invalid versions strings returned as [0]
+
+    Examples:
+        '1.9.0' -> [1, 9, 0]
+        '1.9' -> [1, 9, 0]
+        '1.9-alpha' -> [1, 9, 'alpha']
+        '1.9-alpha+dc65ab' -> [1, 9, 'alpha', 'dc65ab']
+        'a.123' -> [0]
     """
     try:
         rev_parts = re.split('[-+_]', rev)
@@ -101,7 +114,65 @@ def get_rev_num(rev):
         if not num:
             num = [0]
         return num
-    except:
+    except (ValueError, TypeError):
         # invalid revision
         return [0]
 # ------------------------------------------------------------------------------
+
+
+# -----------------------------------------------------------------------
+# Unit tests
+# -----------------------------------------------------------------------
+class RevTest(unittest.TestCase):
+
+    def setUp(self):
+        pass
+
+    def tearDown(self):
+        pass
+
+    def test_get_rev_num(self):
+        # not using assertGreaterEqual to keep Python 2.6 compatibility
+        self.assertTrue(get_rev_num('4.3.10') >= get_rev_num('4.3.5'))
+        self.assertTrue(get_rev_num('1.9.10-dev') >= get_rev_num('1.9.9'))
+        self.assertNotEqual(get_rev_num('1.9.10-dev'), get_rev_num('1.9.10'))
+        self.assertEqual(get_rev_num('1.9.10'), [1, 9, 10])
+        self.assertEqual(get_rev_num('abc1.9.10'), [0])
+        self.assertEqual(get_rev_num('1.0.0+20130313144700'),
+                         [1, 0, 0, '20130313144700'])
+        self.assertNotEqual(get_rev_num('1.0.0+20130313144700'),
+                            get_rev_num('1.0.0-beta+exp.sha.5114f85'))
+
+    def test_is_rev_gte(self):
+        # 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta <
+        #       1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
+        self.assertTrue(is_rev_gte([], []))
+        self.assertTrue(is_rev_gte([1, 9], [1, None]))
+        self.assertFalse(is_rev_gte([1, None], [1, 9]))
+
+        self.assertTrue(is_rev_gte(get_rev_num('4.3.10'), get_rev_num('4.3.5')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.0'), get_rev_num('1.9.0')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9.0')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.0'), get_rev_num('1.9.0-dev')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9-dev')))
+        self.assertTrue(is_rev_gte(get_rev_num('1.9.0-dev'), get_rev_num('1.9.0-dev')))
+        self.assertTrue(is_rev_gte([1, 9, 'rc', 1], [1, 9, 'dev', 0]))
+
+        self.assertFalse(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.10')))
+        self.assertFalse(is_rev_gte([1, 9, 'dev', 1], [1, 9, 'rc', 0]))
+        self.assertFalse(is_rev_gte([1, 9, 'alpha'], [1, 9, 'alpha', 0]))
+        self.assertFalse(is_rev_gte([1, 9, 'alpha', 1], [1, 9, 'alpha', 'beta']))
+        self.assertFalse(is_rev_gte([1, 9, 'alpha.1'], [1, 9, 'alpha.beta']))
+        self.assertFalse(is_rev_gte([1, 9, 'beta', 2], [1, 9, 'beta', 4]))
+        self.assertFalse(is_rev_gte([1, 9, 'beta', '1'], [1, 9, 'rc', '0']))
+        self.assertFalse(is_rev_gte([1, 9, 'rc', 1], [1, 9, 0]))
+        self.assertFalse(is_rev_gte([1, 9, '0.2'], [1, 9, '0.3']))
+        self.assertFalse(is_rev_gte([1, 9, 'build2'], [1, 9, 'build3']))
+
+        self.assertFalse(is_rev_gte(get_rev_num('1.0.0+20130313144700'),
+                                    get_rev_num('1.0.0-beta+exp.sha.5114f85')))
+
+
+if __name__ == "__main__":
+    unittest.main()

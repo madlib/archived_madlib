@@ -12,12 +12,8 @@ import subprocess
 import datetime
 import tempfile
 import shutil
-import unittest
 
-from upgrade_util import ChangeHandler
-from upgrade_util import ViewDependency
-from upgrade_util import TableDependency
-from upgrade_util import ScriptCleaner
+import upgrade_util as uu
 from utilities import is_rev_gte
 from utilities import get_rev_num
 
@@ -585,13 +581,13 @@ def _db_upgrade(schema, dbrev):
     _info("\tDetecting dependencies...", True)
 
     _info("\tLoading change list...", True)
-    ch = ChangeHandler(schema, portid, con_args, maddir, dbrev, is_hawq2)
+    ch = uu.ChangeHandler(schema, portid, con_args, maddir, dbrev, is_hawq2)
 
     _info("\tDetecting table dependencies...", True)
-    td = TableDependency(schema, portid, con_args)
+    td = uu.TableDependency(schema, portid, con_args)
 
     _info("\tDetecting view dependencies...", True)
-    vd = ViewDependency(schema, portid, con_args)
+    vd = uu.ViewDependency(schema, portid, con_args)
 
     abort = False
     if td.has_dependency():
@@ -678,7 +674,7 @@ def _db_upgrade(schema, dbrev):
         _info("No dependency problem found, continuing to upgrade ...", True)
 
     _info("\tReading existing UDAs/UDTs...", False)
-    sc = ScriptCleaner(schema, portid, con_args, ch)
+    sc = uu.ScriptCleaner(schema, portid, con_args, ch)
     _info("Script Cleaner initialized ...", False)
 
     ch.drop_changed_uda()
@@ -1092,31 +1088,27 @@ def main(argv):
             _info("Detected %s version %s." % (ports[portid]['name'], dbver),
                   True)
 
+            dbver_split = get_rev_num(dbver)
             if portid == "hawq":
-                # HAWQ (starting 2.0) and GPDB (starting 5.0) uses semantic versioning,
-                # which implies all HAWQ 2.x or GPDB 5.x versions will have binary
-                # compatibility. Hence, we can keep single folder for all 2.X / 5.X.
-                if (is_rev_gte(get_rev_num(dbver), get_rev_num('2.0')) and
-                        not is_rev_gte(get_rev_num(dbver), get_rev_num('3.0'))):
+                # HAWQ (starting 2.0) uses semantic versioning. Hence,
+                # only need first digit for major version.
+                if is_rev_gte(dbver_split, get_rev_num('2.0')):
                     is_hawq2 = True
-                    dbver = '2'
+                    dbver = str(dbver_split[0])
             elif portid == 'greenplum':
-                # similar to HAWQ above, collapse all 5.X versions
-                if (is_rev_gte(get_rev_num(dbver), get_rev_num('5.0')) and
-                        not is_rev_gte(get_rev_num(dbver), get_rev_num('6.0'))):
-                    dbver = '5'
-                elif (is_rev_gte(get_rev_num(dbver), get_rev_num('6.0')) and
-                        not is_rev_gte(get_rev_num(dbver), get_rev_num('7.0'))):
-                    dbver = '6'
-                # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
-                # MADlib treats 4.3.5+ as DB version 4.3ORCA which is different
-                # from 4.3. The name is suffixed with ORCA since optimizer (ORCA) is
-                # 'on' by default in 4.3.5
-                elif is_rev_gte(get_rev_num(dbver), get_rev_num('4.3.4')):
+                if is_rev_gte(dbver_split, get_rev_num('5.0')):
+                    # GPDB (starting 5.0) uses semantic versioning. Hence, only
+                    # need first digit for major version.
+                    dbver = str(dbver_split[0])
+                elif is_rev_gte(dbver_split, get_rev_num('4.3.5')):
+                    # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
+                    # MADlib treats 4.3.5+ as DB version 4.3ORCA which is
+                    # different from 4.3. The name is suffixed with ORCA since
+                    # optimizer (ORCA) is 'on' by default in 4.3.5+
                     dbver = '4.3ORCA'
                 else:
                     # only need the first two digits for <= 4.3.4
-                    dbver = '.'.join(dbver.split('.')[:2])
+                    dbver = '.'.join(dbver_split[:2])
 
             if not os.path.isdir(os.path.join(portdir, dbver)):
                 _error("This version is not among the %s versions for which "
@@ -1435,73 +1427,17 @@ def main(argv):
         _internal_run_query("DROP USER %s;" % (test_user), True)
 
 
-# -----------------------------------------------------------------------
-# Unit tests
-# -----------------------------------------------------------------------
-class RevTest(unittest.TestCase):
-
-    def setUp(self):
-        pass
-
-    def tearDown(self):
-        pass
-
-    def testget_rev_num(self):
-        # not using assertGreaterEqual to keep Python 2.6 compatibility
-        self.assertTrue(get_rev_num('4.3.10') >= get_rev_num('4.3.5'))
-        self.assertTrue(get_rev_num('1.9.10-dev') >= get_rev_num('1.9.9'))
-        self.assertNotEqual(get_rev_num('1.9.10-dev'), get_rev_num('1.9.10'))
-        self.assertEqual(get_rev_num('1.9.10'), [1, 9, 10])
-        self.assertEqual(get_rev_num('1.0.0+20130313144700'), [1, 0, 0, '20130313144700'])
-        self.assertNotEqual(get_rev_num('1.0.0+20130313144700'),
-                            get_rev_num('1.0.0-beta+exp.sha.5114f85'))
-
-    def testis_rev_gte(self):
-        # 1.0.0-alpha < 1.0.0-alpha.1 < 1.0.0-alpha.beta <
-        #       1.0.0-beta < 1.0.0-beta.2 < 1.0.0-beta.11 < 1.0.0-rc.1 < 1.0.0
-        self.assertTrue(is_rev_gte([], []))
-        self.assertTrue(is_rev_gte([1, 9], [1, None]))
-        self.assertFalse(is_rev_gte([1, None], [1, 9]))
-
-        self.assertTrue(is_rev_gte(get_rev_num('4.3.10'), get_rev_num('4.3.5')))
-        self.assertTrue(is_rev_gte(get_rev_num('1.9.0'), get_rev_num('1.9.0')))
-        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9.0')))
-        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9')))
-        self.assertTrue(is_rev_gte(get_rev_num('1.9.0'), get_rev_num('1.9.0-dev')))
-        self.assertTrue(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.9-dev')))
-        self.assertTrue(is_rev_gte(get_rev_num('1.9.0-dev'), get_rev_num('1.9.0-dev')))
-        self.assertTrue(is_rev_gte([1, 9, 'rc', 1], [1, 9, 'dev', 0]))
-
-        self.assertFalse(is_rev_gte(get_rev_num('1.9.1'), get_rev_num('1.10')))
-        self.assertFalse(is_rev_gte([1, 9, 'dev', 1], [1, 9, 'rc', 0]))
-        self.assertFalse(is_rev_gte([1, 9, 'alpha'], [1, 9, 'alpha', 0]))
-        self.assertFalse(is_rev_gte([1, 9, 'alpha', 1], [1, 9, 'alpha', 'beta']))
-        self.assertFalse(is_rev_gte([1, 9, 'alpha.1'], [1, 9, 'alpha.beta']))
-        self.assertFalse(is_rev_gte([1, 9, 'beta', 2], [1, 9, 'beta', 4]))
-        self.assertFalse(is_rev_gte([1, 9, 'beta', '1'], [1, 9, 'rc', '0']))
-        self.assertFalse(is_rev_gte([1, 9, 'rc', 1], [1, 9, 0]))
-        self.assertFalse(is_rev_gte([1, 9, '0.2'], [1, 9, '0.3']))
-        self.assertFalse(is_rev_gte([1, 9, 'build2'], [1, 9, 'build3']))
-
-        self.assertFalse(is_rev_gte(get_rev_num('1.0.0+20130313144700'),
-                                     get_rev_num('1.0.0-beta+exp.sha.5114f85')))
-
 
 # ------------------------------------------------------------------------------
 # Start Here
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
-    RUN_TESTS = False
+    # Run main
+    main(sys.argv[1:])
 
-    if RUN_TESTS:
-        unittest.main()
+    # Optional log files cleanup
+    # keeplogs and tmpdir are global variables
+    if not keeplogs:
+        shutil.rmtree(tmpdir)
     else:
-        # Run main
-        main(sys.argv[1:])
-
-        # Optional log files cleanup
-        # keeplogs and tmpdir are global variables
-        if not keeplogs:
-            shutil.rmtree(tmpdir)
-        else:
-            print "INFO: Log files saved in " + tmpdir
+        print "INFO: Log files saved in " + tmpdir
