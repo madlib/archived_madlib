@@ -69,10 +69,9 @@ function(determine_target_versions OUT_VERSIONS)
             if(${PORT_UC} STREQUAL "GREENPLUM")
                 # Starting GPDB 5.0, semantic versioning will be followed,
                 # implying we only need 1 folder for same major versions
-                if(${${PORT_UC}_VERSION_MAJOR} EQUAL 5)
-                    set(VERSION "5")
-                elseif(${${PORT_UC}_VERSION_MAJOR} EQUAL 6)
-                    set(VERSION "6")
+                if(${${PORT_UC}_VERSION_MAJOR} EQUAL 5 OR
+                       ${${PORT_UC}_VERSION_MAJOR} GREATER 5)
+                    set(VERSION ${${PORT_UC}_VERSION_MAJOR})
 
                 # Due to the ABI incompatibility between 4.3.4 and 4.3.5,
                 # MADlib treat 4.3.5+ as DB version that is different from 4.3
@@ -81,6 +80,13 @@ function(determine_target_versions OUT_VERSIONS)
                         ${${PORT_UC}_VERSION_PATCH} GREATER 4)
                     set(VERSION "4.3ORCA")
                 endif()
+            elseif(${PORT_UC} STREQUAL "POSTGRESQL" AND
+                    (${${PORT_UC}_VERSION_MAJOR} EQUAL 10 OR
+                    ${${PORT_UC}_VERSION_PATCH} GREATER 10))
+                # Starting Postgresql 10, semantic versioning will be followed,
+                # implying we only need 1 folder for same major versions
+                set(VERSION ${${PORT_UC}_VERSION_MAJOR})
+
             elseif(${PORT_UC} STREQUAL "HAWQ" AND
                     ${${PORT_UC}_VERSION_MAJOR} EQUAL 2)
                 # Starting HAWQ 2.0, semantic versioning will be followed,

@@ -1109,7 +1109,11 @@ def main(argv):
                 else:
                     # only need the first two digits for <= 4.3.4
                     dbver = '.'.join(dbver_split[:2])
-
+            elif portid == 'postgres':
+                if is_rev_gte(dbver_split, get_rev_num('10.0')):
+                    # Postgres starting 10.0 uses semantic versioning. Hence,
+                    # only need first digit for major version.
+                    dbver = str(dbver_split[0])
             if not os.path.isdir(os.path.join(portdir, dbver)):
                 _error("This version is not among the %s versions for which "
                        "MADlib support files have been installed (%s)." %
