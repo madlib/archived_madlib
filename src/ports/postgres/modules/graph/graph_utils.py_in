@@ -26,8 +26,9 @@
 
 @namespace graph
 """
-
+import plpy
 from utilities.utilities import _assert, add_postfix
+from utilities.utilities import get_filtered_cols_subquery_str
 from utilities.validate_args import get_cols
 from utilities.validate_args import unquote_ident
 from utilities.validate_args import table_exists
@@ -109,6 +110,85 @@ def validate_graph_coding(vertex_table, vertex_id, edge_table, edge_params,
 
     return None
 
+def validate_params_for_link_analysis(schema_madlib, func_name,
+                                            threshold, max_iter,
+                                            edge_table=None,
+                                            grouping_cols_list=None):
+    _assert(not threshold or (threshold >= 0.0 and threshold <= 1.0),
+            "{0}: Invalid threshold value ({1}), must be between 0 and 1.".
+            format(func_name, threshold))
+    _assert(max_iter > 0,
+            """{0}: Invalid max_iter value ({1}), must be a positive integer.""".
+            format(func_name, max_iter))
+    if grouping_cols_list:
+        # validate the grouping columns. We currently only support grouping_cols
+        # to be column names in the edge_table, and not expressions!
+        _assert(columns_exist_in_table(edge_table, grouping_cols_list, schema_madlib),
+                "{0} error: One or more grouping columns specified do not exist!".
+                format(func_name))
+
+def update_output_grouping_tables_for_link_analysis(temp_summary_table,
+                                                          iter_num, summary_table,
+                                                          out_table, res_table,
+                                                          grouping_cols_list,
+                                                          cur_unconv,
+                                                          message_unconv=None):
+    """
+        This function updates the summary and output tables only for those
+        groups that have converged. This is found out by looking at groups
+        that appear in cur_unvonv but not in message_unconv: message_unconv
+        consists of groups that have not converged in the current iteration,
+        while cur_unconv contains groups that had not converged in the
+        previous iterations. The entries in cur_unconv is a superset of the
+        entries in message_unconv. So the difference in the groups across
+        the two tables represents the groups that converged in the current
+        iteration.
+    """
+    plpy.execute("TRUNCATE TABLE {0}".format(temp_summary_table))
+    if message_unconv is None:
+        # If this function is called after max_iter is completed, without
+        # convergence, all the unconverged groups from cur_unconv is used
+        # (note that message_unconv is renamed to cur_unconv before checking
+        # for unconverged==0 in the pagerank function's for loop)
+        plpy.execute("""
+            INSERT INTO {temp_summary_table}
+            SELECT * FROM {cur_unconv}
+            """.format(**locals()))
+    else:
+        plpy.execute("""
+            INSERT INTO {temp_summary_table}
+            SELECT {cur_unconv}.*
+            FROM {cur_unconv}
+            WHERE {join_condition}
+            """.format(join_condition=get_filtered_cols_subquery_str(
+            cur_unconv, message_unconv, grouping_cols_list), **locals()))
+
+    plpy.execute("""
+        INSERT INTO {summary_table}
+        SELECT *, {iter_num}+1 AS __iteration__
+        FROM {temp_summary_table}
+        """.format(**locals()))
+    plpy.execute("""
+        INSERT INTO {out_table}
+        SELECT {res_table}.*
+        FROM {res_table}
+        INNER JOIN {temp_summary_table}
+        ON {join_condition}
+        """.format(join_condition=' AND '.join(
+        ["{res_table}.{col}={temp_summary_table}.{col}".format(
+            **locals())
+         for col in grouping_cols_list]), **locals()))
+
+def get_default_threshold_for_link_analysis(n_vertices):
+    """
+        A fixed threshold value, of say 1e-5, might not work well when the
+        number of vertices is a billion, since the initial score
+        (PageRank/Authority/Hub etc.) value of all nodes would then be 1/1e-9.
+        So, assign default threshold value based on number of nodes in the graph.
+        NOTE: The heuristic below is not based on any scientific evidence.
+    """
+    _assert(n_vertices > 0, """Number of vertices must be greater than 0""")
+    return 1.0 / (n_vertices * 1000)
 
 def get_graph_usage(schema_madlib, func_name, other_text):
 

@@ -19,11 +19,12 @@
  *
  *//* ----------------------------------------------------------------------- */
 
-DROP TABLE IF EXISTS vertex, "EDGE";
+\set tolerance 10e-10
+DROP TABLE IF EXISTS vertex, edge;
 CREATE TABLE vertex(
         id INTEGER
         );
-CREATE TABLE "EDGE"(
+CREATE TABLE edge(
         src INTEGER,
         dest INTEGER,
         user_id INTEGER
@@ -36,7 +37,7 @@ INSERT INTO vertex VALUES
 (4),
 (5),
 (6);
-INSERT INTO "EDGE" VALUES
+INSERT INTO edge VALUES
 (0, 1, 1),
 (0, 2, 1),
 (0, 4, 1),
@@ -54,18 +55,104 @@ DROP TABLE IF EXISTS hits_out, hits_out_summary;
 SELECT hits(
          'vertex',        -- Vertex table
          'id',            -- Vertex id column
-         '"EDGE"',          -- "EDGE" table
-         'src=src, dest=dest', -- "EDGE" args
+         'edge',          -- edge table
+         'src=src, dest=dest', -- edge args
          'hits_out',       -- Output table of HITS
          3);                  -- Max number of iteration
 
+SELECT assert(count(*) = 7, 'Tuple count for hits out table != 7') FROM hits_out;
+
+\set expected_authority 0.0865332738777835
+\set expected_hub       0.375721659592363
 
 -- Test Case: when max_iter=3, the authority score for node 0 should be close to 0.086533
-SELECT assert(relative_error(authority, 0.086533) < 0.00001,
-        'HITS: calculation for authority score is wrong'
+SELECT assert(relative_error(authority, :expected_authority) < :tolerance,
+        'HITS: Incorrect value for authority score. Expected: ' || :expected_authority || ' Actual: ' || authority
     ) FROM hits_out WHERE id=0;
 
 -- Test Case: when max_iter=3, the authority score for node 0 should be close to 0.375721
-SELECT assert(relative_error(hub, 0.375721) < 0.00001,
-        'HITS: calculation for hub score is wrong'
+SELECT assert(relative_error(hub, :expected_hub) < :tolerance,
+        'HITS: Incorrect value for hub score. Expected: ' || :expected_hub || ' Actual: ' || hub
     ) FROM hits_out WHERE id=0;
+
+
+-- Test case for grouping columns
+TRUNCATE TABLE vertex, edge;
+INSERT INTO vertex VALUES
+(0),
+(1),
+(2),
+(3),
+(4),
+(5),
+(6);
+INSERT INTO edge VALUES
+(0, 1, 1),
+(0, 2, 1),
+(0, 4, 1),
+(1, 2, 1),
+(1, 3, 1),
+(2, 3, 1),
+(2, 5, 1),
+(2, 6, 1),
+(3, 0, 1),
+(4, 0, 1),
+(5, 6, 1),
+(6, 3, 1),
+(0, 1, 2),
+(0, 2, 2),
+(0, 4, 2),
+(1, 2, 2),
+(1, 3, 2),
+(2, 3, 2),
+(3, 0, 2),
+(4, 0, 2),
+(5, 6, 2),
+(6, 3, 2);
+
+DROP TABLE IF EXISTS hits_out, hits_out_summary;
+SELECT hits(
+         'vertex',        -- Vertex table
+         'id',            -- Vertex id column
+         'edge',          -- edge table'
+         'src=src, dest=dest', -- edge args
+         'hits_out',       -- Output table of HITS
+         3,                -- Max number of iteration
+         0,                -- threshold
+         'user_id');        -- grouping cols
+
+SELECT assert(count(*) = 14, 'Tuple count for hits out table != 14') FROM hits_out;
+
+\set expected_authority1 0.432666369388918
+\set expected_authority2 0.016273613872603
+SELECT assert(relative_error(authority , :expected_authority1) < :tolerance,
+        'HITS: Incorrect value for authority score. Expected: ' || :expected_authority1 || ' Actual: ' || authority
+    ) FROM hits_out WHERE id=2 and user_id = 1;
+
+SELECT assert(relative_error(authority , :expected_authority2) < :tolerance,
+        'HITS: Incorrect value for authority score. Expected: ' || :expected_authority2 || ' Actual: ' || authority
+    ) FROM hits_out WHERE id=6 and user_id = 2;
+
+-- Different max_iter and threshold values
+DROP TABLE IF EXISTS hits_out, hits_out_summary;
+SELECT hits(
+         'vertex',        -- Vertex table
+         'id',            -- Vertex id column
+         'edge',          -- edge table'
+         'src=src, dest=dest', -- edge args
+         'hits_out',      -- Output table of HITS
+         3,               -- Max number of iteration
+         0.01,            -- threshold
+         'user_id');      -- grouping cols
+
+SELECT assert(count(*) = 14, 'Tuple count for hits out table != 14') FROM hits_out;
+
+\set expected_hub1 0.040618557793769
+\set expected_hub2 0.00818161871503306
+SELECT assert(relative_error(hub , :expected_hub1) < :tolerance,
+        'HITS: Incorrect value for hub score. Expected: ' || :expected_hub1 || ' Actual: ' || hub
+    ) FROM hits_out WHERE id=3 and user_id = 1;
+
+SELECT assert(relative_error(hub , :expected_hub2) < :tolerance,
+        'HITS: Incorrect value for hub score. Expected: ' || :expected_hub2 || ' Actual: ' || hub
+    ) FROM hits_out WHERE id=5 and user_id = 2;

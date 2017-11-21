@@ -22,7 +22,9 @@
 \chapter[Graph]{Graph}
 
 \begin{moduleinfo}
-\item[Authors] \href{mailto:okislal@pivotal.io}{Orhan Kislal}, \href{mailto:njayaram@pivotal.io}{Nandish Jayaram}, \href{mailto:rraghu@pivotal.io}{Rashmi Raghu}
+\item[Authors] \href{mailto:okislal@pivotal.io}{Orhan Kislal}, \href{mailto:njayaram@pivotal.io}{Nandish Jayaram},
+			   \href{mailto:rraghu@pivotal.io}{Rashmi Raghu}, \href{mailto:jmei@pivotal.io@pivotal.io}{Jingyi Mei},
+			   \href{mailto:nkak@pivotal.io}{Nikhil Kak}
 \item[History]
 	\begin{modulehistory}
 		\item[v0.1] Initial version, SSSP only.
@@ -31,6 +33,7 @@
         \item[v0.4] APSP
         \item[v0.5] Weakly Connected Components
         \item[v0.6] Breadth First Search (BFS)
+        \item[v0.7] Hyperlink-Induced Topic Search (HITS)
 	\end{modulehistory}
 \end{moduleinfo}
 
@@ -665,3 +668,124 @@ table, except that for each new neighboring vertex considered, only one of the
 parents is recorded as its parent (the node with the smallest id among all
 parent nodes). The content of this updated $message$ is then copied
 to the $out$ table, and this process continues until $message$ table is empty.
+
+
+\section{HITS} \label{sec:graph:hits}
+\begin{figure}[h]
+	\centering
+	\includegraphics[width=0.5\textwidth]{figures/hits_example.pdf}
+\caption{An example graph for HITS showing normalized hub and authority scores}
+\label{hits:example}
+\end{figure}
+
+Hyperlink-Induced Topic Search (HITS)~\cite{hits} developed by Jon Kleinberg is
+a link analysis algorithm that rates Web pages. The idea behind the algorithm is
+to assign Hub and Authority scores to all vertices. Authorities are analagous to
+web pages that have good authoritative content and get linked by other web pages.
+Hubs can be thought of as large directories that themselves do not hold any
+authoritative content but provide direct links to other authoritative pages.
+
+HITS is an iterative algorithm where the Hub and Authority scores of vertices
+from the previous iteration are used to compute the new scores. The
+Hub and Authority scores of a vertex $v$, at the $i^{th}$ iteration, denoted by
+$HUB(v_i)$ and $AUTHORITY(v_i)$ is computed as:
+\begin{equation}
+    \begin{aligned}
+        AUTHORITY(v_i) = \sum_{u \in M(v)}({HUB(u_{i-1})})\\
+        HUB(v_i) = \sum_{u \in M(v)}({AUTHORITY(v_{i})})
+    \end{aligned}
+\label{eq:hits}
+\end{equation}
+
+where $N$ is the number of vertices in the graph, $M(v)$ represents the set of
+vertices that have an edge to vertex $v$, and $HUB(u_{i-1})$ and $AUTHORITY
+(v_{i})$ represent the Hub score of vertex {u} in the $(i-1) ^{th}$ iteration and
+Authority score of vertex $v$ in the $(i)^{th}$ iteration.
+
+\subsection{Implementation Details} \label{sec:hits:implementation}
+
+In this section, we discuss the MADlib implementation of HITS in depth.
+We maintain two tables at every iteration: $message$ and $cur$. The
+$cur$ table maintains the Hub and Authority scores of all vertices
+computed in the previous iteration, while $message$ maintains the updated scores
+of all vertices in the current iteration.
+
+\begin{algorithm}[HITS$(V,E)$] \label{alg:hits:high}
+\begin{algorithmic}[1]
+	\State Create $cur$ table with a default Hub and Authority score of
+			${1}$ for every vertex
+	\Repeat
+        \State Create empty table $message$.
+        \State Update Authority score in $message$ using Hub scores of vertices
+        in $cur$
+        \State Update Hub score in $message$ using Authority scores of vertices
+        in $message$
+        \State Normalize Hub and Authority scores in $message$ using L2
+        normalization
+        \State Rename $message$ to $cur$
+	\Until {both Authority and Hub scores have converged or \emph{max}
+	iterations have elapsed}
+\end{algorithmic}
+\end{algorithm}
+
+The following query is used to create and update the Hub and Authority scores
+in $message$ table using the Hub scores in $cur$ table.
+
+\begin{algorithm}[Update Hub and Authority scores$(cur, edge\_table)$]
+\label{alg:hits:update}
+\begin{lstlisting}
+-- Create message table and update authority scores
+CREATE TABLE message AS
+	SELECT cur.id AS id,
+		COALESCE(SUM(curalias.hub), 0.0) AS authority,
+	cur.hub AS hub
+	FROM cur
+        LEFT JOIN edge_table ON cur.id = edge_table.dest
+        LEFT JOIN cur AS curalias ON curalias.id = edge_table.dest
+	GROUP BY cur.id, cur.hub
+	ORDER BY cur.id
+
+-- Update hub scores in message table:
+UPDATE message
+	SET hub = subquery.hub FROM
+		(
+		SELECT  message.id AS id, COALESCE(SUM(msgalias.authority), 0) AS hub
+		FROM message
+		LEFT JOIN edge_table ON message.id = edge_table.src
+		LEFT JOIN message AS msgalias ON message.id = edge_table.dest
+		GROUP BY  message.id
+		) AS subquery
+	WHERE subquery.id = message.id
+
+\end{lstlisting}
+\end{algorithm}
+
+
+The Hub and Authority computations are terminated either when a fixed number of
+iterations are completed, or when both the Hub and Authority scores of all
+vertices have converged. The Hub/Authority score of a vertex is deemed
+converged if the absolute difference in its Hub/Authority scores from $cur$ and
+$message$ are less than a specified threshold.
+The following query is used to find all the vertices whose Hub/Authority scores
+have not converged yet.
+\begin{algorithm}[Check for Hub and Authority convergence$(cur, message,
+threshold)$]
+\label{alg:hits:update1}
+\begin{lstlisting}
+		SELECT DISTINCT cur.id FROM message
+		INNER JOIN cur ON cur.id=message.id
+		WHERE ABS(cur.authority-message.authority) > threshold
+		OR ABS(cur.hub-message.hub) > threshold
+\end{lstlisting}
+\end{algorithm}
+
+\subsection{Best Practices} \label{sec:hits:bestpractices}
+
+The HITS module in MADlib has a few optional parameters: number of iterations $max$,
+and the threshold for convergence $threshold$.
+The default values for these parameters when not specified by the user are $100$
+and $\frac{1}{N*1000}$ respectively.
+It is to be noted that this is not based on any experimental study. Users of
+MADlib are encouraged to consider this factor when setting a value for threshold,
+since a high $threshold$ value would lead to early termination of computation,
+thus resulting in incorrect Hub and Authority scores.
