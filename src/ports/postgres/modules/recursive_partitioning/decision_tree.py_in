@@ -346,7 +346,7 @@ def get_grouping_array_str(table_name, grouping_cols, qualifier=None):
 # So it has some specific code for cv.
 def _build_tree(schema_madlib, is_classification, split_criterion,
                 training_table_name, output_table_name, id_col_name,
-                dependent_variable, dep_is_bool,
+                dependent_variable, dep_is_bool, list_of_features,
                 cat_features, ordered_cat_features,
                 boolean_cats, con_features, grouping_cols,
                 weights, max_depth, min_split, min_bucket, n_bins,
@@ -499,7 +499,7 @@ def tree_train(schema_madlib, training_table_name, output_table_name,
 def _create_output_tables(schema_madlib, training_table_name, output_table_name,
                           tree_states, bins,
                           split_criterion, cat_features, con_features,
-                          id_col_name, dependent_variable,
+                          id_col_name, dependent_variable, list_of_features,
                           is_classification, n_all_rows, n_rows, dep_list, cp,
                           all_cols_types, grouping_cols=None,
                           use_existing_tables=False, running_cv=False, k=0,
@@ -519,7 +519,8 @@ def _create_output_tables(schema_madlib, training_table_name, output_table_name,
     _create_summary_table(
         schema_madlib, split_criterion, training_table_name,
         output_table_name, id_col_name, cat_features, con_features,
-        dependent_variable, failed_groups, is_classification, n_all_rows,
+        dependent_variable, list_of_features,
+        failed_groups, is_classification, n_all_rows,
         n_rows, dep_list, all_cols_types, cp, grouping_cols, 1,
         use_existing_tables, running_cv, k, null_proxy)
 # -------------------------------------------------------------------------
@@ -1436,13 +1437,12 @@ def _get_dep_type(data_table, dep):
 def _create_summary_table(
         schema_madlib, split_criterion,
         training_table_name, output_table_name, id_col_name,
-        cat_features, con_features, dependent_variable,
+        cat_features, con_features, dependent_variable, list_of_features,
         num_failed_groups, is_classification, n_all_rows, n_rows,
         dep_list, all_cols_types, cp, grouping_cols=None, n_groups=1,
         use_existing_tables=False, running_cv=False, k=0, null_proxy=None):
 
     # dependent variables
-    features = ', '.join(cat_features + con_features)
     if dep_list:
         dep_list_str = ("$dep_list$" +
                         ','.join('"{0}"'.format(str(dep)) for dep in dep_list) +
@@ -1480,7 +1480,7 @@ def _create_summary_table(
                 '{output_table_name}'::text    AS model_table,
                 '{id_col_name}'::text          AS id_col_name,
                 '{dependent_variable}'::text   AS dependent_varname,
-                '{features}'::text             AS independent_varnames,
+                '{list_of_features}'::text     AS independent_varnames,
                 '{cat_features_str}'::text     AS cat_features,
                 '{con_features_str}'::text     AS con_features,
                 {grouping_cols_str}::text      AS grouping_cols,
@@ -1584,12 +1584,12 @@ def tree_predict(schema_madlib, model, source, output, pred_type='response',
     # obtain the cat_features and con_features from model table
     summary_elements = plpy.execute("SELECT * FROM {0}".format(model_summary))[0]
 
+    list_of_features = split_quoted_delimited_str(summary_elements["independent_varnames"])
     cat_features = split_quoted_delimited_str(summary_elements["cat_features"])
     con_features = split_quoted_delimited_str(summary_elements["con_features"])
-    _assert(
-        is_var_valid(source, ','.join(cat_features + con_features)),
-        "Decision tree error: Missing columns in predict data table ({0}) "
-        "that were used during training".format(source))
+    _assert(is_var_valid(source, ','.join(list_of_features)),
+            "Decision tree error: Missing columns in predict data table ({0}) "
+            "that were used during training".format(source))
     id_col_name = summary_elements["id_col_name"]
     grouping_cols_str = summary_elements.get("grouping_cols")  # optional, default = None
     dep_varname = summary_elements["dependent_varname"]
@@ -2066,6 +2066,7 @@ def _get_xvalidate_params(**kwargs):
                        quoted_args['id_col_name'],
                        quoted_args['dependent_variable'],
                        quoted_args['dep_is_bool'],
+                       quoted_args['list_of_features'],
                        all_feature_str[0],
                        all_feature_str[1],
                        all_feature_str[2],
@@ -2073,14 +2074,18 @@ def _get_xvalidate_params(**kwargs):
                        quoted_args['grouping_str'],
                        quoted_args['weights'],
                        quoted_args['max_depth'],
-                       quoted_args['min_split'], quoted_args['min_bucket'], quoted_args['n_bins'],
-                       "%explore%", quoted_args['max_n_surr'], quoted_args['msg_level']
+                       quoted_args['min_split'],
+                       quoted_args['min_bucket'],
+                       quoted_args['n_bins'],
+                       "%explore%",
+                       quoted_args['max_n_surr'],
+                       quoted_args['msg_level']
                        ]
-    modeling_param_types = (["BOOLEAN"] + ["TEXT"] * 5 + ["BOOLEAN"] +
+    modeling_param_types = (["BOOLEAN"] + ["TEXT"] * 5 + ["BOOLEAN"] + ["TEXT"] +
                             ["VARCHAR[]"] * 4 + ["TEXT"] * 2 + ["INTEGER"] * 4 +
                             ["TEXT", "SMALLINT", "TEXT"])
     predict_params = ["%model%", "%data%", "%prediction%", "'response'", "True"]
-    predict_param_types = ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "BOOLEAN"]
+    predict_param_types = (["VARCHAR"] * 4 + ["BOOLEAN"])
     metric_params = ["%data%",
                      quoted_args['dependent_variable'],
                      "%prediction%",
@@ -2089,7 +2094,8 @@ def _get_xvalidate_params(**kwargs):
                      quoted_args['grouping_cols'],
                      "%error%",
                      "True"]
-    metric_param_types = ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR", "TEXT", "VARCHAR", "BOOLEAN"]
+    metric_param_types = ["VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR",
+                          "VARCHAR", "TEXT", "VARCHAR", "BOOLEAN"]
     return [modeling_params, modeling_param_types,
             predict_params, predict_param_types,
             metric_params, metric_param_types]
@@ -2136,11 +2142,13 @@ def _tree_train_using_bins(
 
 
 def _tree_train_grps_using_bins(
-        schema_madlib, bins, training_table_name, cat_features, con_features,
-        boolean_cats, n_bins, weights, grouping_cols, grouping_array_str, dep_var_str,
-        min_split, min_bucket, max_depth, filter_dep, dep_n_levels,
-        is_classification, split_criterion, subsample=False,
-        n_random_features=1, tree_terminated=None, max_n_surr=0, null_proxy=None,
+        schema_madlib, bins, training_table_name,
+        cat_features, con_features, boolean_cats, n_bins, weights,
+        grouping_cols, grouping_array_str,
+        dep_var_str, min_split, min_bucket, max_depth, filter_dep,
+        dep_n_levels, is_classification, split_criterion,
+        subsample=False, n_random_features=1, tree_terminated=None,
+        max_n_surr=0, null_proxy=None,
         **kwargs):
 
     """Trains a tree with grouping columns included """
