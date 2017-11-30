@@ -69,17 +69,17 @@ docker exec madlib bash -c 'rm -rf /build; mkdir /build; cd /build; cmake ../mad
 echo "---------- Installing and running install-check --------------------"
 # Install MADlib and run install check
 cat <<EOF
-docker exec madlib bash -c '/build/src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install' | tee $workdir/logs/madlib_install.log
+docker exec madlib bash -c '/build/src/bin/madpack -s mad -p postgres -c postgres/postgres@localhost:5432/postgres install' | tee $workdir/logs/madlib_install.log
 EOF
-docker exec madlib bash -c '/build/src/bin/madpack -p postgres -c postgres/postgres@localhost:5432/postgres install' | tee $workdir/logs/madlib_install.log
+docker exec madlib bash -c '/build/src/bin/madpack -s mad -p postgres -c postgres/postgres@localhost:5432/postgres install' | tee $workdir/logs/madlib_install.log
 
 cat <<EOF
 docker exec madlib bash -c 'mkdir /tmp'
-docker exec madlib bash -c '/build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres -d /tmp install-check' | tee $workdir/logs/madlib_install_check.log
+docker exec madlib bash -c '/build/src/bin/madpack -s mad -p postgres  -c postgres/postgres@localhost:5432/postgres -d /tmp install-check' | tee $workdir/logs/madlib_install_check.log
 EOF
 
 docker exec madlib bash -c 'mkdir /tmp'
-docker exec madlib bash -c '/build/src/bin/madpack -p postgres  -c postgres/postgres@localhost:5432/postgres -d /tmp install-check' | tee $workdir/logs/madlib_install_check.log
+docker exec madlib bash -c '/build/src/bin/madpack -s mad -p postgres  -c postgres/postgres@localhost:5432/postgres -d /tmp install-check' | tee $workdir/logs/madlib_install_check.log
 
 echo "--------- Copying packages -----------------"
 echo "docker cp madlib:build $workdir"
