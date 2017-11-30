@@ -38,7 +38,7 @@ from utilities.control import MinWarning
 
 def knn_validate_src(schema_madlib, point_source, point_column_name, point_id,
                      label_column_name, test_source, test_column_name,
-                     test_id, output_table, k, output_neighbors, **kwargs):
+                     test_id, output_table, k, output_neighbors, fn_dist, **kwargs):
     input_tbl_valid(point_source, 'kNN')
     input_tbl_valid(test_source, 'kNN')
     output_tbl_valid(output_table, 'kNN')
@@ -88,12 +88,28 @@ def knn_validate_src(schema_madlib, point_source, point_column_name, point_id,
         plpy.error("kNN Error: Data type '{0}' is not a valid type for"
                    " column '{1}' in table '{2}'.".
                    format(col_type_test, test_id, test_source))
+
+    if fn_dist:
+        fn_dist = fn_dist.lower().strip()
+        dist_functions = set([schema_madlib + dist for dist in
+                              ('.dist_norm1', '.dist_norm2', '.squared_dist_norm2', '.dist_angle', '.dist_tanimoto')])
+
+        is_invalid_func = plpy.execute(
+            """select prorettype != 'DOUBLE PRECISION'::regtype
+                OR proisagg = TRUE AS OUTPUT from pg_proc where
+                oid='{fn_dist}(DOUBLE PRECISION[], DOUBLE PRECISION[])'::regprocedure;
+                """.format(**locals()))[0]['output']
+
+        if is_invalid_func or fn_dist not in dist_functions:
+            plpy.error(
+                "KNN error: Distance function has wrong signature or is not a simple function.")
+
     return k
 # ------------------------------------------------------------------------------
 
 
 def knn(schema_madlib, point_source, point_column_name, point_id, label_column_name,
-        test_source, test_column_name, test_id, output_table, k, output_neighbors):
+        test_source, test_column_name, test_id, output_table, k, output_neighbors, fn_dist):
     """
         KNN function to find the K Nearest neighbours
         Args:
@@ -117,12 +133,19 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
                                         neighbors to consider
             @output_neighbours          Outputs the list of k-nearest neighbors
                                         that were used in the voting/averaging.
+            @param fn_dist              Distance metrics function. Default is
+                                        squared_dist_norm2. Following functions
+                                        are supported :
+                                        dist_norm1 , dist_norm2,squared_dist_norm2,
+                                        dist_angle , dist_tanimoto
+                                        Or user defined function with signature
+                                        DOUBLE PRECISION[] x, DOUBLE PRECISION[] y -> DOUBLE PRECISION
     """
     with MinWarning('warning'):
         k_val = knn_validate_src(schema_madlib, point_source,
                                  point_column_name, point_id, label_column_name,
                                  test_source, test_column_name, test_id,
-                                 output_table, k, output_neighbors)
+                                 output_table, k, output_neighbors, fn_dist)
 
         x_temp_table = unique_string(desp='x_temp_table')
         y_temp_table = unique_string(desp='y_temp_table')
@@ -132,6 +155,10 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
         if output_neighbors is None:
             output_neighbors = True
 
+        if not fn_dist:
+            fn_dist = schema_madlib + '.squared_dist_norm2'
+
+        fn_dist = fn_dist.lower().strip()
         interim_table = unique_string(desp='interim_table')
 
         pred_out = ""
@@ -141,7 +168,7 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
 
         if output_neighbors:
             knn_neighbors = (", array_agg(knn_temp.train_id ORDER BY "
-                                "knn_temp.dist ASC) AS k_nearest_neighbours ")
+                             "knn_temp.dist ASC) AS k_nearest_neighbours ")
         if label_column_name:
             is_classification = False
             label_column_type = get_expr_type(
@@ -156,12 +183,12 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
                             ).format(**locals())
             pred_out += " AS prediction"
             label_out = (", train.{label_column_name}{cast_to_int}"
-                            " AS {label_col_temp}").format(**locals())
+                         " AS {label_col_temp}").format(**locals())
 
         if not label_column_name and not output_neighbors:
 
             plpy.error("kNN error: Either label_column_name or "
-                   "output_neighbors has to be non-NULL.")
+                       "output_neighbors has to be non-NULL.")
 
         plpy.execute("""
             CREATE TEMP TABLE {interim_table} AS
@@ -172,7 +199,7 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
                     FROM (
                         SELECT test.{test_id} AS {test_id_temp} ,
                             train.{point_id} as train_id ,
-                            {schema_madlib}.squared_dist_norm2(
+                            {fn_dist}(
                                 train.{point_column_name},
                                 test.{test_column_name})
                             AS dist {label_out}
@@ -195,7 +222,6 @@ def knn(schema_madlib, point_source, point_column_name, point_id, label_column_n
                     knn_temp.{test_id_temp} = knn_test.{test_id}
                 GROUP BY {test_id_temp} , {test_column_name}
             """.format(**locals()))
-
 
         plpy.execute("DROP TABLE IF EXISTS {0}".format(interim_table))
         return
