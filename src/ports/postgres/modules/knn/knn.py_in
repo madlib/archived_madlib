@@ -227,4 +227,182 @@ def knn(schema_madlib, point_source, point_column_name, point_id,
 
         plpy.execute("DROP TABLE IF EXISTS {0}".format(interim_table))
         return
+
+def knn_help(schema_madlib, message, **kwargs):
+    """
+    Help function for knn
+
+    Args:
+        @param schema_madlib
+        @param message: string, Help message string
+        @param kwargs
+
+    Returns:
+        String. Help/usage information
+    """
+    if message is not None and \
+            message.lower() in ("usage", "help", "?"):
+        help_string = """
+-----------------------------------------------------------------------
+                            USAGE
+-----------------------------------------------------------------------
+SELECT {schema_madlib}.knn(
+    point_source,       -- Training data table having training features as vector column and labels
+    point_column_name,  -- Name of column having feature vectors in training data table
+    point_id,           -- Name of column having feature vector Ids in train data table
+    label_column_name,  -- Name of column having actual label/vlaue for corresponding feature vector in training data table
+    test_source,        -- Test data table having features as vector column. Id of features is mandatory
+    test_column_name,   -- Name of column having feature vectors in test data table
+    test_id,     -- Name of column having feature vector Ids in test data table
+    output_table,       -- Name of output table
+    k,                  -- value of k. Default will go as 1
+    output_neighbors    -- Outputs the list of k-nearest neighbors that were used in the voting/averaging.
+    fn_dist             -- The name of the function to use to calculate the distance from a data point to a centroid.
+    );
+
+-----------------------------------------------------------------------
+                            OUTPUT
+-----------------------------------------------------------------------
+The output of the KNN module is a table with the following columns:
+
+id                  The ids of test data points.
+test_column_name    The test data points.
+prediction          The output of KNN- label in case of classification, average value in case of regression.
+k_nearest_neighbours The list of k-nearest neighbors that were used in the voting/averaging.
+"""
+    else:
+        if message is not None and \
+                message.lower() in ("example", "examples"):
+            help_string = """
+----------------------------------------------------------------------------
+                                EXAMPLES
+----------------------------------------------------------------------------
+--  Prepare some training data for classification:
+DROP TABLE IF EXISTS knn_train_data;
+CREATE TABLE knn_train_data (
+                    id integer,
+                    data integer[],
+                    label integer  -- Integer label means for classification
+                    );
+INSERT INTO knn_train_data VALUES
+(1, '{{1,1}}', 1),
+(2, '{{2,2}}', 1),
+(3, '{{3,3}}', 1),
+(4, '{{4,4}}', 1),
+(5, '{{4,5}}', 1),
+(6, '{{20,50}}', 0),
+(7, '{{10,31}}', 0),
+(8, '{{81,13}}', 0),
+(9, '{{1,111}}', 0);
+
+--  Prepare some training data for regression:
+DROP TABLE IF EXISTS knn_train_data_reg;
+CREATE TABLE knn_train_data_reg (
+                    id integer,
+                    data integer[],
+                    label float  -- Float label means for regression
+                    );
+INSERT INTO knn_train_data_reg VALUES
+(1, '{{1,1}}', 1.0),
+(2, '{{2,2}}', 1.0),
+(3, '{{3,3}}', 1.0),
+(4, '{{4,4}}', 1.0),
+(5, '{{4,5}}', 1.0),
+(6, '{{20,50}}', 0.0),
+(7, '{{10,31}}', 0.0),
+(8, '{{81,13}}', 0.0),
+(9, '{{1,111}}', 0.0);
+
+--  Prepare some testing data:
+DROP TABLE IF EXISTS knn_test_data;
+CREATE TABLE knn_test_data (
+                    id integer,
+                    data integer[]
+                    );
+INSERT INTO knn_test_data VALUES
+(1, '{{2,1}}'),
+(2, '{{2,6}}'),
+(3, '{{15,40}}'),
+(4, '{{12,1}}'),
+(5, '{{2,90}}'),
+(6, '{{50,45}}');
+
+--  Run KNN for classification:
+DROP TABLE IF EXISTS knn_result_classification;
+SELECT * FROM {schema_madlib}.knn(
+                'knn_train_data',      -- Table of training data
+                'data',                -- Col name of training data
+                'id',                  -- Col name of id in train data
+                'label',               -- Training labels
+                'knn_test_data',       -- Table of test data
+                'data',                -- Col name of test data
+                'id',                  -- Col name of id in test data
+                'knn_result_classification',  -- Output table
+                 3,                    -- Number of nearest neighbors
+                 True,                 -- True to list nearest-neighbors by id
+                 'madlib.squared_dist_norm2' -- Distance function
+                );
+SELECT * from knn_result_classification ORDER BY id;
+
+Note that the nearest neighbors are sorted from closest
+to furthest from the corresponding test point.
+
+--  Run KNN for regression:
+DROP TABLE IF EXISTS knn_result_regression;
+SELECT * FROM {schema_madlib}.knn(
+                'knn_train_data_reg',  -- Table of training data
+                'data',                -- Col name of training data
+                'id',                  -- Col Name of id in train data
+                'label',               -- Training labels
+                'knn_test_data',       -- Table of test data
+                'data',                -- Col name of test data
+                'id',                  -- Col name of id in test data
+                'knn_result_regression',  -- Output table
+                 3,                    -- Number of nearest neighbors
+                True,                  -- True to list nearest-neighbors by id
+                'madlib.dist_norm2'    -- Distance function
+                );
+SELECT * FROM knn_result_regression ORDER BY id;
+
+--  List nearest neighbors only, without doing classification
+or regression:
+DROP TABLE IF EXISTS knn_result_list_neighbors;
+SELECT * FROM {schema_madlib}.knn(
+                'knn_train_data_reg',  -- Table of training data
+                'data',                -- Col name of training data
+                'id',                  -- Col Name of id in train data
+                NULL,                  -- NULL training labels means just list neighbors
+                'knn_test_data',       -- Table of test data
+                'data',                -- Col name of test data
+                'id',                  -- Col name of id in test data
+                'knn_result_list_neighbors', -- Output table
+                3                      -- Number of nearest neighbors
+                );
+SELECT * FROM knn_result_list_neighbors ORDER BY id;
+"""
+        else:
+            help_string = """
+----------------------------------------------------------------------------
+                                SUMMARY
+----------------------------------------------------------------------------
+k-Nearest Neighbors is a method for finding k closest points to a given data
+point in terms of a given metric. Its input consist of data points as features
+from testing examples. For a given k, it looks for k closest points in
+training set for each of the data points in test set. Algorithm generates one
+output per testing example. The output of KNN depends on the type of task:
+For Classification, the output is majority vote of the classes of the k
+nearest data points. The testing example gets assigned the most popular class
+among nearest neighbors. For Regression, the output is average of the values
+of k nearest neighbors of the given testing example.
+--
+For an overview on usage, run:
+SELECT {schema_madlib}.knn('usage');
+
+For some examples, run:
+SELECT {schema_madlib}.knn('example')
+--
+"""
+
+    return help_string.format(schema_madlib=schema_madlib)
 # ------------------------------------------------------------------------------
+
