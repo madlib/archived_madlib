@@ -9,3 +9,4 @@ macro(rh_version OUT_VERSION)
         set(${OUT_VERSION} "${OUT_VERSION}-NOTFOUND")
     endif(EXISTS "/etc/redhat-release")
 endmacro(rh_version)
+

@@ -271,7 +271,7 @@ function(add_${PORT_LC}_library IN_PORT_VERSION)
 # -- 4.4. Generate gppkg deployment scripts. Note: These are generated CMake
 #       scripts! ---------------------------------------------------------------
     if(NOT (${IN_PORT_VERSION} VERSION_LESS "4.2"))
-        add_gppkg(${IN_PORT_VERSION} Greenplum gpdb 1.0)
+        add_gppkg(${IN_PORT_VERSION} Greenplum gp 1.0)
     endif(NOT (${IN_PORT_VERSION} VERSION_LESS "4.2"))
 
 endfunction(add_${PORT_LC}_library)
