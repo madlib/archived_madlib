@@ -34,7 +34,8 @@ CREATE OR REPLACE FUNCTION detect_changed_types(
 RETURNS TEXT[] AS
 $$
     import plpy
-
+    OLD_SCHEMA = 'madlib_old_vers'
+    NEW_SCHEMA = 'madlib'
     rv = plpy.execute("""
         SELECT name, old_relid, new_relid
         FROM {common_udt_table}
@@ -44,22 +45,31 @@ $$
         name = r['name']
         old_relid = r['old_relid']
         new_relid = r['new_relid']
-        rv = plpy.execute("""
+        res = plpy.execute("""
             SELECT
                 array_eq(old_type, new_type) AS changed
             FROM
             (
-                SELECT array_agg(a.attname || pg_catalog.format_type(a.atttypid, a.atttypmod) || a.attnum order by a.attnum) AS old_type
+                SELECT array_agg(a.attname ||
+                                 regexp_replace(pg_catalog.format_type(a.atttypid, a.atttypmod),
+                                                '{old_schema}.', '') ||
+                                 a.attnum order by a.attnum) AS old_type
                 FROM pg_catalog.pg_attribute a
                 WHERE a.attrelid = '{old_relid}' AND a.attnum > 0 AND NOT a.attisdropped
             ) t1,
             (
-                SELECT array_agg(a.attname || pg_catalog.format_type(a.atttypid, a.atttypmod) || a.attnum order by a.attnum) AS new_type
+                SELECT array_agg(a.attname ||
+                                 regexp_replace(pg_catalog.format_type(a.atttypid, a.atttypmod),
+                                                '{new_schema}.', '') ||
+                                 a.attnum order by a.attnum) AS new_type
                 FROM pg_catalog.pg_attribute a
                 WHERE a.attrelid = '{new_relid}' AND a.attnum > 0 AND NOT a.attisdropped
             ) t2
-            """.format(old_relid=old_relid, new_relid=new_relid))[0]['changed']
-        if not rv:
+            """.format(old_relid=old_relid,
+                       new_relid=new_relid,
+                       old_schema=OLD_SCHEMA,
+                       new_schema=NEW_SCHEMA))[0]['changed']
+        if not res:
             changed_udt.append(name)
     return changed_udt
 $$ LANGUAGE plpythonu;
@@ -67,8 +77,11 @@ $$ LANGUAGE plpythonu;
 -- Get UDTs
 DROP TABLE IF EXISTS types_madlib;
 DROP TABLE IF EXISTS types_madlib_old_vers;
+set search_path = public, madlib;
 SELECT get_types('madlib');
+set search_path = public, madlib_old_vers;
 SELECT get_types('madlib_old_vers');
+set search_path = public;
 
 --SELECT name FROM types_madlib;
 --SELECT name FROM types_madlib_v15;

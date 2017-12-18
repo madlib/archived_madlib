@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# $0 - Script Path, $1 - Package Path, $2 - Target Location, and $3 - Target Volumn
+# $0 - Script Path, $1 - Package Path, $2 - Target Location, and $3 - Target Volume
 
-MADLIB_VERSION=1.13-dev
+MADLIB_VERSION=1.13
 
 find $2/usr/local/madlib/bin -type d -exec cp -RPf {} $2/usr/local/madlib/old_bin \; 2>/dev/null
 find $2/usr/local/madlib/bin -depth -type d -exec rm -r {} \; 2>/dev/null
