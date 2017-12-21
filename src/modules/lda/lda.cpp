@@ -22,23 +22,8 @@ namespace modules {
 namespace lda {
 
 using namespace dbal::eigen_integration;
-using madlib::dbconnector::postgres::madlib_get_typlenbyvalalign;
 using madlib::dbconnector::postgres::madlib_construct_array;
 using madlib::dbconnector::postgres::madlib_construct_md_array;
-
-typedef struct __type_info{
-    Oid oid;
-    int16_t len;
-    bool    byval;
-    char    align;
-
-    __type_info(Oid oid):oid(oid)
-    {
-        madlib_get_typlenbyvalalign(oid, &len, &byval, &align);
-    }
-} type_info;
-static type_info INT4TI(INT4OID);
-static type_info INT8TI(INT8OID);
 
 /**
  * @brief This function samples a new topic for a word in a document based on
@@ -311,10 +296,11 @@ AnyType lda_random_assign::run(AnyType & args)
     if(topic_num < 1)
         throw std::invalid_argument( "invalid argument - topic_num");
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<int32_t> doc_topic(
         madlib_construct_array(
-            NULL, topic_num + word_count, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align));
+            NULL, topic_num + word_count, INT4OID, sizeof(int32_t), true, 'i'));
 
     for(int32_t i = 0; i < word_count; i++){
         int32_t topic = static_cast<int32_t>(random() % topic_num);
@@ -373,6 +359,8 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
         throw std::invalid_argument(
             "dimension mismatch - sum(counts) != topic_assignment.size()");
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<int64_t> state(NULL);
     int32_t *model;
     if(args[0].isNull()) {
@@ -384,8 +372,7 @@ AnyType lda_count_topic_sfunc::run(AnyType & args)
         int dims[1] = {static_cast<int>( (voc_size * (topic_num + 1) + 1) * sizeof(int32_t) / sizeof(int64_t) )};
         int lbs[1] = {1};
         state = madlib_construct_md_array(
-            NULL, NULL, 1, dims, lbs, INT8TI.oid, INT8TI.len, INT8TI.byval,
-            INT8TI.align);
+            NULL, NULL, 1, dims, lbs, INT8OID, sizeof(int64_t), true, 'd');
         // the reason we use bigint[] because integer[] has limit on number of
         // elements and thus cannot be larger than 500MB
         model = reinterpret_cast<int32_t *>(state.ptr());
@@ -449,12 +436,13 @@ AnyType lda_transpose::run(AnyType & args)
     int32_t row_num = static_cast<int32_t>(matrix.sizeOfDim(0));
     int32_t col_num = static_cast<int32_t>(matrix.sizeOfDim(1));
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     int dims[2] = {col_num, row_num};
     int lbs[2] = {1, 1};
     MutableArrayHandle<int64_t> transposed(
         madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, INT8TI.oid, INT8TI.len, INT8TI.byval,
-            INT8TI.align));
+            NULL, NULL, 2, dims, lbs, INT8OID, sizeof(int64_t), true, 'd'));
 
     for(int32_t i = 0; i < row_num; i++){
         int32_t index = i * col_num;
@@ -501,10 +489,12 @@ AnyType lda_unnest_transpose::SRF_next(void *user_fctx, bool *is_last_call)
         return Null();
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<int32_t> outarray(
         madlib_construct_array(
-            NULL, ctx->dim, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align));
+            NULL, ctx->dim, INT4OID, sizeof(int32_t), true, 'i'));
+
     for (int i = 0; i < ctx->dim; i ++) {
         outarray[i] = ctx->inarray[(ctx->maxcall + 1) * i + ctx->curcall];
     }
@@ -540,10 +530,12 @@ AnyType lda_unnest::SRF_next(void *user_fctx, bool *is_last_call)
         return Null();
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<int32_t> outarray(
         madlib_construct_array(
-            NULL, ctx->dim, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align));
+            NULL, ctx->dim, INT4OID, sizeof(int32_t), true, 'i'));
+
     for (int i = 0; i < ctx->dim; i ++) {
         outarray[i] = ctx->inarray[ctx->curcall * (ctx->dim + 1) + i];
     }
@@ -621,14 +613,13 @@ AnyType lda_perplexity_sfunc::run(AnyType & args){
             throw std::invalid_argument("invalid topic counts in model");
         }
 
+        // FIXME: construct_array functions circumvent the abstraction layer. These
+        // should be replaced with appropriate Allocator:: calls.
         state =  madlib_construct_array(NULL,
                                         static_cast<int>(model64.size()) +
                                             topic_num +
                                             static_cast<int>(sizeof(double) / sizeof(int64_t)),
-                                        INT8TI.oid,
-                                        INT8TI.len,
-                                        INT8TI.byval,
-                                        INT8TI.align);
+                                        INT8OID, sizeof(int64_t), true, 'd');
 
         memcpy(state.ptr(), model64.ptr(), model64.size() * sizeof(int64_t));
         int32_t *_model = reinterpret_cast<int32_t *>(state.ptr());
@@ -747,12 +738,13 @@ AnyType lda_parse_model::run(AnyType & args){
 
     const int32_t *model = reinterpret_cast<const int32_t *>(state.ptr());
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     int dims[2] = {voc_size/2, topic_num};
     int lbs[2] = {1, 1};
     MutableArrayHandle<int32_t> model_part1(
         madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align));
+            NULL, NULL, 2, dims, lbs, INT4OID, sizeof(int32_t), true, 'i'));
 
     for(int32_t i = 0; i < voc_size/2; i++){
         for(int32_t j = 0; j < topic_num; j++){
@@ -760,12 +752,12 @@ AnyType lda_parse_model::run(AnyType & args){
         }
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     int dims2[2] = {voc_size - voc_size/2, topic_num};
-
     MutableArrayHandle<int32_t> model_part2(
         madlib_construct_md_array(
-            NULL, NULL, 2, dims2, lbs, INT4TI.oid, INT4TI.len, INT4TI.byval,
-            INT4TI.align));
+            NULL, NULL, 2, dims2, lbs, INT4OID, sizeof(int32_t), true, 'i'));
 
     for(int32_t i = voc_size/2; i < voc_size; i++){
         for(int32_t j = 0; j < topic_num; j++){

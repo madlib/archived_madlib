@@ -18,22 +18,8 @@ namespace modules {
 namespace crf {
 
 using namespace dbal::eigen_integration;
-using madlib::dbconnector::postgres::madlib_get_typlenbyvalalign;
 using madlib::dbconnector::postgres::madlib_construct_array;
 
-typedef struct __type_info{
-    Oid oid;
-    int16_t len;
-    bool    byval;
-    char    align;
-
-    __type_info(Oid oid):oid(oid)
-    {
-        madlib_get_typlenbyvalalign(oid, &len, &byval, &align);
-    }
-} type_info;
-
-static type_info INT4TI(INT4OID);
 
 AnyType vcrf_top1_label::run(AnyType& args) {
 
@@ -124,10 +110,12 @@ AnyType vcrf_top1_label::run(AnyType& args) {
      * elements are used to store the best labels and the last element is used
      * to store the conditional probability of the sequence.
      */
+
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<int> result(
         madlib_construct_array(
-            NULL, doc_len+1, INT4TI.oid,
-               INT4TI.len, INT4TI.byval, INT4TI.align));
+            NULL, doc_len + 1, INT4OID, sizeof(int32_t), true, 'i'));
 
     /* trace back to get the labels for the rest tokens in a sentence */
     result[doc_len - 1] = top1_label;

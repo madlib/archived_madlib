@@ -22,28 +22,10 @@ namespace modules {
 namespace tsa {
 
 using namespace dbal::eigen_integration;
-using madlib::dbconnector::postgres::madlib_get_typlenbyvalalign;
 using madlib::dbconnector::postgres::madlib_construct_array;
 using madlib::dbconnector::postgres::madlib_construct_md_array;
 using namespace std;
 
-// ----------------------------------------------------------------------
-
-typedef struct __type_info{
-    Oid oid;
-    int16_t len;
-    bool    byval;
-    char    align;
-
-    __type_info(Oid oid):oid(oid)
-    {
-        madlib_get_typlenbyvalalign(oid, &len, &byval, &align);
-    }
-} type_info;
-
-static type_info FLOAT8TI(FLOAT8OID);
-
-// ----------------------------------------------------------------------
 
 AnyType arima_residual::run (AnyType & args)
 {
@@ -67,10 +49,11 @@ AnyType arima_residual::run (AnyType & args)
 
     int ret_size = static_cast<int>((distid == 1) ? \
             (tvals.size()+d) : (tvals.size()-p));
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> res(
         madlib_construct_array(
-            NULL, ret_size, FLOAT8TI.oid,
-               FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            NULL, ret_size, FLOAT8OID, sizeof(double), true, 'd'));
 
     if (q < 1) {
         // compute the errors
@@ -137,10 +120,11 @@ AnyType arima_diff::run (AnyType & args)
     ArrayHandle<double> tvals = args[0].getAs<ArrayHandle<double> >();
     uint32_t d  = args[1].getAs<uint32_t>();
     int sz = static_cast<int>(tvals.size() - d);
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> diffs(
         madlib_construct_array(
-            NULL, sz, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
-
+            NULL, sz, FLOAT8OID, sizeof(double), true, 'd'));
     // get diff coef
     int* coef = diff_coef(d);
 
@@ -172,14 +156,13 @@ AnyType arima_adjust::run (AnyType & args)
     ArrayHandle<double> pre_tvals = args[2].getAs<ArrayHandle<double> >();
     int32_t p  = args[3].getAs<int32_t>();
 
-    // note that curr_tvals.size() could be different with prez_tvals.size()
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
+    // note that curr_tvals.size() could be different from prez_tvals.size()
     MutableArrayHandle<double> res(
         madlib_construct_array(NULL,
                                static_cast<int>(cur_tvals.size() + p),
-                               FLOAT8TI.oid,
-                               FLOAT8TI.len,
-                               FLOAT8TI.byval,
-                               FLOAT8TI.align));
+                               FLOAT8OID, sizeof(double), true, 'd'));
 
     // fill in the last p values from the previous tvals
     for(int i = 0; i < p; i++)
@@ -235,18 +218,20 @@ AnyType arima_lm::run (AnyType & args)
     int l = p + q;
     if (include_mean) l++;
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> prez(
         madlib_construct_array(
-            NULL, 0, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            NULL, 0, FLOAT8OID, sizeof(double), true, 'd'));
     MutableArrayHandle<double> prej(
         madlib_construct_array(
-            NULL, 0, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            NULL, 0, FLOAT8OID, sizeof(double), true, 'd'));
     if (q > 0) {
         if (distid == 1) {
             prez = madlib_construct_array(
-                NULL, q, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+                NULL, q, FLOAT8OID, sizeof(double), true, 'd');
             prej = madlib_construct_array(
-                NULL, q * l,  FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+                NULL, q * l,  FLOAT8OID, sizeof(double), true, 'd');
         } else {
             prez = args[7].getAs<MutableArrayHandle<double> >();
             prej = args[8].getAs<MutableArrayHandle<double> >();
@@ -259,14 +244,14 @@ AnyType arima_lm::run (AnyType & args)
             tvals[i] -= mean;
 
     double z2 = 0;
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> jj(
         madlib_construct_array(
-            NULL, l * l, FLOAT8TI.oid,
-            FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            NULL, l * l, FLOAT8OID, sizeof(double), true, 'd'));
     MutableArrayHandle<double> jz(
         madlib_construct_array(
-            NULL, l, FLOAT8TI.oid,
-            FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            NULL, l, FLOAT8OID, sizeof(double), true, 'd'));
 
     for (size_t t = p; t < tvals.size(); t++) {
         // compute the error and Jacob
@@ -353,13 +338,15 @@ AnyType arima_lm_result_sfunc::run (AnyType& args)
 
     MutableArrayHandle<double> state(NULL);
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     if (args[0].isNull()) {
         // state[0:(l*l-1)]         - jj
         // state[(l*l):(l*l+l-1)]   - jz
         // state[l*l+l]             - z2
         // state[l*l+l+1]           - l
-        state = madlib_construct_array(NULL, l2+l+2, FLOAT8TI.oid,
-                                       FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+        state = madlib_construct_array(NULL, l2 + l + 2,
+                                       FLOAT8OID, sizeof(double), true, 'd');
 
         for (int i = 0; i < l2; i++) state[i] = jj[i];
         for (int i = 0; i < l; i++) state[l2 + i] = jz[i];
@@ -409,12 +396,14 @@ AnyType arima_lm_result_ffunc::run (AnyType& args)
             mx = jj[ll];
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> arr_jj(
         madlib_construct_array(
-            NULL, l*l, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            NULL, l*l, FLOAT8OID, sizeof(double), true, 'd'));
     MutableArrayHandle<double> arr_jz(
         madlib_construct_array(
-            NULL, l, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            NULL, l, FLOAT8OID, sizeof(double), true, 'd'));
 
     memcpy(arr_jj.ptr(), jj, l*l*sizeof(double));
     memcpy(arr_jz.ptr(), jz, l*sizeof(double));
@@ -542,6 +531,8 @@ AnyType arima_lm_stat_sfunc::run (AnyType& args)
 
     MutableArrayHandle<double> state(NULL);
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     if (args[0].isNull()) {
         // Eqs. (1.2.21, 1.2.22) tells how many Z^2 are needed
         // Also Hessian is symmetric
@@ -553,8 +544,7 @@ AnyType arima_lm_stat_sfunc::run (AnyType& args)
         // state[(2*l*l+4):((2*l*l+1)*q+(2*l*l+3))]  -- all the PreZ
         // last one   --- p
         state = madlib_construct_array(
-            NULL, sz, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-                FLOAT8TI.align);
+            NULL, sz, FLOAT8OID, sizeof(double), true, 'd');
         for (size_t i = 0; i < state.size(); i++) state[i] = 0.;
         state[0] = l;
         state[1] = delta;
@@ -655,11 +645,13 @@ AnyType arima_lm_stat_ffunc::run (AnyType& args)
          m.transpose(), EigenvaluesOnly, ComputePseudoInverse);
     ColumnVector diag = decomposition.pseudoInverse().diagonal();
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> std_err(
         madlib_construct_array(
-            NULL, l, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-                FLOAT8TI.align));
-    for (int i = 0; i < l; i++) std_err[i] = sqrt(diag[i]);
+            NULL, l, FLOAT8OID, sizeof(double), true, 'd'));
+    for (int i = 0; i < l; i++)
+        std_err[i] = sqrt(diag[i]);
 
     delete [] hessian;
 

@@ -24,26 +24,12 @@ namespace madlib {
 namespace modules {
 namespace linalg {
 
-using madlib::dbconnector::postgres::madlib_get_typlenbyvalalign;
 using madlib::dbconnector::postgres::madlib_construct_array;
 using madlib::dbconnector::postgres::madlib_construct_md_array;
 
 // Use Eigen
 using namespace dbal::eigen_integration;
 
-typedef struct __type_info{
-    Oid oid;
-    int16_t len;
-    bool    byval;
-    char    align;
-
-    __type_info(Oid oid):oid(oid)
-    {
-        madlib_get_typlenbyvalalign(oid, &len, &byval, &align);
-    }
-} type_info;
-static type_info FLOAT8TI(FLOAT8OID);
-static type_info INT4TI(INT4OID);
 
 AnyType matrix_densify_sfunc::run(AnyType & args)
 {
@@ -68,8 +54,7 @@ AnyType matrix_densify_sfunc::run(AnyType & args)
     MutableArrayHandle<double> state(NULL);
     if (args[0].isNull()){
         state =  madlib_construct_array(
-            NULL, col_dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-            FLOAT8TI.align);
+            NULL, col_dim, FLOAT8OID, sizeof(double), true, 'd');
     }else{
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
@@ -93,13 +78,14 @@ AnyType matrix_mem_sum_sfunc::run(AnyType & args)
     int row_m = static_cast<int>(m.sizeOfDim(0));
     int col_m = static_cast<int>(m.sizeOfDim(1));
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if (args[0].isNull()){
         int dims[2] = {row_m, col_m};
         int lbs[2] = {1, 1};
         state =  madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, FLOAT8TI.oid,
-            FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+            NULL, NULL, 2, dims, lbs, FLOAT8OID, sizeof(double), true, 'd');
     }else{
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
@@ -128,13 +114,14 @@ AnyType matrix_blockize_sfunc::run(AnyType & args)
             "invalid argument - block size should be positive");
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if (args[0].isNull()){
         int32_t dims[2] = {rsize, csize};
         int lbs[2] = {1, 1};
         state = madlib_construct_md_array(
-                NULL, NULL, 2, dims, lbs, FLOAT8TI.oid,
-                FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+                NULL, NULL, 2, dims, lbs, FLOAT8OID, sizeof(double), true, 'd');
     }else{
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
@@ -172,9 +159,10 @@ AnyType matrix_mem_mult::run(AnyType & args)
     if (trans_b)
         dims[1] = row_b;
     int lbs[2] = {1, 1};
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> r = madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, FLOAT8TI.oid,
-            FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+            NULL, NULL, 2, dims, lbs, FLOAT8OID, sizeof(double), true, 'd');
 
     for (int i = 0; i < row_a; i++){
         for(int j = 0; j < col_a; j++){
@@ -200,11 +188,12 @@ AnyType matrix_mem_trans::run(AnyType & args)
     int row_m = static_cast<int>(m.sizeOfDim(0));
     int col_m = static_cast<int>(m.sizeOfDim(1));
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     int dims[2] = {col_m, row_m};
     int lbs[2] = {1, 1};
     MutableArrayHandle<double> r = madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, FLOAT8TI.oid,
-            FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align);
+            NULL, NULL, 2, dims, lbs, FLOAT8OID, sizeof(double), true, 'd');
 
     for (int i = 0; i < row_m; i++){
         for(int j = 0; j < col_m; j++){
@@ -221,7 +210,7 @@ AnyType rand_vector::run(AnyType & args)
         throw std::invalid_argument("invalid argument - dim should be positive");
     }
     MutableArrayHandle<int> r =  madlib_construct_array(
-            NULL, dim, INT4TI.oid, INT4TI.len, INT4TI.byval, INT4TI.align);
+            NULL, dim, INT4OID, sizeof(int32_t), true, 'i');
 
     for (int i = 0; i < dim; i++){
         *(r.ptr() + i) = (int)(drand48() * 1000);
@@ -356,15 +345,16 @@ AnyType rand_block::run(AnyType & args)
         should be positive");
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     int dims[2] = {row_dim, col_dim};
     int lbs[2] = {1, 1};
-    MutableArrayHandle<int> r = madlib_construct_md_array(
-            NULL, NULL, 2, dims, lbs, INT4TI.oid,
-            INT4TI.len, INT4TI.byval, INT4TI.align);
+    MutableArrayHandle<int32_t> r = madlib_construct_md_array(
+            NULL, NULL, 2, dims, lbs, INT4OID, sizeof(int32_t), true, 'i');
 
     for (int i = 0; i < row_dim; i++){
         for(int j = 0; j < col_dim; j++){
-                *(r.ptr() + i * col_dim + j) = (int)(drand48() * 1000);
+                *(r.ptr() + i * col_dim + j) = (int32_t)(drand48() * 1000);
         }
     }
     return r;
@@ -423,10 +413,11 @@ AnyType row_split::SRF_next(void *user_fctx, bool *is_last_call)
         size = ctx->dim % ctx->size;
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> outarray(
         madlib_construct_array(
-            NULL, size, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-                FLOAT8TI.align));
+            NULL, size, FLOAT8OID, sizeof(double), true, 'd'));
     memcpy(outarray.ptr(), ctx->inarray + ctx->curcall * ctx->size,
            size * sizeof(double));
 
@@ -462,11 +453,12 @@ AnyType matrix_unblockize_sfunc::run(AnyType & args)
             "invalid argument - col_id should be in the range of [1, total_col_dim]");
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if (args[0].isNull()){
         state =  madlib_construct_array(
-            NULL, total_col_dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-            FLOAT8TI.align);
+            NULL, total_col_dim, FLOAT8OID, sizeof(double), true, 'd');
     }else{
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
@@ -506,10 +498,11 @@ AnyType unnest_block::SRF_next(void *user_fctx, bool *is_last_call)
         return Null();
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> outarray(
         madlib_construct_array(
-            NULL, ctx->dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-            FLOAT8TI.align));
+            NULL, ctx->dim, FLOAT8OID, sizeof(double), true, 'd'));
     memcpy(
         outarray.ptr(), ctx->inarray + ctx->curcall * ctx->dim, ctx->dim *
         sizeof(double));

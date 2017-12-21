@@ -24,9 +24,7 @@ using namespace dbal::eigen_integration;// Use Eigen
 namespace modules {
 namespace linalg {
 
-using madlib::dbconnector::postgres::madlib_get_typlenbyvalalign;
 using madlib::dbconnector::postgres::madlib_construct_array;
-using madlib::dbconnector::postgres::madlib_construct_md_array;
 
 // To get a rank-k approximation of the original matrix if we perform k + s Lanczos
 // bidiagonalization steps followed by the SVD of a small matrix B(k+s) then the
@@ -43,20 +41,6 @@ const size_t MAX_LANCZOS_STEPS = 5000;
 // it is safer to define a small range of values
 // that are "zero", rather than use the exact value of 0.
 const double ZERO_THRESHOLD = 1e-8;
-
-
-typedef struct __type_info{
-    Oid oid;
-    int16_t len;
-    bool    byval;
-    char    align;
-
-    __type_info(Oid oid):oid(oid)
-    {
-        madlib_get_typlenbyvalalign(oid, &len, &byval, &align);
-    }
-} type_info;
-static type_info FLOAT8TI(FLOAT8OID);
 
 /* Project the vector v into the vector u (in-place) */
 static void __project(MappedColumnVector& u, MutableNativeColumnVector& v){
@@ -129,12 +113,13 @@ AnyType svd_lanczos_sfunc::run(AnyType & args){
             "Data contains different sized arrays");
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
         state = MutableArrayHandle<double>(
             madlib_construct_array(
-                NULL, dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-                FLOAT8TI.align));
+                NULL, dim, FLOAT8OID, sizeof(double), true, 'd'));
         for (int i = 0; i < dim; i++)
             state[i] = 0;
     }else{
@@ -234,15 +219,14 @@ AnyType svd_gram_schmidt_orthogonalize_sfunc::run(AnyType & args){
             "dimensions mismatch: u.size() != v.size()");
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
         state = MutableArrayHandle<double>(
             madlib_construct_array(NULL,
                                    static_cast<int>(u.size()) * 2,
-                                   FLOAT8TI.oid,
-                                   FLOAT8TI.len,
-                                   FLOAT8TI.byval,
-                                   FLOAT8TI.align));
+                                   FLOAT8OID, sizeof(double), true, 'd'));
 
         // Save v into the state variable
         memcpy(state.ptr() + u.size(), v.data(), v.size() * sizeof(double));
@@ -341,11 +325,12 @@ AnyType svd_decompose_bidiagonal_sfunc::run(AnyType & args){
             "invalid parameter: col_id should be in the range of [1, k]");
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
         state = MutableArrayHandle<double>(
-            madlib_construct_array(NULL, k * k, FLOAT8TI.oid,
-                FLOAT8TI.len, FLOAT8TI.byval, FLOAT8TI.align));
+            madlib_construct_array(NULL, k * k, FLOAT8OID, sizeof(double), true, 'd'));
     } else {
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
@@ -457,12 +442,13 @@ AnyType svd_block_lanczos_sfunc::run(AnyType & args){
             "invalid parameter: col_id should be in the range of [1, dim]");
     }
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
         state = MutableArrayHandle<double>(
             madlib_construct_array(
-                NULL, dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-                FLOAT8TI.align));
+                NULL, dim, FLOAT8OID, sizeof(double), true, 'd'));
     }else{
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
@@ -495,12 +481,13 @@ AnyType svd_sparse_lanczos_sfunc::run(AnyType & args){
     MappedColumnVector vec = args[4].getAs<MappedColumnVector >();
     int32_t dim = args[5].getAs<int32_t>();
 
+    // FIXME: construct_array functions circumvent the abstraction layer. These
+    // should be replaced with appropriate Allocator:: calls.
     MutableArrayHandle<double> state(NULL);
     if(args[0].isNull()){
         state = MutableArrayHandle<double>(
             madlib_construct_array(
-                NULL, dim, FLOAT8TI.oid, FLOAT8TI.len, FLOAT8TI.byval,
-                FLOAT8TI.align));
+                NULL, dim, FLOAT8OID, sizeof(double), true, 'd'));
     }else{
         state = args[0].getAs<MutableArrayHandle<double> >();
     }
