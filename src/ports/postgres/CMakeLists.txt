@@ -307,8 +307,14 @@ function(add_extension_support)
     # The workhorse for extension target
     # It is hard to interpret Modules.yml in this cmake file, thus we use
     # sort-module.py to sort modules based on the dependencies.
+    #   awk is used to read and print each line from each file into {EXTENSION_SQL}
+    #       awk's prog contains two parts:
+    #           1. FNR==1{print ""}: add an empty newline if reading the
+    #               first line of a file
+    #           2. 1: Print each line. This part takes advantage of the default
+    #               action of {print}
     add_custom_command(OUTPUT ${EXTENSION_SQL}
-        COMMAND cat ${EXTENSION_SQL_BASE}
+        COMMAND awk 'FNR==1{print \"\"}1' ${EXTENSION_SQL_BASE}
             `cd ${CMAKE_BINARY_DIR}/src/madpack &&
             python sort-module.py ${MODULE_SQL_POST_FILES}` >${EXTENSION_SQL}
         DEPENDS ${MODULE_SQL_POST_FILES} madpackFiles configFiles pythonFiles_${DBMS} madlib_${DBMS}
