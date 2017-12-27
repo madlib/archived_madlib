@@ -28,6 +28,7 @@ class Summarizer:
         self._columns = None
         self._column_names = None
         self._delimiter = '_.*.&.!.!.&.*_'
+        self._z_score = 1.96
 
     def _populate_columns(self):
         if self._target_cols:
@@ -99,11 +100,11 @@ class Summarizer:
         self._validate_ntile_array()
         _assert(self._how_many_mfv is not None and self._how_many_mfv > 0,
                 "Summary - Invalid parameter: Number of most frequent values"
-                "required should be positive")
+                " required should be positive")
         self._how_many_mfv = int(self._how_many_mfv)
         _assert(self._n_cols_per_run is not None and self._n_cols_per_run > 0,
                 "Summary - Invalid parameter: Number of columns per run"
-                "should be positive")
+                " should be positive")
         self._n_cols_per_run = int(self._n_cols_per_run)
 
 # ----- End of argument validation functions -----------------------------
@@ -199,6 +200,20 @@ class Summarizer:
         args['max_columns'] = ','.join([minmax_type('max', c) for c in cols])
 
         args['ntile_columns'] = "array_to_string(array[NULL], ',')"
+
+        pos_str = "sum(case when {0} > 0 then 1 else 0 end)"
+        args['positive_columns'] = ','.join([pos_str.format(c['attname'])
+                                             if c['typname'] in numeric_types
+                                             else 'NULL' for c in cols])
+        neg_str = "sum(case when {0} < 0 then 1 else 0 end)"
+        args["negative_columns"] = ','.join([neg_str.format(c['attname'])
+                                             if c['typname'] in numeric_types
+                                             else 'NULL' for c in cols])
+        zero_str = "sum(case when {0} = 0 then 1 else 0 end)"
+        args["zero_columns"] = ','.join([zero_str.format(c['attname'])
+                                         if c['typname'] in numeric_types
+                                         else 'NULL' for c in cols])
+
         if self._ntile_array:
             args['ntile_columns'] = ",".join([
                 "array_to_string(array[" +
@@ -214,17 +229,20 @@ class Summarizer:
                     array[{column_types}]::text[] as datatype,
                     array[{column_number}]::integer[] as colnum,
                     count(*)::bigint as rowcount,
+                    array[{positive_columns}]::bigint[] as positive_values,
+                    array[{negative_columns}]::bigint[] as negative_values,
+                    array[{zero_columns}]::bigint[] as zero_values,
                     array[{mean_columns}]::float8[] as mean,
                     array[{var_columns}]::float8[] as variance,
                     array[{distinct_columns}]::bigint[] as distinct_values,
                     array[{missing_columns}]::bigint[] as missing_values,
                     array[{blank_columns}]::bigint[] as blank_values,
                     array[{min_columns}]::float8[] as min,
+                    array[{max_columns}]::float8[] as max,
                     array[{q1_columns}]::float8[] as first_quartile,
                     array[{q2_columns}]::float8[] as median,
                     array[{q3_columns}]::float8[] as third_quartile,
                     array[{ntile_columns}]::text[] as ntiles,
-                    array[{max_columns}]::float8[] as max,
                     array[{mfv_value}]::text[] as mfv_value,
                     array[{mfv_count}]::text[] as mfv_count
                 FROM {source_table}{group_expr}
@@ -247,14 +265,19 @@ class Summarizer:
                     distinct_values::float8 / rowcount as fraction_distinct_values,
                     missing_values::float8 / rowcount as fraction_missing_values,
                     blank_values::float8 / rowcount as fraction_blank_values,
+                    positive_values,
+                    negative_values,
+                    zero_values,
                     mean,
                     variance,
+                    (mean - {z_score} * sqrt(variance / rowcount))::float8 as ci_lower_bound,
+                    (mean + {z_score} * sqrt(variance / rowcount))::float8 as ci_upper_bound,
                     min,
+                    max,
                     first_quartile,
                     median,
                     third_quartile,
                     ntiles,
-                    max,
                     string_to_array(mfv_value, '{delimiter}') as mfv_value,
                     string_to_array(mfv_count, '{delimiter}') as mfv_count
                 FROM
@@ -269,19 +292,23 @@ class Summarizer:
                         unnest(distinct_values) as distinct_values,
                         unnest(missing_values) as missing_values,
                         unnest(blank_values) as blank_values,
+                        unnest(positive_values) as positive_values,
+                        unnest(negative_values) as negative_values,
+                        unnest(zero_values) as zero_values,
                         unnest(mean) as mean,
                         unnest(variance) as variance,
                         unnest(min) as min,
+                        unnest(max) as max,
                         unnest(first_quartile) as first_quartile,
                         unnest(median) as median,
                         unnest(third_quartile) as third_quartile,
                         string_to_array(unnest(ntiles), ',') as ntiles,
-                        unnest(max) as max,
                         unnest(mfv_value) as mfv_value,
                         unnest(mfv_count) as mfv_count
                     FROM ({subquery}) q1
                 ) q2
-        """.format(schema_madlib=self._schema_madlib, subquery=subquery, delimiter=self._delimiter)
+        """.format(schema_madlib=self._schema_madlib, subquery=subquery,
+                   delimiter=self._delimiter, z_score=self._z_score)
         return query
 
     def _build_query(self, group_val, cols, create_table):
@@ -322,8 +349,15 @@ class Summarizer:
                 blank_values as blank_values,
                 (missing_values::float8 / rowcount) as fraction_missing,
                 (blank_values::float8 / rowcount) as fraction_blank,
+                positive_values,
+                negative_values,
+                zero_values,
                 mean,
                 variance,
+                CASE WHEN ci_lower_bound is NULL OR ci_upper_bound is NULL
+                     THEN null
+                     ELSE ARRAY[ci_lower_bound, ci_upper_bound]
+                END as confidence_interval,
                 min,
                 max,
                 {first_quartile}
