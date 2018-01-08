@@ -36,36 +36,60 @@ def _compute_svm(args):
     """
     init_stepsize = args['init_stepsize']
     args['stepsize'] = init_stepsize
+    batch_size = args['batch_size']
+    args['dist_func'] = ('internal_linear_svm_igd_distance' if batch_size == 1
+                         else 'internal_linear_svm_igd_minibatch_distance')
     iterationCtrl = GroupIterationController(args)
     with iterationCtrl as it:
         it.iteration = 0
         has_converged = False
         while not has_converged:
-            it.update(
-                """
-                {schema_madlib}.linear_svm_igd_step(
-                    ({col_ind_var})::FLOAT8[],
-                    ({col_dep_var_trans})::FLOAT8,
-                    {rel_state}.{col_grp_state},
-                    {n_features}::INT4,
-                    {stepsize}::FLOAT8,
-                    {lambda}::FLOAT8,
-                    {is_l2}::BOOLEAN,
-                    {col_n_tuples},
-                    ({select_epsilon})::FLOAT8,
-                    {is_svc}::BOOLEAN,
-                    {class_weight_sql}::FLOAT8
-                    )
-                """)
+            if batch_size == 1:
+                it.update(
+                    """
+                    {schema_madlib}.linear_svm_igd_step(
+                        ({col_ind_var})::FLOAT8[],
+                        ({col_dep_var_trans})::FLOAT8,
+                        {rel_state}.{col_grp_state},
+                        {n_features}::INT4,
+                        {stepsize}::FLOAT8,
+                        {lambda}::FLOAT8,
+                        {is_l2}::BOOLEAN,
+                        {col_n_tuples},
+                        ({select_epsilon})::FLOAT8,
+                        {is_svc}::BOOLEAN,
+                        {class_weight_sql}::FLOAT8
+                        )
+                    """)
+            else:
+                it.update(
+                    """
+                    {schema_madlib}.linear_svm_igd_minibatch_step(
+                        ({col_ind_var})::FLOAT8[][],
+                        ({col_dep_var_trans})::FLOAT8[],
+                        {rel_state}.{col_grp_state},
+                        {n_features}::INT4,
+                        {stepsize}::FLOAT8,
+                        {lambda}::FLOAT8,
+                        {is_l2}::BOOLEAN,
+                        {col_n_tuples},
+                        ({select_epsilon})::FLOAT8,
+                        {is_svc}::BOOLEAN,
+                        {class_weight_sql}::FLOAT8,
+                        {n_epochs}::INTEGER,
+                        {batch_size}::INTEGER
+                        )
+                    """)
             it.info()
             if it.kwargs['decay_factor'] > 0:
                 it.kwargs['stepsize'] *= it.kwargs['decay_factor']
             else:
                 it.kwargs['stepsize'] = init_stepsize / (it.iteration + 1)
+
             has_converged = it.test(
                 """
                 {iteration} >= {max_iter}
-                OR {schema_madlib}.internal_linear_svm_igd_distance(
+                OR {schema_madlib}.{dist_func}(
                     _state_previous, _state_current) < {tolerance}
                 """)
         it.final()
@@ -89,9 +113,9 @@ def _verify_table(source_table, model_table, dependent_varname,
                 "('{dependent_varname}') for source_table "
                 "({source_table})!".format(dependent_varname=dependent_varname,
                                            source_table=source_table))
-        dep_type = get_expr_type(dependent_varname, source_table)
-        if '[]' in dep_type:
-            plpy.error("SVM error: dependent_varname cannot be of array type!")
+        # dep_type = get_expr_type(dependent_varname, source_table)
+        # if '[]' in dep_type:
+        #     plpy.error("SVM error: dependent_varname cannot be of array type!")
 
     # validate output tables
     output_tbl_valid(model_table, 'SVM')
@@ -157,6 +181,8 @@ def _build_output_tables(n_iters_run, args, **kwargs):
     else:
         groupby_str, grouping_str1, using_str = "", "", "ON TRUE"
     # organizing results
+    result_func = ("internal_linear_svm_igd_result" if args['batch_size'] == 1
+                   else "internal_linear_svm_igd_minibatch_result")
     args.update(locals())
     model_table_query = """
         CREATE TABLE {model_table} AS
@@ -173,7 +199,7 @@ def _build_output_tables(n_iters_run, args, **kwargs):
             FROM
             (
                 SELECT
-                    {schema_madlib}.internal_linear_svm_igd_result(
+                    {schema_madlib}.{result_func}(
                         {col_grp_state}
                     ) AS result,
                     {col_grp_key}
@@ -1151,7 +1177,15 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
             datasets.
 
     """
-    n_features = num_features(source_table, independent_varname)
+    # n_features = num_features(source_table, independent_varname)
+
+    upper_dim = 1 if params_dict['batch_size'] == 1 else 2
+    n_features = plpy.execute("SELECT array_upper({0}, {2}) AS dim "
+                              "FROM {1} LIMIT 1".
+                              format(independent_varname,
+                                     source_table,
+                                     upper_dim))[0]['dim']
+
     if update_source_for_one_class:
         # This block is run only when the caller is svm_one_class
 
@@ -1489,7 +1523,9 @@ def _extract_params(schema_madlib, params, module='SVM'):
         'validation_result': '',
         'epsilon': [0.01],
         'eps_table': '',
-        'class_weight': ''}
+        'class_weight': '',
+        'n_epochs': 1,
+        'batch_size': 1}
 
     params_types = {
         'init_stepsize': list,
@@ -1502,7 +1538,9 @@ def _extract_params(schema_madlib, params, module='SVM'):
         'validation_result': str,
         'epsilon': list,
         'eps_table': str,
-        'class_weight': str}
+        'class_weight': str,
+        'n_epochs': int,
+        'batch_size': int}
 
     params_vals = extract_keyvalue_params(params, params_types, params_default)
     if params_vals['n_folds'] < 0:

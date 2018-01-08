@@ -22,9 +22,9 @@ class LinearSVM {
 public:
     typedef Model model_type;
     typedef Tuple tuple_type;
-    typedef typename Tuple::independent_variables_type
-        independent_variables_type;
+    typedef typename Tuple::independent_variables_type independent_variables_type;
     typedef typename Tuple::dependent_variable_type dependent_variable_type;
+    typedef typename model_type::PlainEigenType model_eigen_type;
 
     static double epsilon;
     static bool is_svc;
@@ -41,6 +41,11 @@ public:
             const dependent_variable_type       &y,
             const double                        &stepsize);
 
+    static double lossAndGradient(
+            model_type                          &model,
+            const Matrix                        &x,
+            const ColumnVector                  &y,
+            model_eigen_type                    &gradient);
     static double loss(
             const model_type                    &model,
             const independent_variables_type    &x,
@@ -99,6 +104,41 @@ LinearSVM<Model, Tuple>::gradientInPlace(
         if (c*wx_y - epsilon > 0.)
             model -= stepsize * c * x;
     }
+}
+
+template <class Model, class Tuple>
+double
+LinearSVM<Model, Tuple>::lossAndGradient(
+        model_type                          &model,
+        const Matrix                        &x,
+        const ColumnVector                  &y,
+        model_eigen_type                    &gradient) {
+
+    gradient.setZero();
+    model_eigen_type s = x * model;
+    double l = 0.0;
+    int n = s.rows();
+    double dist = 0.;
+    double c = 0.;
+
+    for (int i=0; i<n; i++) {
+        if (is_svc) {
+            c = -y(i);   // minus for "-loglik"
+            dist = 1. - s(i) * y(i);
+        } else {
+            double wx_y = s(i) - y(i);
+            c = wx_y > 0 ? 1. : -1.;
+            dist = c * wx_y - epsilon;
+        }
+        if ( dist > 0.) {
+            gradient += c * x.row(i);
+            l += dist;
+        }
+
+    }
+    l /= n;
+    gradient.array() /= n;
+    return l;
 }
 
 template <class Model, class Tuple>

@@ -295,6 +295,87 @@ public:
     } algo;
 };
 
+template <class Handle>
+class SVMMinibatchState {
+    template <class OtherHandle>
+    friend class SVMMinibatchState;
+
+public:
+    SVMMinibatchState(const AnyType &inArray) : mStorage(inArray.getAs<Handle>()) {
+        rebind();
+    }
+
+    /**
+     * @brief Convert to backend representation
+     *
+     * We define this function so that we can use State in the
+     * argument list and as a return type.
+     */
+    inline operator AnyType() const {
+        return mStorage;
+    }
+
+    /**
+     * @brief Allocating the state.
+     */
+    inline void allocate(const Allocator &inAllocator, uint32_t nFeatures) {
+        mStorage = inAllocator.allocateArray<double, dbal::AggregateContext,
+                dbal::DoZero, dbal::ThrowBadAlloc>(arraySize(nFeatures));
+
+        rebind();
+        task.nFeatures = nFeatures;
+        rebind();
+    }
+
+    /**
+     * @brief We need to support assigning the previous state
+     */
+    template <class OtherHandle>
+    SVMMinibatchState &operator=(const SVMMinibatchState<OtherHandle> &inOtherState) {
+        for (size_t i = 0; i < mStorage.size(); i++) {
+            mStorage[i] = inOtherState.mStorage[i];
+        }
+
+        return *this;
+    }
+
+    static inline uint32_t arraySize(const uint32_t nFeatures) {
+        return 8 + nFeatures;
+    }
+
+protected:
+    void rebind() {
+        task.nFeatures.rebind(&mStorage[0]);
+        task.stepsize.rebind(&mStorage[1]);
+        algo.numRows.rebind(&mStorage[2]);
+        algo.loss.rebind(&mStorage[3]);
+        task.reg.rebind(&mStorage[4]);
+        algo.batchSize.rebind(&mStorage[5]);
+        algo.nEpochs.rebind(&mStorage[6]);
+        algo.numBuffers.rebind(&mStorage[7]);
+        task.model.rebind(&mStorage[8], task.nFeatures);
+    }
+
+    Handle mStorage;
+
+public:
+    struct TaskState {
+        typename HandleTraits<Handle>::ReferenceToUInt32 nFeatures;
+        typename HandleTraits<Handle>::ReferenceToDouble stepsize;
+        typename HandleTraits<Handle>::ReferenceToDouble reg;
+        typename HandleTraits<Handle>::ColumnVectorTransparentHandleMap model;
+    } task;
+
+    struct AlgoState {
+        typename HandleTraits<Handle>::ReferenceToUInt64 numRows;
+        typename HandleTraits<Handle>::ReferenceToUInt64 numBuffers;
+        typename HandleTraits<Handle>::ReferenceToDouble loss;
+        typename HandleTraits<Handle>::ReferenceToUInt32 batchSize;
+        typename HandleTraits<Handle>::ReferenceToUInt32 nEpochs;
+    } algo;
+};
+
+
 /**
  * @brief Inter- (Task State) and intra-iteration (Algo State) state of
  *        Conjugate Gradient for generalized linear models

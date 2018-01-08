@@ -32,6 +32,10 @@ typedef IGD<GLMIGDState<MutableArrayHandle<double> >,
         GLMIGDState<ArrayHandle<double> >,
         LinearSVM<GLMModel, GLMTuple > > LinearSVMIGDAlgorithm;
 
+typedef IGD<SVMMinibatchState<MutableArrayHandle<double> >,
+        SVMMinibatchState<ArrayHandle<double> >,
+        LinearSVM<GLMModel, MiniBatchTuple > > LinearSVMIGDAlgoMiniBatch;
+
 typedef Loss<GLMIGDState<MutableArrayHandle<double> >,
         GLMIGDState<ArrayHandle<double> >,
         LinearSVM<GLMModel, GLMTuple > > LinearSVMLossAlgorithm;
@@ -121,6 +125,104 @@ linear_svm_igd_transition::run(AnyType &args) {
 }
 
 /**
+ * @brief Perform the linear support vector machine transition step
+ *
+ * Called for each tuple.
+ */
+AnyType
+linear_svm_igd_minibatch_transition::run(AnyType &args) {
+    // The real state.
+    // For the first tuple: args[0] is nothing more than a marker that
+    // indicates that we should do some initial operations.
+    // For other tuples: args[0] holds the computation state until last tuple
+    SVMMinibatchState<MutableArrayHandle<double> > state = args[0];
+
+    // initialize the state if first tuple
+    if (state.algo.numRows == 0) {
+
+        LinearSVM<GLMModel, GLMTuple >::epsilon = args[9].getAs<double>();;
+        LinearSVM<GLMModel, GLMTuple >::is_svc = args[10].getAs<bool>();;
+        if (!args[3].isNull()) {
+            SVMMinibatchState<ArrayHandle<double> > previousState = args[3];
+            state.allocate(*this, previousState.task.nFeatures);
+            state = previousState;
+        } else {
+            // configuration parameters
+            uint32_t dimension = args[4].getAs<uint32_t>();
+            state.allocate(*this, dimension); // with zeros
+        }
+        // resetting in either case
+        // state.reset();
+        state.task.stepsize = args[5].getAs<double>();
+        const double lambda = args[6].getAs<double>();
+        const bool isL2 = args[7].getAs<bool>();
+        const int nTuples = args[8].getAs<int>();
+        L1<GLMModel>::n_tuples = nTuples;
+        L2<GLMModel>::n_tuples = nTuples;
+        if (isL2)
+            L2<GLMModel>::lambda = lambda;
+        else
+            L1<GLMModel>::lambda = lambda;
+    }
+
+    state.algo.nEpochs = args[12].getAs<int>();
+    state.algo.batchSize = args[13].getAs<int>();
+
+    // Skip the current record if args[1] (features) contains NULL values,
+    // or args[2] is NULL
+    try {
+        args[1].getAs<MappedMatrix>();
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+    if (args[2].isNull())
+        return args[0];
+
+    // tuple
+    using madlib::dbal::eigen_integration::MappedColumnVector;
+
+    // each tuple can be weighted - this can be combination of the sample weight
+    // and the class weight. Calling function is responsible for combining the two
+    // into a single tuple weight. The default value for this parameter is 1, set
+    // into the definition of "tuple".
+    // The weight is used to increase the value of a particular tuple for the online
+    // learning. The weight is not used for the loss computation.
+    MappedMatrix x(NULL);
+    MappedColumnVector y(NULL);
+    try {
+        new (&x) MappedMatrix(args[1].getAs<MappedMatrix>());
+        new (&y) MappedColumnVector(args[2].getAs<MappedColumnVector>());
+    } catch (const ArrayWithNullException &e) {
+        return args[0];
+    }
+    MiniBatchTuple tuple;
+    tuple.indVar = trans(x);
+    tuple.depVar.rebind(y.memoryHandle(), y.size());
+
+    // tuple.indVar.rebind(args[1].getAs<MappedMatrix>().memoryHandle(), );
+    // tuple.depVar.rebind(args[2].getAs<MappedColumnVector>().memoryHandle(), );
+
+    // tuple.depVar = args[2].getAs<double>();
+    tuple.weight = args[11].getAs<double>();
+
+    // Now do the transition step
+    // apply IGD with regularization
+    // L2<GLMModel>::scaling(state.algo.incrModel, state.task.stepsize);
+    LinearSVMIGDAlgoMiniBatch::transitionInMiniBatch(state, tuple);
+    // L1<GLMModel>::clipping(state.algo.incrModel, state.task.stepsize);
+    // evaluate objective function and its gradient
+    // at the old model - state.task.model
+    // LinearSVMLossAlgorithm::transition(state, tuple);
+    // LinearSVMGradientAlgorithm::transition(state, tuple);
+
+    state.algo.numRows += x.cols();
+    state.algo.numBuffers ++;
+
+    return state;
+}
+
+
+/**
  * @brief Perform the perliminary aggregation function: Merge transition states
  */
 AnyType
@@ -141,6 +243,31 @@ linear_svm_igd_merge::run(AnyType &args) {
     // The following numRows update, cannot be put above, because the model
     // averaging depends on their original values
     stateLeft.algo.numRows += stateRight.algo.numRows;
+
+    return stateLeft;
+}
+
+/**
+ * @brief Perform the perliminary aggregation function: Merge transition states
+ */
+AnyType
+linear_svm_igd_minibatch_merge::run(AnyType &args) {
+    SVMMinibatchState<MutableArrayHandle<double> > stateLeft = args[0];
+    SVMMinibatchState<ArrayHandle<double> > stateRight = args[1];
+
+    // We first handle the trivial case where this function is called with one
+    // of the states being the initial state
+    if (stateLeft.algo.numRows == 0) { return stateRight; }
+    else if (stateRight.algo.numRows == 0) { return stateLeft; }
+
+    // Merge states together
+    LinearSVMIGDAlgoMiniBatch::mergeInPlace(stateLeft, stateRight);
+
+    // The following numRows update, cannot be put above, because the model
+    // averaging depends on their original values
+    stateLeft.algo.numRows += stateRight.algo.numRows;
+    stateLeft.algo.loss += stateRight.algo.loss;
+    stateLeft.algo.numBuffers += stateRight.algo.numBuffers;
 
     return stateLeft;
 }
@@ -172,6 +299,29 @@ linear_svm_igd_final::run(AnyType &args) {
 }
 
 /**
+ * @brief Perform the linear support vector machine final step
+ */
+AnyType
+linear_svm_igd_minibatch_final::run(AnyType &args) {
+    // We request a mutable object. Depending on the backend, this might perform
+    // a deep copy.
+    SVMMinibatchState<MutableArrayHandle<double> > state = args[0];
+    // Aggregates that haven't seen any data just return Null.
+    if (state.algo.numRows == 0) { return Null(); }
+    state.algo.loss = state.algo.loss/state.algo.numBuffers;
+    return state;
+}
+
+AnyType
+internal_linear_svm_igd_minibatch_distance::run(AnyType &args) {
+    SVMMinibatchState<ArrayHandle<double> > stateLeft = args[0];
+    SVMMinibatchState<ArrayHandle<double> > stateRight = args[1];
+
+    return std::abs((stateLeft.algo.loss - stateRight.algo.loss)
+            / stateLeft.algo.loss);
+}
+
+/**
  * @brief Return the difference in RMSE between two states
  */
 AnyType
@@ -194,6 +344,22 @@ internal_linear_svm_igd_result::run(AnyType &args) {
     tuple << state.task.model
         << static_cast<double>(state.algo.loss)
         << state.algo.gradient.norm()
+        << static_cast<int64_t>(state.algo.numRows);
+
+    return tuple;
+}
+
+/**
+ * @brief Return the coefficients and diagnostic statistics of the state
+ */
+AnyType
+internal_linear_svm_igd_minibatch_result::run(AnyType &args) {
+    SVMMinibatchState<ArrayHandle<double> > state = args[0];
+
+    AnyType tuple;
+    tuple << state.task.model
+        << static_cast<double>(state.algo.loss)
+        << 0.
         << static_cast<int64_t>(state.algo.numRows);
 
     return tuple;
