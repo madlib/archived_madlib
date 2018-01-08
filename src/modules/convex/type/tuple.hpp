@@ -61,6 +61,8 @@ using madlib::dbal::eigen_integration::MappedColumnVector;
 // Generalized Linear Models (GLMs): Logistic regression, Linear SVM
 typedef ExampleTuple<MappedColumnVector, double> GLMTuple;
 
+typedef ExampleTuple<Matrix, MappedColumnVector> MiniBatchTuple;
+
 // madlib::modules::convex::MatrixIndex
 typedef ExampleTuple<MatrixIndex, double> LMFTuple;
 
