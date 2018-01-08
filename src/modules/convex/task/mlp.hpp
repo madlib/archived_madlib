@@ -52,6 +52,12 @@ public:
             const dependent_variable_type       &y,
             const double                        &stepsize);
 
+    static double getLossAndUpdateModel(
+            model_type                          &model,
+            const Matrix                        &x,
+            const ColumnVector                  &y,
+            const double                        &stepsize);
+
     static double loss(
             const model_type                    &model,
             const independent_variables_type    &x,
@@ -112,6 +118,51 @@ template <class Model, class Tuple>
 double MLP<Model, Tuple>::lambda = 0;
 
 template <class Model, class Tuple>
+double
+MLP<Model, Tuple>::getLossAndUpdateModel(
+        model_type           &model,
+        const Matrix         &x_batch,
+        const ColumnVector   &y_true_batch,
+        const double         &stepsize) {
+
+    uint16_t N = model.u.size(); // assuming nu. of layers >= 1
+    size_t n = x_batch.rows();
+    size_t i, k;
+    double total_loss = 0.;
+
+    // gradient added over the batch
+    std::vector<Matrix> total_gradient_per_layer(N);
+    for (k=0; k < N; ++k)
+        total_gradient_per_layer[k] = Matrix::Zero(model.u[k].rows(),
+                                                   model.u[k].cols());
+
+    for (i=0; i < n; i++){
+        ColumnVector x = x_batch.row(i);
+        ColumnVector y_true = y_true_batch.segment(i, 1);
+        // FIXME: CURRENTLY HARD-CODED FOR SINGLE OUTPUT NODE
+
+        std::vector<ColumnVector> net, o, delta;
+        feedForward(model, x, net, o);
+        backPropogate(y_true, o.back(), net, model, delta);
+
+        for (k=0; k < N; k++){
+                total_gradient_per_layer[k] += o[k] * delta[k].transpose();
+        }
+
+        // loss computation
+        ColumnVector y_estimated = o.back();
+        total_loss += 0.5 * (y_estimated - y_true).squaredNorm();
+    }
+
+    for (k=0; k < N; k++){
+        Matrix regularization = MLP<Model, Tuple>::lambda * model.u[k];
+        regularization.row(0).setZero(); // Do not update bias
+        model.u[k] -= stepsize * (total_gradient_per_layer[k] / n + regularization);
+    }
+    return total_loss;
+}
+
+template <class Model, class Tuple>
 void
 MLP<Model, Tuple>::gradientInPlace(
         model_type                          &model,
@@ -151,7 +202,7 @@ MLP<Model, Tuple>::loss(
                + (-y_true.array()+1)*(-y_estimated.array()+1).log()).sum();
     }
     else{
-        return 0.5 * (y_estimated-y_true).squaredNorm();
+        return 0.5 * (y_estimated - y_true).squaredNorm();
     }
 }
 
@@ -165,6 +216,7 @@ MLP<Model, Tuple>::predict(
 
     feedForward(model, x, net, o);
     ColumnVector output = o.back();
+
     if(get_class){ // Return a length 1 array with the predicted index
         int max_idx;
         output.maxCoeff(&max_idx);
@@ -195,12 +247,12 @@ MLP<Model, Tuple>::feedForward(
     else
         activation = &tanh;
 
-    o[0].resize(x.size()+1);
+    o[0].resize(x.size() + 1);
     o[0] << 1.,x;
 
     for (k = 1; k < N; k ++) {
         net[k] = model.u[k-1].transpose() * o[k-1];
-        o[k] = ColumnVector(model.u[k-1].cols()+1);
+        o[k] = ColumnVector(model.u[k-1].cols() + 1);
         o[k] << 1., net[k].unaryExpr(activation);
     }
     o[N] = model.u[N-1].transpose() * o[N-1];
@@ -209,6 +261,7 @@ MLP<Model, Tuple>::feedForward(
     if(model.is_classification){
         double max_x = o[N].maxCoeff();
         o[N] = (o[N].array() - max_x).exp();
+        // elog(INFO, "o.sum = %d", o[N].sum());
         o[N] /= o[N].sum();
     }
 }
