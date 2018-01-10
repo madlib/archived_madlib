@@ -1,0 +1,366 @@
+/* ----------------------------------------------------------------------- *//**
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ *
+ *
+ * @file balance_sample.sql_in
+ *
+ * @brief SQL functions for balanced data sets sampling.
+ * @date 12/14/2017
+ *
+ * @sa Given a table, balanced sampling returns a sampled data set
+ * with specified balancing for each class (defaults to uniform sampleing).
+ *
+ *//* ----------------------------------------------------------------------- */
+
+m4_include(`SQLCommon.m4')
+
+
+/**
+@addtogroup grp_balance_sampling
+
+<div class="toc"><b>Contents</b>
+<ul>
+<li><a href="#strs">Balanced Data Sets Sampling</a></li>
+<li><a href="#examples">Examples</a></li>
+</ul>
+</div>
+
+@brief A method for independently sampling classes to receive a
+balanced data set.
+It is commonly used to where classes have greater imbalanced ratio.
+It ensures the subclasses are adequately represented in the sample.
+
+@anchor strs
+@par Balanced Sampling
+
+<pre class="syntax">
+balance_sample( source_table,
+                output_table,
+                class_col,
+                class_sizes,
+                output_table_size,
+                grouping_cols,
+                with_replacement
+              )
+</pre>
+
+\b Arguments
+<dl class="arglist">
+<dt>source_table</dt>
+<dd>TEXT. Name of the table containing the input data.</dd>
+
+<dt>output_table</dt>
+<dd>TEXT. Name of output table that contains the sampled data.
+The output table contains all columns present in the source
+table.</dd>
+
+<dt>class_col</dt>
+<dd>TEXT,  Name of the column containing the class to be balanced.
+</dd>
+
+<dt>class_sizes (optional)</dt>
+<dd>VARCHAR, default ‘uniform’.
+
+@note
+Current implementation only supports 'undersample'.
+
+Parameter to define the size of the different class values.
+(Class values are sometimes also called levels).
+
+Can take the following forms:
+
+<ul>
+<li><b>‘uniform’</b>:
+All class values will be resampled to have the same number of rows.
+</li>
+<li><b>'undersample'</b>:
+Under-sample such that all class values end up with the same number of
+observations as the minority class.  Done without replacement by default
+unless the parameter ‘with_replacement’ is set to TRUE.
+</li>
+<li><b>'oversample'</b>:
+Over-sample with replacement such that all class values end up with the
+same number of observations as the majority class.  Not affected by the
+parameter ‘with_replacement’ since over-sampling is always done with
+replacement.
+</li>
+</ul>
+
+You can also explicitly set class size in a string containing a
+comma-delimited list. Order does not matter and all class values do not
+need to be specified.  Use the format “class_value_1=x, class_value_2=y, …”
+where the class value in the list must exist in the column ‘class_col’.
+
+It can be set to either:
+
+<ul>
+<li><b>Float</b> in the range [0.0,1.0] representing fraction of the data set.
+
+E.g., ‘male=0.4, female=0.6’ means you want to resample the dataset to
+result in 40% male and 60% female proportion in the ‘output_table’.
+</li>
+
+<li><b>Integer</b> representing the desired number of observations.
+
+E.g.,  ‘male=3000, female=7000’ means you want to resample the dataset
+to result in 3000 male and 7000 female rows in the ‘output_table’.
+</li>
+</ul>
+
+@note
+The allowed names for class values follows object naming rules in
+PostgreSQL [6].  Quoted identifiers are allowed and should be enclosed
+in double quotes “ in the usual way.  If for some reason the class values
+in the examples above were “MaLe” and “FeMaLe” then the comma delimited
+list for ‘class_size’ would be:  ‘“MaLe”=0.4, “FeMaLe”=0.6’.
+</dd>
+
+<dt>output_table_size (optional)</dt>
+<dd>INTEGER, default NULL.  Desired size of the output data set.
+
+@note
+Current implementation does not support configuring
+output_table_size.
+
+This parameter is ignored if ‘class_size’ parameter is set to either
+‘oversample’ or ‘undersample’ since output table size is already
+determined.
+If NULL, the resulting output table size will depend on the settings
+for the ‘class_size’ parameter.
+
+You can set ‘output_table_size’ to either:
+<ul>
+
+<li><b>Float</b></li> in the range (0.0,1.0) representing fraction of the input
+data set size.
+
+E.g., ‘0.4’ means you want an ‘ouput_table’ that is 40% the size
+of the input ‘source_table’.
+
+<li><b>Integer</b></li> representing the desired number of rows.
+
+E.g.,  ‘3000’ means you want 3000 rows in the ‘ouput_table’.
+</ul>
+</dd>
+
+
+<dt>grouping_cols (optional)</dt>
+<dd>TEXT, default: NULL. A single column or a list of
+comma-separated columns that defines the strata.  When this
+parameter is NULL, no grouping is used so the sampling is
+non-stratified, that is, the whole table is treated as a
+single group.
+
+@note
+Current implementation does not support grouping_cols
+</dd>
+
+<dt>with_replacement  (optional)</dt>
+<dd>BOOLEAN, default FALSE.  Determines whether to sample
+with replacement or without replacement (default).
+With replacement means that it is possible that the
+same row may appear in the sample set more than once.
+Without replacement means a given row can be selected
+only once.This parameter affects under-sampling only since
+over-sampling is always done with replacement.</dd>
+</dl>
+
+@anchor examples
+@par Examples
+
+Please note that due to the random nature of sampling, your
+results may look different from those below.
+
+-# Create an input table:
+<pre class="syntax">
+DROP TABLE IF EXISTS test;
+CREATE TABLE test(
+    id1 INTEGER,
+    id2 INTEGER,
+    gr1 INTEGER,
+    gr2 INTEGER
+);
+INSERT INTO test VALUES
+(1,0,1,1),
+(2,0,1,1),
+(3,0,1,1),
+(4,0,1,1),
+(5,0,1,1),
+(6,0,1,1),
+(7,0,1,1),
+(8,0,1,1),
+(9,0,1,1),
+(9,0,1,1),
+(9,0,1,1),
+(9,0,1,1),
+(0,1,1,2),
+(0,2,1,2),
+(0,3,1,2),
+(0,4,1,2),
+(0,5,1,2),
+(0,6,1,2),
+(10,10,2,2),
+(20,20,2,2),
+(30,30,2,2),
+(40,40,2,2),
+(50,50,2,2),
+(60,60,2,2),
+(70,70,2,2);
+</pre>
+
+-# Sample without replacement:
+<pre class="syntax">
+DROP TABLE IF EXISTS out;
+SELECT madlib.balance_sample(
+                              'test',     -- Source table
+                              'out',      -- Output table
+                              'gr1');     -- Class column
+SELECT * FROM out ORDER BY gr1, gr2, id1, id2;
+</pre>
+<pre class="result">
+ id1 | id2 | gr1 | gr2
+-----+-----+-----+-----
+   1 |   0 |   1 |   1
+   2 |   0 |   1 |   1
+   3 |   0 |   1 |   1
+   9 |   0 |   1 |   1
+   0 |   1 |   1 |   2
+   0 |   2 |   1 |   2
+   0 |   3 |   1 |   2
+  10 |  10 |   2 |   2
+  20 |  20 |   2 |   2
+  30 |  30 |   2 |   2
+  40 |  40 |   2 |   2
+  50 |  50 |   2 |   2
+  60 |  60 |   2 |   2
+  70 |  70 |   2 |   2
+(14 rows)
+</pre>
+
+-# Sample with replacement:
+<pre class="syntax">
+DROP TABLE IF EXISTS out;
+SELECT madlib.balance_sample(
+                              'test',     -- Source table
+                              'out',      -- Output table
+                              'gr1',      -- Class column
+                              'undersample', -- Class size
+                              NULL,       -- Output table size
+                              NULL,       -- Grouping columns
+                              TRUE);      -- With replacement
+SELECT * FROM out ORDER BY gr1, gr2, id1, id2;
+</pre>
+<pre class="result">
+ id1 | id2 | gr1 | gr2
+\-\-\-\--+\-\-\---+\-\-\---+\-\-\---
+  10 |  10 |   2 |   2
+  20 |  20 |   2 |   2
+  30 |  30 |   2 |   2
+  40 |  40 |   2 |   2
+  50 |  50 |   2 |   2
+  60 |  60 |   2 |   2
+  70 |  70 |   2 |   2
+   4 |   0 |   1 |   1
+   6 |   0 |   1 |   1
+   6 |   0 |   1 |   1
+   7 |   0 |   1 |   1
+   7 |   0 |   1 |   1
+   8 |   0 |   1 |   1
+   0 |   5 |   1 |   2
+(14 rows)
+</pre>
+*/
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample(
+  source_table       TEXT,
+  output_table       TEXT,
+  class_col          TEXT,
+  class_sizes        VARCHAR,
+  output_table_size  INTEGER,
+  grouping_cols      TEXT,
+  with_replacement   BOOLEAN
+) RETURNS VOID AS $$
+    PythonFunction(sample, balance_sample, balance_sample)
+$$ LANGUAGE plpythonu VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample(
+  source_table       TEXT,
+  output_table       TEXT,
+  class_col          TEXT,
+  class_sizes        VARCHAR,
+  output_table_size  INTEGER,
+  grouping_cols      TEXT
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.balance_sample($1, $2, $3, $4, $5, $6, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample(
+  source_table       TEXT,
+  output_table       TEXT,
+  class_col          TEXT,
+  class_sizes        VARCHAR,
+  output_table_size  INTEGER
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.balance_sample($1, $2, $3, $4, $5, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample(
+  source_table       TEXT,
+  output_table       TEXT,
+  class_col          TEXT,
+  class_sizes        VARCHAR
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.balance_sample($1, $2, $3, $4, NULL, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+--NOTE UNIFROM IN DEFAULT CASE
+--SELECT MADLIB_SCHEMA.balance_sample($1, $2, $3, 'uniform', NULL, NULL, NULL);
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample(
+  source_table       TEXT,
+  output_table       TEXT,
+  class_col          TEXT
+) RETURNS VOID AS $$
+     SELECT MADLIB_SCHEMA.balance_sample($1, $2, $3, 'undersample', NULL, NULL, NULL);
+$$ LANGUAGE sql VOLATILE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `MODIFIES SQL DATA', `');
+
+-------------------------------------------------------------------------------
+
+-- Online help
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample(
+    message VARCHAR
+) RETURNS VARCHAR AS $$
+    PythonFunction(sample, balance_sample, balance_sample_help)
+$$ LANGUAGE plpythonu IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+
+-------------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION MADLIB_SCHEMA.balance_sample()
+RETURNS VARCHAR AS $$
+    SELECT MADLIB_SCHEMA.balance_sample('');
+$$ LANGUAGE sql IMMUTABLE
+m4_ifdef(`\_\_HAS_FUNCTION_PROPERTIES\_\_', `CONTAINS SQL', `');
+-------------------------------------------------------------------------------
