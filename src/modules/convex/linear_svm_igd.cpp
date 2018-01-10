@@ -34,7 +34,7 @@ typedef IGD<GLMIGDState<MutableArrayHandle<double> >,
 
 typedef IGD<SVMMinibatchState<MutableArrayHandle<double> >,
         SVMMinibatchState<ArrayHandle<double> >,
-        LinearSVM<GLMModel, MiniBatchTuple > > LinearSVMIGDAlgoMiniBatch;
+        LinearSVM<GLMModel, SVMMiniBatchTuple > > LinearSVMIGDAlgoMiniBatch;
 
 typedef Loss<GLMIGDState<MutableArrayHandle<double> >,
         GLMIGDState<ArrayHandle<double> >,
@@ -157,6 +157,9 @@ linear_svm_igd_minibatch_transition::run(AnyType &args) {
         const double lambda = args[6].getAs<double>();
         const bool isL2 = args[7].getAs<bool>();
         const int nTuples = args[8].getAs<int>();
+
+        // The regularization operations called below (scaling and clipping)
+        // need these class variables to be set.
         L1<GLMModel>::n_tuples = nTuples;
         L2<GLMModel>::n_tuples = nTuples;
         if (isL2)
@@ -195,7 +198,7 @@ linear_svm_igd_minibatch_transition::run(AnyType &args) {
     } catch (const ArrayWithNullException &e) {
         return args[0];
     }
-    MiniBatchTuple tuple;
+    SVMMiniBatchTuple tuple;
     tuple.indVar = trans(x);
     tuple.depVar.rebind(y.memoryHandle(), y.size());
 
@@ -207,9 +210,9 @@ linear_svm_igd_minibatch_transition::run(AnyType &args) {
 
     // Now do the transition step
     // apply IGD with regularization
-    // L2<GLMModel>::scaling(state.algo.incrModel, state.task.stepsize);
+    L2<GLMModel>::scaling(state.task.model, state.task.stepsize);
     LinearSVMIGDAlgoMiniBatch::transitionInMiniBatch(state, tuple);
-    // L1<GLMModel>::clipping(state.algo.incrModel, state.task.stepsize);
+    L1<GLMModel>::clipping(state.task.model, state.task.stepsize);
     // evaluate objective function and its gradient
     // at the old model - state.task.model
     // LinearSVMLossAlgorithm::transition(state, tuple);

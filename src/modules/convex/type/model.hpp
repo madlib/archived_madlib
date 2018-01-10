@@ -93,9 +93,11 @@ struct LMFModel {
     }
 };
 
-// Generalized Linear Models (GLMs): Logistic regression, Linear SVM
 typedef HandleTraits<MutableArrayHandle<double> >::ColumnVectorTransparentHandleMap
     GLMModel;
+
+typedef HandleTraits<MutableArrayHandle<double> >::ColumnVectorTransparentHandleMap
+    SVMModel;
 
 // The necessity of this wrapper is to allow classes in algo/ and task/ to
 // have a type that they can template over

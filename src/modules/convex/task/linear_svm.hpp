@@ -22,9 +22,15 @@ class LinearSVM {
 public:
     typedef Model model_type;
     typedef Tuple tuple_type;
+
     typedef typename Tuple::independent_variables_type independent_variables_type;
     typedef typename Tuple::dependent_variable_type dependent_variable_type;
-    typedef typename model_type::PlainEigenType model_eigen_type;
+
+    // Model is assumed to be base Eigen type or Eigen map and the 'EigenType'
+    // variable infers the actual type from the Model definition.
+    // For eg. SVMModel is defined as a ColumnVectorTransparentHandleMap which
+    // has a ColumnVector as its EigenType.
+    typedef typename model_type::PlainEigenType coefficient_type;
 
     static double epsilon;
     static bool is_svc;
@@ -41,11 +47,12 @@ public:
             const dependent_variable_type       &y,
             const double                        &stepsize);
 
-    static double lossAndGradient(
+    static double getLossAndUpdateModel(
             model_type                          &model,
-            const Matrix                        &x,
-            const ColumnVector                  &y,
-            model_eigen_type                    &gradient);
+            const independent_variables_type    &x,
+            const dependent_variable_type       &y,
+            const double                        &stepsize);
+
     static double loss(
             const model_type                    &model,
             const independent_variables_type    &x,
@@ -106,27 +113,43 @@ LinearSVM<Model, Tuple>::gradientInPlace(
     }
 }
 
+/**
+* @brief This function will update the model for a single batch and return the loss
+* @param model Model to update
+* @param x Batch of independent variables
+* @param y Batch of dependent variables
+* @param stepsize Learning rate for model update
+* @return Average loss in the batch
+*/
 template <class Model, class Tuple>
 double
-LinearSVM<Model, Tuple>::lossAndGradient(
+LinearSVM<Model, Tuple>::getLossAndUpdateModel(
         model_type                          &model,
-        const Matrix                        &x,
-        const ColumnVector                  &y,
-        model_eigen_type                    &gradient) {
+        const independent_variables_type    &x,
+        const dependent_variable_type       &y,
+        const double                        &stepsize){
 
+    // This function is called by the minibatch transition function to update
+    // the model for each batch. x and y in the function signature are defined
+    // as generic variables to ensure a consistent interface across all modules.
+
+    // Assumption: 'gradient' will always be of the same type as the coefficients
+    // With SVM, the model is same as coefficients, but can be more complex with
+    // other modules like MLP.
+    coefficient_type gradient;
     gradient.setZero();
-    model_eigen_type s = x * model;
+    coefficient_type w_transpose_x = x * model;
     double l = 0.0;
-    int n = s.rows();
+    int n = w_transpose_x.rows();
     double dist = 0.;
     double c = 0.;
 
     for (int i=0; i<n; i++) {
         if (is_svc) {
             c = -y(i);   // minus for "-loglik"
-            dist = 1. - s(i) * y(i);
+            dist = 1. - w_transpose_x(i) * y(i);
         } else {
-            double wx_y = s(i) - y(i);
+            double wx_y = w_transpose_x(i) - y(i);
             c = wx_y > 0 ? 1. : -1.;
             dist = c * wx_y - epsilon;
         }
@@ -134,10 +157,10 @@ LinearSVM<Model, Tuple>::lossAndGradient(
             gradient += c * x.row(i);
             l += dist;
         }
-
     }
     l /= n;
     gradient.array() /= n;
+    model -= stepsize * gradient;
     return l;
 }
 

@@ -66,65 +66,12 @@ IGD<State, ConstState, Task>::transition(state_type &state,
   *     1. Task defines a model_eigen_type
   *     2. A batch of tuple.indVar is a Matrix
   *     3. A batch of tuple.depVar is a ColumnVector
-  *     4. Task defines a lossAndGradient method
-  *
- */
- template <class State, class ConstState, class Task>
- void
- IGD<State, ConstState, Task>::transitionInMiniBatch(state_type &state,
-         const tuple_type &tuple) {
-
-     typedef typename Task::model_eigen_type model_eigen_type;
-
-     int batch_size = state.algo.batchSize;
-     int n_epochs = state.algo.nEpochs;
-     int N = tuple.indVar.rows();
-     int d = tuple.indVar.cols();
-     int n_batches = N < batch_size ? 1 : N / batch_size + int(N%batch_size > 0);
-
-     // elog(INFO, "Number of items = %d, batch_size = %d, Number of batches = %d\n", N, batch_size, n_batches);
-
-     model_eigen_type gradient(state.task.model);
-     double avg_loss = 0.0;
-     for (int i=0; i < n_epochs; i++) {
-         double loss = 0.0;
-         for (int j=0, k=0; j < n_batches; j++, k += batch_size) {
-             Matrix X_batch;
-             ColumnVector y_batch;
-             if (j == n_batches-1) {
-                // last batch
-                X_batch = tuple.indVar.bottomRows(N-k);
-                y_batch = tuple.depVar.tail(N-k);
-             } else {
-                 X_batch = tuple.indVar.block(k, 0, batch_size, d);
-                 y_batch = tuple.depVar.segment(k, batch_size);
-             }
-             loss += Task::lossAndGradient(state.task.model,
-                                           X_batch, y_batch,
-                                           gradient);
-             state.task.model -= state.task.stepsize * (gradient + state.task.reg * state.task.model);
-         }
-         loss /= n_batches;
-         // elog(NOTICE, "Epoch %d, loss = %e\n", i, loss);
-         // return average loss for the first epoch
-         if (i==0) state.algo.loss += loss;
-     }
-     return;
- }
-
-/**
-  * @brief Update the transition state in mini-batches
-  *
-  * Note: We assume that
-  *     1. Task defines a model_eigen_type
-  *     2. A batch of tuple.indVar is a Matrix
-  *     3. A batch of tuple.depVar is a ColumnVector
   *     4. Task defines a lossAndUpdateModel method
   *
  */
  template <class State, class ConstState, class Task>
  void
- IGD<State, ConstState, Task>::transitionInMiniBatch2(
+ IGD<State, ConstState, Task>::transitionInMiniBatch(
         state_type &state,
         const tuple_type &tuple) {
 
