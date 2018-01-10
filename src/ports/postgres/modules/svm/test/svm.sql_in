@@ -907,14 +907,14 @@ FROM m9;
 -------------------------------------------------------------------------
 
 
-drop table if exists abalone_batch;
-CREATE TABLE abalone_batch (
+drop table if exists abalone_minibatch;
+CREATE TABLE abalone_minibatch (
     id integer,
     x double precision[][],
     y integer[]
 );
 
-COPY abalone_batch (id, x, y) FROM stdin DELIMITER '|';
+COPY abalone_minibatch (id, x, y) FROM stdin DELIMITER '|';
 0|{{0.53,0.42,0.17,0.828,0.41,0.208,0.1505},{0.27,0.195,0.06,0.073,0.0285,0.0235,0.03},{0.31,0.23,0.07,0.1245,0.0505,0.0265,0.038},{0.36,0.27,0.085,0.2185,0.1065,0.038,0.062},{0.32,0.24,0.08,0.18,0.08,0.0385,0.055},{0.3,0.22,0.08,0.121,0.0475,0.042,0.035},{0.5,0.39,0.135,0.6595,0.3145,0.1535,0.1565},{0.295,0.215,0.07,0.121,0.047,0.0155,0.0405},{0.375,0.28,0.08,0.226,0.105,0.047,0.065}}|{6,5,6,6,6,5,6,6,6}
 1|{{0.415,0.31,0.105,0.3595,0.167,0.083,0.0915},{0.35,0.25,0.07,0.1605,0.0715,0.0335,0.046},{0.415,0.33,0.09,0.3595,0.17,0.081,0.09},{0.66,0.475,0.18,1.3695,0.641,0.294,0.335},{0.415,0.31,0.09,0.2815,0.1245,0.0615,0.085},{0.35,0.265,0.09,0.2265,0.0995,0.0575,0.065},{0.215,0.155,0.06,0.0525,0.021,0.0165,0.015},{0.35,0.27,0.075,0.215,0.1,0.036,0.065},{0.255,0.18,0.065,0.079,0.034,0.014,0.025},{0.28,0.22,0.08,0.1315,0.066,0.024,0.03}}|{6,6,6,6,6,6,5,6,5,5}
 2|{{0.27,0.19,0.08,0.081,0.0265,0.0195,0.03},{0.375,0.29,0.095,0.2875,0.123,0.0605,0.08},{0.27,0.2,0.08,0.1205,0.0465,0.028,0.04},{0.235,0.175,0.065,0.0615,0.0205,0.02,0.019},{0.24,0.17,0.05,0.0545,0.0205,0.016,0.0155},{0.34,0.255,0.085,0.204,0.097,0.021,0.05},{0.275,0.22,0.08,0.1365,0.0565,0.0285,0.042},{0.385,0.28,0.09,0.228,0.1025,0.042,0.0655},{0.355,0.27,0.075,0.1775,0.079,0.0315,0.054},{0.27,0.205,0.05,0.084,0.03,0.0185,0.029}}|{6,6,6,6,5,6,6,5,6,6}
@@ -927,14 +927,40 @@ COPY abalone_batch (id, x, y) FROM stdin DELIMITER '|';
 9|{{0.365,0.27,0.105,0.2155,0.0915,0.0475,0.063},{0.36,0.27,0.09,0.2075,0.098,0.039,0.062},{0.33,0.23,0.085,0.1695,0.079,0.026,0.0505},{0.34,0.26,0.085,0.1885,0.0815,0.0335,0.06},{0.285,0.215,0.075,0.106,0.0415,0.023,0.035},{0.195,0.145,0.05,0.032,0.01,0.008,0.012},{0.32,0.24,0.07,0.133,0.0585,0.0255,0.041},{0.495,0.4,0.155,0.8085,0.2345,0.1155,0.35},{0.475,0.36,0.12,0.5915,0.3245,0.11,0.127},{0.395,0.27,0.1,0.2985,0.1445,0.061,0.082}}|{6,6,6,6,5,4,6,6,6,5}
 \.
 
-DROP TABLE IF EXISTS svm_out, svm_out_summary;
+DROP TABLE IF EXISTS svm_minibatch_out, svm_minibatch_out_summary;
+\timing on
 SELECT svm_regression(
-    'abalone_batch',
-    'svm_out',
+    'abalone_minibatch',
+    'svm_minibatch_out',
     'y',
     'x',
     'linear',
     NULL,
     NULL,
-    'max_iter=10, init_stepsize=0.1, batch_size=3, n_epochs=3'
+    'max_iter=100, init_stepsize=0.5, batch_size=3, n_epochs=3'
 );
+\timing off
+
+DROP TABLE IF EXISTS svm_minibatch_test;
+CREATE TABLE svm_minibatch_test AS
+SELECT id,
+       ARRAY[round(length::numeric, 4),
+       round(diameter::numeric, 4),
+       round(height::numeric, 4),
+       round(whole::numeric, 4),
+       round(shucked::numeric, 4),
+       round(viscera::numeric, 4),
+       round(shell::numeric, 4)] as x,
+       rings as y
+FROM abalone_train_small_tmp;
+
+
+
+DROP TABLE IF EXISTS svm_predict_minibatch_out;
+SELECT svm_predict('svm_minibatch_out', 'svm_minibatch_test', 'id', 'svm_predict_minibatch_out');
+--
+---- we check if the accuracy in prediction the unbalanced class is relatively
+---- good. Without the class weight, this can go as low as 50%.
+SELECT avg((y-prediction)^2) as error
+FROM svm_minibatch_test JOIN svm_predict_minibatch_out
+using (id);
