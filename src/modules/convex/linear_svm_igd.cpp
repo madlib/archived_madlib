@@ -200,7 +200,7 @@ linear_svm_igd_minibatch_transition::run(AnyType &args) {
     }
     SVMMiniBatchTuple tuple;
     tuple.indVar = trans(x);
-    tuple.depVar.rebind(y.memoryHandle(), y.size());
+    tuple.depVar = y;
 
     // tuple.indVar.rebind(args[1].getAs<MappedMatrix>().memoryHandle(), );
     // tuple.depVar.rebind(args[2].getAs<MappedColumnVector>().memoryHandle(), );

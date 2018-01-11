@@ -80,7 +80,6 @@ IGD<State, ConstState, Task>::transition(state_type &state,
     int N = tuple.indVar.rows();
     int d = tuple.indVar.cols();
     int n_batches = N < batch_size ? 1 : N / batch_size + int(N%batch_size > 0);
-    // elog(INFO, "Number of items = %d, batch_size = %d, Number of batches = %d\n", N, batch_size, n_batches);
     for (int i=0; i < n_epochs; i++) {
         double loss = 0.0;
         for (int j=0, k=0; j < n_batches; j++, k += batch_size) {
@@ -96,10 +95,10 @@ IGD<State, ConstState, Task>::transition(state_type &state,
            }
            loss += Task::getLossAndUpdateModel(
                state.task.model, X_batch, y_batch, state.task.stepsize);
-           // state.task.model -= state.task.stepsize * (gradient + state.task.reg * state.task.model);
         }
-        // elog(NOTICE, "Epoch %d, loss = %e\n", i, loss);
-        // return average loss for the first epoch
+
+        // The first epoch will most likely have the most loss.
+        // So being pessimistic, we return average loss only for the first epoch.
         if (i==0) state.algo.loss += loss;
     }
     return;

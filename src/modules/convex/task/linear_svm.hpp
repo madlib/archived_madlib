@@ -136,32 +136,32 @@ LinearSVM<Model, Tuple>::getLossAndUpdateModel(
     // Assumption: 'gradient' will always be of the same type as the coefficients
     // With SVM, the model is same as coefficients, but can be more complex with
     // other modules like MLP.
-    coefficient_type gradient;
+    coefficient_type gradient = model;
     gradient.setZero();
     coefficient_type w_transpose_x = x * model;
-    double l = 0.0;
-    int n = w_transpose_x.rows();
-    double dist = 0.;
+    double loss = 0.0;
+    int batch_size = w_transpose_x.rows();
+    double dist_from_hyperplane = 0.;
     double c = 0.;
 
-    for (int i=0; i<n; i++) {
+    for (int i=0; i<batch_size; i++) {
         if (is_svc) {
             c = -y(i);   // minus for "-loglik"
-            dist = 1. - w_transpose_x(i) * y(i);
+            dist_from_hyperplane = 1. - w_transpose_x(i) * y(i);
         } else {
             double wx_y = w_transpose_x(i) - y(i);
             c = wx_y > 0 ? 1. : -1.;
-            dist = c * wx_y - epsilon;
+            dist_from_hyperplane = c * wx_y - epsilon;
         }
-        if ( dist > 0.) {
+        if ( dist_from_hyperplane > 0.) {
             gradient += c * x.row(i);
-            l += dist;
+            loss += dist_from_hyperplane;
         }
     }
-    l /= n;
-    gradient.array() /= n;
+    loss /= batch_size;
+    gradient.array() /= batch_size;
     model -= stepsize * gradient;
-    return l;
+    return loss;
 }
 
 template <class Model, class Tuple>

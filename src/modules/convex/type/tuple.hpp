@@ -62,7 +62,7 @@ using madlib::dbal::eigen_integration::MappedColumnVector;
 typedef ExampleTuple<MappedColumnVector, double> GLMTuple;
 
 typedef ExampleTuple<MappedColumnVector, double> SVMTuple;
-typedef ExampleTuple<Matrix, MappedColumnVector> SVMMiniBatchTuple;
+typedef ExampleTuple<Matrix, ColumnVector> SVMMiniBatchTuple;
 
 // madlib::modules::convex::MatrixIndex
 typedef ExampleTuple<MatrixIndex, double> LMFTuple;
