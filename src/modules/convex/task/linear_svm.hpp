@@ -154,6 +154,7 @@ LinearSVM<Model, Tuple>::getLossAndUpdateModel(
             dist_from_hyperplane = c * wx_y - epsilon;
         }
         if ( dist_from_hyperplane > 0.) {
+            //FIXME: count the num of positives to use in averaging
             gradient += c * x.row(i);
             loss += dist_from_hyperplane;
         }

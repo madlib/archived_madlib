@@ -978,9 +978,9 @@ def svm(schema_madlib, source_table, model_table,
         _verify_table(source_table, model_table,
                       dependent_varname, independent_varname)
         reserved_cols =['coef', 'random_feature_data',
-                     'random_feature_data', 'loss'
-                     'num_rows_processed', 'num_rows_skipped',
-                     'norm_of_gradient', 'num_iterations']
+                        'random_feature_data', 'loss'
+                        'num_rows_processed', 'num_rows_skipped',
+                        'norm_of_gradient', 'num_iterations']
         grouping_str, grouping_col = \
             get_grouping_col_str(schema_madlib, 'SVM', reserved_cols,
                                  source_table, grouping_col)
@@ -1238,7 +1238,9 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
 
     args.update(_verify_get_params_dict(params_dict))
     args.update(_process_epsilon(is_svc, args))
-    args.update(_svc_or_svr(is_svc, source_table, dependent_varname))
+
+    is_sgd = params_dict['batch_size'] <= 1
+    args.update(_svc_or_svr(is_svc, source_table, dependent_varname, is_sgd))
 
     # place holder for compatibility
     plpy.execute("CREATE TABLE pg_temp.{0} AS SELECT 1".format(args['rel_args']))
@@ -1288,13 +1290,13 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
 
         input_tbl_valid(new_data_table, 'SVM')
         reserved_cols =['coef', 'random_feature_data',
-                     'random_feature_data', 'loss'
-                     'num_rows_processed', 'num_rows_skipped',
-                     'norm_of_gradient', 'num_iterations']
+                        'random_feature_data', 'loss'
+                        'num_rows_processed', 'num_rows_skipped',
+                        'norm_of_gradient', 'num_iterations']
         grouping_str, grouping_col = get_grouping_col_str(schema_madlib,
-                                                           'SVM', reserved_cols,
-                                                           new_data_table,
-                                                           grouping_col)
+                                                          'SVM', reserved_cols,
+                                                          new_data_table,
+                                                          grouping_col)
         _assert(is_var_valid(new_data_table, independent_varname),
                 "SVM Error: independent_varname ('" + independent_varname +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
@@ -1375,43 +1377,67 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
 # -----------------------------------------------------------------------------
 
 
-def _svc_or_svr(is_svc, source_table, dependent_varname):
+def _svc_or_svr(is_svc, source_table, dependent_varname, is_sgd):
     # transform col_dep_var to binary (1`or -1) if classification
     _args = {'col_dep_var_trans': dependent_varname,
              'mapping': 'NULL',
              'method': 'SVR'}
 
     if is_svc:
+        if is_sgd:
+            src = source_table
+        else:
+            src = "(SELECT unnest({0}) as {0} FROM {1}) q".format(dependent_varname, source_table)
         # dependent variable mapping
         dep_labels = plpy.execute("""
             SELECT {dependent_varname} AS y
-            FROM {source_table}
+            FROM {src}
             WHERE ({dependent_varname}) IS NOT NULL
             GROUP BY ({dependent_varname})
             ORDER BY ({dependent_varname})
-            """.format(source_table=source_table,
+            """.format(src=src,
                        dependent_varname=dependent_varname))
 
-        dep_var_mapping = ["'{0}'".format(d['y'])
-                           if isinstance(d['y'], basestring)
-                           else str(d['y']) for d in dep_labels]
-
-        _assert(1 <= len(dep_var_mapping) <= 2,
+        _assert(1 <= len(dep_labels) <= 2,
                 "SVM Error: Classification currently "
                 "only supports unary or binary output!. Found values {0}".
-                format(dep_var_mapping))
+                format(dep_labels))
 
-        col_dep_var_trans = ("""
-            CASE WHEN ({col_dep_var}) IS NULL THEN NULL
-                WHEN ({col_dep_var}) = {mapped_value_for_negative} THEN -1.0
-                ELSE 1.0
-            END
-            """.format(col_dep_var=dependent_varname,
-                       mapped_value_for_negative=dep_var_mapping[0]))
+        dep_labels_str = ["'{0}'".format(d['y'])
+                          if isinstance(d['y'], basestring)
+                          else str(d['y']) for d in dep_labels]
+
+        # map the dependent variable labels to -1 and 1 to represent the two
+        # sides of the hyperplane (only supporting unary/binary for now)
+        if is_sgd:
+            col_dep_var_trans = """
+                CASE WHEN ({dependent_varname}) IS NULL THEN NULL
+                    WHEN ({dependent_varname}) = {mapped_value_for_negative} THEN -1.0
+                    ELSE 1.0
+                END
+                """
+        else:
+            # For minibatch, the dependent_varname is an array. So unnest the
+            # array before mapping to 1/-1.
+            col_dep_var_trans = """
+                ARRAY(SELECT
+                    CASE WHEN ({dependent_varname}) IS NULL THEN NULL
+                         WHEN ({dependent_varname}) = {mapped_value_for_negative} THEN -1.0
+                         ELSE 1.0
+                    END
+                    FROM UNNEST({dependent_varname}) as {dependent_varname}
+                    )
+                """
+
+        # col_dep_var_trans is used by the update query in _compute_svm to
+        # transform dependent variable labels to -1 and 1.
+        col_dep_var_trans = col_dep_var_trans.format(
+            dependent_varname=dependent_varname,
+            mapped_value_for_negative=dep_labels_str[0])
         _args.update({
-            'mapped_value_for_negative': dep_var_mapping[0],
+            'mapped_value_for_negative': dep_labels_str[0],
             'col_dep_var_trans': col_dep_var_trans,
-            'mapping': dep_var_mapping[0] + "," + dep_var_mapping[1],
+            'mapping': dep_labels_str[0] + "," + dep_labels_str[1],
             'method': 'SVC'})
     return _args
 # -----------------------------------------------------------------------------
