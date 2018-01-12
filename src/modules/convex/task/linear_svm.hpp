@@ -140,10 +140,10 @@ LinearSVM<Model, Tuple>::getLossAndUpdateModel(
     gradient.setZero();
     coefficient_type w_transpose_x = x * model;
     double loss = 0.0;
-    int batch_size = w_transpose_x.rows();
+    int batch_size = x.rows();
     double dist_from_hyperplane = 0.;
     double c = 0.;
-
+    int n_points_with_positive_dist=0;
     for (int i=0; i<batch_size; i++) {
         if (is_svc) {
             c = -y(i);   // minus for "-loglik"
@@ -154,13 +154,13 @@ LinearSVM<Model, Tuple>::getLossAndUpdateModel(
             dist_from_hyperplane = c * wx_y - epsilon;
         }
         if ( dist_from_hyperplane > 0.) {
-            //FIXME: count the num of positives to use in averaging
             gradient += c * x.row(i);
             loss += dist_from_hyperplane;
+            n_points_with_positive_dist++;
         }
     }
-    loss /= batch_size;
-    gradient.array() /= batch_size;
+    loss /= n_points_with_positive_dist;
+    gradient.array() /= n_points_with_positive_dist;
     model -= stepsize * gradient;
     return loss;
 }

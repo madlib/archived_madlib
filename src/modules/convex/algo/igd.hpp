@@ -66,7 +66,7 @@ IGD<State, ConstState, Task>::transition(state_type &state,
   *     1. Task defines a model_eigen_type
   *     2. A batch of tuple.indVar is a Matrix
   *     3. A batch of tuple.depVar is a ColumnVector
-  *     4. Task defines a lossAndUpdateModel method
+  *     4. Task defines a getLossAndUpdateModel method
   *
  */
  template <class State, class ConstState, class Task>
@@ -77,21 +77,27 @@ IGD<State, ConstState, Task>::transition(state_type &state,
 
     int batch_size = state.algo.batchSize;
     int n_epochs = state.algo.nEpochs;
-    int N = tuple.indVar.rows();
-    int d = tuple.indVar.cols();
-    int n_batches = N < batch_size ? 1 : N / batch_size + int(N%batch_size > 0);
-    for (int i=0; i < n_epochs; i++) {
+
+    // n_rows/n_ind_cols are the rows/cols in a transition tuple.
+    int n_rows = tuple.indVar.rows();
+    int n_ind_cols = tuple.indVar.cols();
+    int n_batches = n_rows < batch_size ? 1 :
+                    n_rows / batch_size +
+                    int(n_rows%batch_size > 0);
+
+    for (int curr_epoch=0; curr_epoch < n_epochs; curr_epoch++) {
         double loss = 0.0;
-        for (int j=0, k=0; j < n_batches; j++, k += batch_size) {
+        for (int curr_batch=0, curr_batch_row_index=0; curr_batch < n_batches;
+             curr_batch++, curr_batch_row_index += batch_size) {
            Matrix X_batch;
            ColumnVector y_batch;
-           if (j == n_batches-1) {
+           if (curr_batch == n_batches-1) {
               // last batch
-              X_batch = tuple.indVar.bottomRows(N-k);
-              y_batch = tuple.depVar.tail(N-k);
+              X_batch = tuple.indVar.bottomRows(n_rows-curr_batch_row_index);
+              y_batch = tuple.depVar.tail(n_rows-curr_batch_row_index);
            } else {
-               X_batch = tuple.indVar.block(k, 0, batch_size, d);
-               y_batch = tuple.depVar.segment(k, batch_size);
+               X_batch = tuple.indVar.block(curr_batch_row_index, 0, batch_size, n_ind_cols);
+               y_batch = tuple.depVar.segment(curr_batch_row_index, batch_size);
            }
            loss += Task::getLossAndUpdateModel(
                state.task.model, X_batch, y_batch, state.task.stepsize);
@@ -99,7 +105,7 @@ IGD<State, ConstState, Task>::transition(state_type &state,
 
         // The first epoch will most likely have the most loss.
         // So being pessimistic, we return average loss only for the first epoch.
-        if (i==0) state.algo.loss += loss;
+        if (curr_epoch==0) state.algo.loss += loss;
     }
     return;
  }
