@@ -398,10 +398,15 @@ class ChangeHandler(UpgradeBase):
         """
         for udf in self._udf:
             for item in self._udf[udf]:
+                # This is a fix for https://issues.apache.org/jira/browse/MADLIB-1197.
+                # kNN had a peculiar case where a UDF with no arguments was defined,
+                # so dropping that function needs this extra check.
+                udf_arglist = item['argument'] if 'argument' in item else ''
+
                 self._run_sql("DROP FUNCTION IF EXISTS {schema}.{udf}({arg})".
                               format(schema=self._schema,
                                      udf=udf,
-                                     arg=item['argument']))
+                                     arg=udf_arglist))
 
     def drop_changed_uda(self):
         """
