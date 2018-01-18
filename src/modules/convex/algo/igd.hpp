@@ -75,6 +75,10 @@ IGD<State, ConstState, Task>::transition(state_type &state,
         state_type &state,
         const tuple_type &tuple) {
 
+    madlib_assert(tuple.indVar.rows() == tuple.depVar.rows(),
+                  std::runtime_error("Invalid data. Independent and dependent "
+                                     "batches don't have same number of rows."));
+
     int batch_size = state.algo.batchSize;
     int n_epochs = state.algo.nEpochs;
 

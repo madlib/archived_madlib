@@ -134,7 +134,7 @@ LinearSVM<Model, Tuple>::getLossAndUpdateModel(
     // as generic variables to ensure a consistent interface across all modules.
 
     // Assumption: 'gradient' will always be of the same type as the coefficients
-    // With SVM, the model is same as coefficients, but can be more complex with
+    // With SVM, the model is just the coefficients, but can be more complex with
     // other modules like MLP.
     coefficient_type gradient = model;
     gradient.setZero();

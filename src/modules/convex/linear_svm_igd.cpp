@@ -184,12 +184,6 @@ linear_svm_igd_minibatch_transition::run(AnyType &args) {
     // tuple
     using madlib::dbal::eigen_integration::MappedColumnVector;
 
-    // each tuple can be weighted - this can be combination of the sample weight
-    // and the class weight. Calling function is responsible for combining the two
-    // into a single tuple weight. The default value for this parameter is 1, set
-    // into the definition of "tuple".
-    // The weight is used to increase the value of a particular tuple for the online
-    // learning. The weight is not used for the loss computation.
     MappedMatrix x(NULL);
     MappedColumnVector y(NULL);
     try {
@@ -202,21 +196,20 @@ linear_svm_igd_minibatch_transition::run(AnyType &args) {
     tuple.indVar = trans(x);
     tuple.depVar = y;
 
-    // tuple.indVar.rebind(args[1].getAs<MappedMatrix>().memoryHandle(), );
-    // tuple.depVar.rebind(args[2].getAs<MappedColumnVector>().memoryHandle(), );
-
-    // tuple.depVar = args[2].getAs<double>();
+    // each tuple can be weighted - this can be combination of the sample weight
+    // and the class weight. Calling function is responsible for combining the two
+    // into a single tuple weight. The default value for this parameter is 1, set
+    // into the definition of "tuple".
+    // The weight is used to increase the value of a particular tuple for the online
+    // learning. The weight is not used for the loss computation.
     tuple.weight = args[11].getAs<double>();
 
+
     // Now do the transition step
-    // apply IGD with regularization
+    // apply Minibatching with regularization
     L2<GLMModel>::scaling(state.task.model, state.task.stepsize);
     LinearSVMIGDAlgoMiniBatch::transitionInMiniBatch(state, tuple);
     L1<GLMModel>::clipping(state.task.model, state.task.stepsize);
-    // evaluate objective function and its gradient
-    // at the old model - state.task.model
-    // LinearSVMLossAlgorithm::transition(state, tuple);
-    // LinearSVMGradientAlgorithm::transition(state, tuple);
 
     state.algo.numRows += x.cols();
     state.algo.numBuffers ++;
