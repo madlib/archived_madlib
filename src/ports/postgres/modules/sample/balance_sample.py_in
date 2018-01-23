@@ -39,6 +39,7 @@ m4_changequote(`<!', `!>')
 UNIFORM = 'uniform'
 UNDERSAMPLE = 'undersample'
 OVERSAMPLE = 'oversample'
+NOSAMPLE = 'nosample'
 
 
 def _get_sampling_strategy(sampling_strategy_str, supported_strategies, default=UNIFORM):
@@ -64,6 +65,28 @@ def _get_sampling_strategy(sampling_strategy_str, supported_strategies, default=
                        .format(sampling_strategy_str, ','.join(sorted(supported_strategies))))
     return sampling_strategy_str
 # ------------------------------------------------------------------------------
+
+def _get_target_class_sizes(sampling_strategy_str, user_specified_class_sizes,
+                            class_counts, output_table_size):
+    target_class_sizes = {}
+    if not sampling_strategy_str:
+        for each_level, user_level_count in user_specified_class_sizes.items():
+            if class_counts[each_level] < user_level_count:
+                target_class_sizes[each_level] = (user_level_count, OVERSAMPLE)
+            elif class_counts[each_level] > user_level_count:
+                target_class_sizes[each_level] = (user_level_count, UNDERSAMPLE)
+            else:
+                target_class_sizes[each_level] = (user_level_count, NOSAMPLE)
+        remaining_rows = output_table_size - sum(user_specified_class_sizes.values())
+        remaining_levels = [level for level in class_counts.keys()
+                            if level not in user_specified_class_sizes.keys()]
+        if output_table_size:
+            # Output table size was specified. Ensure class levels and their
+            # sizes specified in user_specified_class_sizes is retained, and
+            # uniformly distribute across the remaining class levels if any.
+            for each_level in remaining_levels:
+                target_class_size[each_level] = remaining_rows / len(remaining_levels)
+
 
 
 def balance_sample(schema_madlib, source_table, output_table, class_col,
@@ -93,6 +116,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         _validate_strs(source_table, output_table, class_col, class_sizes,
                        output_table_size, grouping_cols)
 
+        class_counts = _get_frequency_distribution(source_table, class_col)
         # class_sizes can be of two forms:
         #   1. A string describing sampling strategy (as described in _get_sampling_strategy)
         #       In this case, 'sampling_strategy_str' is set to one of [UNIFORM, UNDERSAMPLE, OVERSAMPLE]
@@ -105,15 +129,26 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         else:
             sampling_strategy_str = None
             try:
+                all_levels = class_counts.keys()
                 for each_level, each_class_size in parsed_class_sizes.items():
-                    parsed_class_sizes[each_level] = int(each_class_size)
+                    each_level = each_level.strip()
+                    if each_level not in all_levels:
+                        plpy.error("Sample: Invalid class value specified ({0})".
+                                format(each_level))
+                    each_class_size = int(each_class_size)
+                    if each_class_size < 0:
+                        plpy.error("Sample: Class size has to be positive")
+                    parsed_class_sizes[each_level] = each_class_size
+
             except TypeError:
                 plpy.error("Sample: Invalid value for class_sizes ({0})".
                            format(class_sizes))
 
-        class_counts = _get_frequency_distribution(source_table, class_col)
 
-
+        target_class_sizes = _get_target_class_sizes(sampling_strategy_str,
+                                                     parsed_class_sizes,
+                                                     class_counts,
+                                                     output_table_size)
         # ---------------------- REFACTORED TILL HERE -----------------------
 
         source_table_columns = ','.join(get_cols(source_table))
