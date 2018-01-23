@@ -16,6 +16,8 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from enum import Enum
+
 import math
 import plpy
 import re
@@ -30,10 +32,43 @@ from utilities.validate_args import get_cols
 from utilities.validate_args import table_exists
 from utilities.validate_args import table_is_empty
 
+
 m4_changequote(`<!', `!>')
 
+
+UNIFORM = 'uniform'
+UNDERSAMPLE = 'undersample'
+OVERSAMPLE = 'oversample'
+
+
+def _get_sampling_strategy(sampling_strategy_str, supported_strategies, default=UNIFORM):
+    if not sampling_strategy_str:
+        sampling_strategy_str = default
+    else:
+        if len(sampling_strategy_str) < 3:
+            # Require at least 3 characters since UNIFORM and UNDERSAMPLE have
+            # common prefix substring
+            plpy.error("Sample: Invalid class_sizes parameter")
+
+        if not supported_strategies:
+            supported_strategies = [UNIFORM, UNDERSAMPLE, OVERSAMPLE]
+        try:
+            # allow user to specify a prefix substring of
+            # supported strategies.
+            sampling_strategy_str = next(x for x in supported_strategies
+                                         if x.startswith(sampling_strategy_str))
+        except StopIteration:
+            # next() returns a StopIteration if no element found
+            plpy.error("Sample: Invalid class_sizes parameter: "
+                       "{0}. Supported class_size parameters are ({1})"
+                       .format(sampling_strategy_str, ','.join(sorted(supported_strategies))))
+    return sampling_strategy_str
+# ------------------------------------------------------------------------------
+
+
 def balance_sample(schema_madlib, source_table, output_table, class_col,
-    class_sizes, output_table_size, grouping_cols, with_replacement, **kwargs):
+                   class_sizes, output_table_size, grouping_cols,
+                   with_replacement, **kwargs):
 
     """
     Balance sampling function
@@ -42,7 +77,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         @param output_table       Output table name.
         @param class_col          Name of the column containing the class to be
                                   balanced.
-        @param class_size         Parameter to define the size of the different
+        @param class_sizes        Parameter to define the size of the different
                                   class values.
         @param output_table_size  Desired size of the output data set.
         @param grouping_cols      The columns columns that defines the grouping.
@@ -55,18 +90,33 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         desired_sample_per_class = unique_string(desp='desired_sample_per_class')
         desired_counts = unique_string(desp='desired_counts')
 
-        if not class_sizes:
-            class_sizes = 'uniform'
-
         _validate_strs(source_table, output_table, class_col, class_sizes,
-            output_table_size, grouping_cols)
+                       output_table_size, grouping_cols)
+
+        # class_sizes can be of two forms:
+        #   1. A string describing sampling strategy (as described in _get_sampling_strategy)
+        #       In this case, 'sampling_strategy_str' is set to one of [UNIFORM, UNDERSAMPLE, OVERSAMPLE]
+        #   2. Class sizes for all (or a subset) of the class levels
+        #       In this case, sampling_strategy_str = None and parsed_class_sizes
+        #       is used for the sampling.
+        parsed_class_sizes = extract_keyvalue_params(class_sizes)
+        if not parsed_class_sizes:
+            sampling_strategy_str = _get_sampling_strategy(class_sizes)
+        else:
+            sampling_strategy_str = None
+            try:
+                for each_level, each_class_size in parsed_class_sizes.items():
+                    parsed_class_sizes[each_level] = int(each_class_size)
+            except TypeError:
+                plpy.error("Sample: Invalid value for class_sizes ({0})".
+                           format(class_sizes))
+
+        class_counts = _get_frequency_distribution(source_table, class_col)
+
+
+        # ---------------------- REFACTORED TILL HERE -----------------------
 
         source_table_columns = ','.join(get_cols(source_table))
-        grp_by = "GROUP BY {0}".format(class_col)
-
-        _create_frequency_distribution(class_counts, source_table, class_col)
-        temp_views = [class_counts]
-
         if class_sizes.lower() == 'undersample' and not with_replacement:
             """
                 Random undersample without replacement.
@@ -623,15 +673,17 @@ def _compute_class_sizes(cs_dict, x):
 """
     Create view to store class counts of classes in class_col
 """
-def _create_frequency_distribution(class_counts, source_table, class_col):
-
-    plpy.execute(""" CREATE VIEW {class_counts} AS (
-                 SELECT
-                    {class_col}::text AS classes,
-                    count(*) AS class_count
-                 FROM {source_table}
-                 GROUP BY {class_col})
-             """.format(**locals()))
+def _get_frequency_distribution(source_table, class_col):
+    query_result = plpy.execute("""
+                    SELECT {class_col}::text AS classes,
+                           count(*) AS class_count
+                    FROM {source_table}
+                    GROUP BY {class_col}
+                 """.format(**locals()))
+    class_counts = {}
+    for each_row in query_result:
+        class_counts[each_row['classes']] = each_row['class_count']
+    return class_counts
 
 """
     Create view desired_sample_per_class which contains the desired sampling for
@@ -870,6 +922,7 @@ def _compute_uniform_class_sizes(class_counts, desired_sample_per_class,
 
     return temp_views
 
+
 def _validate_strs (source_table, output_table, class_col, class_sizes,
                     output_table_size, grouping_cols):
 
@@ -889,7 +942,7 @@ def _validate_strs (source_table, output_table, class_col, class_sizes,
         ("""Sample: Class column ({class_col}) does not exist in"""+
             """ table ({source_table}).""").format(**locals()))
 
-    _assert(class_sizes in ('oversample', 'undersample', 'uniform')
+    _assert(class_sizes in (UNIFORM, UNDERSAMPLE, OVERSAMPLE)
             or (class_sizes.find('=') > 0),
             "Sample: Invalid class size ({class_sizes})!".format(**locals()))
 
