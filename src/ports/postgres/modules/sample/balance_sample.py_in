@@ -36,13 +36,10 @@ if __name__ != "__main__":
 
 # m4_changequote(`<!', `!>')
 
-
 UNIFORM = 'uniform'
 UNDERSAMPLE = 'undersample'
 OVERSAMPLE = 'oversample'
 NOSAMPLE = 'nosample'
-
-
 
 def _get_sampling_strategy(sampling_strategy_str, supported_strategies, default=UNIFORM):
     if not sampling_strategy_str:
@@ -184,14 +181,13 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
     """
     with MinWarning("warning"):
 
-        class_counts = unique_string(desp='class_counts')
         desired_sample_per_class = unique_string(desp='desired_sample_per_class')
         desired_counts = unique_string(desp='desired_counts')
 
         _validate_strs(source_table, output_table, class_col, class_sizes,
                        output_table_size, grouping_cols)
 
-        class_counts = _get_frequency_distribution(source_table, class_col)
+        actual_level_counts = _get_frequency_distribution(source_table, class_col)
         # class_sizes can be of two forms:
         #   1. A string describing sampling strategy (as described in _get_sampling_strategy)
         #       In this case, 'sampling_strategy_str' is set to one of [UNIFORM, UNDERSAMPLE, OVERSAMPLE]
@@ -204,7 +200,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         else:
             sampling_strategy_str = None
             try:
-                all_levels = class_counts.keys()
+                all_levels = actual_level_counts.keys()
                 for each_level, each_class_size in parsed_class_sizes.items():
                     each_level = each_level.strip()
                     if each_level not in all_levels:
@@ -219,11 +215,15 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 plpy.error("Sample: Invalid value for class_sizes ({0})".
                            format(class_sizes))
 
-
-        target_class_sizes = _get_target_class_sizes(sampling_strategy_str,
+        # Get the number of rows to be sampled for each class level, based on
+        # the input table, class_sizes, and output_table_size params. This also
+        # includes info about the resulting sampling strategy, i.e., one of
+        # undersampling, oversampling, or no sampling for each level.
+        target_class_sizes = _get_target_level_counts(sampling_strategy_str,
                                                      parsed_class_sizes,
-                                                     class_counts,
+                                                     actual_level_counts,
                                                      output_table_size)
+
         # ---------------------- REFACTORED TILL HERE -----------------------
 
         source_table_columns = ','.join(get_cols(source_table))
@@ -236,7 +236,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             """
             _undersampling_with_no_replacement(source_table, output_table,
                 class_col, class_sizes, output_table_size, grouping_cols,
-                with_replacement, class_counts, source_table_columns)
+                with_replacement, actual_level_counts, source_table_columns)
 
             _delete_temp_views(temp_views)
             return
@@ -261,14 +261,14 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             """
             class_sizes, include_unsampled_classes = _validate_format_and_values(
                 class_sizes, source_table, class_col, output_table_size,
-                class_counts, include_unsampled_classes)
+                actual_level_counts, include_unsampled_classes)
 
             """
                  Only valid condition for sampling is desired_sample_sizes <=
                  output_table_size
             """
             temp_views.extend(_create_desired_and_actual_sampling_views(
-                class_counts, desired_sample_per_class, desired_counts,
+                actual_level_counts, desired_sample_per_class, desired_counts,
                 source_table, output_table, class_col,
                 class_sizes, output_table_size, include_unsampled_classes))
 
@@ -278,7 +278,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 uniform distribution of class sizes
             """
             temp_views.extend(_compute_uniform_class_sizes(
-                class_counts, desired_sample_per_class, desired_counts,
+                actual_level_counts, desired_sample_per_class, desired_counts,
                 source_table, output_table, class_col, class_sizes,
                 output_table_size))
 
@@ -361,13 +361,13 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                     SELECT
                         {desired_sample_per_class}.classes,
                         generate_series(1, sample_class_size::int) AS _i,
-                        ((random()*({class_counts}.class_count-1)+1)::int)
+                        ((random()*({actual_level_counts}.class_count-1)+1)::int)
                         AS __row_no
                     FROM
-                        {class_counts},
+                        {actual_level_counts},
                         {desired_sample_per_class}
                     WHERE
-                    {desired_sample_per_class}.classes = {class_counts}.classes
+                    {desired_sample_per_class}.classes = {actual_level_counts}.classes
                     AND (category like 'oversample')
                     """.format(**locals())
                     plpy.info("THAT 2222222 random_targetclass_size_sample_number_gen_sql")
@@ -382,15 +382,15 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                     SELECT
                         classes,
                         generate_series(1, target_class_size::int) AS _i,
-                        ((random()*({class_counts}.class_count-1)+1)::int)
+                        ((random()*({actual_level_counts}.class_count-1)+1)::int)
                         AS __row_no
                     FROM
                         (SELECT
                             {func_name}(class_count) AS target_class_size
-                        FROM {class_counts})
+                        FROM {actual_level_counts})
                             AS foo,
-                            {class_counts}
-                        WHERE {class_counts}.class_count != target_class_size
+                            {actual_level_counts}
+                        WHERE {actual_level_counts}.class_count != target_class_size
                     """.format(**locals())
 
             """
@@ -423,9 +423,9 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                     WHERE {class_col}::text IN
                         (SELECT
                             classes AS target_class
-                         FROM {class_counts}
+                         FROM {actual_level_counts}
                          WHERE class_count in
-                            (SELECT {func_name}(class_count) FROM {class_counts}))
+                            (SELECT {func_name}(class_count) FROM {actual_level_counts}))
                     """.format(**locals())
 
                 """
@@ -521,7 +521,7 @@ def _delete_temp_views(temp_views):
 """
 def _undersampling_with_no_replacement(source_table, output_table, class_col,
         class_sizes, output_table_size, grouping_cols, with_replacement,
-        class_counts, source_table_columns):
+        actual_level_counts, source_table_columns):
 
     distinct_class_labels = plpy.execute("""
         SELECT array_agg(DISTINCT {class_col}::text) AS labels
@@ -530,11 +530,11 @@ def _undersampling_with_no_replacement(source_table, output_table, class_col,
 
     limit_bound = plpy.execute("""
         SELECT MIN(class_count)::int AS min
-        FROM {class_counts}""".format(**locals()))[0]['min']
+        FROM {actual_level_counts}""".format(**locals()))[0]['min']
 
     minority_class = plpy.execute("""
         SELECT array_agg(classes::text) as minority_class
-        FROM {class_counts}
+        FROM {actual_level_counts}
         WHERE class_count = {limit_bound}
         """.format(**locals()))[0]['minority_class']
 
@@ -638,7 +638,7 @@ def _validate_classes(all_classes, source_table, class_col):
     7. Checks is classes are present in class_col
 """
 def _validate_format_and_values(class_sizes, source_table, class_col,
-                    output_table_size, class_counts, include_unsampled_classes):
+                    output_table_size, actual_level_counts, include_unsampled_classes):
 
     class_sizes_arr = [cls.strip() for cls in class_sizes.split(',')]
     class_sizes = ','.join(class_sizes_arr)
@@ -712,7 +712,7 @@ def _validate_format_and_values(class_sizes, source_table, class_col,
     if Fraction(str(fraction_value_sum)) > Fraction(str(0.0)):
 
         sum_remaining_class_samples = plpy.execute("""
-                SELECT sum({class_counts}.class_count) AS remaining_classes FROM {class_counts}
+                SELECT sum({actual_level_counts}.class_count) AS remaining_classes FROM {actual_level_counts}
                 WHERE classes not IN ({all_classes})
                 """.format(**locals()))
         """
@@ -790,16 +790,16 @@ def _get_frequency_distribution(source_table, class_col):
                     FROM {source_table}
                     GROUP BY {class_col}
                  """.format(**locals()))
-    class_counts = {}
+    actual_level_counts = {}
     for each_row in query_result:
-        class_counts[each_row['classes']] = each_row['class_count']
-    return class_counts
+        actual_level_counts[each_row['classes']] = each_row['class_count']
+    return actual_level_counts
 
 """
     Create view desired_sample_per_class which contains the desired sampling for
     each class.
  """
-def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_class,
+def _create_desired_and_actual_sampling_views(actual_level_counts, desired_sample_per_class,
                                               desired_counts, source_table,
                                               output_table, class_col,
                                               class_sizes,output_table_size,
@@ -840,10 +840,10 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                       ELSE 'undersample'
                     END AS category
             FROM
-                {class_counts}
+                {actual_level_counts}
                 JOIN
                 {desired_counts}
-                ON ({class_counts}.classes = {desired_counts}.desired_classes)
+                ON ({actual_level_counts}.classes = {desired_counts}.desired_classes)
             )
             """.format(**locals())
     else:
@@ -855,7 +855,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
         if output_table_size:
 
             remaining_class_samples = _sample_remaining_classes_uniformly_per_output_table_size(
-                class_counts, desired_counts, output_table_size)
+                actual_level_counts, desired_counts, output_table_size)
 
             desired_sample_per_class_sql = """
             CREATE VIEW {desired_sample_per_class} AS (
@@ -877,13 +877,13 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                             END AS desired_values,
                             class_count
                     FROM
-                        {class_counts}
+                        {actual_level_counts}
                         LEFT JOIN
                         {desired_counts}
-                        ON ({class_counts}.classes = {desired_counts}.desired_classes)
+                        ON ({actual_level_counts}.classes = {desired_counts}.desired_classes)
                         LEFT JOIN
                         {remaining_class_samples}
-                        ON ({class_counts}.classes = {remaining_class_samples}.extra_classes)
+                        ON ({actual_level_counts}.classes = {remaining_class_samples}.extra_classes)
                         ) AS foo
                 )
             """.format(**locals())
@@ -912,10 +912,10 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
                                 END AS desired_values,
                                 class_count
                         FROM
-                            {class_counts}
+                            {actual_level_counts}
                              LEFT JOIN
                             {desired_counts}
-                            ON ({class_counts}.classes = {desired_counts}.desired_classes)
+                            ON ({actual_level_counts}.classes = {desired_counts}.desired_classes)
                             ) AS foo
                     )
                 """.format(**locals())
@@ -930,7 +930,7 @@ def _create_desired_and_actual_sampling_views(class_counts, desired_sample_per_c
     Sample the remaining classes in output_table_size - (total calculated
     class sizes).
 """
-def _sample_remaining_classes_uniformly_per_output_table_size(class_counts,
+def _sample_remaining_classes_uniformly_per_output_table_size(actual_level_counts,
                                                               desired_counts,
                                                               output_table_size):
 
@@ -953,14 +953,14 @@ def _sample_remaining_classes_uniformly_per_output_table_size(class_counts,
                         AS user_desired_class_sizes,
                 (SELECT
                     count(*) AS total_classes
-                FROM {class_counts})
+                FROM {actual_level_counts})
                         AS actual_table_frequencies,
                 (SELECT
                     classes AS extra_classes
                 FROM
                     (SELECT
                         classes
-                    FROM {class_counts}
+                    FROM {actual_level_counts}
                         EXCEPT
                     SELECT
                         desired_classes
@@ -975,7 +975,7 @@ def _sample_remaining_classes_uniformly_per_output_table_size(class_counts,
 """
     Calculate uniform class sizes per class
 """
-def _compute_uniform_class_sizes(class_counts, desired_sample_per_class,
+def _compute_uniform_class_sizes(actual_level_counts, desired_sample_per_class,
                                 desired_counts, source_table, output_table,
                                 class_col, class_sizes, output_table_size):
 
@@ -1021,7 +1021,7 @@ def _compute_uniform_class_sizes(class_counts, desired_sample_per_class,
                         sample_size AS uniform_sample_size,
                         class_count
                   FROM
-                      {class_counts},
+                      {actual_level_counts},
                       {calculated_sample_per_class}
                 ) AS foo)
         """.format(**locals())
