@@ -43,6 +43,7 @@ OVERSAMPLE = 'oversample'
 NOSAMPLE = 'nosample'
 
 
+
 def _get_sampling_strategy(sampling_strategy_str, supported_strategies, default=UNIFORM):
     if not sampling_strategy_str:
         sampling_strategy_str = default
@@ -67,113 +68,100 @@ def _get_sampling_strategy(sampling_strategy_str, supported_strategies, default=
     return sampling_strategy_str
 # ------------------------------------------------------------------------------
 
-def _get_counts_for_default_strategies(input_class_level_counts, computed_each_level_count):
-    """
-    @param input_class_level_counts: The various class levels, and the number of rows for
-                             each in the input table
-    @param computed_each_level_count: Number of rows to be sampled for each class level.
-                                    This is the same for each class level for
-                                    default strategies ([UNIFORM, UNDERSAMPLE, OVERSAMPLE])
-    @returns:
-        dictionary of various class levels, whose values is a tuple of
-        (# of samples, sampling strategy)
-    """
-    target_class_level_size = {}
-    for each_level, each_level_count in input_class_level_counts.items():
-        if each_level_count < computed_each_level_count:
-            target_class_level_size[each_level] = (computed_each_level_count, OVERSAMPLE)
-        else:
-            # If the number of samples to be generated for a class level is the
-            # same as what we have in the input table, mark it as UNDERSAMPLE
-            # instead of NOSAMPLE. This is because, NOSAMPLE always indicates
-            # copy data as is. But if the stratege specified is one of UNIFORM,
-            # UNDERSAMPLE or OVERSAMPLE, then we may have to sample rows with
-            # or without replacement. The option of using with or without comes
-            # only with UNDERSAMPLE (OVERSAMPLE always is with replacement, and
-            # NOSAMPLE is always without replacement)
-            target_class_level_size[each_level] = (computed_each_level_count, UNDERSAMPLE)
-    return target_class_level_size
 
-def _get_count_and_strategy_for_each_level(input_class_level_counts, level, level_count):
-    """
-    @param input_class_level_counts: The various class levels, and the number of rows for
-                             each in the input table
-    @param level: Class level considered
-    @param level_count: Number of rows to be sampled for the specified class level
+def _choose_strategy(actual_count, desired_count):
+    """ Choose sampling strategy by comparing actual and desired sample counts
+
+    @param actual_count: Actual number of samples for some level
+    @param desired_count: Desired number of sample for the level
     @returns:
-        dictionary with one entry: Key: level, Value = a tuple of (# of samples, sampling strategy)
+        Str. Sampling strategy string (either UNDERSAMPlE or OVERSAMPLE)
     """
-    target_class_level_size = {}
-    if input_class_level_counts[level] < level_count:
-        target_class_level_size[level] = (level_count, OVERSAMPLE)
+    # OVERSAMPLE when the actual count is less than the desired count
+    # UNDERSAMPLE when the actual count is more than the desired count
+
+    # If the actual count for a class level is the same as desired count, then
+    # we could potentially return the input rows as is.  This, however,
+    # precludes the case of bootstrapping (i.e. returning same  number of rows
+    # but after sampling with replacement).  Hence, we treat the actual=desired
+    # as UNDERSAMPLE.  It's specifically set to UNDERSAMPLE since it provides
+    # both 'with' and 'without' replacement  (OVERSAMPLE is always with
+    # replacement and NOSAMPLE is always without replacement)
+    if actual_count < desired_count:
+        return OVERSAMPLE
     else:
-        target_class_level_size[level] = (level_count, UNDERSAMPLE)
-    return target_class_level_size
+        return UNDERSAMPLE
+# -------------------------------------------------------------------------
 
-def _get_target_class_sizes(sampling_strategy_str, user_specified_class_sizes,
-                            input_class_level_counts, output_table_size):
+
+def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
+                             actual_level_counts, output_table_size):
     """
     @param sampling_strategy_str: one of [UNIFORM, UNDERSAMPLE, OVERSAMPLE, None].
                                This is `None` only if this is user-defined, i.e.,
                                a comma separated list of class levels and number of
                                rows desired pairs.
-    @param user_specified_class_sizes: Dict that is defined and populated only when
+    @param desired_level_counts: Dict that is defined and populated only when
                                     sampling_strategy_str is None.
-    @param input_class_level_counts: Dict of various class levels and number of rows
+    @param actual_level_counts: Dict of various class levels and number of rows
                                   in each of them in the input table
     @param output_table_size: Size of the desired output table (NULL or Integer)
     """
-    target_class_sizes = {}
+    target_level_counts = {}
     if not sampling_strategy_str:
-        # Case where the sampling strategy specified by the user is row numbers
-        # for one or more classes. Get the desired number of samples for those
-        # class levels specified, and the number of samples for the rest of
-        # the classes depends on `output_table_size`.
-        # If `output_table_size`=NULL, then keep all rows of unspecified class
-        #                        levels as is.
-        # If `output_table_size`=<Integer>, then divide the unspecified class
-        #                        levels equally among the remaining rows
-        for each_level, user_level_count in user_specified_class_sizes.items():
-            target_class_sizes.update(_get_count_and_strategy_for_each_level(
-                                      input_class_level_counts, each_level, user_level_count))
-        remaining_levels = [level for level in input_class_level_counts.keys()
-                            if level not in user_specified_class_sizes.keys()]
+        # This case implies user has provided a desired count for one or more
+        # levels. Counts for the rest of the levels depend on `output_table_size`.
+        #   if `output_table_size` = NULL, unspecified level counts remain as is
+        #   if `output_table_size` = <Integer>, divide remaining row count
+        #                             uniformly among unspecified level counts
+        for each_level, desired_count in desired_level_counts.items():
+            sample_strategy = _choose_strategy(actual_level_counts[each_level],
+                                               desired_count)
+            target_level_counts[each_level] = (desired_count, sample_strategy)
+
+        remaining_levels = (set(actual_level_counts.keys()) -
+                            set(desired_level_counts.keys()))
         if output_table_size:
-            remaining_rows = output_table_size - sum(user_specified_class_sizes.values())
-            # Output table size was specified. Ensure class levels and their
-            # sizes specified in user_specified_class_sizes is retained, and
-            # uniformly distribute across the remaining class levels if any.
-            computed_remaining_rows = math.ceil(float(remaining_rows) / len(remaining_levels))
-            for each_level in remaining_levels:
-                target_class_sizes.update(_get_count_and_strategy_for_each_level(
-                                          input_class_level_counts, each_level,
-                                          computed_remaining_rows))
+            # Uniformly distribute across the remaining class levels
+            remaining_rows = output_table_size - sum(desired_level_counts.values())
+            if remaining_rows > 0:
+                rows_per_level = math.ceil(float(remaining_rows) /
+                                           len(remaining_levels))
+                for each_level in remaining_levels:
+                    sample_strategy = _choose_strategy(
+                        actual_level_counts[each_level], rows_per_level)
+                    target_level_counts[each_level] = (rows_per_level,
+                                                       sample_strategy)
         else:
-            # NOSAMPLE strategy is used only in this case, where all rows
-            # from the input table are used as is as samples for a class level.
+            # When output_table_size is unspecified, rows from the input table
+            # are sampled as is for remaining class levels. This is same as the
+            # NOSAMPLE strategy.
             for each_level in remaining_levels:
-                target_class_sizes[each_level] = (input_class_level_counts[each_level], NOSAMPLE)
-    elif sampling_strategy_str in [UNDERSAMPLE, OVERSAMPLE]:
-        # Every class level must have the same number of rows as the class with
-        # the smallest number of rows in the input table for UNDERSAMPLE,
-        # and largest number of rows in the input table for OVERSAMPLE.
-        size_function = min if sampling_strategy_str == UNDERSAMPLE else max
-        target_class_sizes = _get_counts_for_default_strategies(input_class_level_counts,
-                                                               size_function(input_class_level_counts.values()))
-    elif sampling_strategy_str == UNIFORM:
-        # Here again, the size of the class levels depend on `output_table_size`.
-        if output_table_size:
-            target_size = float(output_table_size)
-        else:
-            target_size = sum(input_class_level_counts.values())
-        computed_each_level_count = math.ceil(target_size / len(input_class_level_counts))
-        target_class_sizes = _get_counts_for_default_strategies(input_class_level_counts,
-                                                               computed_each_level_count)
+                target_level_counts[each_level] = (actual_level_counts[each_level], NOSAMPLE)
     else:
-        plpy.error("Sample: Class size specified is not supported.")
+        def ceil_of_mean(numbers):
+            return math.ceil(float(sum(numbers)) / max(len(numbers), 1))
 
-    return target_class_sizes
-
+        # UNIFORM: Ensure all level counts are same (size determined by output_table_size)
+        # UNDERSAMPLE: Ensure all level counts are same as the minimum count
+        # OVERSAMPLE: Ensure all level counts are same as the maximum count
+        size_function = {UNDERSAMPLE: min,
+                         OVERSAMPLE: max,
+                         UNIFORM: ceil_of_mean
+                        }[sampling_strategy_str]
+        if sampling_strategy_str == UNIFORM and output_table_size:
+            # Ignore actual counts for computing target sizes
+            # if output_table_size is specified
+            target_size_per_level = math.ceil(float(output_table_size) /
+                                              len(actual_level_counts))
+        else:
+            target_size_per_level = size_function(actual_level_counts.values())
+        for each_level, actual_count in actual_level_counts.items():
+            sample_strategy = _choose_strategy(actual_count, target_size_per_level)
+            target_level_counts[each_level] = (target_size_per_level,
+                                               sample_strategy)
+    return target_level_counts
+# -------------------------------------------------------------------------
 
 
 def balance_sample(schema_madlib, source_table, output_table, class_col,
@@ -1235,69 +1223,66 @@ class UtilitiesTestCase(unittest.TestCase):
         self.output_table_size1 = None
         self.output_table_size2 = 60
         # self.input_class_level_counts2 = {'a':100, 'b':100, 'c':100}
-    def test__get_count_and_strategy_for_each_level(self):
-        self.assertEqual({'a': (15, UNDERSAMPLE)},
-                         _get_count_and_strategy_for_each_level(self.input_class_level_counts1, self.level1a, self.level1a_cnt1))
-        self.assertEqual({'a': (25, OVERSAMPLE)},
-                         _get_count_and_strategy_for_each_level(self.input_class_level_counts1, self.level1a, self.level1a_cnt2))
-        self.assertEqual({'a': (20, UNDERSAMPLE)},
-                         _get_count_and_strategy_for_each_level(self.input_class_level_counts1, self.level1a, self.level1a_cnt3))
+    def test__choose_strategy(self):
+        self.assertEqual(UNDERSAMPLE, _choose_strategy(35, 25))
+        self.assertEqual(OVERSAMPLE, _choose_strategy(15, 25))
+        self.assertEqual(UNDERSAMPLE, _choose_strategy(25, 25))
 
-    def test__get_target_class_sizes(self):
+    def test__get_target_level_counts(self):
         # Test cases for user defined class level samples, without output table size
         self.assertEqual({'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(25, NOSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str0,
-                                                self.user_specified_class_size1,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size1))
+                         _get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size1,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
         self.assertEqual({'a':(20, NOSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(25, NOSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str0,
-                                                self.user_specified_class_size2,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size1))
+                         _get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size2,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
         self.assertEqual({'a':(30, OVERSAMPLE), 'b':(30, NOSAMPLE), 'c':(25, NOSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str0,
-                                                self.user_specified_class_size3,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size1))
+                         _get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size3,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
         # Test cases for user defined class level samples, with output table size
         self.assertEqual({'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(10, UNDERSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str0,
-                                                self.user_specified_class_size1,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size2))
+                         _get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size1,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
         self.assertEqual({'a':(18, UNDERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(18, UNDERSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str0,
-                                                self.user_specified_class_size2,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size2))
+                         _get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size2,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
         self.assertEqual({'a':(30, OVERSAMPLE), 'b':(15, UNDERSAMPLE), 'c':(15, UNDERSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str0,
-                                                self.user_specified_class_size3,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size2))
+                         _get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size3,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
         # Test cases for UNIFORM, OVERSAMPLE, and UNDERSAMPLE without any output table size
         self.assertEqual({'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(25, UNDERSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str1,
-                                                self.user_specified_class_size0,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size1))
+                         _get_target_level_counts(self.sampling_strategy_str1,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
         self.assertEqual({'a':(30, OVERSAMPLE), 'b':(30, UNDERSAMPLE), 'c':(30, OVERSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str2,
-                                                self.user_specified_class_size0,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size1))
+                         _get_target_level_counts(self.sampling_strategy_str2,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
         self.assertEqual({'a':(20, UNDERSAMPLE), 'b':(20, UNDERSAMPLE), 'c':(20, UNDERSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str3,
-                                                self.user_specified_class_size0,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size1))
+                         _get_target_level_counts(self.sampling_strategy_str3,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
         # Test cases for UNIFORM with output table size
         self.assertEqual({'a':(20, UNDERSAMPLE), 'b':(20, UNDERSAMPLE), 'c':(20, UNDERSAMPLE)},
-                         _get_target_class_sizes(self.sampling_strategy_str1,
-                                                self.user_specified_class_size0,
-                                                self.input_class_level_counts1,
-                                                self.output_table_size2))
+                         _get_target_level_counts(self.sampling_strategy_str1,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
 
 if __name__ == '__main__':
     unittest.main()
