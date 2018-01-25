@@ -32,7 +32,23 @@ if __name__ != "__main__":
     from utilities.validate_args import get_cols
     from utilities.validate_args import table_exists
     from utilities.validate_args import table_is_empty
+else:
+    # FIXME: repeating a function from utilities that is needed by the unit test.
+    # This should be removed once a unittest framework in used for testing.
+    import random
+    import time
 
+    def unique_string(desp='', **kwargs):
+        """
+        Generate random remporary names for temp table and other names.
+        It has a SQL interface so both SQL and Python functions can call it.
+        """
+        r1 = random.randint(1, 100000000)
+        r2 = int(time.time())
+        r3 = int(time.time()) % random.randint(1, 100000000)
+        u_string = "__madlib_temp_" + desp + str(r1) + "_" + str(r2) + "_" + str(r3) + "__"
+        return u_string
+# ------------------------------------------------------------------------------
 
 # m4_changequote(`<!', `!>')
 
@@ -176,6 +192,8 @@ def _get_sampling_strategy_specific_dict(target_class_sizes):
             chosen_strategy = nosample_level_dict
         chosen_strategy[level] = count
     return (undersample_level_dict, oversample_level_dict, nosample_level_dict)
+# ------------------------------------------------------------------------------
+
 
 def _get_nosample_subquery(source_table, class_col, nosample_levels):
     subquery = """
@@ -185,9 +203,66 @@ def _get_nosample_subquery(source_table, class_col, nosample_levels):
             """.format(source_table, class_col,
                         ','.join(map(str, nosample_levels)))
     return subquery
+# ------------------------------------------------------------------------------
 
-def _get_oversample_subquery(source_table, class_col, oversample_level_dict):
 
+def _get_with_replacement_subquery(schema_madlib, source_table, source_table_columns,
+                                   class_col, actual_level_counts, oversample_level_dict):
+    """ Return the query for oversampling
+
+    This function uses Poisson distribution to approximate the process of
+    sampling with replacement. See section 17.3 in MADlib design doc
+    (FIXME: Add more references!)
+
+    """
+    lambda_per_level = {}
+    for each_level, actual_count in actual_level_counts.items():
+        desired_count = oversample_level_dict[each_level][0]
+        # lambda_val = int(math.ceil(float(desired_count) / actual_count))
+
+        # sample a higher proportion that desired to ensure we get at least
+        # 'desired_count' number of rows
+        lambda_val = float(desired_count) / actual_count + 0.5
+        lambda_per_level[each_level] = (lambda_val, desired_count)
+
+    # lambda_per_level contains the Poisson lambda value for each level
+    # Below string represents that dictionary in a table format
+    # eg. if lambda_per_level = {'a': 5, 'b': 4, 'c': 10}
+    #     then lambda_per_level_str = "VALUES ('a', 5), ('b': 4), ('c': 10)"
+    # This allows joining the source table with this table-like format.
+    lambda_per_level_str = "VALUES " + \
+        ','.join(map(str, [(k, v[0], v[1]) for k, v in lambda_per_level.items()]))
+
+    count_name = unique_string()
+    poisson_lambda = unique_string()
+    class_col_tmp = unique_string()
+    row_number_col = unique_string()
+    desired_count_col = unique_string()
+
+    oversample_levels = ','.join(oversample_level_dict.keys())
+    subquery = """
+        SELECT {source_table_columns}
+        FROM (
+            SELECT {source_table_columns},
+                   row_number() OVER (PARTITION BY {class_col}) AS {row_number_col},
+                   {desired_count_col}
+            FROM (
+                SELECT {source_table_columns},
+                       generate_series(1, {schema_madlib}.poisson_random({poisson_lambda}))
+                            AS {count_name},
+                       {desired_count_col}
+                FROM
+                    {source_table} s,
+                    ({lambda_per_level_str})
+                        q({class_col_tmp}, {poisson_lambda}, {desired_count_col})
+                WHERE {class_col}::text = {class_col_tmp} AND
+                      {class_col} IN ({oversample_levels})
+            ) q2
+        ) q3
+        WHERE {row_number_col} <= {desired_count_col}
+        """.format(**locals())
+    return subquery
+# ------------------------------------------------------------------------------
 
 
 def balance_sample(schema_madlib, source_table, output_table, class_col,
@@ -256,12 +331,16 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         undersample_level_dict, oversample_level_dict, nosample_level_dict = \
             _get_sampling_strategy_specific_dict(target_class_sizes)
 
-        nosample_subquery = _get_nosample_subquery(source_table, class_col,
-                                                   nosample_level_dict.keys())
-        oversample_subquery = _get_oversample_subquery(source_table, class_col,
-                                                         oversample_level_dict)
-        undersample_subquery = _get_undersample_subquery(source_table, class_col,
-                                                         undersample_level_dict)
+        nosample_subquery = _get_nosample_subquery(
+            source_table, class_col, nosample_level_dict.keys())
+        oversample_subquery = _get_with_replacement_subquery(
+            source_table, class_col, oversample_level_dict)
+        if with_replacement:
+            undersample_subquery = _get_with_replacement_subquery(
+                source_table, class_col, undersample_level_dict)
+        else:
+            undersample_subquery = _get_without_replacement_subquery(
+                source_table, class_col, undersample_level_dict)
 
         # ---------------------- REFACTORED TILL HERE -----------------------
 
@@ -1344,3 +1423,8 @@ class UtilitiesTestCase(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+    # print(_get_with_replacement_subquery('madlib', 'madlibtestdata.log_ornstein_wi',
+    #                                "x, y, grp_by_col",
+    #                                'grp_by_col',
+    #                                {'1': 119, '2': 129},
+    #                                {'1': (360, OVERSAMPLE), '2': (500, OVERSAMPLE)}))
