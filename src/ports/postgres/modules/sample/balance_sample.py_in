@@ -57,6 +57,7 @@ NOSAMPLE = 'nosample'
 
 NEW_ID_COLUMN = '__madlib_id__'
 
+
 def _get_frequency_distribution(source_table, class_col):
     query_result = plpy.execute("""
                     SELECT {class_col}::text AS classes,
@@ -68,6 +69,7 @@ def _get_frequency_distribution(source_table, class_col):
     for each_row in query_result:
         actual_level_counts[each_row['classes']] = each_row['class_count']
     return actual_level_counts
+
 
 def _get_sampling_strategy(sampling_strategy_str, supported_strategies=None,
                            default=UNIFORM):
@@ -174,7 +176,7 @@ def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
         size_function = {UNDERSAMPLE: min,
                          OVERSAMPLE: max,
                          UNIFORM: ceil_of_mean
-                        }[sampling_strategy_str]
+                         }[sampling_strategy_str]
         if sampling_strategy_str == UNIFORM and output_table_size:
             # Ignore actual counts for computing target sizes
             # if output_table_size is specified
@@ -189,6 +191,7 @@ def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
     return target_level_counts
 
 # -------------------------------------------------------------------------
+
 
 def _get_sampling_strategy_specific_dict(target_class_sizes):
     undersample_level_dict = {}
@@ -214,13 +217,13 @@ def _get_nosample_subquery(source_table, class_col, nosample_levels):
                 FROM {0}
                 WHERE {1} in ({2})
             """.format(source_table, class_col,
-                        ','.join(map(str, nosample_levels)))
+                       ','.join(map(str, nosample_levels)))
     return subquery
 # ------------------------------------------------------------------------------
 
 
 def _get_without_replacement_subquery(schema_madlib, source_table, source_table_columns,
-                                   class_col, actual_level_counts, desired_level_counts):
+                                      class_col, actual_level_counts, desired_level_counts):
     if not desired_level_counts:
         return ''
     class_col_tmp = unique_string()
@@ -229,7 +232,7 @@ def _get_without_replacement_subquery(schema_madlib, source_table, source_table_
     sample_levels = ",".join(desired_level_counts.keys())
 
     desired_level_counts_str = "VALUES " + \
-        ','.join(map(str, [(k, v) for k, v in desired_level_counts.items()]))
+        ','.join('({0}::text, {1})'.format(k, v) for k, v in desired_level_counts.items())
 
     subquery = """
         SELECT {source_table_columns}
@@ -251,6 +254,8 @@ def _get_without_replacement_subquery(schema_madlib, source_table, source_table_
         WHERE {row_number_col} <= {desired_count_col}
         """.format(**locals())
     return subquery
+# ------------------------------------------------------------------------------
+
 
 def _get_with_replacement_subquery(schema_madlib, source_table, source_table_columns,
                                    class_col, actual_level_counts, desired_level_counts):
@@ -270,8 +275,12 @@ def _get_with_replacement_subquery(schema_madlib, source_table, source_table_col
 
         # sample a higher proportion that desired to ensure we get at least
         # 'desired_count' number of rows
-        # FIXME: Run experiments to figure out if 0.5 is ideal
-        lambda_val = float(desired_count) / actual_count + 0.5
+
+        # FIXME: poisson_padding is used to ensure enough number of samples in
+        # the result. The padding is set to a magic number of 100 obtained
+        # through ad-hoc experiments.
+        poisson_padding = 100
+        lambda_val = float(desired_count + poisson_padding) / actual_count
         lambda_per_level[each_level] = (lambda_val, desired_count)
 
     # lambda_per_level contains the Poisson lambda value for each level
@@ -280,7 +289,8 @@ def _get_with_replacement_subquery(schema_madlib, source_table, source_table_col
     #     then lambda_per_level_str = "VALUES ('a', 5), ('b': 4), ('c': 10)"
     # This allows joining the source table with this table-like format.
     lambda_per_level_str = "VALUES " + \
-        ','.join(map(str, [(k, v[0], v[1]) for k, v in lambda_per_level.items()]))
+        ','.join('({0}::text, {1}, {2})'.format(k, v[0], v[1])
+                 for k, v in lambda_per_level.items())
 
     count_name = unique_string()
     poisson_lambda = unique_string()
@@ -317,7 +327,6 @@ def _get_with_replacement_subquery(schema_madlib, source_table, source_table_col
 def balance_sample(schema_madlib, source_table, output_table, class_col,
                    class_sizes, output_table_size, grouping_cols,
                    with_replacement, **kwargs):
-
     """
     Balance sampling function
     Args:
@@ -336,6 +345,12 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
 
         desired_sample_per_class = unique_string(desp='desired_sample_per_class')
         desired_counts = unique_string(desp='desired_counts')
+
+        # set all default values
+        if not class_sizes:
+            class_sizes = UNIFORM
+        if not with_replacement:
+            with_replacement = False
 
         _validate_strs(source_table, output_table, class_col, class_sizes,
                        output_table_size, grouping_cols)
@@ -359,10 +374,10 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                     each_level = each_level.strip()
                     if each_level not in all_levels:
                         plpy.error("Sample: Invalid class value specified ({0})".
-                                format(each_level))
+                                   format(each_level))
                     each_class_size = int(each_class_size)
                     _assert(each_class_size >= 1,
-                        "Sample: Class size has to be greater than zero")
+                            "Sample: Class size has to be greater than zero")
                     parsed_class_sizes[each_level] = each_class_size
 
             except TypeError:
@@ -374,12 +389,16 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         # includes info about the resulting sampling strategy, i.e., one of
         # UNDERSAMPLE, OVERSAMPLE, or NOSAMPLE for each level.
         target_class_sizes = _get_target_level_counts(sampling_strategy_str,
-                                                     parsed_class_sizes,
-                                                     actual_level_counts,
-                                                     output_table_size)
+                                                      parsed_class_sizes,
+                                                      actual_level_counts,
+                                                      output_table_size)
 
         undersample_level_dict, oversample_level_dict, nosample_level_dict = \
             _get_sampling_strategy_specific_dict(target_class_sizes)
+
+        plpy.info("{0}, {1}, {2}".format(undersample_level_dict,
+                                         oversample_level_dict,
+                                         nosample_level_dict))
 
         nosample_subquery = _get_nosample_subquery(
             source_table, class_col, nosample_level_dict.keys())
@@ -403,51 +422,54 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         final_query = """
                 CREATE TABLE {output_table} AS
                 SELECT row_number() OVER() AS {new_col_name}, *
-                FROM {union_all_subquery}
+                FROM (
+                    {union_all_subquery}
+                ) union_query
             """.format(new_col_name=NEW_ID_COLUMN, **locals())
         plpy.execute(final_query)
 
 
-def _validate_strs (source_table, output_table, class_col, class_sizes,
-                    output_table_size, grouping_cols):
+def _validate_strs(source_table, output_table, class_col, class_sizes,
+                   output_table_size, grouping_cols):
 
     _assert(source_table and table_exists(source_table),
-        "Sample: Source table ({source_table}) does not exist.".format(**locals()))
+            "Sample: Source table ({source_table}) does not exist.".format(**locals()))
     _assert(not table_is_empty(source_table),
-        "Sample: Source table ({source_table}) is empty.".format(**locals()))
+            "Sample: Source table ({source_table}) is empty.".format(**locals()))
 
     _assert(output_table,
-        "Sample: Output table name is missing.".format(**locals()))
+            "Sample: Output table name is missing.".format(**locals()))
     _assert(not table_exists(output_table),
-        "Sample: Output table ({output_table}) already exists.".format(**locals()))
+            "Sample: Output table ({output_table}) already exists.".format(**locals()))
 
     _assert(class_col,
-        "Sample: Class column name is missing.".format(**locals()))
+            "Sample: Class column name is missing.".format(**locals()))
     _assert(columns_exist_in_table(source_table, [class_col]),
-        ("""Sample: Class column ({class_col}) does not exist in"""+
-            """ table ({source_table}).""").format(**locals()))
+            ("""Sample: Class column ({class_col}) does not exist in""" +
+             """ table ({source_table}).""").format(**locals()))
 
     _assert(not columns_exist_in_table(source_table, [NEW_ID_COLUMN]),
-        ("""Sample: Please ensure the source table ({0})"""+
-            """ does not contain a column named {1}""").format(source_table, NEW_ID_COLUMN))
+            ("""Sample: Please ensure the source table ({0})""" +
+             """ does not contain a column named {1}""").format(source_table, NEW_ID_COLUMN))
 
-    _assert(class_sizes in (UNIFORM, UNDERSAMPLE, OVERSAMPLE)
-            or (class_sizes.find('=') > 0),
+    _assert(class_sizes in (UNIFORM, UNDERSAMPLE, OVERSAMPLE) or
+            (class_sizes.find('=') > 0),
             "Sample: Invalid class size ({class_sizes}).".format(**locals()))
 
     _assert(not(class_sizes.lower() == 'oversample' and output_table_size),
-        "Sample: Cannot set output_table_size with oversampling.")
+            "Sample: Cannot set output_table_size with oversampling.")
 
     _assert(not(class_sizes.lower() == 'undersample' and output_table_size),
-        "Sample: Cannot set output_table_size with undersampling.")
+            "Sample: Cannot set output_table_size with undersampling.")
 
     _assert((not output_table_size) or (output_table_size > 0),
-        "Sample: Invalid output table size ({output_table_size}).".format(
+            "Sample: Invalid output table size ({output_table_size}).".format(
             **locals()))
 
     _assert(grouping_cols is None,
-        "grouping_cols is not supported at the moment."
-        .format(**locals()))
+            "grouping_cols is not supported at the moment."
+            .format(**locals()))
+
 
 def balance_sample_help(schema_madlib, message, **kwargs):
     """
@@ -575,15 +597,18 @@ SELECT * FROM out;
 
     return help_string.format(schema_madlib=schema_madlib)
 
+
 import unittest
+
 
 class UtilitiesTestCase(unittest.TestCase):
     """
         Comment "import plpy" and replace plpy.error calls with appropriate
         Python Exceptions to successfully run the test cases
     """
+
     def setUp(self):
-        self.input_class_level_counts1 = {'a':20, 'b':30, 'c':25}
+        self.input_class_level_counts1 = {'a': 20, 'b': 30, 'c': 25}
         self.level1a = 'a'
         self.level1a_cnt1 = 15
         self.level1a_cnt2 = 25
@@ -594,13 +619,12 @@ class UtilitiesTestCase(unittest.TestCase):
         self.sampling_strategy_str2 = 'oversample'
         self.sampling_strategy_str3 = 'undersample'
         self.user_specified_class_size0 = ''
-        self.user_specified_class_size1 = {'a':25, 'b':25}
-        self.user_specified_class_size2 = {'b':25}
-        self.user_specified_class_size3 = {'a':30}
+        self.user_specified_class_size1 = {'a': 25, 'b': 25}
+        self.user_specified_class_size2 = {'b': 25}
+        self.user_specified_class_size3 = {'a': 30}
         self.output_table_size1 = None
         self.output_table_size2 = 60
         # self.input_class_level_counts2 = {'a':100, 'b':100, 'c':100}
-
 
     def test__choose_strategy(self):
         self.assertEqual(UNDERSAMPLE, _choose_strategy(35, 25))
@@ -609,55 +633,55 @@ class UtilitiesTestCase(unittest.TestCase):
 
     def test__get_target_level_counts(self):
         # Test cases for user defined class level samples, without output table size
-        self.assertEqual({'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(25, NOSAMPLE)},
+        self.assertEqual({'a': (25, OVERSAMPLE), 'b': (25, UNDERSAMPLE), 'c': (25, NOSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str0,
                                                   self.user_specified_class_size1,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size1))
-        self.assertEqual({'a':(20, NOSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(25, NOSAMPLE)},
+        self.assertEqual({'a': (20, NOSAMPLE), 'b': (25, UNDERSAMPLE), 'c': (25, NOSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str0,
                                                   self.user_specified_class_size2,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size1))
-        self.assertEqual({'a':(30, OVERSAMPLE), 'b':(30, NOSAMPLE), 'c':(25, NOSAMPLE)},
+        self.assertEqual({'a': (30, OVERSAMPLE), 'b': (30, NOSAMPLE), 'c': (25, NOSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str0,
                                                   self.user_specified_class_size3,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size1))
         # Test cases for user defined class level samples, with output table size
-        self.assertEqual({'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(10, UNDERSAMPLE)},
+        self.assertEqual({'a': (25, OVERSAMPLE), 'b': (25, UNDERSAMPLE), 'c': (10, UNDERSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str0,
                                                   self.user_specified_class_size1,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size2))
-        self.assertEqual({'a':(18, UNDERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(18, UNDERSAMPLE)},
+        self.assertEqual({'a': (18, UNDERSAMPLE), 'b': (25, UNDERSAMPLE), 'c': (18, UNDERSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str0,
                                                   self.user_specified_class_size2,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size2))
-        self.assertEqual({'a':(30, OVERSAMPLE), 'b':(15, UNDERSAMPLE), 'c':(15, UNDERSAMPLE)},
+        self.assertEqual({'a': (30, OVERSAMPLE), 'b': (15, UNDERSAMPLE), 'c': (15, UNDERSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str0,
                                                   self.user_specified_class_size3,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size2))
         # Test cases for UNIFORM, OVERSAMPLE, and UNDERSAMPLE without any output table size
-        self.assertEqual({'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(25, UNDERSAMPLE)},
+        self.assertEqual({'a': (25, OVERSAMPLE), 'b': (25, UNDERSAMPLE), 'c': (25, UNDERSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str1,
                                                   self.user_specified_class_size0,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size1))
-        self.assertEqual({'a':(30, OVERSAMPLE), 'b':(30, UNDERSAMPLE), 'c':(30, OVERSAMPLE)},
+        self.assertEqual({'a': (30, OVERSAMPLE), 'b': (30, UNDERSAMPLE), 'c': (30, OVERSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str2,
                                                   self.user_specified_class_size0,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size1))
-        self.assertEqual({'a':(20, UNDERSAMPLE), 'b':(20, UNDERSAMPLE), 'c':(20, UNDERSAMPLE)},
+        self.assertEqual({'a': (20, UNDERSAMPLE), 'b': (20, UNDERSAMPLE), 'c': (20, UNDERSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str3,
                                                   self.user_specified_class_size0,
                                                   self.input_class_level_counts1,
                                                   self.output_table_size1))
         # Test cases for UNIFORM with output table size
-        self.assertEqual({'a':(20, UNDERSAMPLE), 'b':(20, UNDERSAMPLE), 'c':(20, UNDERSAMPLE)},
+        self.assertEqual({'a': (20, UNDERSAMPLE), 'b': (20, UNDERSAMPLE), 'c': (20, UNDERSAMPLE)},
                          _get_target_level_counts(self.sampling_strategy_str1,
                                                   self.user_specified_class_size0,
                                                   self.input_class_level_counts1,
@@ -665,15 +689,15 @@ class UtilitiesTestCase(unittest.TestCase):
 
     def test__get_sampling_strategy_specific_dict(self):
         # Test cases for getting sampling strategy specific counts
-        target_level_counts_1 = {'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE), 'c':(25, NOSAMPLE) }
-        target_level_counts_2 = {'a':(25, OVERSAMPLE), 'b':(25, UNDERSAMPLE)}
-        target_level_counts_3 = {'a':(25, OVERSAMPLE), 'b':(25, NOSAMPLE), 'c':(25, NOSAMPLE) }
-        self.assertEqual(({'b':25}, {'a':25}, {'c':25}),
-                        _get_sampling_strategy_specific_dict(target_level_counts_1))
-        self.assertEqual(({'b':25}, {'a':25}, {}),
-                        _get_sampling_strategy_specific_dict(target_level_counts_2))
-        self.assertEqual(({}, {'a':25}, {'c':25, 'b':25}),
-                        _get_sampling_strategy_specific_dict(target_level_counts_3))
+        target_level_counts_1 = {'a': (25, OVERSAMPLE), 'b': (25, UNDERSAMPLE), 'c': (25, NOSAMPLE)}
+        target_level_counts_2 = {'a': (25, OVERSAMPLE), 'b': (25, UNDERSAMPLE)}
+        target_level_counts_3 = {'a': (25, OVERSAMPLE), 'b': (25, NOSAMPLE), 'c': (25, NOSAMPLE)}
+        self.assertEqual(({'b': 25}, {'a': 25}, {'c': 25}),
+                         _get_sampling_strategy_specific_dict(target_level_counts_1))
+        self.assertEqual(({'b': 25}, {'a': 25}, {}),
+                         _get_sampling_strategy_specific_dict(target_level_counts_2))
+        self.assertEqual(({}, {'a': 25}, {'c': 25, 'b': 25}),
+                         _get_sampling_strategy_specific_dict(target_level_counts_3))
 
 
 if __name__ == '__main__':
