@@ -17,13 +17,15 @@
 # specific language governing permissions and limitations
 # under the License.
 
+m4_changequote(`<!', `!>')
+
 import math
 
 if __name__ != "__main__":
     import plpy
     from utilities.control import MinWarning
     from utilities.utilities import _assert
-    from utilities.utilities import py_list_to_sql_string
+    from utilities.utilities import extract_keyvalue_params
     from utilities.utilities import unique_string
     from utilities.validate_args import columns_exist_in_table
     from utilities.validate_args import get_cols
@@ -53,7 +55,7 @@ UNDERSAMPLE = 'undersample'
 OVERSAMPLE = 'oversample'
 NOSAMPLE = 'nosample'
 
-NEW_COLUMN_ID = '__madlib_id__'
+NEW_ID_COLUMN = '__madlib_id__'
 
 def _get_frequency_distribution(source_table, class_col):
     query_result = plpy.execute("""
@@ -67,7 +69,8 @@ def _get_frequency_distribution(source_table, class_col):
         actual_level_counts[each_row['classes']] = each_row['class_count']
     return actual_level_counts
 
-def _get_sampling_strategy(sampling_strategy_str, supported_strategies, default=UNIFORM):
+def _get_sampling_strategy(sampling_strategy_str, supported_strategies=None,
+                           default=UNIFORM):
     if not sampling_strategy_str:
         sampling_strategy_str = default
     else:
@@ -121,7 +124,7 @@ def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
                              actual_level_counts, output_table_size):
     """
     @param sampling_strategy_str: one of [UNIFORM, UNDERSAMPLE, OVERSAMPLE, None].
-                               This is `None` only if this is user-defined, i.e.,
+                               This is 'None' only if this is user-defined, i.e.,
                                a comma separated list of class levels and number of
                                rows desired pairs.
     @param desired_level_counts: Dict that is defined and populated only when
@@ -133,9 +136,9 @@ def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
     target_level_counts = {}
     if not sampling_strategy_str:
         # This case implies user has provided a desired count for one or more
-        # levels. Counts for the rest of the levels depend on `output_table_size`.
-        #   if `output_table_size` = NULL, unspecified level counts remain as is
-        #   if `output_table_size` = <Integer>, divide remaining row count
+        # levels. Counts for the rest of the levels depend on 'output_table_size'.
+        #   if 'output_table_size' = NULL, unspecified level counts remain as is
+        #   if 'output_table_size' = <Integer>, divide remaining row count
         #                             uniformly among unspecified level counts
         for each_level, desired_count in desired_level_counts.items():
             sample_strategy = _choose_strategy(actual_level_counts[each_level],
@@ -223,7 +226,7 @@ def _get_without_replacement_subquery(schema_madlib, source_table, source_table_
     class_col_tmp = unique_string()
     row_number_col = unique_string()
     desired_count_col = unique_string()
-    sample_levels = ','.join(desired_level_counts.keys())
+    sample_levels = ",".join(desired_level_counts.keys())
 
     desired_level_counts_str = "VALUES " + \
         ','.join(map(str, [(k, v) for k, v in desired_level_counts.items()]))
@@ -247,6 +250,7 @@ def _get_without_replacement_subquery(schema_madlib, source_table, source_table_
         ) q3
         WHERE {row_number_col} <= {desired_count_col}
         """.format(**locals())
+    return subquery
 
 def _get_with_replacement_subquery(schema_madlib, source_table, source_table_columns,
                                    class_col, actual_level_counts, desired_level_counts):
@@ -335,6 +339,7 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
 
         _validate_strs(source_table, output_table, class_col, class_sizes,
                        output_table_size, grouping_cols)
+        source_table_columns = ','.join(get_cols(source_table))
 
         actual_level_counts = _get_frequency_distribution(source_table, class_col)
         # class_sizes can be of two forms:
@@ -356,8 +361,8 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                         plpy.error("Sample: Invalid class value specified ({0})".
                                 format(each_level))
                     each_class_size = int(each_class_size)
-                    if each_class_size < 0:
-                        plpy.error("Sample: Class size has to be positive")
+                    _assert(each_class_size >= 1,
+                        "Sample: Class size has to be greater than zero")
                     parsed_class_sizes[each_level] = each_class_size
 
             except TypeError:
@@ -392,13 +397,14 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
 
         union_all_subquery = ' UNION ALL '.join(
             ['({0})'.format(subquery)
-             for subquery in [undersample_subquery, oversample_subquery, nosample_subquery]])
+             for subquery in [undersample_subquery, oversample_subquery, nosample_subquery]
+             if subquery])
 
         final_query = """
                 CREATE TABLE {output_table} AS
-                SELECT row_number() OVER() AS {NEW_COLUMN_ID}, *
+                SELECT row_number() OVER() AS {new_col_name}, *
                 FROM {union_all_subquery}
-            """.format(**locals())
+            """.format(new_col_name=NEW_ID_COLUMN, **locals())
         plpy.execute(final_query)
 
 
@@ -421,9 +427,9 @@ def _validate_strs (source_table, output_table, class_col, class_sizes,
         ("""Sample: Class column ({class_col}) does not exist in"""+
             """ table ({source_table}).""").format(**locals()))
 
-    _assert(not columns_exist_in_table(source_table, [NEW_COLUMN_ID]),
+    _assert(not columns_exist_in_table(source_table, [NEW_ID_COLUMN]),
         ("""Sample: Please ensure the source table ({0})"""+
-            """ does not contain a column named {1}""").format(source_table, NEW_COLUMN_ID))
+            """ does not contain a column named {1}""").format(source_table, NEW_ID_COLUMN))
 
     _assert(class_sizes in (UNIFORM, UNDERSAMPLE, OVERSAMPLE)
             or (class_sizes.find('=') > 0),
