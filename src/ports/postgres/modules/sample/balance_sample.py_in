@@ -232,7 +232,7 @@ def _get_without_replacement_subquery(schema_madlib, source_table, source_table_
     sample_levels = ",".join(desired_level_counts.keys())
 
     desired_level_counts_str = "VALUES " + \
-        ','.join('({0}::text, {1})'.format(k, v) for k, v in desired_level_counts.items())
+        ','.join("('{0}'::text, {1})".format(k, v) for k, v in desired_level_counts.items())
 
     subquery = """
         SELECT {source_table_columns}
@@ -247,8 +247,7 @@ def _get_without_replacement_subquery(schema_madlib, source_table, source_table_
                     {source_table} s,
                     ({desired_level_counts_str})
                         q({class_col_tmp}, {desired_count_col})
-                WHERE {class_col}::text = {class_col_tmp} AND
-                      {class_col} IN ({sample_levels})
+                WHERE {class_col}::text = {class_col_tmp}
             ) q2
         ) q3
         WHERE {row_number_col} <= {desired_count_col}
@@ -261,68 +260,45 @@ def _get_with_replacement_subquery(schema_madlib, source_table, source_table_col
                                    class_col, actual_level_counts, desired_level_counts):
     """ Return the query for oversampling
 
-    This function uses Poisson distribution to approximate the process of
-    sampling with replacement. See section 17.3 in MADlib design doc
-    (FIXME: Add more references!)
-
     """
     if not desired_level_counts:
         return ''
-    lambda_per_level = {}
-    for each_level, desired_count in desired_level_counts.items():
-        actual_count = actual_level_counts[each_level]
-        # lambda_val = int(math.ceil(float(desired_count) / actual_count))
 
-        # sample a higher proportion that desired to ensure we get at least
-        # 'desired_count' number of rows
-
-        # FIXME: poisson_padding is used to ensure enough number of samples in
-        # the result. The padding is set to a magic number of 100 obtained
-        # through ad-hoc experiments.
-        poisson_padding = 100
-        lambda_val = float(desired_count + poisson_padding) / actual_count
-        lambda_per_level[each_level] = (lambda_val, desired_count)
-
-    # lambda_per_level contains the Poisson lambda value for each level
-    # Below string represents that dictionary in a table format
-    # eg. if lambda_per_level = {'a': 5, 'b': 4, 'c': 10}
-    #     then lambda_per_level_str = "VALUES ('a', 5), ('b': 4), ('c': 10)"
-    # This allows joining the source table with this table-like format.
-    lambda_per_level_str = "VALUES " + \
-        ','.join('({0}::text, {1}, {2})'.format(k, v[0], v[1])
-                 for k, v in lambda_per_level.items())
-
-    count_name = unique_string()
-    poisson_lambda = unique_string()
     class_col_tmp = unique_string()
-    row_number_col = unique_string()
     desired_count_col = unique_string()
+    actual_count_col = unique_string()
+    q1_row_no = unique_string()
+    q2_row_no = unique_string()
 
     sample_levels = ','.join(desired_level_counts.keys())
+    desired_and_actual_level_counts = "VALUES " + \
+    ','.join("('{0}'::text, {1}, {2})".format(k, v, actual_level_counts[k])
+             for k, v in desired_level_counts.items())
     subquery = """
         SELECT {source_table_columns}
         FROM (
-            SELECT {source_table_columns},
-                   row_number() OVER (PARTITION BY {class_col}) AS {row_number_col},
-                   {desired_count_col}
-            FROM (
-                SELECT {source_table_columns},
-                       generate_series(1, {schema_madlib}.poisson_random({poisson_lambda}))
-                            AS {count_name},
-                       {desired_count_col}
-                FROM
-                    {source_table} s,
-                    ({lambda_per_level_str})
-                        q({class_col_tmp}, {poisson_lambda}, {desired_count_col})
-                WHERE {class_col}::text = {class_col_tmp} AND
-                      {class_col} IN ({sample_levels})
+            SELECT
+                 {class_col_tmp},
+                 generate_series(1, {desired_count_col}::int) AS _i,
+                 ((random()*({actual_count_col}-1)+1)::int)
+                 AS {q1_row_no}
+            FROM
+                ({desired_and_actual_level_counts})
+                q({class_col_tmp}, {desired_count_col}, {actual_count_col})
+            ) q1,
+            (
+            SELECT
+                *,
+                row_number() OVER(PARTITION BY {class_col})
+                AS {q2_row_no}
+            FROM
+                 {source_table}
             ) q2
-        ) q3
-        WHERE {row_number_col} <= {desired_count_col}
+            WHERE {class_col}::text = {class_col_tmp} AND
+            q1.{q1_row_no} = q2.{q2_row_no}
         """.format(**locals())
     return subquery
 # ------------------------------------------------------------------------------
-
 
 def balance_sample(schema_madlib, source_table, output_table, class_col,
                    class_sizes, output_table_size, grouping_cols,
@@ -395,10 +371,6 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
 
         undersample_level_dict, oversample_level_dict, nosample_level_dict = \
             _get_sampling_strategy_specific_dict(target_class_sizes)
-
-        plpy.info("{0}, {1}, {2}".format(undersample_level_dict,
-                                         oversample_level_dict,
-                                         nosample_level_dict))
 
         nosample_subquery = _get_nosample_subquery(
             source_table, class_col, nosample_level_dict.keys())
