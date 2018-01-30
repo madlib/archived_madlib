@@ -70,12 +70,15 @@ def _get_frequency_distribution(source_table, class_col):
                  """.format(**locals()))
     actual_level_counts = {}
     for each_row in query_result:
-        actual_level_counts[each_row['classes']] = each_row['class_count']
+        level = each_row['classes']
+        if level:
+            level = level.strip()
+        actual_level_counts[level] = each_row['class_count']
     return actual_level_counts
 
 
-def _get_sampling_strategy(sampling_strategy_str, supported_strategies=None,
-                           default=UNIFORM):
+def _validate_and_get_sampling_strategy(sampling_strategy_str, output_table_size,
+                            supported_strategies=None, default=UNIFORM):
     """ Returns the sampling strategy based on the class_sizes input param.
         @param sampling_strategy_str The sampling strategy specified by the
                                          user (class_sizes param)
@@ -96,12 +99,23 @@ def _get_sampling_strategy(sampling_strategy_str, supported_strategies=None,
             # allow user to specify a prefix substring of
             # supported strategies.
             sampling_strategy_str = next(x for x in supported_strategies
-                                         if x.startswith(sampling_strategy_str))
+                                         if x.startswith(sampling_strategy_str.lower()))
         except StopIteration:
             # next() returns a StopIteration if no element found
             plpy.error("Sample: Invalid class_sizes parameter: "
                        "{0}. Supported class_size parameters are ({1})"
                        .format(sampling_strategy_str, ','.join(sorted(supported_strategies))))
+
+    _assert(sampling_strategy_str.lower() in (UNIFORM, UNDERSAMPLE, OVERSAMPLE) or
+            (sampling_strategy_str.find('=') > 0),
+            "Sample: Invalid class size ({sampling_strategy_str}).".format(**locals()))
+
+    _assert(not(sampling_strategy_str.lower() == 'oversample' and output_table_size),
+            "Sample: Cannot set output_table_size with oversampling.")
+
+    _assert(not(sampling_strategy_str.lower() == 'undersample' and output_table_size),
+            "Sample: Cannot set output_table_size with undersampling.")
+
     return sampling_strategy_str
 # ------------------------------------------------------------------------------
 
@@ -237,8 +251,8 @@ def _get_nosample_subquery(source_table, class_col, nosample_levels):
                 FROM {0}
                 WHERE {1} in ({2}) OR {1} IS NULL
             """.format(source_table, class_col,
-                       ','.join(map(str,
-                                [level for level in nosample_levels if level])))
+                       ','.join(["'{0}'".format(level)
+                                for level in nosample_levels if level]))
     return subquery
 # ------------------------------------------------------------------------------
 
@@ -363,8 +377,10 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         if not with_replacement:
             with_replacement = False
         keep_null = False if not keep_null else True
+        if class_sizes:
+            class_sizes = class_sizes.strip()
 
-        _validate_strs(source_table, output_table, class_col, class_sizes,
+        _validate_strs(source_table, output_table, class_col,
                        output_table_size, grouping_cols)
         source_table_columns = ','.join(get_cols(source_table))
 
@@ -382,22 +398,23 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                                                           class_col)
         # class_sizes can be of two forms:
         #   1. A string describing sampling strategy (as described in
-        #       _get_sampling_strategy).
+        #       _validate_and_get_sampling_strategy).
         #       In this case, 'sampling_strategy_str' is set to one of
         #       [UNIFORM, UNDERSAMPLE, OVERSAMPLE]
         #   2. Class sizes for all (or a subset) of the class levels
         #       In this case, sampling_strategy_str = None and parsed_class_sizes
         #       is used for the sampling.
         parsed_class_sizes = extract_keyvalue_params(class_sizes,
-                                                     allow_duplicates=False)
+                                                     allow_duplicates=False,
+                                                     lower_case_names=False)
         if not parsed_class_sizes:
-            sampling_strategy_str = _get_sampling_strategy(class_sizes)
+            sampling_strategy_str = _validate_and_get_sampling_strategy(class_sizes,
+                                        output_table_size)
         else:
             sampling_strategy_str = None
             try:
                 all_levels = actual_level_counts.keys()
                 for each_level, each_class_size in parsed_class_sizes.items():
-                    each_level = each_level.strip()
                     _assert(each_level in all_levels,
                             "Sample: Invalid class value specified ({0})".
                                        format(each_level))
@@ -456,9 +473,8 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             plpy.execute("DROP VIEW {0}".format(new_source_table))
 
 
-def _validate_strs(source_table, output_table, class_col, class_sizes,
-                   output_table_size, grouping_cols):
-
+def _validate_strs(source_table, output_table, class_col, output_table_size,
+                    grouping_cols):
     _assert(source_table and table_exists(source_table),
             "Sample: Source table ({source_table}) does not exist.".format(**locals()))
     _assert(not table_is_empty(source_table),
@@ -478,16 +494,6 @@ def _validate_strs(source_table, output_table, class_col, class_sizes,
     _assert(not columns_exist_in_table(source_table, [NEW_ID_COLUMN]),
             ("""Sample: Please ensure the source table ({0})""" +
              """ does not contain a column named {1}""").format(source_table, NEW_ID_COLUMN))
-
-    _assert(class_sizes in (UNIFORM, UNDERSAMPLE, OVERSAMPLE) or
-            (class_sizes.find('=') > 0),
-            "Sample: Invalid class size ({class_sizes}).".format(**locals()))
-
-    _assert(not(class_sizes.lower() == 'oversample' and output_table_size),
-            "Sample: Cannot set output_table_size with oversampling.")
-
-    _assert(not(class_sizes.lower() == 'undersample' and output_table_size),
-            "Sample: Cannot set output_table_size with undersampling.")
 
     _assert((not output_table_size) or (output_table_size > 0),
             "Sample: Invalid output table size ({output_table_size}).".format(
