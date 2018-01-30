@@ -211,3 +211,78 @@ SELECT lda_train(
     'lda_model_even_voc_size_even_topic_num',
     'lda_output_even_voc_size_even_topic_num',
     20, 6, 2, 3, 0.01);
+
+DROP TABLE IF EXISTS documents;
+CREATE TABLE documents(docid INT4, contents TEXT);
+INSERT INTO documents VALUES
+(0, ' b a a c'),
+(1, ' d e f f f ');
+
+ALTER TABLE documents ADD COLUMN words TEXT[];
+UPDATE documents SET words = regexp_split_to_array(lower(contents), E'[\\s+\\.\\,]');
+
+DROP TABLE IF EXISTS my_training, my_training_vocabulary;
+SELECT madlib.term_frequency('documents', 'docid', 'words', 'my_training', TRUE);
+
+
+DROP TABLE IF EXISTS my_model, my_outdata;
+SELECT lda_train(
+    'my_training',
+    'my_model',
+    'my_outdata',
+    7, 2, 2, 3, 0.01);
+
+DROP TABLE IF EXISTS word_topic_count;
+SELECT madlib.lda_get_word_topic_count( 'my_model', 'word_topic_count');
+SELECT * FROM word_topic_count ORDER BY wordid;
+
+-- This function will validate that the output of lda_get_word_topic_count() is consistent with the output of lda_train
+CREATE OR REPLACE FUNCTION validate_lda_output() RETURNS integer AS $$
+    DECLARE
+        -- variables for looping through the word_topic_mapping table
+        word_topic_mapping_row RECORD;
+        word_topic_mapping_wordid int;
+        word_topic_mapping_topicid int;
+
+        -- we use the following array from word_topic_mapping to compare with the output of lda_get_word_topic_count()
+        word_topic_mapping_array INT[7][2] := ARRAY[[0,0],[0,0],[0,0],[0,0],[0,0],[0,0],[0,0]];
+        word_topic_mapping_topic_count int[];
+
+        -- variables for looping through the output of lda_get_word_topic_count()
+        word_topic_count_row RECORD;
+        word_topic_count_topic_count int[];
+    BEGIN
+        -- Create helper table from out_data
+        DROP TABLE IF EXISTS word_topic_mapping;
+        CREATE table word_topic_mapping as  SELECT wordid, topicid FROM (
+             SELECT unnest((counts::text || ':' ||
+             words::text)::madlib.svec::float[]) AS wordid, unnest(topic_assignment)
+             AS topicid FROM my_outdata) a
+             order by wordid ;
+
+        -- Construct the mapping array
+        FOR word_topic_mapping_row IN SELECT * FROM word_topic_mapping ORDER BY wordid LOOP
+            -- we need to add 1 because postgres array starts from 1 and our wordid and topicid start from 0
+            word_topic_mapping_wordid := word_topic_mapping_row.wordid+1;
+            word_topic_mapping_topicid := word_topic_mapping_row.topicid+1;
+
+            word_topic_mapping_array[word_topic_mapping_wordid][word_topic_mapping_topicid] := word_topic_mapping_array[word_topic_mapping_wordid][word_topic_mapping_topicid] + 1;
+
+        END LOOP;
+
+        -- Loop through the output of lda_get_word_topic_count() and compare the results with the helper table word_topic_mapping
+        FOR word_topic_count_row IN select * from word_topic_count ORDER BY wordid LOOP
+            word_topic_count_topic_count := ARRAY[word_topic_count_row.topic_count];
+            word_topic_mapping_topic_count := word_topic_mapping_array[word_topic_count_row.wordid+1:word_topic_count_row.wordid+1]; -- Here arrayX[i:i] means the ith 1d array of a 2d array
+
+            IF (word_topic_mapping_topic_count != word_topic_count_topic_count) THEN
+                RAISE EXCEPTION 'Topic assignment for wordid % does not match. word_topic_mapping: % word_topic_count: %',word_topic_count_row.wordid, word_topic_mapping_topic_count, word_topic_count_topic_count;
+            END IF;
+        END LOOP;
+
+        RETURN 1;
+    END;
+$$ LANGUAGE plpgsql;
+
+
+select validate_lda_output();
