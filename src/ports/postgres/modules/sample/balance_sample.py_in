@@ -56,9 +56,12 @@ OVERSAMPLE = 'oversample'
 NOSAMPLE = 'nosample'
 
 NEW_ID_COLUMN = '__madlib_id__'
-
+NULL_IDENTIFIER = '__madlib_null_id__'
 
 def _get_frequency_distribution(source_table, class_col):
+    """ Returns a dict containing the number of rows associated with each class
+        level. Each class level value is converted to a string using ::text.
+    """
     query_result = plpy.execute("""
                     SELECT {class_col}::text AS classes,
                            count(*) AS class_count
@@ -73,6 +76,12 @@ def _get_frequency_distribution(source_table, class_col):
 
 def _get_sampling_strategy(sampling_strategy_str, supported_strategies=None,
                            default=UNIFORM):
+    """ Returns the sampling strategy based on the class_sizes input param.
+        @param sampling_strategy_str The sampling strategy specified by the
+                                         user (class_sizes param)
+        @returns:
+            Str. One of [UNIFORM, UNDERSAMPLE, OVERSAMPLE]. Default is UNIFORM.
+    """
     if not sampling_strategy_str:
         sampling_strategy_str = default
     else:
@@ -121,7 +130,6 @@ def _choose_strategy(actual_count, desired_count):
         return UNDERSAMPLE
 # -------------------------------------------------------------------------
 
-
 def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
                              actual_level_counts, output_table_size):
     """
@@ -134,6 +142,10 @@ def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
     @param actual_level_counts: Dict of various class levels and number of rows
                                   in each of them in the input table
     @param output_table_size: Size of the desired output table (NULL or Integer)
+
+    @returns:
+        Dict. Number of samples to be drawn, and the sampling strategy to be
+              used for each class level.
     """
     target_level_counts = {}
     if not sampling_strategy_str:
@@ -165,7 +177,8 @@ def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
             # are sampled as is for remaining class levels. This is same as the
             # NOSAMPLE strategy.
             for each_level in remaining_levels:
-                target_level_counts[each_level] = (actual_level_counts[each_level], NOSAMPLE)
+                target_level_counts[each_level] = (actual_level_counts[each_level],
+                                                    NOSAMPLE)
     else:
         def ceil_of_mean(numbers):
             return math.ceil(float(sum(numbers)) / max(len(numbers), 1))
@@ -194,6 +207,10 @@ def _get_target_level_counts(sampling_strategy_str, desired_level_counts,
 
 
 def _get_sampling_strategy_specific_dict(target_class_sizes):
+    """ Return three dicts, one each for undersampling, oversampling, and
+        nosampling. The dict contains the number of samples to be drawn for
+        each class level.
+    """
     undersample_level_dict = {}
     oversample_level_dict = {}
     nosample_level_dict = {}
@@ -210,56 +227,70 @@ def _get_sampling_strategy_specific_dict(target_class_sizes):
 
 
 def _get_nosample_subquery(source_table, class_col, nosample_levels):
+    """ Return the subquery for fetching all rows as is from the input table
+        for specific class levels.
+    """
     if not nosample_levels:
         return ''
     subquery = """
                 SELECT *
                 FROM {0}
-                WHERE {1} in ({2})
+                WHERE {1} in ({2}) OR {1} IS NULL
             """.format(source_table, class_col,
-                       ','.join(map(str, nosample_levels)))
+                       ','.join(map(str,
+                                [level for level in nosample_levels if level])))
     return subquery
 # ------------------------------------------------------------------------------
 
 
-def _get_without_replacement_subquery(schema_madlib, source_table, source_table_columns,
-                                      class_col, actual_level_counts, desired_level_counts):
+def _get_without_replacement_subquery(schema_madlib, source_table,
+                                      source_table_columns, class_col,
+                                      actual_level_counts, desired_level_counts):
+    """ Return the subquery for sampling without replacement for specific
+        class levels.
+    """
     if not desired_level_counts:
         return ''
     class_col_tmp = unique_string()
     row_number_col = unique_string()
     desired_count_col = unique_string()
-    sample_levels = ",".join(desired_level_counts.keys())
+
+    null_value_string = "'{0}'".format(NULL_IDENTIFIER)
 
     desired_level_counts_str = "VALUES " + \
-        ','.join("('{0}'::text, {1})".format(k, v) for k, v in desired_level_counts.items())
-
+            ','.join("({0}, {1})".
+            format("'{0}'::text".format(k) if k else null_value_string, v)
+            for k, v in desired_level_counts.items())
     subquery = """
-        SELECT {source_table_columns}
-        FROM (
-            SELECT {source_table_columns},
-                   row_number() OVER (PARTITION BY {class_col} ORDER BY random()) AS {row_number_col},
-                   {desired_count_col}
-            FROM (
-                SELECT {source_table_columns},
-                       {desired_count_col}
-                FROM
-                    {source_table} s,
-                    ({desired_level_counts_str})
-                        q({class_col_tmp}, {desired_count_col})
-                WHERE {class_col}::text = {class_col_tmp}
-            ) q2
-        ) q3
-        WHERE {row_number_col} <= {desired_count_col}
-        """.format(**locals())
+            SELECT {source_table_columns}
+            FROM
+                (
+                    SELECT {source_table_columns},
+                           row_number() OVER (PARTITION BY {class_col} ORDER BY random()) AS {row_number_col},
+                           {desired_count_col}
+                    FROM
+                    (
+                        SELECT {source_table_columns},
+                               {desired_count_col}
+                        FROM
+                            {source_table} s,
+                            ({desired_level_counts_str})
+                                q({class_col_tmp}, {desired_count_col})
+                        WHERE {class_col_tmp} = coalesce({class_col}::text, '{null_level_val}')
+                    ) q2
+                ) q3
+            WHERE {row_number_col} <= {desired_count_col}
+        """.format(null_level_val=NULL_IDENTIFIER, **locals())
     return subquery
 # ------------------------------------------------------------------------------
 
 
-def _get_with_replacement_subquery(schema_madlib, source_table, source_table_columns,
-                                   class_col, actual_level_counts, desired_level_counts):
-    """ Return the query for oversampling
-
+def _get_with_replacement_subquery(schema_madlib, source_table,
+                                   source_table_columns, class_col,
+                                   actual_level_counts, desired_level_counts):
+    """ Return the query for sampling with replacement for specific class
+        levels (always used for oversampling, and used for undersampling if
+        with_replacement flag is set to TRUE).
     """
     if not desired_level_counts:
         return ''
@@ -270,39 +301,41 @@ def _get_with_replacement_subquery(schema_madlib, source_table, source_table_col
     q1_row_no = unique_string()
     q2_row_no = unique_string()
 
-    sample_levels = ','.join(desired_level_counts.keys())
+    null_value_string = "'{0}'".format(NULL_IDENTIFIER)
+
     desired_and_actual_level_counts = "VALUES " + \
-    ','.join("('{0}'::text, {1}, {2})".format(k, v, actual_level_counts[k])
+    ','.join("({0}, {1}, {2})".
+             format("'{0}'::text".format(k) if k else null_value_string,
+                v, actual_level_counts[k])
              for k, v in desired_level_counts.items())
     subquery = """
-        SELECT {source_table_columns}
-        FROM (
-            SELECT
-                 {class_col_tmp},
-                 generate_series(1, {desired_count_col}::int) AS _i,
-                 ((random()*({actual_count_col}-1)+1)::int)
-                 AS {q1_row_no}
+            SELECT {source_table_columns}
             FROM
-                ({desired_and_actual_level_counts})
-                q({class_col_tmp}, {desired_count_col}, {actual_count_col})
-            ) q1,
-            (
-            SELECT
-                *,
-                row_number() OVER(PARTITION BY {class_col})
-                AS {q2_row_no}
-            FROM
-                 {source_table}
-            ) q2
-            WHERE {class_col}::text = {class_col_tmp} AND
-            q1.{q1_row_no} = q2.{q2_row_no}
-        """.format(**locals())
+                (
+                    SELECT
+                         {class_col_tmp},
+                         generate_series(1, {desired_count_col}::int) AS _i,
+                         ((random()*({actual_count_col}-1)+1)::int) AS {q1_row_no}
+                    FROM
+                        ({desired_and_actual_level_counts})
+                            q({class_col_tmp}, {desired_count_col}, {actual_count_col})
+                ) q1,
+                (
+                    SELECT
+                        *,
+                        row_number() OVER(PARTITION BY {class_col}) AS {q2_row_no}
+                    FROM
+                         {source_table}
+                ) q2
+            WHERE {class_col_tmp} = coalesce({class_col}::text, '{null_level_val}') AND
+                  q1.{q1_row_no} = q2.{q2_row_no}
+        """.format(null_level_val=NULL_IDENTIFIER, **locals())
     return subquery
 # ------------------------------------------------------------------------------
 
 def balance_sample(schema_madlib, source_table, output_table, class_col,
                    class_sizes, output_table_size, grouping_cols,
-                   with_replacement, **kwargs):
+                   with_replacement, keep_null, **kwargs):
     """
     Balance sampling function
     Args:
@@ -315,6 +348,8 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         @param output_table_size  Desired size of the output data set.
         @param grouping_cols      The columns that define the grouping.
         @param with_replacement   The sampling method.
+        @param keep_null          Flag to include rows with class level values
+                                  NULL. Default is False.
 
     """
     with MinWarning("warning"):
@@ -327,19 +362,34 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
             class_sizes = UNIFORM
         if not with_replacement:
             with_replacement = False
+        keep_null = False if not keep_null else True
 
         _validate_strs(source_table, output_table, class_col, class_sizes,
                        output_table_size, grouping_cols)
         source_table_columns = ','.join(get_cols(source_table))
 
-        actual_level_counts = _get_frequency_distribution(source_table, class_col)
+        new_source_table = source_table
+        # If keep_null=False, create a view of the input table ignoring NULL
+        # values for class levels.
+        if not keep_null:
+            new_source_table = unique_string(desp='source_table')
+            plpy.execute("""
+                        CREATE VIEW {new_source_table} AS
+                        SELECT * FROM {source_table}
+                        WHERE {class_col} IS NOT NULL
+                    """.format(**locals()))
+        actual_level_counts = _get_frequency_distribution(new_source_table,
+                                                          class_col)
         # class_sizes can be of two forms:
-        #   1. A string describing sampling strategy (as described in _get_sampling_strategy)
-        #       In this case, 'sampling_strategy_str' is set to one of [UNIFORM, UNDERSAMPLE, OVERSAMPLE]
+        #   1. A string describing sampling strategy (as described in
+        #       _get_sampling_strategy).
+        #       In this case, 'sampling_strategy_str' is set to one of
+        #       [UNIFORM, UNDERSAMPLE, OVERSAMPLE]
         #   2. Class sizes for all (or a subset) of the class levels
         #       In this case, sampling_strategy_str = None and parsed_class_sizes
         #       is used for the sampling.
-        parsed_class_sizes = extract_keyvalue_params(class_sizes)
+        parsed_class_sizes = extract_keyvalue_params(class_sizes,
+                                                     allow_duplicates=False)
         if not parsed_class_sizes:
             sampling_strategy_str = _get_sampling_strategy(class_sizes)
         else:
@@ -348,9 +398,9 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 all_levels = actual_level_counts.keys()
                 for each_level, each_class_size in parsed_class_sizes.items():
                     each_level = each_level.strip()
-                    if each_level not in all_levels:
-                        plpy.error("Sample: Invalid class value specified ({0})".
-                                   format(each_level))
+                    _assert(each_level in all_levels,
+                            "Sample: Invalid class value specified ({0})".
+                                       format(each_level))
                     each_class_size = int(each_class_size)
                     _assert(each_class_size >= 1,
                             "Sample: Class size has to be greater than zero")
@@ -372,20 +422,23 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
         undersample_level_dict, oversample_level_dict, nosample_level_dict = \
             _get_sampling_strategy_specific_dict(target_class_sizes)
 
+        # Get subqueries for each sampling strategy, so that they can be used
+        # together in one big query.
         nosample_subquery = _get_nosample_subquery(
-            source_table, class_col, nosample_level_dict.keys())
+            new_source_table, class_col, nosample_level_dict.keys())
         oversample_subquery = _get_with_replacement_subquery(
-            schema_madlib, source_table, source_table_columns, class_col,
+            schema_madlib, new_source_table, source_table_columns, class_col,
             actual_level_counts, oversample_level_dict)
         if with_replacement:
             undersample_subquery = _get_with_replacement_subquery(
-                schema_madlib, source_table, source_table_columns, class_col,
+                schema_madlib, new_source_table, source_table_columns, class_col,
                 actual_level_counts, undersample_level_dict)
         else:
             undersample_subquery = _get_without_replacement_subquery(
-                schema_madlib, source_table, source_table_columns, class_col,
+                schema_madlib, new_source_table, source_table_columns, class_col,
                 actual_level_counts, undersample_level_dict)
 
+        # Merge the three subqueries using a UNION ALL clause.
         union_all_subquery = ' UNION ALL '.join(
             ['({0})'.format(subquery)
              for subquery in [undersample_subquery, oversample_subquery, nosample_subquery]
@@ -399,6 +452,8 @@ def balance_sample(schema_madlib, source_table, output_table, class_col,
                 ) union_query
             """.format(new_col_name=NEW_ID_COLUMN, **locals())
         plpy.execute(final_query)
+        if not keep_null:
+            plpy.execute("DROP VIEW {0}".format(new_source_table))
 
 
 def _validate_strs(source_table, output_table, class_col, class_sizes,
@@ -495,6 +550,8 @@ whole table is a single strata.
     grouping_cols     TEXT,     -- (Default: NULL) The columns columns that
                                 -- defines the grouping.
     with_replacement  BOOLEAN   -- (Default: FALSE) The sampling method.
+    keep_null         BOOLEAN   -- (Default: FALSE) Consider class levels with
+                                    NULL values or not.
 
 If class_size is NULL, the source table is uniformly sampled.
 
@@ -509,6 +566,10 @@ If with_replacement is TRUE, each sample is independent (the same row may
 be selected in the sample set more than once). Else (if with_replacement
 is FALSE), a row can be selected at most once.
 );
+
+The output_table would contain the required number of samples, along with a
+new column named __madlib_id__, that contain unique numbers for all
+sampled rows.
 """
     elif message.lower() in ("example", "examples"):
         help_string = """
