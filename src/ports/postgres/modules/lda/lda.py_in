@@ -120,14 +120,22 @@ class LDATrainer:
         # etime = time.time()
         # plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
 
-    def gen_output_data_table(self):
+    def gen_final_data_tables(self):
         # stime = time.time()
         # plpy.notice('\t\tgenerating output data table ...')
 
-        work_table_final = self.work_table_1
-        if self.iter_num % 2 == 0:
-            work_table_final = self.work_table_0
+        ##This function updates 2 tables, one is the model table and
+        # the other one is the output table
 
+        work_table_final = self.work_table_0 if self.iter_num % 2 == 0 \
+        else self.work_table_1
+
+        # Update model table
+        #JIRA:MADLIB-1201, we have to update model table one more time after
+        # iteration to sycn up output table and model table
+        self.update_model_table(work_table_final)
+
+        # Update output table
         plpy.execute("TRUNCATE TABLE " + self.output_data_table)
         plpy.execute("""
             INSERT INTO {output_data_table}
@@ -146,16 +154,44 @@ class LDATrainer:
         # stime = time.time()
 
         work_table_in = self.work_table_0
-        if it % 2 == 0:
-            work_table_in = self.work_table_1
-
         work_table_out = self.work_table_1
         if it % 2 == 0:
+            work_table_in = self.work_table_1
             work_table_out = self.work_table_0
 
-        # plpy.notice('iteration [%d] ...' % (it))
-        # plpy.notice('\t\tupdating global model...')
+        # Update model_table using work_table_out from the previous iteration
+        self.update_model_table(work_table_in)
 
+        # For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
+        # planner since currently ORCA doesn't support InitPlan. This would have
+        # to be fixed when ORCA is the only available query planner.
+        with OptimizerControl(False):
+            # plpy.notice('\t\tsampling ...')
+            plpy.execute('TRUNCATE TABLE ' + work_table_out)
+            query = """
+                INSERT INTO {work_table_out}
+                SELECT
+                    docid, wordcount, words, counts,
+                    {schema_madlib}.__lda_gibbs_sample(
+                        words, counts, doc_topic,
+                        (SELECT model FROM {model_table}),
+                        {alpha}, {beta}, {voc_size}, {topic_num}, 1)
+                FROM
+                    {work_table_in}
+                """.format(work_table_out=work_table_out,
+                           schema_madlib=self.schema_madlib,
+                           model_table=self.model_table,
+                           alpha=self.alpha,
+                           beta=self.beta,
+                           voc_size=self.voc_size,
+                           topic_num=self.topic_num,
+                           work_table_in=work_table_in)
+            plpy.execute(query)
+
+        # etime = time.time()
+        # plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
+
+    def update_model_table(self, work_table_in):
         plpy.execute('TRUNCATE TABLE ' + self.model_table)
         if version_wrapper.is_gp43() or version_wrapper.is_hawq():
             with OptimizerControl(True):
@@ -212,35 +248,6 @@ class LDATrainer:
                 ['bigint[]'])
             plpy.execute(plan, [model])
 
-        # For GPDB 4.3 and higher we disable the optimzer (ORCA) for the query
-        # planner since currently ORCA doesn't support InitPlan. This would have
-        # to be fixed when ORCA is the only available query planner.
-        with OptimizerControl(False):
-            # plpy.notice('\t\tsampling ...')
-            plpy.execute('TRUNCATE TABLE ' + work_table_out)
-            query = """
-                INSERT INTO {work_table_out}
-                SELECT
-                    docid, wordcount, words, counts,
-                    {schema_madlib}.__lda_gibbs_sample(
-                        words, counts, doc_topic,
-                        (SELECT model FROM {model_table}),
-                        {alpha}, {beta}, {voc_size}, {topic_num}, 1)
-                FROM
-                    {work_table_in}
-                """.format(work_table_out=work_table_out,
-                           schema_madlib=self.schema_madlib,
-                           model_table=self.model_table,
-                           alpha=self.alpha,
-                           beta=self.beta,
-                           voc_size=self.voc_size,
-                           topic_num=self.topic_num,
-                           work_table_in=work_table_in)
-            plpy.execute(query)
-
-        # etime = time.time()
-        # plpy.notice('\t\ttime elapsed: %.2f seconds' % (etime - stime))
-
     def run(self):
         # stime = time.time()
         # plpy.notice('start training process ...')
@@ -252,10 +259,11 @@ class LDATrainer:
         # eetime = time.time()
         # plpy.notice('\t\titeration done, time elapsed: %.2f seconds' % (eetime - sstime))
 
-        self.gen_output_data_table()
+        self.gen_final_data_tables()
 
         # etime = time.time()
         # plpy.notice('finished, time elapsed: %.2f seconds' % (etime - stime))
+
 # ------------------------------------------------------------------------------
 
 
