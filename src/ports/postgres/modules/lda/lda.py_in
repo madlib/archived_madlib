@@ -692,6 +692,53 @@ def get_word_topic_count(schema_madlib, model_table, output_table):
         """.format(output_table=output_table, schema_madlib=schema_madlib,
                    model_table=model_table))
 
+def get_word_topic_mapping(schema_madlib, lda_output_table, mapping_table):
+    """
+    @brief Get the wordid - topicid mapping from the lda training output table
+    @param lda_output_table The output table from lda traning or predicting
+    @param mapping_table    The result table that saves the mapping info
+    """
+    _assert(lda_output_table != '',
+            "invalid argument: LDA output table name is not specified")
+    output_tbl_valid(mapping_table, 'LDA')
+
+    plpy.execute("""
+        CREATE TABLE {mapping_table} (
+            docid   INT4,
+            wordid  INT4,
+            topicid INT4)
+        m4_ifdef(
+            `__POSTGRESQL__', `',
+            `WITH (APPENDONLY=TRUE)
+            DISTRIBUTED BY (docid)')
+        """.format(mapping_table=mapping_table))
+
+    ## The following query is a workaround for GPDB 4.3 because it cannot
+    ## convert text string to svec (that's why we have to call
+    ## array_to_string first to form a string and then call
+    ## {schema_madlib}.svec_from_string to convert it to svec format).
+    ## In GPDB5, the query can be written as
+    ##  ```
+    ##  INSERT INTO {mapping_table}
+    ##  SELECT docid, unnest((counts::text || ':' ||
+    ##  words::text)::{schema_madlib}.svec::float[]) AS wordid,
+    ##  unnest(topic_assignment) AS topicid
+    ##  FROM {lda_output_table}
+    ##  GROUP BY docid, wordid, topicid
+    ##  ```
+    ##  Also look at validate_lda_output() function in lda install check
+    ##  which applies the same workaround
+
+    plpy.execute("""
+        INSERT INTO {mapping_table}
+        SELECT docid,
+        unnest({schema_madlib}.svec_from_string('{{' || array_to_string(counts, ',') || '}}:{{' || array_to_string(words, ',') || '}}')::float[]) AS wordid,
+        unnest(topic_assignment) AS topicid
+        FROM {lda_output_table}
+        GROUP BY docid, wordid, topicid
+        ORDER BY docid
+        """.format(lda_output_table=lda_output_table,
+                   schema_madlib=schema_madlib, mapping_table=mapping_table))
 
 def get_perplexity(schema_madlib, model_table, output_data_table):
     """
