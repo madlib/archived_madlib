@@ -23,12 +23,39 @@
 
 """
 import plpy
+from utilities import unique_string
 
-def matrix_nest_1d_to_2d (source_table, output_table, independent_varname,
-                            dependent_varname, n_elements, encode):
+m4_changequote(`<!', `!>')
+
+def minibatch_preprocessor(schema_madlib, source_table, output_table, independent_varname, dependent_varname, n_elements, encode, **kwargs):
 
     if not source_table or not output_table or not independent_varname\
             or not dependent_varname or not n_elements:
         plpy.error("source table cannot be null")
+
+
+    uq_id = unique_string("id")
+    uq_dep = unique_string("dep")
+    uq_ind = unique_string("ind")
+    uq_tbl = unique_string("tbl")
+
+    sql1 = """
+        CREATE TABLE {output_table} AS
+        SELECT {uq_id},
+            {schema_madlib}.matrix_agg({uq_ind}) as {uq_ind},
+            array_agg({uq_dep}) as {uq_dep}
+        FROM (
+            SELECT (row_number() OVER (ORDER BY random())-1) / {n_elements}
+                        as {uq_id},
+                    ARRAY[{independent_varname}] as {uq_ind},
+                    {dependent_varname} as {uq_dep}
+            FROM
+            {source_table}
+        ) {uq_tbl}
+        GROUP BY {uq_id}
+    """.format(**locals())
+
+    plpy.execute(sql1)
+
 
 # ---------------------------------------------------------------------
