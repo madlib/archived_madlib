@@ -27,35 +27,75 @@ from utilities import unique_string
 
 m4_changequote(`<!', `!>')
 
+
 def minibatch_preprocessor(schema_madlib, source_table, output_table, independent_varname, dependent_varname, n_elements, encode, **kwargs):
 
     if not source_table or not output_table or not independent_varname\
             or not dependent_varname or not n_elements:
-        plpy.error("source table cannot be null")
+        plpy.error("Source table cannot be null")
 
+    array_features = []
+    non_array_features = []
+    feature_list = split_quoted_delimited_str(independent_varname)
+    for feat in feature_list:
+        feat_type = get_expr_type(feat, source_table)
+        if '[]' in feat_type:
+            array_features.append(feat)
+        else:
+            non_array_features.append(feat)
 
-    uq_id = unique_string("id")
-    uq_dep = unique_string("dep")
-    uq_ind = unique_string("ind")
+    indep_var_array_str = ("ARRAY[{0}]::double precision[]".
+                           format(', '.join(non_array_features)))
+    for each_array_feat in array_features:
+        indep_var_array_str = ('ARRAY_CAT({0}, {1})'.
+                               format(each_array_feat, indep_var_array_str))
+
+    uq_id = "id"
+    uq_dep = "dependent_varname"
+    uq_ind = "independent_varname"
     uq_tbl = unique_string("tbl")
+
+    """
+    If not encoding (test if the input is a numeric value):
+        1. dependent_varname = rings
+            output = ARRAY[[rings1], [rings2], []]
+        2. dependent_varname = ARRAY[a, b, c]
+            output = ARRAY[[a1, b1, c1], [a2, b2, c2], []]
+    If encoding:
+        3. dependent_varname = rings (encoding)
+            output = ARRAY[[rings1=1, rings1=2], [rings2=1, rings2=2], []]
+    """
+
+    # for encoding
+    dep_level_sql = """
+            SELECT DISTINCT {dependent_varname}
+            FROM {source_table}
+        """.format(dependent_varname=dependent_varname,
+                   source_table=source_table)
+    dep_levels = plpy.execute(dep_level_sql)
+    if not dep
+    classes = sorted(["'{0}'".format(l) for l in dep_levels])
+
+    one_hot_dep_list = []
+    for c in classes:
+        one_hot_dep_list.append("{0} = {1}".format(dependent_varname, c))
+    dep_var_array_str = 'ARRAY[{0}]::integer[]'.format(','.join(one_hot_dep_list))
 
     sql1 = """
         CREATE TABLE {output_table} AS
         SELECT {uq_id},
-            {schema_madlib}.matrix_agg({uq_ind}) as {uq_ind},
-            array_agg({uq_dep}) as {uq_dep}
+               {schema_madlib}.matrix_agg({uq_ind}) as {uq_ind},
+               {schema_madlib}.matrix_agg({uq_dep}) as {uq_dep}
         FROM (
-            SELECT (row_number() OVER (ORDER BY random())-1) / {n_elements}
+            SELECT (row_number() OVER (ORDER BY random()) - 1) / {n_elements}
                         as {uq_id},
-                    ARRAY[{independent_varname}] as {uq_ind},
-                    {dependent_varname} as {uq_dep}
+                    {indep_var_array_str} as {uq_ind},
+                    {dep_var_array_str} as {uq_dep}
             FROM
-            {source_table}
+                {source_table}
         ) {uq_tbl}
         GROUP BY {uq_id}
     """.format(**locals())
 
     plpy.execute(sql1)
-
-
 # ---------------------------------------------------------------------
