@@ -24,6 +24,9 @@
 """
 import plpy
 from utilities import unique_string
+from utilities import strip_end_quotes
+from utilities import split_quoted_delimited_str
+from validate_args import get_expr_type
 
 m4_changequote(`<!', `!>')
 
@@ -66,20 +69,28 @@ def minibatch_preprocessor(schema_madlib, source_table, output_table, independen
             output = ARRAY[[rings1=1, rings1=2], [rings2=1, rings2=2], []]
     """
 
-    # for encoding
-    dep_level_sql = """
-            SELECT DISTINCT {dependent_varname}
-            FROM {source_table}
-        """.format(dependent_varname=dependent_varname,
-                   source_table=source_table)
-    dep_levels = plpy.execute(dep_level_sql)
-    if not dep
-    classes = sorted(["'{0}'".format(l) for l in dep_levels])
+    dep_type = get_expr_type(dependent_varname,source_table).lower()
+    plpy.info(dep_type)
+    if dep_type in ("text", "boolean"):
 
-    one_hot_dep_list = []
-    for c in classes:
-        one_hot_dep_list.append("{0} = {1}".format(dependent_varname, c))
-    dep_var_array_str = 'ARRAY[{0}]::integer[]'.format(','.join(one_hot_dep_list))
+        # for encoding
+        dep_level_sql = """
+                SELECT DISTINCT {dependent_varname}
+                FROM {source_table}
+            """.format(dependent_varname=dependent_varname,
+                       source_table=source_table)
+        dep_levels = plpy.execute(dep_level_sql)
+
+        classes = sorted(["'{0}'".format(l[dependent_varname]) for l in dep_levels])
+
+        one_hot_dep_list = []
+        for c in classes:
+            one_hot_dep_list.append("{0} = {1}".format(dependent_varname, c))
+        dep_var_array_str = 'ARRAY[{0}]::integer[]'.format(','.join(one_hot_dep_list))
+    elif "[]" in dep_type:
+        dep_var_array_str = dependent_varname
+    else :
+        dep_var_array_str = 'ARRAY[{0}]'.format(dependent_varname)
 
     sql1 = """
         CREATE TABLE {output_table} AS
