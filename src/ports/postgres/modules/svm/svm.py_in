@@ -36,36 +36,60 @@ def _compute_svm(args):
     """
     init_stepsize = args['init_stepsize']
     args['stepsize'] = init_stepsize
+    batch_size = args['batch_size']
+    args['dist_func'] = ('internal_linear_svm_igd_distance' if batch_size == 1
+                         else 'internal_linear_svm_igd_minibatch_distance')
     iterationCtrl = GroupIterationController(args)
     with iterationCtrl as it:
         it.iteration = 0
         has_converged = False
         while not has_converged:
-            it.update(
-                """
-                {schema_madlib}.linear_svm_igd_step(
-                    ({col_ind_var})::FLOAT8[],
-                    ({col_dep_var_trans})::FLOAT8,
-                    {rel_state}.{col_grp_state},
-                    {n_features}::INT4,
-                    {stepsize}::FLOAT8,
-                    {lambda}::FLOAT8,
-                    {is_l2}::BOOLEAN,
-                    {col_n_tuples},
-                    ({select_epsilon})::FLOAT8,
-                    {is_svc}::BOOLEAN,
-                    {class_weight_sql}::FLOAT8
-                    )
-                """)
+            if batch_size == 1:
+                it.update(
+                    """
+                    {schema_madlib}.linear_svm_igd_step(
+                        ({col_ind_var})::FLOAT8[],
+                        ({col_dep_var_trans})::FLOAT8,
+                        {rel_state}.{col_grp_state},
+                        {n_features}::INT4,
+                        {stepsize}::FLOAT8,
+                        {lambda}::FLOAT8,
+                        {is_l2}::BOOLEAN,
+                        {col_n_tuples},
+                        ({select_epsilon})::FLOAT8,
+                        {is_svc}::BOOLEAN,
+                        {class_weight_sql}::FLOAT8
+                        )
+                    """)
+            else:
+                it.update(
+                    """
+                    {schema_madlib}.linear_svm_igd_minibatch_step(
+                        ({col_ind_var})::FLOAT8[][],
+                        ({col_dep_var_trans})::FLOAT8[],
+                        {rel_state}.{col_grp_state},
+                        {n_features}::INT4,
+                        {stepsize}::FLOAT8,
+                        {lambda}::FLOAT8,
+                        {is_l2}::BOOLEAN,
+                        {col_n_tuples},
+                        ({select_epsilon})::FLOAT8,
+                        {is_svc}::BOOLEAN,
+                        {class_weight_sql}::FLOAT8,
+                        {n_epochs}::INTEGER,
+                        {batch_size}::INTEGER
+                        )
+                    """)
             it.info()
             if it.kwargs['decay_factor'] > 0:
                 it.kwargs['stepsize'] *= it.kwargs['decay_factor']
             else:
                 it.kwargs['stepsize'] = init_stepsize / (it.iteration + 1)
+
             has_converged = it.test(
                 """
                 {iteration} >= {max_iter}
-                OR {schema_madlib}.internal_linear_svm_igd_distance(
+                OR {schema_madlib}.{dist_func}(
                     _state_previous, _state_current) < {tolerance}
                 """)
         it.final()
@@ -89,9 +113,9 @@ def _verify_table(source_table, model_table, dependent_varname,
                 "('{dependent_varname}') for source_table "
                 "({source_table})!".format(dependent_varname=dependent_varname,
                                            source_table=source_table))
-        dep_type = get_expr_type(dependent_varname, source_table)
-        if '[]' in dep_type:
-            plpy.error("SVM error: dependent_varname cannot be of array type!")
+        # dep_type = get_expr_type(dependent_varname, source_table)
+        # if '[]' in dep_type:
+        #     plpy.error("SVM error: dependent_varname cannot be of array type!")
 
     # validate output tables
     output_tbl_valid(model_table, 'SVM')
@@ -157,6 +181,8 @@ def _build_output_tables(n_iters_run, args, **kwargs):
     else:
         groupby_str, grouping_str1, using_str = "", "", "ON TRUE"
     # organizing results
+    result_func = ("internal_linear_svm_igd_result" if args['batch_size'] == 1
+                   else "internal_linear_svm_igd_minibatch_result")
     args.update(locals())
     model_table_query = """
         CREATE TABLE {model_table} AS
@@ -173,7 +199,7 @@ def _build_output_tables(n_iters_run, args, **kwargs):
             FROM
             (
                 SELECT
-                    {schema_madlib}.internal_linear_svm_igd_result(
+                    {schema_madlib}.{result_func}(
                         {col_grp_state}
                     ) AS result,
                     {col_grp_key}
@@ -952,9 +978,9 @@ def svm(schema_madlib, source_table, model_table,
         _verify_table(source_table, model_table,
                       dependent_varname, independent_varname)
         reserved_cols =['coef', 'random_feature_data',
-                     'random_feature_data', 'loss'
-                     'num_rows_processed', 'num_rows_skipped',
-                     'norm_of_gradient', 'num_iterations']
+                        'random_feature_data', 'loss'
+                        'num_rows_processed', 'num_rows_skipped',
+                        'norm_of_gradient', 'num_iterations']
         grouping_str, grouping_col = \
             get_grouping_col_str(schema_madlib, 'SVM', reserved_cols,
                                  source_table, grouping_col)
@@ -1151,7 +1177,15 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
             datasets.
 
     """
-    n_features = num_features(source_table, independent_varname)
+    # n_features = num_features(source_table, independent_varname)
+
+    upper_dim = 1 if params_dict['batch_size'] == 1 else 2
+    n_features = plpy.execute("SELECT array_upper({0}, {2}) AS dim "
+                              "FROM {1} LIMIT 1".
+                              format(independent_varname,
+                                     source_table,
+                                     upper_dim))[0]['dim']
+
     if update_source_for_one_class:
         # This block is run only when the caller is svm_one_class
 
@@ -1204,7 +1238,9 @@ def _svm_parsed_params(schema_madlib, source_table, model_table,
 
     args.update(_verify_get_params_dict(params_dict))
     args.update(_process_epsilon(is_svc, args))
-    args.update(_svc_or_svr(is_svc, source_table, dependent_varname))
+
+    is_sgd = params_dict['batch_size'] <= 1
+    args.update(_svc_or_svr(is_svc, source_table, dependent_varname, is_sgd))
 
     # place holder for compatibility
     plpy.execute("CREATE TABLE pg_temp.{0} AS SELECT 1".format(args['rel_args']))
@@ -1254,13 +1290,13 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
 
         input_tbl_valid(new_data_table, 'SVM')
         reserved_cols =['coef', 'random_feature_data',
-                     'random_feature_data', 'loss'
-                     'num_rows_processed', 'num_rows_skipped',
-                     'norm_of_gradient', 'num_iterations']
+                        'random_feature_data', 'loss'
+                        'num_rows_processed', 'num_rows_skipped',
+                        'norm_of_gradient', 'num_iterations']
         grouping_str, grouping_col = get_grouping_col_str(schema_madlib,
-                                                           'SVM', reserved_cols,
-                                                           new_data_table,
-                                                           grouping_col)
+                                                          'SVM', reserved_cols,
+                                                          new_data_table,
+                                                          grouping_col)
         _assert(is_var_valid(new_data_table, independent_varname),
                 "SVM Error: independent_varname ('" + independent_varname +
                 "') is invalid for new_data_table (" + new_data_table + ")!")
@@ -1341,43 +1377,67 @@ def svm_predict(schema_madlib, model_table, new_data_table, id_col_name,
 # -----------------------------------------------------------------------------
 
 
-def _svc_or_svr(is_svc, source_table, dependent_varname):
+def _svc_or_svr(is_svc, source_table, dependent_varname, is_sgd):
     # transform col_dep_var to binary (1`or -1) if classification
     _args = {'col_dep_var_trans': dependent_varname,
              'mapping': 'NULL',
              'method': 'SVR'}
 
     if is_svc:
+        if is_sgd:
+            src = source_table
+        else:
+            src = "(SELECT unnest({0}) as {0} FROM {1}) q".format(dependent_varname, source_table)
         # dependent variable mapping
         dep_labels = plpy.execute("""
             SELECT {dependent_varname} AS y
-            FROM {source_table}
+            FROM {src}
             WHERE ({dependent_varname}) IS NOT NULL
             GROUP BY ({dependent_varname})
             ORDER BY ({dependent_varname})
-            """.format(source_table=source_table,
+            """.format(src=src,
                        dependent_varname=dependent_varname))
 
-        dep_var_mapping = ["'{0}'".format(d['y'])
-                           if isinstance(d['y'], basestring)
-                           else str(d['y']) for d in dep_labels]
-
-        _assert(1 <= len(dep_var_mapping) <= 2,
+        _assert(1 <= len(dep_labels) <= 2,
                 "SVM Error: Classification currently "
                 "only supports unary or binary output!. Found values {0}".
-                format(dep_var_mapping))
+                format(dep_labels))
 
-        col_dep_var_trans = ("""
-            CASE WHEN ({col_dep_var}) IS NULL THEN NULL
-                WHEN ({col_dep_var}) = {mapped_value_for_negative} THEN -1.0
-                ELSE 1.0
-            END
-            """.format(col_dep_var=dependent_varname,
-                       mapped_value_for_negative=dep_var_mapping[0]))
+        dep_labels_str = ["'{0}'".format(d['y'])
+                          if isinstance(d['y'], basestring)
+                          else str(d['y']) for d in dep_labels]
+
+        # map the dependent variable labels to -1 and 1 to represent the two
+        # sides of the hyperplane (only supporting unary/binary for now)
+        if is_sgd:
+            col_dep_var_trans = """
+                CASE WHEN ({dependent_varname}) IS NULL THEN NULL
+                    WHEN ({dependent_varname}) = {mapped_value_for_negative} THEN -1.0
+                    ELSE 1.0
+                END
+                """
+        else:
+            # For minibatch, the dependent_varname is an array. So unnest the
+            # array before mapping to 1/-1.
+            col_dep_var_trans = """
+                ARRAY(SELECT
+                    CASE WHEN ({dependent_varname}) IS NULL THEN NULL
+                         WHEN ({dependent_varname}) = {mapped_value_for_negative} THEN -1.0
+                         ELSE 1.0
+                    END
+                    FROM UNNEST({dependent_varname}) as {dependent_varname}
+                    )
+                """
+
+        # col_dep_var_trans is used by the update query in _compute_svm to
+        # transform dependent variable labels to -1 and 1.
+        col_dep_var_trans = col_dep_var_trans.format(
+            dependent_varname=dependent_varname,
+            mapped_value_for_negative=dep_labels_str[0])
         _args.update({
-            'mapped_value_for_negative': dep_var_mapping[0],
+            'mapped_value_for_negative': dep_labels_str[0],
             'col_dep_var_trans': col_dep_var_trans,
-            'mapping': dep_var_mapping[0] + "," + dep_var_mapping[1],
+            'mapping': dep_labels_str[0] + "," + dep_labels_str[1],
             'method': 'SVC'})
     return _args
 # -----------------------------------------------------------------------------
@@ -1489,7 +1549,9 @@ def _extract_params(schema_madlib, params, module='SVM'):
         'validation_result': '',
         'epsilon': [0.01],
         'eps_table': '',
-        'class_weight': ''}
+        'class_weight': '',
+        'n_epochs': 1,
+        'batch_size': 1}
 
     params_types = {
         'init_stepsize': list,
@@ -1502,7 +1564,9 @@ def _extract_params(schema_madlib, params, module='SVM'):
         'validation_result': str,
         'epsilon': list,
         'eps_table': str,
-        'class_weight': str}
+        'class_weight': str,
+        'n_epochs': int,
+        'batch_size': int}
 
     params_vals = extract_keyvalue_params(params, params_types, params_default)
     if params_vals['n_folds'] < 0:

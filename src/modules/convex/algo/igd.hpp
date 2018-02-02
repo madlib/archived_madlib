@@ -34,7 +34,9 @@ public:
     typedef typename Task::model_type model_type;
 
     static void transition(state_type &state, const tuple_type &tuple);
+    static void transitionInMiniBatch(state_type &state, const tuple_type &tuple);
     static void merge(state_type &state, const_state_type &otherState);
+    static void mergeInPlace(state_type &state, const_state_type &otherState);
     static void final(state_type &state);
 };
 
@@ -55,6 +57,62 @@ IGD<State, ConstState, Task>::transition(state_type &state,
             tuple.depVar,
             state.task.stepsize * tuple.weight);
 }
+
+/**
+  * @brief Update the transition state in mini-batches
+  *
+  * Note: We assume that
+  *     1. Task defines a model_eigen_type
+  *     2. A batch of tuple.indVar is a Matrix
+  *     3. A batch of tuple.depVar is a ColumnVector
+  *     4. Task defines a getLossAndUpdateModel method
+  *
+ */
+ template <class State, class ConstState, class Task>
+ void
+ IGD<State, ConstState, Task>::transitionInMiniBatch(
+        state_type &state,
+        const tuple_type &tuple) {
+
+    madlib_assert(tuple.indVar.rows() == tuple.depVar.rows(),
+                  std::runtime_error("Invalid data. Independent and dependent "
+                                     "batches don't have same number of rows."));
+
+    int batch_size = state.algo.batchSize;
+    int n_epochs = state.algo.nEpochs;
+
+    // n_rows/n_ind_cols are the rows/cols in a transition tuple.
+    int n_rows = tuple.indVar.rows();
+    int n_ind_cols = tuple.indVar.cols();
+    int n_batches = n_rows < batch_size ? 1 :
+                    n_rows / batch_size +
+                    int(n_rows%batch_size > 0);
+
+    for (int curr_epoch=0; curr_epoch < n_epochs; curr_epoch++) {
+        double loss = 0.0;
+        for (int curr_batch=0, curr_batch_row_index=0; curr_batch < n_batches;
+             curr_batch++, curr_batch_row_index += batch_size) {
+           Matrix X_batch;
+           ColumnVector y_batch;
+           if (curr_batch == n_batches-1) {
+              // last batch
+              X_batch = tuple.indVar.bottomRows(n_rows-curr_batch_row_index);
+              y_batch = tuple.depVar.tail(n_rows-curr_batch_row_index);
+           } else {
+               X_batch = tuple.indVar.block(curr_batch_row_index, 0, batch_size, n_ind_cols);
+               y_batch = tuple.depVar.segment(curr_batch_row_index, batch_size);
+           }
+           loss += Task::getLossAndUpdateModel(
+               state.task.model, X_batch, y_batch, state.task.stepsize);
+        }
+
+        // The first epoch will most likely have the highest loss.
+        // Being pessimistic, use the total loss only from the first epoch.
+        if (curr_epoch==0) state.algo.loss += loss;
+    }
+    return;
+ }
+
 
 template <class State, class ConstState, class Task>
 void
@@ -86,11 +144,32 @@ IGD<State, ConstState, Task>::merge(state_type &state,
 
 template <class State, class ConstState, class Task>
 void
+IGD<State, ConstState, Task>::mergeInPlace(state_type &state,
+        const_state_type &otherState) {
+    // avoid division by zero
+    if (state.algo.numRows == 0) {
+        state.task.model = otherState.task.model;
+        return;
+    } else if (otherState.algo.numRows == 0) {
+        return;
+    }
+
+    // model averaging, weighted by rows seen
+    double leftRows = static_cast<double>(state.algo.numRows + state.algo.numRows);
+    double rightRows = static_cast<double>(otherState.algo.numRows + otherState.algo.numRows);
+    double totalNumRows = leftRows + rightRows;
+    state.task.model *= leftRows / rightRows;
+    state.task.model += otherState.task.model;
+    state.task.model *= rightRows / totalNumRows;
+}
+
+template <class State, class ConstState, class Task>
+void
 IGD<State, ConstState, Task>::final(state_type &state) {
     // The reason that we have to keep the task.model untouched in transition
     // funtion: loss computation needs the model from last iteration cleanly
-
     state.task.model = state.algo.incrModel;
+
 }
 
 } // namespace convex

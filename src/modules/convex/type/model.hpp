@@ -93,17 +93,20 @@ struct LMFModel {
     }
 };
 
-// Generalized Linear Models (GLMs): Logistic regression, Linear SVM
 typedef HandleTraits<MutableArrayHandle<double> >::ColumnVectorTransparentHandleMap
     GLMModel;
+
+typedef HandleTraits<MutableArrayHandle<double> >::ColumnVectorTransparentHandleMap
+    SVMModel;
 
 // The necessity of this wrapper is to allow classes in algo/ and task/ to
 // have a type that they can template over
 template <class Handle>
 struct MLPModel {
-    typename HandleTraits<Handle>::ReferenceToUInt16 is_classification;
-    typename HandleTraits<Handle>::ReferenceToUInt16 activation;
-    std::vector<Eigen::Map<Matrix > > u;
+    typename HandleTraits<Handle>::ReferenceToDouble is_classification;
+    typename HandleTraits<Handle>::ReferenceToDouble activation;
+    // std::vector<Eigen::Map<Matrix > > u;
+    std::vector<MutableMappedMatrix> u;
 
     /**
      * @brief Space needed.
@@ -120,8 +123,8 @@ struct MLPModel {
         size_t N = inNumberOfStages;
         const double *n = inNumbersOfUnits;
         size_t k;
-        for (k = 1; k <= N; k ++) {
-            size += (n[k-1] + 1) * (n[k]);
+        for (k = 0; k < N; k ++) {
+            size += (n[k] + 1) * (n[k+1]);
         }
         return size;     // weights (u)
     }
@@ -140,71 +143,87 @@ struct MLPModel {
 
         uint32_t sizeOfU = 0;
         u.clear();
-        for (k = 1; k <= N; k ++) {
-            u.push_back(Eigen::Map<Matrix >(
-                    const_cast<double*>(data + sizeOfU),
-                    n[k-1] + 1, n[k]));
-            sizeOfU += (n[k-1] + 1) * (n[k]);
+        for (k = 0; k < N; k ++) {
+            // u.push_back(Eigen::Map<Matrix >(
+            //     const_cast<double*>(data + sizeOfU),
+            //     n[k] + 1, n[k+1]));
+            u.push_back(MutableMappedMatrix());
+            u[k].rebind(const_cast<double *>(data + sizeOfU), n[k] + 1, n[k+1]);
+            sizeOfU += (n[k] + 1) * (n[k+1]);
         }
 
         return sizeOfU;
+    }
+
+    void initialize(const uint16_t &inNumberOfStages,
+                    const double *inNumbersOfUnits){
+        size_t N = inNumberOfStages;
+        const double *n = inNumbersOfUnits;
+        size_t k;
+        double span;
+        for (k =0; k < N; ++k){
+            // Initalize according to Glorot and Bengio (2010)
+            // See design doc for more info
+            span = sqrt(6.0 / (n[k] + n[k+1]));
+            u[k] << span * Matrix::Random(u[k].rows(), u[k].cols());
+        }
     }
 
     double norm() const {
         double norm = 0.;
         size_t k;
         for (k = 0; k < u.size(); k ++) {
-            norm+=u[k].bottomRows(u[k].rows()-1).squaredNorm();
+            norm += u[k].bottomRows(u[k].rows()-1).squaredNorm();
         }
         return std::sqrt(norm);
     }
 
     void setZero(){
         size_t k;
-        for (k = 1; k <= u.size(); k ++) {
-            u[k-1].setZero();
+        for (k = 0; k < u.size(); k ++) {
+            u[k].setZero();
         }
     }
 
     /*
      *  Some operator wrappers for u.
      */
-    MLPModel &operator*=(const double &c) {
+    MLPModel& operator*=(const double &c) {
         // Note that when scaling the model, you should
         // not update the bias.
         size_t k;
-        for (k = 1; k <= u.size(); k ++) {
-           u[k-1] *= c;
+        for (k = 0; k < u.size(); k ++) {
+           u[k] *= c;
         }
 
         return *this;
     }
 
     template<class OtherHandle>
-    MLPModel &operator-=(const MLPModel<OtherHandle> &inOtherModel) {
+    MLPModel& operator-=(const MLPModel<OtherHandle> &inOtherModel) {
         size_t k;
-        for (k = 1; k <= u.size() && k <= inOtherModel.u.size(); k ++) {
-            u[k-1] -= inOtherModel.u[k-1];
+        for (k = 0; k < u.size() && k < inOtherModel.u.size(); k ++) {
+            u[k] -= inOtherModel.u[k];
         }
 
         return *this;
     }
 
     template<class OtherHandle>
-    MLPModel &operator+=(const MLPModel<OtherHandle> &inOtherModel) {
+    MLPModel& operator+=(const MLPModel<OtherHandle> &inOtherModel) {
         size_t k;
-        for (k = 1; k <= u.size() && k <= inOtherModel.u.size(); k ++) {
-            u[k-1] += inOtherModel.u[k-1];
+        for (k = 0; k < u.size() && k < inOtherModel.u.size(); k ++) {
+            u[k] += inOtherModel.u[k];
         }
 
         return *this;
     }
 
     template<class OtherHandle>
-    MLPModel &operator=(const MLPModel<OtherHandle> &inOtherModel) {
+    MLPModel& operator=(const MLPModel<OtherHandle> &inOtherModel) {
         size_t k;
-        for (k = 1; k <= u.size() && k <= inOtherModel.u.size(); k ++) {
-            u[k-1] = inOtherModel.u[k-1];
+        for (k = 0; k < u.size() && k < inOtherModel.u.size(); k ++) {
+            u[k] = inOtherModel.u[k];
         }
         is_classification = inOtherModel.is_classification;
         activation = inOtherModel.activation;
