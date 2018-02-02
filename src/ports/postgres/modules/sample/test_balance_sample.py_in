@@ -1,0 +1,125 @@
+import unittest
+from mock import *
+"""
+ SELECT id1,id2,gr1,gr2 FROM
+ (
+ SELECT tmp1, generate_series(1, tmp2::int) AS _i, ((random()*(tmp3-1)+1)::int) AS tmp4 FROM (VALUES ('1'::text, 3, 18),('3'::text, 3, 3),('2'::text, 3, 7),('5'::text, 3, 14),('4'::text, 3, 3)) q(tmp1, tmp2, tmp3)
+ ) q1,
+ (
+ SELECT *, row_number() OVER(PARTITION BY gr1) AS tmp5 FROM tmp6
+ ) q2
+ WHERE
+ tmp1 = coalesce(gr1::text, '__madlib_null_id__') AND q1.tmp4 = q2.tmp5
+"""
+class BalanceSampleTestCase(unittest.TestCase):
+    def setUp(self):
+        patches = {
+            'plpy': Mock(return_value=None),
+            'utilities': Mock(return_value=None),
+            'utilities.utilities':  Mock(return_value=None),
+            'utilities.validate_args':  Mock(return_value=None),
+            'utilities.control': Mock(return_value=None)
+        }
+
+        self.module_patcher = patch.dict('sys.modules', patches)
+        self.module_patcher.start()
+        import balance_sample
+        self.subject = balance_sample
+
+
+        self.input_class_level_counts1 = {'a': 20, 'b': 30, 'c': 25}
+        self.level1a = 'a'
+        self.level1a_cnt1 = 15
+        self.level1a_cnt2 = 25
+        self.level1a_cnt3 = 20
+
+        self.sampling_strategy_str0 = ''
+        self.sampling_strategy_str1 = 'uniform'
+        self.sampling_strategy_str2 = 'oversample'
+        self.sampling_strategy_str3 = 'undersample'
+        self.user_specified_class_size0 = ''
+        self.user_specified_class_size1 = {'a': 25, 'b': 25}
+        self.user_specified_class_size2 = {'b': 25}
+        self.user_specified_class_size3 = {'a': 30}
+        self.output_table_size1 = None
+        self.output_table_size2 = 60
+
+    def tearDown(self):
+        self.module_patcher.stop()
+
+    def test__choose_strategy(self):
+        self.assertEqual(self.subject.UNDERSAMPLE, self.subject._choose_strategy(35, 25))
+        self.assertEqual(self.subject.OVERSAMPLE, self.subject._choose_strategy(15, 25))
+        self.assertEqual(self.subject.UNDERSAMPLE, self.subject._choose_strategy(25, 25))
+
+    def test__get_target_level_counts(self):
+        # Test cases for user defined class level samples, without output table size
+        self.assertEqual({'a': (25, self.subject.OVERSAMPLE), 'b': (25, self.subject.UNDERSAMPLE), 'c': (25, self.subject.NOSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size1,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
+        self.assertEqual({'a': (20, self.subject.NOSAMPLE), 'b': (25, self.subject.UNDERSAMPLE), 'c': (25, self.subject.NOSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size2,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
+        self.assertEqual({'a': (30, self.subject.OVERSAMPLE), 'b': (30, self.subject.NOSAMPLE), 'c': (25, self.subject.NOSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size3,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
+        # Test cases for user defined class level samples, with output table size
+        self.assertEqual({'a': (25, self.subject.OVERSAMPLE), 'b': (25, self.subject.UNDERSAMPLE), 'c': (10, self.subject.UNDERSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size1,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
+        self.assertEqual({'a': (18, self.subject.UNDERSAMPLE), 'b': (25, self.subject.UNDERSAMPLE), 'c': (18, self.subject.UNDERSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size2,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
+        self.assertEqual({'a': (30, self.subject.OVERSAMPLE), 'b': (15, self.subject.UNDERSAMPLE), 'c': (15, self.subject.UNDERSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str0,
+                                                  self.user_specified_class_size3,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
+        # Test cases for UNIFORM, self.subject.OVERSAMPLE, and self.subject.UNDERSAMPLE without any output table size
+        self.assertEqual({'a': (25, self.subject.OVERSAMPLE), 'b': (25, self.subject.UNDERSAMPLE), 'c': (25, self.subject.UNDERSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str1,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
+        self.assertEqual({'a': (30, self.subject.OVERSAMPLE), 'b': (30, self.subject.UNDERSAMPLE), 'c': (30, self.subject.OVERSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str2,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
+        self.assertEqual({'a': (20, self.subject.UNDERSAMPLE), 'b': (20, self.subject.UNDERSAMPLE), 'c': (20, self.subject.UNDERSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str3,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size1))
+        # Test cases for UNIFORM with output table size
+        self.assertEqual({'a': (20, self.subject.UNDERSAMPLE), 'b': (20, self.subject.UNDERSAMPLE), 'c': (20, self.subject.UNDERSAMPLE)},
+                         self.subject._get_target_level_counts(self.sampling_strategy_str1,
+                                                  self.user_specified_class_size0,
+                                                  self.input_class_level_counts1,
+                                                  self.output_table_size2))
+
+    def test__get_sampling_strategy_specific_dict(self):
+        # Test cases for getting sampling strategy specific counts
+        target_level_counts_1 = {'a': (25, self.subject.OVERSAMPLE), 'b': (25, self.subject.UNDERSAMPLE), 'c': (25, self.subject.NOSAMPLE)}
+        target_level_counts_2 = {'a': (25, self.subject.OVERSAMPLE), 'b': (25, self.subject.UNDERSAMPLE)}
+        target_level_counts_3 = {'a': (25, self.subject.OVERSAMPLE), 'b': (25, self.subject.NOSAMPLE), 'c': (25, self.subject.NOSAMPLE)}
+        self.assertEqual(({'b': 25}, {'a': 25}, {'c': 25}),
+                         self.subject._get_sampling_strategy_specific_dict(target_level_counts_1))
+        self.assertEqual(({'b': 25}, {'a': 25}, {}),
+                         self.subject._get_sampling_strategy_specific_dict(target_level_counts_2))
+        self.assertEqual(({}, {'a': 25}, {'c': 25, 'b': 25}),
+                         self.subject._get_sampling_strategy_specific_dict(target_level_counts_3))
+
+
+if __name__ == '__main__':
+    unittest.main()
