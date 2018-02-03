@@ -24,6 +24,7 @@
 """
 import unittest
 from mock import *
+import sys
 
 m4_changequote(`<!', `!>')
 
@@ -36,55 +37,100 @@ class MiniBatchPreProcessingTestCase(unittest.TestCase):
         self.plpy_mock_error = Mock(return_value=None)
         self.plpy_mock.error = self.plpy_mock_error
 
+        self.plpy_mock_execute = MagicMock()
+        self.plpy_mock.execute = self.plpy_mock_execute
+
+        self.plpy_mock.info = Mock()
+
         self.module_patcher = patch.dict('sys.modules', patches)
         self.module_patcher.start()
+
         import minibatch_preprocessing
         self.subject = minibatch_preprocessing
 
+        self.default_schema_madlib = "madlib"
         self.default_source_table = "source"
         self.default_output_table = "output"
         self.default_ind_var = "indvar"
         self.default_dep_var = "depvar"
         self.default_n_elements = 2
-        self.default_encode = True
 
     def tearDown(self):
         self.module_patcher.stop()
 
-    def test_matrix_nest_1d_to_2d_all_nulls(self):
-        self.subject.matrix_nest_1d_to_2d(None, None, None, None, None, False)
-        self.plpy_mock_error.assert_called_once_with("source table cannot be null")
+    def test_minibatch_preprocessor_all_nulls(self):
+        self.subject.minibatch_preprocessor(self.default_schema_madlib, None, None, None, None, None)
+        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
 
-    def test_matrix_nest_1d_to_2d_source_table_null(self):
-        self.subject.matrix_nest_1d_to_2d(
-            None, self.default_output_table, self.default_ind_var,
-            self.default_dep_var, self.default_n_elements,
-            self.default_encode)
-        self.plpy_mock_error.assert_called_once_with("source table cannot be null")
+    def test_minibatch_preprocessor_source_table_null(self):
+        self.subject.minibatch_preprocessor(self.default_schema_madlib,
+                                            None, self.default_output_table, self.default_ind_var,
+                                            self.default_dep_var, self.default_n_elements)
+        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
 
-    def test_matrix_nest_1d_to_2d_output_table_null(self):
-        self.subject.matrix_nest_1d_to_2d(
-            self.default_source_table, None, self.default_ind_var,
-            self.default_dep_var, self.default_n_elements, self.default_encode)
-        self.plpy_mock_error.assert_called_once_with("source table cannot be null")
+    def test_minibatch_preprocessor_output_table_null(self):
+        self.subject.minibatch_preprocessor(self.default_schema_madlib,
+                                            self.default_source_table, None, self.default_ind_var,
+                                            self.default_dep_var, self.default_n_elements)
+        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
 
-    def test_matrix_nest_1d_to_2d_indvar_null(self):
-        self.subject.matrix_nest_1d_to_2d(
-            self.default_source_table, self.default_output_table, None,
-            self.default_dep_var, self.default_n_elements, self.default_encode)
-        self.plpy_mock_error.assert_called_once_with("source table cannot be null")
+    def test_minibatch_preprocessor_indvar_null(self):
+        self.subject.minibatch_preprocessor(self.default_schema_madlib,
+                                            self.default_source_table, self.default_output_table, None,
+                                            self.default_dep_var, self.default_n_elements)
+        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
 
-    def test_matrix_nest_1d_to_2d_depvar_null(self):
-        self.subject.matrix_nest_1d_to_2d(
-            self.default_source_table, self.default_output_table, self.default_ind_var,
-            None, self.default_n_elements, self.default_encode)
-        self.plpy_mock_error.assert_called_once_with("source table cannot be null")
+    def test_minibatch_preprocessor_depvar_null(self):
+        self.subject.minibatch_preprocessor(self.default_schema_madlib,
+                                            self.default_source_table, self.default_output_table, self.default_ind_var,
+                                            None, self.default_n_elements)
+        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
 
-    def test_matrix_nest_1d_to_2d_elements_null(self):
-        self.subject.matrix_nest_1d_to_2d(
-            self.default_source_table, self.default_output_table, self.default_ind_var,
-            self.default_dep_var, None, self.default_encode)
-        self.plpy_mock_error.assert_called_once_with("source table cannot be null")
+    def test_minibatch_preprocessor_elements_null(self):
+        self.subject.minibatch_preprocessor(self.default_schema_madlib,
+                                            self.default_source_table, self.default_output_table, self.default_ind_var,
+                                            self.default_dep_var, None)
+        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
+
+    def test_minibatch_preprocessor_indvar_scalar_depvar_text_passes(self):
+        self.subject.get_expr_type = MagicMock(return_value="text")
+        self.subject.get_expr_type.__iter__ = Mock(return_value = iter(["not_an_array", "text"]))
+        self.subject.unique_string = Mock(return_value="unique_str")
+
+        self.plpy_mock_execute.side_effect = [[{"class":1},{"class":2},{"class":3}],""]
+        expected_sql = """
+        CREATE TABLE {output_table} AS
+        SELECT {uq_id},
+               {schema_madlib}.matrix_agg({uq_ind}) as {uq_ind},
+               {schema_madlib}.matrix_agg({uq_dep}) as {uq_dep}
+        FROM (
+            SELECT (row_number() OVER (ORDER BY random()) - 1) / {n_elements}
+                        as {uq_id},
+                    {indep_var_array_str} as {uq_ind},
+                    {dep_var_array_str} as {uq_dep}
+            FROM
+                {source_table}
+        ) {uq_tbl}
+        GROUP BY {uq_id}
+        """.format(
+                source_table = self.default_source_table,
+                output_table = self.default_output_table,
+                indep_var_array_str = "ARRAY[x1]::double precision[]",
+                dep_var_array_str = "ARRAY[y = '1',y = '2',y = '3']::integer[]",
+                n_elements = self.default_n_elements,
+                uq_id = "id",
+                uq_tbl = "unique_str",
+                schema_madlib = self.default_schema_madlib,
+                uq_dep = "dependent_varname",
+                uq_ind = "independent_varname"
+            )
+        self.subject.minibatch_preprocessor(self.default_schema_madlib,
+                                            self.default_source_table,
+                                            self.default_output_table,
+                                            "x1",
+                                            "y", self.default_n_elements)
+        self.assertEqual(2, self.plpy_mock_execute.call_count)
+        self.plpy_mock_execute.assert_called_with(expected_sql)
 
 if __name__ == '__main__':
     unittest.main()

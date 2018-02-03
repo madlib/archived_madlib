@@ -31,27 +31,26 @@ from validate_args import get_expr_type
 m4_changequote(`<!', `!>')
 
 
-def minibatch_preprocessor(schema_madlib, source_table, output_table, independent_varname, dependent_varname, n_elements, encode, **kwargs):
+def minibatch_preprocessor(schema_madlib, source_table, output_table,
+                           independent_varname, dependent_varname, n_elements,
+                           **kwargs):
+    """
 
+    :param schema_madlib:
+    :param source_table:
+    :param output_table:
+    :param independent_varname:
+    :param dependent_varname:
+    :param n_elements:
+    :param kwargs:
+    :return:
+    """
     if not source_table or not output_table or not independent_varname\
             or not dependent_varname or not n_elements:
         plpy.error("Source table cannot be null")
+        return
 
-    array_features = []
-    non_array_features = []
-    feature_list = split_quoted_delimited_str(independent_varname)
-    for feat in feature_list:
-        feat_type = get_expr_type(feat, source_table)
-        if '[]' in feat_type:
-            array_features.append(feat)
-        else:
-            non_array_features.append(feat)
-
-    indep_var_array_str = ("ARRAY[{0}]::double precision[]".
-                           format(', '.join(non_array_features)))
-    for each_array_feat in array_features:
-        indep_var_array_str = ('ARRAY_CAT({0}, {1})'.
-                               format(each_array_feat, indep_var_array_str))
+    indep_var_array_str = get_indep_var_array_str(source_table, independent_varname)
 
     uq_id = "id"
     uq_dep = "dependent_varname"
@@ -70,19 +69,18 @@ def minibatch_preprocessor(schema_madlib, source_table, output_table, independen
     """
 
     dep_type = get_expr_type(dependent_varname,source_table).lower()
-    plpy.info(dep_type)
+    # plpy.info(dep_type)
     if dep_type in ("text", "boolean"):
 
         # for encoding
         dep_level_sql = """
-                SELECT DISTINCT {dependent_varname}
+                SELECT DISTINCT {dependent_varname} AS class
                 FROM {source_table}
             """.format(dependent_varname=dependent_varname,
                        source_table=source_table)
         dep_levels = plpy.execute(dep_level_sql)
 
-        classes = sorted(["'{0}'".format(l[dependent_varname]) for l in dep_levels])
-
+        classes = sorted(["'{0}'".format(l["class"]) for l in dep_levels])
         one_hot_dep_list = []
         for c in classes:
             one_hot_dep_list.append("{0} = {1}".format(dependent_varname, c))
@@ -106,7 +104,26 @@ def minibatch_preprocessor(schema_madlib, source_table, output_table, independen
                 {source_table}
         ) {uq_tbl}
         GROUP BY {uq_id}
-    """.format(**locals())
-
+        """.format(**locals())
+    plpy.info(sql1)
     plpy.execute(sql1)
+
+
+def get_indep_var_array_str(source_table, independent_varname):
+    array_features = []
+    non_array_features = []
+    feature_list = split_quoted_delimited_str(independent_varname)
+    for feat in feature_list:
+        feat_type = get_expr_type(feat, source_table)
+        if '[]' in feat_type:
+            array_features.append(feat)
+        else:
+            non_array_features.append(feat)
+    indep_var_array_str = ("ARRAY[{0}]::double precision[]".
+                           format(', '.join(non_array_features)))
+    for each_array_feat in array_features:
+        indep_var_array_str = ('ARRAY_CAT({0}, {1})'.
+                               format(each_array_feat, indep_var_array_str))
+    return indep_var_array_str
+
 # ---------------------------------------------------------------------
