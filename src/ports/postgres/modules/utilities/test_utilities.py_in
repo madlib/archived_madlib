@@ -1,0 +1,109 @@
+import unittest
+from mock import *
+import sys
+import plpy_mock as plpy
+
+m4_changequote(`<!', `!>')
+class UtilitiesTestCase(unittest.TestCase):
+    def setUp(self):
+        self.plpy_mock = Mock(spec='error')
+        patches = {
+            'plpy': plpy
+        }
+        self.plpy_mock_execute = MagicMock()
+        plpy.execute = self.plpy_mock_execute
+
+        self.module_patcher = patch.dict('sys.modules', patches)
+        self.module_patcher.start()
+
+        import utilities
+        self.subject = utilities
+
+        self.default_source_table = "source"
+        self.default_output_table = "output"
+        self.default_ind_var = "indvar"
+        self.default_dep_var = "depvar"
+        self.default_module = "unittest_module"
+
+    def tearDown(self):
+        self.module_patcher.stop()
+
+    def plpy_error_mock_exception(self, message):
+        raise Exception(message)
+
+    def test_validate_module_input_params_all_nulls(self):
+        with self.assertRaises(Exception) as context:
+            self.subject.validate_module_input_params(None, None, None, None, "unittest_module")
+
+        expected_exception = Exception("unittest_module error: NULL/empty input table name!")
+        self.assertEqual(expected_exception.message, context.exception.message)
+
+    def test_validate_module_input_params_source_table_null(self):
+        with self.assertRaises(Exception) as context:
+            self.subject.validate_module_input_params(None, self.default_output_table,
+                                                      self.default_ind_var,
+                                                      self.default_dep_var,
+                                                      self.default_module)
+
+        expected_exception = "unittest_module error: NULL/empty input table name!"
+        self.assertEqual(expected_exception, context.exception.message)
+
+    @patch('validate_args.table_exists', return_value=True)
+    @patch('validate_args.table_is_empty', return_value=False)
+    def test_validate_module_input_params_output_table_null(self, mock1, mock2):
+        with self.assertRaises(Exception) as context:
+            self.subject.validate_module_input_params(self.default_source_table, None,
+                                                      self.default_ind_var,
+                                                      self.default_dep_var,
+                                                      self.default_module)
+
+        expected_exception = "unittest_module error: NULL/empty output table name!"
+        self.assertEqual(expected_exception, context.exception.message)
+
+    @patch('validate_args.table_is_empty', return_value=False)
+    @patch('validate_args.table_exists', return_value=Mock())
+    # @patch('validate_args.is_var_valid', return_value=Mock())
+    def test_validate_module_input_params_ind_var_null(self, table_exists_mock,
+                                                             table_is_empty_mock):
+        table_exists_mock.side_effect = [True, False]
+        # is_var_valid_mock.side_effect = True
+        with self.assertRaises(Exception) as context:
+            self.subject.validate_module_input_params(self.default_source_table,
+                                                      self.default_output_table,
+                                                      None,
+                                                      self.default_dep_var,
+                                                      self.default_module)
+
+        expected_exception = "unittest_module error: invalid independent_varname ('None') for source_table (source)!"
+        self.assertEqual(expected_exception, context.exception.message)
+        # is_var_valid_mock.assert_called_once_with(self.default_source_table, self.default_ind_var)
+
+    @patch('validate_args.table_exists', return_value=Mock())
+    @patch('validate_args.table_is_empty', return_value=False)
+    def test_validate_module_input_params_dep_var_null(self, table_is_empty_mock, table_exists_mock):
+        table_exists_mock.side_effect = [True, False]
+        with self.assertRaises(Exception) as context:
+            self.subject.validate_module_input_params(self.default_source_table,
+                                                      self.default_output_table,
+                                                      self.default_ind_var,
+                                                      None,
+                                                      self.default_module)
+
+        expected_exception = "unittest_module error: invalid dependent_varname ('None') for source_table (source)!"
+        self.assertEqual(expected_exception, context.exception.message)
+
+    def test_is_var_valid_all_nulls(self):
+        self.assertEqual(False, self.subject.is_var_valid(None, None))
+
+    def test_is_var_valid_var_null(self):
+        self.assertEqual(False, self.subject.is_var_valid("some_table", None))
+
+    def test_is_var_valid_var_exists_in_table(self):
+        self.assertEqual(True, self.subject.is_var_valid("some_var", "some_var"))
+
+    def test_is_var_valid_var_does_not_exist_in_table(self):
+        self.plpy_mock_execute.side_effect = Exception("var does not exist in tbl")
+        self.assertEqual(False, self.subject.is_var_valid("some_var", "some_var"))
+
+if __name__ == '__main__':
+    unittest.main()

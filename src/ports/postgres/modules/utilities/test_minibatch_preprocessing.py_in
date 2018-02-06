@@ -1,30 +1,7 @@
-# coding=utf-8
-#
-# Licensed to the Apache Software Foundation (ASF) under one
-# or more contributor license agreements.  See the NOTICE file
-# distributed with this work for additional information
-# regarding copyright ownership.  The ASF licenses this file
-# to you under the Apache License, Version 2.0 (the
-# "License"); you may not use this file except in compliance
-# with the License.  You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied.  See the License for the
-# specific language governing permissions and limitations
-# under the License.
-
-
-"""
-@file minibatch_preprocessing.py_in
-
-"""
 import unittest
 from mock import *
 import sys
+import plpy_mock as plpy
 
 m4_changequote(`<!', `!>')
 
@@ -32,15 +9,13 @@ class MiniBatchPreProcessingTestCase(unittest.TestCase):
     def setUp(self):
         self.plpy_mock = Mock(spec='error')
         patches = {
-            'plpy': self.plpy_mock,
+            'plpy': plpy
         }
-        self.plpy_mock_error = Mock(return_value=None)
-        self.plpy_mock.error = self.plpy_mock_error
 
+        # we need to use MagicMock() instead of Mock() for the plpy.execute mock
+        # to be able to iterate on the return value
         self.plpy_mock_execute = MagicMock()
-        self.plpy_mock.execute = self.plpy_mock_execute
-
-        self.plpy_mock.info = Mock()
+        plpy.execute = self.plpy_mock_execute
 
         self.module_patcher = patch.dict('sys.modules', patches)
         self.module_patcher.start()
@@ -58,41 +33,8 @@ class MiniBatchPreProcessingTestCase(unittest.TestCase):
     def tearDown(self):
         self.module_patcher.stop()
 
-    def test_minibatch_preprocessor_all_nulls(self):
-        self.subject.minibatch_preprocessor(self.default_schema_madlib, None, None, None, None, None)
-        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
-
-    def test_minibatch_preprocessor_source_table_null(self):
-        self.subject.minibatch_preprocessor(self.default_schema_madlib,
-                                            None, self.default_output_table, self.default_ind_var,
-                                            self.default_dep_var, self.default_n_elements)
-        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
-
-    def test_minibatch_preprocessor_output_table_null(self):
-        self.subject.minibatch_preprocessor(self.default_schema_madlib,
-                                            self.default_source_table, None, self.default_ind_var,
-                                            self.default_dep_var, self.default_n_elements)
-        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
-
-    def test_minibatch_preprocessor_indvar_null(self):
-        self.subject.minibatch_preprocessor(self.default_schema_madlib,
-                                            self.default_source_table, self.default_output_table, None,
-                                            self.default_dep_var, self.default_n_elements)
-        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
-
-    def test_minibatch_preprocessor_depvar_null(self):
-        self.subject.minibatch_preprocessor(self.default_schema_madlib,
-                                            self.default_source_table, self.default_output_table, self.default_ind_var,
-                                            None, self.default_n_elements)
-        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
-
-    def test_minibatch_preprocessor_elements_null(self):
-        self.subject.minibatch_preprocessor(self.default_schema_madlib,
-                                            self.default_source_table, self.default_output_table, self.default_ind_var,
-                                            self.default_dep_var, None)
-        self.plpy_mock_error.assert_called_once_with("Source table cannot be null")
-
-    def test_minibatch_preprocessor_indvar_scalar_depvar_text_passes(self):
+    @patch('minibatch_preprocessing.validate_minibatch_preprocessor_params' , return_value=Mock())
+    def test_minibatch_preprocessor_passes(self, mock1):
         self.subject.get_expr_type = MagicMock(return_value="text")
         self.subject.get_expr_type.__iter__ = Mock(return_value = iter(["not_an_array", "text"]))
         self.subject.unique_string = Mock(return_value="unique_str")
@@ -130,7 +72,153 @@ class MiniBatchPreProcessingTestCase(unittest.TestCase):
                                             "x1",
                                             "y", self.default_n_elements)
         self.assertEqual(2, self.plpy_mock_execute.call_count)
+
+        # this will assert the last call of execute
         self.plpy_mock_execute.assert_called_with(expected_sql)
+
+    @patch('minibatch_preprocessing.validate_module_input_params' , return_value=Mock())
+    def test_validate_minibatch_preprocessor_params_n_elements_null_fails(self, mock1):
+        with self.assertRaises(Exception) as context:
+            self.subject.validate_minibatch_preprocessor_params(
+                self.default_source_table,
+                self.default_output_table,
+                self.default_ind_var,
+                self.default_dep_var,
+                None)
+
+        expected_exception = "minibatch_preprocessor: The buffer size has to be a positive integer."
+        self.assertEqual(expected_exception, context.exception.message)
+
+    @patch('minibatch_preprocessing.validate_module_input_params' , return_value=Mock())
+    def test_validate_minibatch_preprocessor_params_n_elements_zero_fails(self, mock1):
+        with self.assertRaises(Exception) as context:
+            self.subject.validate_minibatch_preprocessor_params(
+
+                                        self.default_source_table,
+                                        self.default_output_table,
+                                        self.default_ind_var,
+                                        self.default_dep_var,
+                                        0)
+        expected_exception = "minibatch_preprocessor: The buffer size has to be a positive integer."
+        self.assertEqual(expected_exception, context.exception.message)
+
+    @patch('minibatch_preprocessing.validate_module_input_params' , return_value=Mock())
+    def test_validate_minibatch_preprocessor_params_n_elements_one_passes(self, mock1):
+        #not sure how to assert that an exception has not been raised
+        self.subject.validate_minibatch_preprocessor_params(
+            self.default_source_table,
+            self.default_output_table,
+            self.default_ind_var,
+            self.default_dep_var,
+            1)
+        self.assert_(True)
+
+class MinibatchQueryFormatterTestCase(unittest.TestCase):
+    def setUp(self):
+        self.plpy_mock = Mock(spec='error')
+        patches = {
+            'plpy': plpy
+        }
+
+        # we need to use MagicMock() instead of Mock() for the plpy.execute mock
+        # to be able to iterate on the return value
+        self.plpy_mock_execute = MagicMock()
+        plpy.execute = self.plpy_mock_execute
+
+        self.module_patcher = patch.dict('sys.modules', patches)
+        self.module_patcher.start()
+
+        import minibatch_preprocessing
+        self.subject = minibatch_preprocessing
+
+        self.default_schema_madlib = "madlib"
+        self.default_source_table = "source"
+        self.default_output_table = "output"
+        self.default_ind_var = "indvar"
+        self.default_dep_var = "depvar"
+
+    def tearDown(self):
+        self.module_patcher.stop()
+
+    def test_get_dep_var_array_str_text_type(self):
+        self.subject.get_expr_type = MagicMock(return_value="text")
+
+        self.plpy_mock_execute.return_value = [{"class":22},{"class":100},{"class":0}]
+
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        dep_var_array_str = query_formatter.get_dep_var_array_str(self.default_dep_var)
+
+        # get_dep_var_array_str does a string sorting on the class levels. Hence the order
+        # 0,100,22 and not 0,22,100
+        self.assertEqual("ARRAY[{0} = '0',{0} = '100',{0} = '22']::integer[]".
+                         format(self.default_dep_var), dep_var_array_str)
+
+    def test_get_dep_var_array_str_boolean_type(self):
+        self.subject.get_expr_type = MagicMock(return_value="boolean")
+
+        self.plpy_mock_execute.return_value = [{"class":3}]
+
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+
+        dep_var_array_str = query_formatter.get_dep_var_array_str(self.default_dep_var)
+
+        self.assertEqual("ARRAY[{0} = '3']::integer[]".
+                         format(self.default_dep_var), dep_var_array_str)
+
+    def test_get_dep_var_array_str_array_type(self):
+        self.subject.get_expr_type = MagicMock(return_value="some_array[]")
+
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        dep_var_array_str = query_formatter.get_dep_var_array_str(self.default_dep_var)
+
+        self.assertEqual(self.default_dep_var, dep_var_array_str)
+
+    def test_get_dep_var_array_str_other_type(self):
+        self.subject.get_expr_type = MagicMock(return_value="other")
+
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        dep_var_array_str = query_formatter.get_dep_var_array_str(self.default_dep_var)
+
+        self.assertEqual("ARRAY[{0}]".format(self.default_dep_var), dep_var_array_str)
+
+    def test_get_indep_var_array_str_one_scalar_type(self):
+        self.subject.get_expr_type = MagicMock(return_value="scalar")
+
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        ind_var_array_str = query_formatter.get_indep_var_array_str(self.default_ind_var)
+
+        self.assertEqual("ARRAY[{0}]::double precision[]".format(self.default_ind_var), ind_var_array_str)
+
+    def test_get_indep_var_array_str_one_array_type(self):
+        self.subject.get_expr_type = MagicMock(return_value="array[]")
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        ind_var_array_str = query_formatter.get_indep_var_array_str(self.default_ind_var)
+
+        self.assertEqual("ARRAY_CAT({0}, ARRAY[]::double precision[])".format(self.default_ind_var), ind_var_array_str)
+
+    def test_get_indep_var_array_str_mult_scalar_type(self):
+        self.subject.get_expr_type = MagicMock()
+        self.subject.get_expr_type.side_effect = ["scalar1","scalar2"]
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        ind_var_array_str = query_formatter.get_indep_var_array_str('x1,x2')
+
+        self.assertEqual("ARRAY[x1, x2]::double precision[]", ind_var_array_str)
+
+    def test_get_indep_var_array_str_mult_array_type(self):
+        self.subject.get_expr_type = MagicMock()
+        self.subject.get_expr_type.side_effect = ["array1[]","array2[]"]
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        ind_var_array_str = query_formatter.get_indep_var_array_str('x1,x2')
+
+        self.assertEqual("ARRAY_CAT(x2, ARRAY_CAT(x1, ARRAY[]::double precision[]))", ind_var_array_str)
+
+    def test_get_indep_var_array_str_mixed_type(self):
+        self.subject.get_expr_type = MagicMock()
+        self.subject.get_expr_type.side_effect = ["scalar","array[]"]
+        query_formatter = self.subject.MinibatchQueryFormatter(self.default_source_table)
+        ind_var_array_str = query_formatter.get_indep_var_array_str('x1,x2')
+
+        self.assertEqual("ARRAY_CAT(x2, ARRAY[x1]::double precision[])", ind_var_array_str)
 
 if __name__ == '__main__':
     unittest.main()
