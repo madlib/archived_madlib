@@ -24,7 +24,6 @@
 """
 import plpy
 from utilities import unique_string
-from utilities import strip_end_quotes
 from utilities import split_quoted_delimited_str
 from utilities import validate_module_input_params
 from utilities import _assert
@@ -32,64 +31,76 @@ from validate_args import get_expr_type
 
 m4_changequote(`<!', `!>')
 
-def minibatch_preprocessor(schema_madlib, source_table, output_table,
-                           independent_varname, dependent_varname, n_elements,
-                           **kwargs):
-    """
+class MinibatchPreProcessor:
+    def __init__(self, schema_madlib, source_table, output_table,
+                 independent_varname, dependent_varname, n_elements, **kwargs):
 
-    :param schema_madlib:
-    :param source_table:
-    :param output_table:
-    :param independent_varname:
-    :param dependent_varname:
-    :param n_elements:
-    :param kwargs:
-    :return:
-    """
-    validate_minibatch_preprocessor_params(source_table, output_table, independent_varname,
-              dependent_varname, n_elements)
+        self.schema_madlib = schema_madlib
+        self.source_table = source_table
+        self.output_table = output_table
+        self.independent_varname = independent_varname
+        self.dependent_varname = dependent_varname
+        self.n_elements = n_elements
+        self.module_name = "minibatch_preprocessor"
 
-    query_formatter = MinibatchQueryFormatter(source_table)
-    indep_var_array_str = query_formatter.get_indep_var_array_str(independent_varname)
-    dep_var_array_str = query_formatter.get_dep_var_array_str(dependent_varname)
+    def minibatch_preprocessor(self):
+        """
 
-    uq_id = "id"
-    uq_dep = "dependent_varname"
-    uq_ind = "independent_varname"
-    uq_tbl = unique_string("tbl")
+        :param schema_madlib:
+        :param source_table:
+        :param output_table:
+        :param independent_varname:
+        :param dependent_varname:
+        :param n_elements:
+        :param kwargs:
+        :return:
+        """
+        self.validate_minibatch_preprocessor_params()
 
-    sql = """
-        CREATE TABLE {output_table} AS
-        SELECT {uq_id},
-               {schema_madlib}.matrix_agg({uq_ind}) as {uq_ind},
-               {schema_madlib}.matrix_agg({uq_dep}) as {uq_dep}
-        FROM (
-            SELECT (row_number() OVER (ORDER BY random()) - 1) / {n_elements}
-                        as {uq_id},
-                    {indep_var_array_str} as {uq_ind},
-                    {dep_var_array_str} as {uq_dep}
-            FROM
-                {source_table}
-        ) {uq_tbl}
-        GROUP BY {uq_id}
-        """.format(**locals())
-    plpy.execute(sql)
+        query_formatter = MinibatchQueryFormatter(self.source_table)
+        indep_var_array_str = query_formatter.get_indep_var_array_str(self.independent_varname)
+        dep_var_array_str = query_formatter.get_dep_var_array_str(self.dependent_varname)
+
+        uq_id = "id"
+        uq_dep = "dependent_varname"
+        uq_ind = "independent_varname"
+        uq_tbl = unique_string("tbl")
+
+        sql = """
+            CREATE TABLE {output_table} AS
+            SELECT {uq_id},
+                   {schema_madlib}.matrix_agg({uq_ind}) as {uq_ind},
+                   {schema_madlib}.matrix_agg({uq_dep}) as {uq_dep}
+            FROM (
+                SELECT (row_number() OVER (ORDER BY random()) - 1) / {n_elements}
+                            as {uq_id},
+                        {indep_var_array_str} as {uq_ind},
+                        {dep_var_array_str} as {uq_dep}
+                FROM
+                    {source_table}
+            ) {uq_tbl}
+            GROUP BY {uq_id}
+            """.format(
+            schema_madlib=self.schema_madlib,
+            source_table=self.source_table,
+            output_table=self.output_table,
+            n_elements=self.n_elements,
+            **locals())
+        plpy.execute(sql)
 
 
-def validate_minibatch_preprocessor_params(source_table, output_table,
-              independent_varname, dependent_varname, n_elements):
+    def validate_minibatch_preprocessor_params(self):
 
-    validate_module_input_params(source_table, output_table,
-                                 independent_varname, dependent_varname,
-                                 'minibatch_preprocessor')
+        validate_module_input_params(self.source_table, self.output_table,
+                                     self.independent_varname, self.dependent_varname,
+                                     self.module_name)
 
-    _assert(n_elements>0, "minibatch_preprocessor: The buffer size has to be a"
-                          " positive integer.")
+        _assert(self.n_elements>0, "minibatch_preprocessor: The buffer size has to be a"
+                              " positive integer.")
 
 class MinibatchQueryFormatter:
     def __init__(self, source_table):
         self.source_table = source_table
-        pass
 
     def get_indep_var_array_str(self, independent_varname):
         array_features = []
