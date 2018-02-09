@@ -16,21 +16,24 @@ m4_include(`SQLCommon.m4')
 
 <div class="toc"><b>Contents</b>
   <ul>
-    <li><a href="#term_frequency">Term Frequency</a></li>
+    <li><a href="#function_syntax">Function Syntax</a></li>
     <li><a href="#examples">Examples</a></li>
-    <li><a href="#rel;ated">Related Topics</a></li>
+    <li><a href="#related">Related Topics</a></li>
   </ul>
 </div>
 
-@brief Provides a collection of user-defined functions for performing common
-tasks related to text.
+@brief Provides a collection of functions for performing common
+tasks related to text analytics.
 
-@anchor term_frequency
-@par Term frequency
-    Term frequency \c tf(t,d) is to the raw frequency of a word/term in a document,
-    i.e. the number of times that word/term \c t occurs in document \c d. For
-    this function, 'word' and 'term' are used interchangeably.
-    <b>Note:</b> the term frequency is not normalized by the document length.
+Term frequency computes the number of times that a word 
+or term occurs in a document.  Term frequency is often 
+used as part of a larger text processing pipeline, which may 
+include operations such as stemming, stop word removal
+and topic modelling.
+
+@anchor function_syntax
+@par Function Syntax
+ 
 <pre class="syntax">
     term_frequency(input_table,
                    doc_id_col,
@@ -43,29 +46,33 @@ tasks related to text.
 <dl class="arglist">
     <dt>input_table</dt>
     <dd>TEXT.
-    The name of the table storing the documents.
-    Each row is in the form &lt;doc_id, word_vector&gt; where \c doc_id is an id,
+    The name of the table containing the documents, with one
+    document per row.
+    Each row is in the form &lt;doc_id, word_vector&gt; where \c doc_id is an id
     unique to each document, and  \c word_vector is a text array containing the
     words in the document. The \c word_vector should contain multiple entries of
     a word if the document contains multiple occurrence of that word.
     </dd>
 
-    <dt>id_col</dt>
+    <dt>doc_id_col</dt>
     <dd>TEXT.
     The name of the column containing the document id. </dd>
 
     <dt>word_col</dt>
     <dd>TEXT.
     The name of the column containing the vector of words/terms in the
-    document. This column should of type that can be cast to TEXT[].</dd>
+    document. This column should be of type that can be cast to TEXT[].</dd>
 
     <dt>output_table</dt>
     <dd>TEXT.
     The name of the table to store the term frequency output.
     The output table contains the following columns:
-        - \c id_col: This the document id column (same as the one provided as input).
-        - \c word: A word/term present in a document. This is either the original
-        word present in \c word_col or an id representing the word (depending on the value of compute_vocab below).
+        - \c doc_id_col: This the document id column 
+        (name will be same as the one provided as input).
+        - \c word: Word/term present in a document. Depending on the value 
+        of \c compute_vocab below, this is either the original
+        word as it appears in \c word_col, or an id representing the word.
+        Note that word id's start from 0 not 1.
         - \c count: The number of times this word is found in the document.
     </dd>
 
@@ -74,175 +81,231 @@ tasks related to text.
     Flag to indicate if a vocabulary is to be created. If TRUE, an additional
     output table is created containing the vocabulary of all words, with an id
     assigned to each word. The table is called <em>output_table</em>_vocabulary
-    (suffix added to the <em>output_table</em> name) and contains the
+    (i.e., suffix added to the <em>output_table</em> name) and contains the
     following columns:
-        - \c wordid: An id assignment for each word
-        - \c word: The word/term
+        - \c wordid: An id for each word.
+        - \c word: The word/term corresponding to the id.
     </dd>
 </dl>
 
 @anchor examples
 @par Examples
 
--# Prepare datasets with some example documents
+-# First we create a document table with one document per row:
 <pre class="example">
 DROP TABLE IF EXISTS documents;
-CREATE TABLE documents(docid INTEGER, doc_contents TEXT);
+CREATE TABLE documents(docid INT4, contents TEXT);
 INSERT INTO documents VALUES
-(1, 'I like to eat broccoli and banana. I ate a banana and spinach smoothie for breakfast.'),
-(2, 'Chinchillas and kittens are cute.'),
-(3, 'My sister adopted two kittens yesterday'),
-(4, 'Look at this cute hamster munching on a piece of broccoli');
+(0, 'I like to eat broccoli and bananas. I ate a banana and spinach smoothie for breakfast.'),
+(1, 'Chinchillas and kittens are cute.'),
+(2, 'My sister adopted two kittens yesterday.'),
+(3, 'Look at this cute hamster munching on a piece of broccoli.');
 </pre>
-
--# Add a new column containing the words (lower-cased) in a text array
+You can apply stemming, stop word removal and tokenization at this point 
+in order to prepare the documents for text processing. 
+Depending upon your database version, various tools are 
+available. Databases based on more recent versions of 
+PostgreSQL may do something like:
+<pre class="example">
+SELECT tsvector_to_array(to_tsvector('english',contents)) from documents;
+</pre>
+<pre class="result">
+                    tsvector_to_array                     
++----------------------------------------------------------
+ {ate,banana,breakfast,broccoli,eat,like,smoothi,spinach}
+ {chinchilla,cute,kitten}
+ {adopt,kitten,sister,two,yesterday}
+ {broccoli,cute,hamster,look,munch,piec}
+(4 rows)
+</pre>
+In this example, we assume a database based on an older 
+version of PostgreSQL and just perform basic punctuation 
+removal and tokenization. The array of words is added as 
+a new column to the documents table:
 <pre class="example">
 ALTER TABLE documents ADD COLUMN words TEXT[];
-UPDATE documents SET words = regexp_split_to_array(lower(doc_contents), E'[\\\\s+\\\\.]');
-</pre>
-
--# Compute the frequency of each word in each document
-<pre class="example">
-DROP TABLE IF EXISTS documents_tf;
-SELECT madlib.term_frequency('documents', 'docid', 'words', 'documents_tf');
-SELECT * FROM documents_tf order by docid;
+UPDATE documents SET words = 
+    regexp_split_to_array(lower(
+    regexp_replace(contents, E'[,.;\\']','', 'g')
+    ), E'[\\\\s+]');
+\\x on   
+SELECT * FROM documents ORDER BY docid;
 </pre>
 <pre class="result">
- docid |    word    | count
--------+------------+-------
-     1 | ate        |     1
-     1 | like       |     1
-     1 | breakfast  |     1
-     1 | to         |     1
-     1 | broccoli   |     1
-     1 | spinach    |     1
-     1 | i          |     2
-     1 | and        |     2
-     1 | a          |     1
-     1 |            |     2
-     1 | smoothie   |     1
-     1 | eat        |     1
-     1 | banana     |     2
-     1 | for        |     1
-     2 | cute       |     1
-     2 | are        |     1
-     2 | kitten     |     1
-     2 | and        |     1
-     2 | chinchilla |     1
-     3 | kitten     |     1
-     3 | my         |     1
-     3 | a          |     1
-     3 | sister     |     1
-     3 | adopted    |     1
-     3 | yesterday  |     1
-     4 | at         |     1
-     4 | of         |     1
-     4 | piece      |     1
-     4 | this       |     1
-     4 | a          |     1
-     4 | broccoli   |     1
-     4 | hamster    |     1
-     4 | munching   |     1
-     4 | cute       |     1
-     4 | look       |     1
-(35 rows)
+-[ RECORD 1 ]------------------------------------------------------------------------------------
+docid    | 0
+contents | I like to eat broccoli and bananas. I ate a banana and spinach smoothie for breakfast.
+words    | {i,like,to,eat,broccoli,and,bananas,i,ate,a,banana,and,spinach,smoothie,for,breakfast}
+-[ RECORD 2 ]------------------------------------------------------------------------------------
+docid    | 1
+contents | Chinchillas and kittens are cute.
+words    | {chinchillas,and,kittens,are,cute}
+-[ RECORD 3 ]------------------------------------------------------------------------------------
+docid    | 2
+contents | My sister adopted two kittens yesterday.
+words    | {my,sister,adopted,two,kittens,yesterday}
+-[ RECORD 4 ]------------------------------------------------------------------------------------
+docid    | 3
+contents | Look at this cute hamster munching on a piece of broccoli.
+words    | {look,at,this,cute,hamster,munching,on,a,piece,of,broccoli}
 </pre>
 
--# We also can create a vocabulary of the words and store a wordid in the output
-table instead of the actual word.
+-# Compute the frequency of each word in each document:
 <pre class="example">
-DROP TABLE IF EXISTS documents_tf;
-DROP TABLE IF EXISTS documents_tf_vocabulary;
-SELECT madlib.term_frequency('documents', 'docid', 'words', 'documents_tf', TRUE);
--- Output with wordid instead of the actual words
-SELECT * FROM documents_tf order by docid;
+DROP TABLE IF EXISTS documents_tf, documents_tf_vocabulary;
+SELECT madlib.term_frequency('documents',    -- input table
+                             'docid',        -- document id
+                             'words',        -- vector of words in document
+                             'documents_tf'  -- output table
+                            );
+\\x off
+SELECT * FROM documents_tf ORDER BY docid;
+</pre>
+<pre class="result">
+ docid |    word     | count 
+-------+-------------+-------
+     0 | a           |     1
+     0 | breakfast   |     1
+     0 | banana      |     1
+     0 | and         |     2
+     0 | eat         |     1
+     0 | smoothie    |     1
+     0 | to          |     1
+     0 | like        |     1
+     0 | broccoli    |     1
+     0 | bananas     |     1
+     0 | spinach     |     1
+     0 | i           |     2
+     0 | ate         |     1
+     0 | for         |     1
+     1 | are         |     1
+     1 | cute        |     1
+     1 | kittens     |     1
+     1 | chinchillas |     1
+     1 | and         |     1
+     2 | two         |     1
+     2 | yesterday   |     1
+     2 | kittens     |     1
+     2 | sister      |     1
+     2 | my          |     1
+     2 | adopted     |     1
+     3 | this        |     1
+     3 | at          |     1
+     3 | a           |     1
+     3 | broccoli    |     1
+     3 | of          |     1
+     3 | look        |     1
+     3 | hamster     |     1
+     3 | on          |     1
+     3 | piece       |     1
+     3 | cute        |     1
+     3 | munching    |     1
+(36 rows)
+</pre>
+
+-# Next we create a vocabulary of the words 
+and store a wordid in the output table instead of the 
+actual word:
+<pre class="example">
+DROP TABLE IF EXISTS documents_tf, documents_tf_vocabulary;
+SELECT madlib.term_frequency('documents',    -- input table
+                             'docid',        -- document id
+                             'words',        -- vector of words in document
+                             'documents_tf',-- output table
+                             TRUE
+                            );
+SELECT * FROM documents_tf ORDER BY docid;
 </pre>
 \nbsp
 <pre class="result">
- docid | wordid | count
+ docid | wordid | count 
 -------+--------+-------
-     1 |      0 |     2
-     1 |      1 |     1
-     1 |      3 |     2
-     1 |      6 |     1
-     1 |      7 |     2
-     1 |      8 |     1
-     1 |      9 |     1
-     1 |     12 |     1
-     1 |     13 |     1
-     1 |     15 |     2
-     1 |     17 |     1
-     1 |     24 |     1
-     1 |     25 |     1
-     1 |     27 |     1
+     0 |     17 |     1
+     0 |      9 |     1
+     0 |     25 |     1
+     0 |     12 |     1
+     0 |     13 |     1
+     0 |     15 |     2
+     0 |      0 |     1
+     0 |      2 |     2
+     0 |     28 |     1
+     0 |      5 |     1
+     0 |      6 |     1
+     0 |      7 |     1
+     0 |      8 |     1
+     0 |     26 |     1
+     1 |     16 |     1
+     1 |     11 |     1
+     1 |     10 |     1
+     1 |      2 |     1
+     1 |      3 |     1
+     2 |     30 |     1
+     2 |      1 |     1
      2 |     16 |     1
-     2 |      3 |     1
-     2 |      4 |     1
-     2 |     10 |     1
-     2 |     11 |     1
-     3 |      1 |     1
-     3 |     16 |     1
-     3 |     28 |     1
+     2 |     20 |     1
+     2 |     24 |     1
+     2 |     29 |     1
+     3 |      4 |     1
+     3 |     21 |     1
+     3 |     22 |     1
      3 |     23 |     1
-     3 |      2 |     1
-     3 |     20 |     1
-     4 |      9 |     1
-     4 |     11 |     1
-     4 |     22 |     1
-     4 |     14 |     1
-     4 |     26 |     1
-     4 |      1 |     1
-     4 |      5 |     1
-     4 |     18 |     1
-     4 |     19 |     1
-     4 |     21 |     1
-(35 rows)
+     3 |      0 |     1
+     3 |     11 |     1
+     3 |      9 |     1
+     3 |     27 |     1
+     3 |     14 |     1
+     3 |     18 |     1
+     3 |     19 |     1
+(36 rows)
 </pre>
 \nbsp
+Note above that wordid's start 
+at 0 not 1.  The vocabulary table maps wordid to the actual word:
 <pre class="example">
--- Vocabulary
-SELECT * FROM documents_tf_vocabulary order by wordid;
+SELECT * FROM documents_tf_vocabulary ORDER BY wordid;
 </pre>
 <pre class="result">
- wordid |    word
---------+------------
-      0 |
-      1 | a
-      2 | adopted
-      3 | and
-      4 | are
-      5 | at
-      6 | ate
-      7 | banana
+ wordid |    word     
+--------+-------------
+      0 | a
+      1 | adopted
+      2 | and
+      3 | are
+      4 | at
+      5 | ate
+      6 | banana
+      7 | bananas
       8 | breakfast
       9 | broccoli
-     10 | chinchilla
+     10 | chinchillas
      11 | cute
      12 | eat
      13 | for
      14 | hamster
      15 | i
-     16 | kitten
+     16 | kittens
      17 | like
      18 | look
      19 | munching
      20 | my
      21 | of
-     22 | piece
-     23 | sister
-     24 | smoothie
-     25 | spinach
-     26 | this
-     27 | to
-     28 | yesterday
-(29 rows)
+     22 | on
+     23 | piece
+     24 | sister
+     25 | smoothie
+     26 | spinach
+     27 | this
+     28 | to
+     29 | two
+     30 | yesterday
+(31 rows)
 </pre>
 
 @anchor related
 @par Related Topics
 
-File text_utilities.sql_in documenting the SQL functions.
-File utilities.sql_in documenting the utility functions for DB administration.
+See text_utilities.sql_in for the term frequency SQL function definition 
+and porter_stemmer.sql_in for the stemmer function.
 
 */
 

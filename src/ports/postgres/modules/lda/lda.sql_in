@@ -18,11 +18,12 @@ m4_include(`SQLCommon.m4')
 
 <div class="toc"><b>Contents</b>
 <ul>
-<li><a href="#vocabulary">Vocabulary Format</a></li>
+<li><a href="#background">Background</a></li>
 <li><a href="#train">Training Function</a></li>
 <li><a href="#predict">Prediction Function</a></li>
+<li><a href="#perplexity">Perplexity</a></li>
+<li><a href="#helper">Helper Functions</a></li>
 <li><a href="#examples">Examples</a></li>
-<li><a href="#notes">Notes</a></li>
 <li><a href="#literature">Literature</a></li>
 <li><a href="#related">Related Topics</a><li>
 </ul>
@@ -30,14 +31,27 @@ m4_include(`SQLCommon.m4')
 
 @brief Generates a Latent Dirichlet Allocation predictive model for a collection of documents.
 
-
-Latent Dirichlet Allocation (LDA) is an interesting generative probabilistic
-model for natural texts and has received a lot of attention in recent years.
-The model is quite versatile, having found uses in problems like automated
+Latent Dirichlet Allocation (LDA) is a generative probabilistic
+model for natural texts.  It is used in problems such as automated
 topic discovery, collaborative filtering, and document classification.
 
+In addition to an implementation of LDA, this MADlib module also provides a 
+number of additional helper functions to interpret results of the LDA output.
+
+@note
+Topic modeling is often used as part of a larger text processing 
+pipeline, which may include operations such as term frequency, stemming and
+stop word removal.  You can use the 
+function <a href="group__grp__text__utilities.html">Term Frequency</a>
+to generate the required vocabulary format from raw documents for the 
+LDA training function. See 
+the examples later on this page for more details.
+
+@anchor background
+@par Background
+
 The LDA model posits that each document is associated with a mixture of various
-topics (e.g. a document is related to Topic 1 with probability 0.7, and Topic 2
+topics (e.g., a document is related to Topic 1 with probability 0.7, and Topic 2
 with probability 0.3), and that each word in the document is attributable to
 one of the document's topics. There is a (symmetric) Dirichlet prior with
 parameter \f$ \alpha \f$ on each document's topic mixture. In addition, there
@@ -45,7 +59,7 @@ is another (symmetric) Dirichlet prior with parameter \f$ \beta \f$ on the
 distribution of words for each topic.
 
 The following generative process then defines a distribution over a corpus of
-documents.
+documents:
 
 - Sample for each topic \f$ i \f$, a per-topic word
 distribution \f$ \phi_i \f$ from the Dirichlet(\f$\beta\f$) prior.
@@ -63,111 +77,20 @@ Dirichlet(\f$\alpha\f$) distribution.
 In practice, only the words in each document are observable. The topic mixture
 of each document and the topic for each word in each document are latent
 unobservable variables that need to be inferred from the observables, and this
-is the problem people refer to when they talk about the inference problem for
+is referred to as the inference problem for
 LDA. Exact inference is intractable, but several approximate inference
 algorithms for LDA have been developed. The simple and effective Gibbs sampling
 algorithm described in Griffiths and Steyvers [2] appears to be the current
 algorithm of choice.
 
 This implementation provides a parallel and scalable in-database solution for
-LDA based on Gibbs sampling. Different with the implementations based on MPI or
-Hadoop Map/Reduce, this implementation builds upon the shared-nothing MPP
-databases and enables high-performance in-database analytics.
-
-@anchor vocabulary
-@par Vocabulary Format
-
-The vocabulary, or dictionary, indexes all the words found in the corpus and has the following format:
-<pre>{TABLE|VIEW} <em>vocab_table</em> (
-    <em>wordid</em> INTEGER,
-    <em>word</em> TEXT
-)</pre>
-where \c wordid refers the word ID (the index of a word in the vocabulary) and
-\c word is the actual word.
-
-@usage
-- The training (i.e. topic inference) can be done with the following function:
-    <pre>
-        SELECT \ref lda_train(
-            <em>'data_table'</em>,
-            <em>'model_table'</em>,
-            <em>'output_data_table'</em>,
-            <em>voc_size</em>,
-            <em>topic_num</em>,
-            <em>iter_num</em>,
-            <em>alpha</em>,
-            <em>beta</em>)
-    </pre>
-
-    This function stores the resulting model in <tt><em>model_table</em></tt>.
-    The table has only 1 row and is in the following form:
-    <pre>{TABLE} <em>model_table</em> (
-        <em>voc_size</em> INTEGER,
-        <em>topic_num</em> INTEGER,
-        <em>alpha</em> FLOAT,
-        <em>beta</em> FLOAT,
-        <em>model</em> BIGINT[])
-    </pre>
-
-    This function also stores the topic counts and the topic assignments in
-    each document in <tt><em>output_data_table</em></tt>. The table is in the
-    following form:
-    <pre>{TABLE} <em>output_data_table</em> (
-        <em>docid</em> INTEGER,
-        <em>wordcount</em> INTEGER,
-        <em>words</em> INTEGER[],
-        <em>counts</em> INTEGER[],
-        <em>topic_count</em> INTEGER[],
-        <em>topic_assignment</em> INTEGER[])
-    </pre>
-
-- The prediction (i.e. labelling of test documents using a learned LDA model)
-  can be done with the following function:
-    <pre>
-        SELECT \ref lda_predict(
-            <em>'data_table'</em>,
-            <em>'model_table'</em>,
-            <em>'output_table'</em>);
-    </pre>
-
-    This function stores the prediction results in
-    <em>output_table</em>. Each row in the table stores the topic
-    distribution and the topic assignments for a docuemnt in the dataset.
-    The table is in the following form:
-    <pre>{TABLE} <em>output_table</em> (
-        <em>docid</em> INTEGER,
-        <em>wordcount</em> INTEGER,
-        <em>words</em> INTEGER,
-        <em>counts</em> INTEGER,
-        <em>topic_count</em> INTEGER[],
-        <em>topic_assignment</em> INTEGER[])
-    </pre>
-
-- This module also provides a function for computing the perplexity:
-    <pre>
-        SELECT \ref lda_get_perplexity(
-            <em>'model_table'</em>,
-            <em>'output_data_table'</em>);
-    </pre>
-
-@implementation
-The input format requires the user to tokenize each document into an array of
-words. This process involves tokenizing and filtering documents - a process
-out-of-scope for this module. Internally, the input data will be
-validated and then converted to the following format for efficiency:
-<pre>{TABLE} <em>__internal_data_table__</em> (
-    <em>docid</em> INTEGER,
-    <em>wordcount</em> INTEGER,
-    <em>words</em> INTEGER[],
-    <em>counts</em> INTEGER[])
-</pre>
-where \c docid is the document ID, \c wordcount is the number of words in the
-document, \c words is the list of unique words in the document, and \c counts
-is a list of the number of occurrences of each unique word in the document.
+LDA based on Gibbs sampling. It takes advantage of the shared-nothing MPP
+architecture and is a different implementation than one would find for
+MPI or map/reduce.
 
 @anchor train
 @par Training Function
-The LDA training function has the following syntax.
+The LDA training function has the following syntax:
 <pre class="syntax">
 lda_train( data_table,
            model_table,
@@ -182,23 +105,32 @@ lda_train( data_table,
 \b Arguments
 <dl class="arglist">
     <dt>data_table</dt>
-    <dd>TEXT. The name of the table storing the training dataset. Each row is
+    <dd>TEXT. Name of the table storing the training dataset. Each row is
     in the form <tt>&lt;docid, wordid, count&gt;</tt> where \c docid, \c wordid, and \c count
-    are non-negative integers.
-
+    are non-negative integers.  
     The \c docid column refers to the document ID, the \c wordid column is the
     word ID (the index of a word in the vocabulary), and \c count is the
-    number of occurrences of the word in the document.
-
-    Please note that column names for \c docid, \c wordid, and \c count are currently fixed, so you must use these
-    exact names in the data_table.</dd>
+    number of occurrences of the word in the document. Please note:
+    
+    - \c wordid must be 
+    contiguous integers going from from 0 to \c voc_size &minus; \c 1.
+    - column names for \c docid, \c wordid, and \c count are currently fixed, 
+    so you must use these exact names in the data_table.  
+    
+    The function <a href="group__grp__text__utilities.html">Term Frequency</a>
+    can be used to generate vocabulary in the required format from raw documents.
+    </dd>
 
     <dt>model_table</dt>
-    <dd>TEXT. The name of the table storing the learned models. This table has one row and the following columns.
+    <dd>TEXT. This is an output table generated by LDA which contains the learned model. 
+    It has one row with the following columns:
         <table class="output">
             <tr>
                 <th>voc_size</th>
-                <td>INTEGER. Size of the vocabulary. Note that the \c wordid should be continous integers starting from 0 to \c voc_size &minus; \c 1.  A data validation routine is called to validate the dataset.</td>
+                <td>INTEGER. Size of the vocabulary. As mentioned above for the input 
+                table, \c wordid consists of contiguous integers going 
+                from 0 to \c voc_size &minus; \c 1.  
+                </td>
             </tr>
             <tr>
                 <th>topic_num</th>
@@ -206,115 +138,286 @@ lda_train( data_table,
             </tr>
             <tr>
                 <th>alpha</th>
-                <td>DOUBLE PRECISION. Dirichlet parameter for the per-doc topic multinomial (e.g. 50/topic_num).</td>
+                <td>DOUBLE PRECISION. Dirichlet prior for the per-document 
+                topic multinomial.</td>
             </tr>
             <tr>
                 <th>beta</th>
-                <td>DOUBLE PRECISION. Dirichlet parameter for the per-topic word multinomial (e.g. 0.01).</td>
+                <td>DOUBLE PRECISION. Dirichlet prior for the per-topic 
+                word multinomial.</td>
             </tr>
             <tr>
                 <th>model</th>
-                <td>BIGINT[].</td>
+                <td>BIGINT[]. The encoded model description (not human readable).</td>
             </tr>
         </table>
     </dd>
     <dt>output_data_table</dt>
-    <dd>TEXT. The name of the table to store the output data. It has the following columns:
+    <dd>TEXT. The name of the table generated by LDA that stores 
+    the output data. It has the following columns:
         <table class="output">
             <tr>
                 <th>docid</th>
-                <td>INTEGER.</td>
+                <td>INTEGER. Document id from input 'data_table'.</td>
             </tr>
             <tr>
                 <th>wordcount</th>
-                <td>INTEGER.</td>
+                <td>INTEGER. Count of number of words in the document, 
+                including repeats. For example, if a word appears 3 times 
+                in the document, it is counted 3 times.</td>
             </tr>
             <tr>
                 <th>words</th>
-                <td>INTEGER[].</td>
+                <td>INTEGER[]. Array of \c wordid in the document, not
+                including repeats.  For example, if a word appears 3 times 
+                in the document, it appears only once in the \c words array.</td>
             </tr>
             <tr>
                 <th>counts</th>
-                <td>INTEGER[].</td>
+                <td>INTEGER[]. Frequency of occurance of a word in the document,
+                indexed the same as the \c words array above.  For example, if the
+                2nd element of the \c counts array is 4, it means that the word
+                in the 2nd element of the \c words array occurs 4 times in the
+                document.</td>
             </tr>
             <tr>
                 <th>topic_count</th>
-                <td>INTEGER[].</td>
+                <td>INTEGER[]. Array of the count of words in the document
+                that correspond to each topic.</td>
             </tr>
             <tr>
                 <th>topic_assignment</th>
-                <td>INTEGER[].</td>
+                <td>INTEGER[]. Array indicating which topic each word in the 
+                document corresponds to.  This array is of length \c  wordcount.</td>
             </tr>
         </table>
     </dd>
     <dt>voc_size</dt>
-    <dd>INTEGER. Size of the vocabulary. Note that the \c wordid should be continous integers starting from 0 to \c voc_size &minus; \c 1.  A data validation routine is called to validate the dataset.</dd>
+    <dd>INTEGER. Size of the vocabulary. As mentioned above for the 
+                input 'data_table', \c wordid consists of continous integers going 
+                from 0 to \c voc_size &minus; \c 1.   
+    </dd>
     <dt>topic_num</dt>
-    <dd>INTEGER. Number of topics.</dd>
+    <dd>INTEGER. Desired number of topics.</dd>
     <dt>iter_num</dt>
-    <dd>INTEGER. Number of iterations (e.g. 60).</dd>
+    <dd>INTEGER. Desired number of iterations.</dd>
     <dt>alpha</dt>
-    <dd>DOUBLE PRECISION. Dirichlet parameter for the per-doc topic multinomial (e.g. 50/topic_num).</dd>
+    <dd>DOUBLE PRECISION. Dirichlet prior for the per-document topic 
+    multinomial (e.g., 50/topic_num is a typical value to start with).</dd>
     <dt>beta</dt>
-    <dd>DOUBLE PRECISION. Dirichlet parameter for the per-topic word multinomial (e.g. 0.01).</dd>
+    <dd>DOUBLE PRECISION. Dirichlet prior for the per-topic 
+    word multinomial (e.g., 0.01 is a typical value to start with).</dd>
 </dl>
 
 @anchor predict
 @par Prediction Function
 
-Prediction&mdash;labelling test documents using a learned LDA model&mdash;is accomplished with the following function:
+Prediction involves labelling test documents using a learned LDA model:
 <pre class="syntax">
 lda_predict( data_table,
              model_table,
-             output_table
+             output_predict_table
            );
 </pre>
-
-This function stores the prediction results in
-<tt><em>output_table</em></tt>. Each row in the table stores the topic
-distribution and the topic assignments for a document in the dataset. The
-table has the following columns:
-<table class="output">
-    <tr>
-        <th>docid</th>
-        <td>INTEGER.</td>
-    </tr>
-    <tr>
-        <th>wordcount</th>
-        <td>INTEGER.</td>
-    </tr>
-    <tr>
-        <th>words</th>
-        <td>INTEGER[]. List of word IDs in this document.</td>
-    </tr>
-    <tr>
-        <th>counts</th>
-        <td>INTEGER[]. List of word counts in this document.</td>
-    </tr>
-    <tr>
-        <th>topic_count</th>
-        <td>INTEGER[]. Of length topic_num, list of topic counts in this document.</td>
-    </tr>
-    <tr>
-        <th>topic_assignment</th>
-        <td>INTEGER[]. Of length wordcount, list of topic index for each word.</td>
-    </tr>
-</table>
+\b Arguments
+<dl class="arglist">
+<dt>data_table</dt>
+    <dd>TEXT. Name of the table storing the test dataset 
+    (new document to be labeled).
+    </dd>
+<dt>model_table</dt>
+    <dd>TEXT. The model table generated by the training process.
+    </dd>
+<dt>output_predict_table</dt>
+    <dd>TEXT. The prediction output table. 
+    Each row in the table stores the topic 
+    distribution and the topic assignments for a 
+    document in the dataset. This table has the exact 
+    same columns and interpretation as 
+    the 'output_data_table' from the training function above. 
+    </dd>
+</dl>
 
 @anchor perplexity
-@par Perplexity Function
-This module provides a function for computing the perplexity.
+@par Perplexity
+Perplexity describes how well the model fits the data by 
+computing word likelihoods averaged over the test documents.
+This function returns a single perplexity value. 
 <pre class="syntax">
 lda_get_perplexity( model_table,
-                    output_data_table
+                    output_predict_table
                   );
 </pre>
+\b Arguments
+<dl class="arglist">
+<dt>model_table</dt>
+    <dd>TEXT. The model table generated by the training process.
+    </dd>
+<dt>output_predict_table</dt>
+    <dd>TEXT. The prediction output table generated by the 
+    predict function above.
+    </dd>
+</dl>
 
+@anchor helper
+@par Helper Functions
+
+The helper functions can help to interpret the output 
+from LDA training and LDA prediction.
+
+<b>Topic description by top-k words</b>
+
+Applies to LDA training only.
+
+<pre class="syntax">
+lda_get_topic_desc( model_table,
+                    vocab_table,
+                    output_table,
+                    top_k
+                  )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>model_table</dt>
+    <dd>TEXT. The model table generated by the training process.
+    </dd>
+<dt>vocab_table</dt>
+    <dd>TEXT. The vocabulary table in the form <wordid, word>. 
+    </dd>
+<dt>output_table</dt>
+    <dd>TEXT. The output table with per-topic description
+    generated by this helper function.  
+    It has the following columns:
+        <table class="output">
+            <tr>
+                <th>topicid</th>
+                <td>INTEGER. Topic id.</td>
+            </tr>
+            <tr>
+                <th>wordid</th>
+                <td>INTEGER. Word id.</td>
+            </tr>
+            <tr>
+                <th>prob</th>
+                <td>DOUBLE PRECISION. Probability that this topic
+                will generate the word.</td>
+            </tr>
+            <tr>
+                <th>word</th>
+                <td>TEXT. Word in text form.</td>
+            </tr>
+        </table>
+    </dd>
+<dt>top_k</dt>
+    <dd>TEXT. The desired number of top words to show for each topic.
+    </dd>
+</dl>
+
+<b>Per-word topic counts</b>
+
+Applies to LDA training only.
+
+<pre class="syntax">
+lda_get_word_topic_count( model_table,
+                          output_table
+                        )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>model_table</dt>
+    <dd>TEXT. The model table generated by the training process.
+    </dd>
+<dt>output_table</dt>
+    <dd>TEXT. The output table with per-word topic counts
+        generated by this helper function. 
+        It has the following columns:
+        <table class="output">
+            <tr>
+                <th>wordid</th>
+                <td>INTEGER. Word id.</td>
+            </tr>
+            <tr>
+                <th>topic_count</th>
+                <td>INTEGER[]. Count of word association with each topic, i.e.,
+                shows how many times a given word is 
+                assigned to a topic. Array is of length number of topics.</td>
+            </tr>
+        </table>
+    </dd>
+</dl>
+
+<b>Per-topic word counts</b>
+
+Applies to LDA training only.
+
+<pre class="syntax">
+lda_get_topic_word_count( model_table,
+                          output_table
+                        )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>model_table</dt>
+    <dd>TEXT. The model table generated by the training process.
+    </dd>
+<dt>output_table</dt>
+    <dd>TEXT. The output table with per-topic word counts
+        generated by this helper function. 
+        It has the following columns:
+        <table class="output">
+            <tr>
+                <th>topicid</th>
+                <td>INTEGER. Topic id.</td>
+            </tr>
+            <tr>
+                <th>word_count</th>
+                <td>INTEGER[]. Array showing which words are associated with the topic
+                by frequency. Array is of length number of words.</td>
+            </tr>
+        </table>
+    </dd>
+</dl>
+
+<b>Per-document word to topic mapping</b>
+
+Applies to both LDA training and LDA prediction.
+
+<pre class="syntax">
+lda_get_word_topic_mapping( output_data_table,  -- From training or prediction
+                            output_table
+                          )
+</pre>
+\b Arguments
+<dl class="arglist">
+<dt>output_data_table</dt>
+    <dd>TEXT. The output data table generated by either LDA training
+    or LDA prediction.
+    </dd>
+<dt>output_table</dt>
+    <dd>TEXT. The output table with word to topic mappings
+        generated by this helper function. 
+        It has the following columns:
+        <table class="output">
+            <tr>
+                <th>docid</th>
+                <td>INTEGER. Document id.</td>
+            </tr>
+            <tr>
+                <th>wordid</th>
+                <td>INTEGER. Word id.</td>
+            </tr>
+            <tr>
+                <th>topicid</th>
+                <td>INTEGER. Topic id.</td>
+            </tr>
+        </table>
+    </dd>
+</dl>
 
 @anchor examples
 @examp
 
--# Prepare a training dataset for LDA. The examples below are small strings extracted from various Wikipedia documents .
+-# Prepare a training dataset for LDA. The examples below are small strings extracted from various Wikipedia documents:
 <pre class="example">
 DROP TABLE IF EXISTS documents;
 CREATE TABLE documents(docid INT4, contents TEXT);
@@ -322,183 +425,468 @@ INSERT INTO documents VALUES
 (0, 'Statistical topic models are a class of Bayesian latent variable models, originally developed for analyzing the semantic content of large document corpora.'),
 (1, 'By the late 1960s, the balance between pitching and hitting had swung in favor of the pitchers. In 1968 Carl Yastrzemski won the American League batting title with an average of just .301, the lowest in history.'),
 (2, 'Machine learning is closely related to and often overlaps with computational statistics; a discipline that also specializes in prediction-making. It has strong ties to mathematical optimization, which deliver methods, theory and application domains to the field.'),
-(3, 'California''s diverse geography ranges from the Sierra Nevada in the east to the Pacific Coast in the west, from the Redwood–Douglas fir forests of the northwest, to the Mojave Desert areas in the southeast. The center of the state is dominated by the Central Valley, a major agricultural area. ');
+(3, 'California''s diverse geography ranges from the Sierra Nevada in the east to the Pacific Coast in the west, from the Redwood–Douglas fir forests of the northwest, to the Mojave Desert areas in the southeast. The center of the state is dominated by the Central Valley, a major agricultural area.');
 </pre>
-
+You can apply stemming, stop word removal and tokenization 
+at this point in order to prepare the documents for text 
+processing. Depending upon your database version, various 
+tools are available. Databases based on more recent 
+versions of PostgreSQL may do something like:
+<pre class="example">
+SELECT tsvector_to_array(to_tsvector('english',contents)) from documents;
+</pre>
+<pre class="result">
+                        tsvector_to_array
++-----------------------------------------------------------------------
+ {analyz,bayesian,class,content,corpora,develop,document,larg,...}
+ {1960s,1968,301,american,averag,balanc,bat,carl,favor,histori,...}
+ {also,applic,close,comput,deliv,disciplin,domain,field,learn,...}
+ {agricultur,area,california,center,central,coast,desert,divers,...}
+(4 rows)
+</pre>
+In this example, we assume a database based on an older 
+version of PostgreSQL and just perform basic punctuation removal 
+and tokenization. The array of words is added as a new column 
+to the documents table:
+<pre class="example">
+ALTER TABLE documents ADD COLUMN words TEXT[];
+UPDATE documents SET words = 
+    regexp_split_to_array(lower(
+    regexp_replace(contents, E'[,.;\']','', 'g')
+    ), E'[\\\\s+]');
+SELECT * FROM documents ORDER BY docid;
+</pre>
+<pre class="result">
+-[ RECORD 1 ]---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+docid    | 0
+contents | Statistical topic models are a class of Bayesian latent variable models, originally developed for analyzing the semantic content of large document corpora.
+words    | {statistical,topic,models,are,a,class,of,bayesian,latent,variable,models,originally,developed,for,analyzing,the,semantic,content,of,large,document,corpora}
+-[ RECORD 2 ]---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+docid    | 1
+contents | By the late 1960s, the balance between pitching and hitting had swung in favor of the pitchers. In 1968 Carl Yastrzemski won the American League batting title with an average of just .301, the lowest in history.
+words    | {by,the,late,1960s,the,balance,between,pitching,and,hitting,had,swung,in,favor,of,the,pitchers,in,1968,carl,yastrzemski,won,the,american,league,batting,title,with,an,average,of,just,301,the,lowest,in,history}
+-[ RECORD 3 ]---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+docid    | 2
+contents | Machine learning is closely related to and often overlaps with computational statistics; a discipline that also specializes in prediction-making. It has strong ties to mathematical optimization, which deliver methods, theory and application domains to the field.
+words    | {machine,learning,is,closely,related,to,and,often,overlaps,with,computational,statistics,a,discipline,that,also,specializes,in,prediction-making,it,has,strong,ties,to,mathematical,optimization,which,deliver,methods,theory,and,application,domains,to,the,field}
+-[ RECORD 4 ]---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+docid    | 3
+contents | California's diverse geography ranges from the Sierra Nevada in the east to the Pacific Coast in the west, from the Redwood–Douglas fir forests of the northwest, to the Mojave Desert areas in the southeast. The center of the state is dominated by the Central Valley, a major agricultural area.
+words    | {californias,diverse,geography,ranges,from,the,sierra,nevada,in,the,east,to,the,pacific,coast,in,the,west,from,the,redwood–douglas,fir,forests,of,the,northwest,to,the,mojave,desert,areas,in,the,southeast,the,center,of,the,state,is,dominated,by,the,central,valley,a,major,agricultural,area}
+</pre>
 -# Build a word count table by extracting the words and building a histogram for
 each document using the \c term_frequency function (\ref grp_text_utilities).
 <pre class="example">
--- Convert a string to a list of words
-ALTER TABLE documents ADD COLUMN words TEXT[];
-UPDATE documents SET words = regexp_split_to_array(lower(contents), E'[\\\\s+\\\\.\\\\,]');
-\nbsp
--- Create the term frequency table
-DROP TABLE IF EXISTS my_training, my_training_vocabulary;
-SELECT madlib.term_frequency('documents', 'docid', 'words', 'my_training', TRUE);
-SELECT * FROM my_training order by docid limit 20;
+DROP TABLE IF EXISTS documents_tf, documents_tf_vocabulary;
+SELECT madlib.term_frequency('documents',    -- input table
+                             'docid',        -- document id column
+                             'words',        -- vector of words in document
+                             'documents_tf', -- output documents table with term frequency
+                             TRUE);          -- TRUE to created vocabulary table
+SELECT * FROM documents_tf ORDER BY docid LIMIT 20;
 </pre>
 <pre class="result">
- docid | wordid | count
+ docid | wordid | count 
 -------+--------+-------
-     0 |     57 |     1
-     0 |     86 |     1
-     0 |      4 |     1
-     0 |     55 |     1
-     0 |     69 |     2
-     0 |     81 |     1
-     0 |     30 |     1
-     0 |     33 |     1
-     0 |     36 |     1
-     0 |     43 |     1
-     0 |     25 |     1
-     0 |     65 |     2
-     0 |     72 |     1
-     0 |      9 |     1
-     0 |      0 |     2
+     0 |     71 |     1
+     0 |     90 |     1
+     0 |     56 |     1
+     0 |     68 |     2
+     0 |     85 |     1
+     0 |     28 |     1
+     0 |     35 |     1
+     0 |     54 |     1
+     0 |     64 |     2
+     0 |      8 |     1
      0 |     29 |     1
-     0 |     18 |     1
-     0 |     12 |     1
-     0 |     96 |     1
-     0 |     91 |     1
+     0 |     80 |     1
+     0 |     24 |     1
+     0 |     11 |     1
+     0 |     17 |     1
+     0 |     32 |     1
+     0 |      3 |     1
+     0 |     42 |     1
+     0 |     97 |     1
+     0 |     95 |     1
 (20 rows)
 </pre>
+Here is the associated vocabulary table. Note that wordid starts at 0:
 <pre class="example">
-SELECT * FROM my_training_vocabulary order by wordid limit 20;
+SELECT * FROM documents_tf_vocabulary ORDER BY wordid LIMIT 20;
 </pre>
 <pre class="result">
- wordid |     word
+ wordid |     word     
 --------+--------------
-      0 |
-      1 | 1960s
-      2 | 1968
-      3 | 301
-      4 | a
-      5 | agricultural
-      6 | also
-      7 | american
-      8 | an
-      9 | analyzing
-     10 | and
-     11 | application
-     12 | are
-     13 | area
-     14 | areas
-     15 | average
-     16 | balance
-     17 | batting
-     18 | bayesian
-     19 | between
+      0 | 1960s
+      1 | 1968
+      2 | 301
+      3 | a
+      4 | agricultural
+      5 | also
+      6 | american
+      7 | an
+      8 | analyzing
+      9 | and
+     10 | application
+     11 | are
+     12 | area
+     13 | areas
+     14 | average
+     15 | balance
+     16 | batting
+     17 | bayesian
+     18 | between
+     19 | by
 (20 rows)
 </pre>
-
--# Create an LDA model using the \c lda_train() function.
+The total number of words in the vocabulary across all documents is:
 <pre class="example">
-DROP TABLE IF EXISTS my_model, my_outdata;
-SELECT madlib.lda_train( 'my_training',
-                         'my_model',
-                         'my_outdata',
-                         104,
-                         5,
-                         10,
-                         5,
-                         0.01
+SELECT COUNT(*) FROM documents_tf_vocabulary;
+</pre>
+<pre class="result">
+ count 
++------
+   103
+(1 row)
+</pre>
+-# Train LDA model.  For Dirichlet priors we use initial 
+rule-of-thumb values of 50/(number of topics) for alpha 
+and 0.01 for beta.
+Reminder that column names for docid, wordid, and count 
+are currently fixed, so you must use these exact names 
+in the input table. After a successful run of the LDA 
+training function two tables are generated, one for 
+storing the learned model and the other for storing 
+the output data table.
+<pre class="example">
+DROP TABLE IF EXISTS lda_model, lda_output_data;
+SELECT madlib.lda_train( 'documents_tf',     -- documents table in the form of term frequency
+                         'lda_model',        -- model table created by LDA training (not human readable)
+                         'lda_output_data',  -- readable output data table 
+                         103,                -- vocabulary size
+                         5,                  -- number of topics
+                         10,                 -- number of iterations
+                         5,                  -- Dirichlet prior for the per-doc topic multinomial (alpha)
+                         0.01                -- Dirichlet prior for the per-topic word multinomial (beta)
                        );
+SELECT * FROM lda_output_data ORDER BY docid;
 </pre>
-Reminder that column names for \c docid, \c wordid, and \c count are currently fixed,
-so you must use these exact names in the input table.
-After a successful run of the lda_train() function two tables are generated,
-one for storing the learned model and the other for storing the output data table.
+<pre class="result">
+-[ RECORD 1 ]----+------------------------------------------------------------------------------------------------------
+docid            | 0
+wordcount        | 22
+words            | {24,17,11,95,90,85,68,54,42,35,28,8,3,97,80,71,64,56,32,29}
+counts           | {1,1,1,1,1,1,2,1,1,1,1,1,1,1,1,1,2,1,1,1}
+topic_count      | {4,2,4,3,9}
+topic_assignment | {4,2,4,1,2,1,2,2,0,3,4,4,3,0,0,4,0,4,4,4,3,4}
+-[ RECORD 2 ]----+------------------------------------------------------------------------------------------------------
+docid            | 1
+wordcount        | 37
+words            | {1,50,49,46,19,16,14,9,7,0,90,68,57,102,101,100,93,88,75,74,59,55,53,48,39,21,18,15,6,2}
+counts           | {1,3,1,1,1,1,1,1,1,1,5,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
+topic_count      | {2,5,14,9,7}
+topic_assignment | {0,3,3,3,1,4,2,2,2,1,3,1,2,2,2,2,2,2,2,1,4,3,2,0,4,2,4,2,3,4,3,1,3,4,3,2,4}
+-[ RECORD 3 ]----+------------------------------------------------------------------------------------------------------
+docid            | 2
+wordcount        | 36
+words            | {10,27,33,40,47,51,58,62,63,69,72,83,100,99,94,92,91,90,89,87,86,79,76,70,60,52,50,36,30,25,9,5,3}
+counts           | {1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1}
+topic_count      | {15,10,1,7,3}
+topic_assignment | {0,3,1,3,0,0,3,3,1,0,1,0,0,0,0,1,1,0,4,2,0,4,1,0,1,0,0,4,3,3,3,0,1,1,1,0}
+-[ RECORD 4 ]----+------------------------------------------------------------------------------------------------------
+docid            | 3
+wordcount        | 49
+words            | {77,78,81,82,67,65,51,45,44,43,34,26,13,98,96,94,90,84,73,68,66,61,50,41,38,37,31,23,22,20,19,12,4,3}
+counts           | {1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,2,11,1,1,2,1,1,3,1,1,1,1,1,1,1,1,1,1,1}
+topic_count      | {5,5,26,5,8}
+topic_assignment | {4,4,4,0,2,0,0,2,4,4,2,2,2,1,2,4,1,0,2,2,2,2,2,2,2,2,2,2,2,1,2,2,2,2,4,3,3,3,2,3,2,3,2,1,4,2,2,1,0}
+</pre>
 
--# To get the detailed information about the learned model, run these commands:
+-# Review learned model using helper functions.
+First, we get topic description by top-k words. These are 
+the k words with the highest probability for the topic.
+Note that if there are ties in probability, more than k 
+words may actually be reported for each topic. Also note 
+that topicid starts at 0:
 <pre class="example">
--- The topic description by top-k words
-DROP TABLE IF EXISTS my_topic_desc;
-SELECT madlib.lda_get_topic_desc( 'my_model',
-                                  'my_training_vocabulary',
-                                  'my_topic_desc',
-                                  15);
-select * from my_topic_desc order by topicid, prob DESC;
+DROP TABLE IF EXISTS helper_output_table;
+SELECT madlib.lda_get_topic_desc( 'lda_model',                -- LDA model generated in training
+                                  'documents_tf_vocabulary',  -- vocabulary table that maps wordid to word
+                                  'helper_output_table',      -- output table for per-topic descriptions
+                                  5);                         -- k: number of top words for each topic
+SELECT * FROM helper_output_table ORDER BY topicid, prob DESC LIMIT 40;
 </pre>
 <pre class="result">
- topicid | wordid |        prob        |       word
+ topicid | wordid |        prob        |       word        
 ---------+--------+--------------------+-------------------
-       1 |     69 |  0.181900726392252 | of
-       1 |     52 | 0.0608353510895884 | is
-       1 |     65 | 0.0608353510895884 | models
-       1 |     30 | 0.0305690072639225 | corpora
-       1 |      1 | 0.0305690072639225 | 1960s
-       1 |     57 | 0.0305690072639225 | latent
-       1 |     35 | 0.0305690072639225 | diverse
-       1 |     81 | 0.0305690072639225 | semantic
-       1 |     19 | 0.0305690072639225 | between
-       1 |     75 | 0.0305690072639225 | pitchers
-       1 |     43 | 0.0305690072639225 | for
-       1 |      6 | 0.0305690072639225 | also
-       1 |     40 | 0.0305690072639225 | favor
-       1 |     47 | 0.0305690072639225 | had
-       1 |     28 | 0.0305690072639225 | computational
-       ....
+       0 |      3 |  0.111357750647429 | a
+       0 |     51 |  0.074361820199778 | is
+       0 |     94 |  0.074361820199778 | to
+       0 |     70 | 0.0373658897521273 | optimization
+       0 |     82 | 0.0373658897521273 | southeast
+       0 |     60 | 0.0373658897521273 | machine
+       0 |     71 | 0.0373658897521273 | originally
+       0 |     69 | 0.0373658897521273 | often
+       0 |     99 | 0.0373658897521273 | which
+       0 |     83 | 0.0373658897521273 | specializes
+       0 |      1 | 0.0373658897521273 | 1968
+       0 |     97 | 0.0373658897521273 | variable
+       0 |     25 | 0.0373658897521273 | closely
+       0 |     93 | 0.0373658897521273 | title
+       0 |     47 | 0.0373658897521273 | has
+       0 |     65 | 0.0373658897521273 | mojave
+       0 |     79 | 0.0373658897521273 | related
+       0 |     89 | 0.0373658897521273 | that
+       0 |     10 | 0.0373658897521273 | application
+       0 |    100 | 0.0373658897521273 | with
+       0 |     92 | 0.0373658897521273 | ties
+       0 |     54 | 0.0373658897521273 | large
+       1 |     94 |  0.130699088145897 | to
+       1 |      9 |  0.130699088145897 | and
+       1 |      5 | 0.0438558402084238 | also
+       1 |     57 | 0.0438558402084238 | league
+       1 |     49 | 0.0438558402084238 | hitting
+       1 |     13 | 0.0438558402084238 | areas
+       1 |     39 | 0.0438558402084238 | favor
+       1 |     85 | 0.0438558402084238 | statistical
+       1 |     95 | 0.0438558402084238 | topic
+       1 |      0 | 0.0438558402084238 | 1960s
+       1 |     76 | 0.0438558402084238 | prediction-making
+       1 |     86 | 0.0438558402084238 | statistics
+       1 |     84 | 0.0438558402084238 | state
+       1 |     72 | 0.0438558402084238 | overlaps
+       1 |     22 | 0.0438558402084238 | center
+       1 |      4 | 0.0438558402084238 | agricultural
+       1 |     63 | 0.0438558402084238 | methods
+       1 |     33 | 0.0438558402084238 | discipline
+(40 rows)
 </pre>
-\nbsp
+Get the per-word topic counts.  This mapping shows how 
+many times a given word is assigned to a topic.  E.g., 
+wordid 3 is assigned to topicid 0 three times: 
 <pre class="example">
--- The per-word topic counts (sorted by topic id)
-DROP TABLE IF EXISTS my_word_topic_count;
-SELECT madlib.lda_get_word_topic_count( 'my_model',
-                                        'my_word_topic_count');
-SELECT * FROM my_word_topic_count ORDER BY wordid;
+DROP TABLE IF EXISTS helper_output_table;
+SELECT madlib.lda_get_word_topic_count( 'lda_model',            -- LDA model generated in training
+                                        'helper_output_table'); -- output table for per-word topic counts
+SELECT * FROM helper_output_table ORDER BY wordid LIMIT 20;
 </pre>
-\nbsp
 <pre class="result">
- wordid | topic_count
---------+--------------
-      0 | {0,17,0,0,0}
+ wordid | topic_count 
+--------+-------------
+      0 | {0,1,0,0,0}
       1 | {1,0,0,0,0}
-      2 | {0,0,0,0,1}
-      3 | {0,0,0,0,1}
-      4 | {0,0,0,0,3}
+      2 | {1,0,0,0,0}
+      3 | {3,0,0,0,0}
+      4 | {0,0,0,0,1}
       5 | {0,1,0,0,0}
       6 | {1,0,0,0,0}
-      7 | {1,0,0,0,0}
-      8 | {0,0,0,1,0}
-      9 | {1,0,0,0,0}
-     10 | {0,0,0,0,3}
-     11 | {0,0,1,0,0}
-     ....
+      7 | {0,0,0,1,0}
+      8 | {0,1,0,0,0}
+      9 | {0,0,0,3,0}
+     10 | {1,0,0,0,0}
+     11 | {1,0,0,0,0}
+     12 | {0,0,1,0,0}
+     13 | {0,0,0,0,1}
+     14 | {0,1,0,0,0}
+     15 | {0,0,0,0,1}
+     16 | {0,1,0,0,0}
+     17 | {0,0,1,0,0}
+     18 | {1,0,0,0,0}
+     19 | {2,0,0,0,0}
+(20 rows)
 </pre>
-
--# To get the topic counts and the topic assignments for each doucment, run the following commands:
+Get the per-topic word counts.   This mapping shows 
+which words are associated with each topic by frequency:
 <pre class="example">
--- The per-document topic assignments and counts:
-SELECT docid, topic_assignment, topic_count FROM my_outdata;
+DROP TABLE IF EXISTS topic_word_count;
+SELECT madlib.lda_get_topic_word_count( 'lda_model',
+                                        'topic_word_count');
+SELECT * FROM topic_word_count ORDER BY topicid;
 </pre>
 <pre class="result">
- docid |                                                topic_assignment                                                 |  topic_count
--------+-----------------------------------------------------------------------------------------------------------------+----------------
-     1 | {1,1,1,1,1,1,2,4,1,4,4,4,1,0,2,1,0,2,2,3,4,2,1,1,4,2,4,3,0,0,2,4,4,3,3,3,3,3,0,1,0,4}                           | {6,12,7,7,10}
-     3 | {1,1,1,1,1,1,4,0,2,3,1,2,0,0,0,1,2,2,1,3,3,2,2,1,2,2,2,0,3,0,4,1,0,0,1,4,3,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,3} | {8,12,10,21,4}
-     0 | {1,1,4,2,1,4,4,4,1,3,1,0,0,0,0,0,0,0,0,1,1,3,0,1}                                                               | {9,8,1,2,4}
-     2 | {1,1,1,1,4,1,4,4,2,0,2,4,1,1,4,1,2,0,1,3,1,2,4,3,2,4,4,3,1,2,0,3,3,1,4,3,3,3,2,1}                               | {3,13,7,8,9}
-(4 rows)
+-[ RECORD 1 ]----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+topicid    | 1
+word_count | {1,1,0,0,0,0,0,1,1,0,1,0,0,0,0,1,0,0,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,0,0,1,0,1,1,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,1,0,0,0,0,1,0,1,0,1,0,0,1,1,0,0,0,0,0,0,0,1,0}
+-[ RECORD 2 ]----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+topicid    | 2
+word_count | {0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,1,0,0,0,0,1,0,1,0,1,1,2,0,1,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,1,0,0,0,0,4,0,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,1,0,0,0,0,0,0,0,5,0,1,0,0,1,0,0,0}
+-[ RECORD 3 ]----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+topicid    | 3
+word_count | {0,0,0,0,0,0,0,0,0,3,0,1,0,1,1,0,0,0,0,2,0,0,0,0,1,0,0,1,0,1,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,1,0,0,2,1,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0}
+-[ RECORD 4 ]----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+topicid    | 4
+word_count | {0,0,1,0,0,1,1,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,1,0,0,1,0,0,1,0,0,0,1,0,0,1,1,1,0,0,0,1,0,0,0,0,0,0,1,0,7,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,1,0,0,0,0,1,0,0,0,0,1,1,1,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1}
+-[ RECORD 5 ]----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+topicid    | 5
+word_count | {0,0,0,3,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,1,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,18,0,0,0,0,0,0,0,1,0,2,0,0}
+</pre>
+Get the per-document word to topic mapping:
+<pre class="example">
+DROP TABLE IF EXISTS helper_output_table;
+SELECT madlib.lda_get_word_topic_mapping('lda_output_data',  -- Output table from training
+                                         'helper_output_table');
+SELECT * FROM helper_output_table ORDER BY docid LIMIT 40;
+</pre>
+<pre class="result">
+ docid | wordid | topicid 
+-------+--------+---------
+     0 |     56 |       1
+     0 |     54 |       1
+     0 |     42 |       2
+     0 |     35 |       1
+     0 |     32 |       1
+     0 |     29 |       3
+     0 |     28 |       4
+     0 |     24 |       3
+     0 |     17 |       2
+     0 |     11 |       0
+     0 |      8 |       1
+     0 |      3 |       0
+     0 |     97 |       0
+     0 |     95 |       3
+     0 |     90 |       0
+     0 |     85 |       0
+     0 |     80 |       2
+     0 |     71 |       2
+     0 |     68 |       0
+     0 |     64 |       1
+     1 |      2 |       0
+     1 |      1 |       0
+     1 |      0 |       1
+     1 |    102 |       4
+     1 |    101 |       2
+     1 |    100 |       1
+     1 |     93 |       3
+     1 |     90 |       2
+     1 |     90 |       0
+     1 |     88 |       1
+     1 |     75 |       1
+     1 |     74 |       3
+     1 |     68 |       0
+     1 |     59 |       2
+     1 |     57 |       4
+     1 |     55 |       3
+     1 |     53 |       3
+     1 |     50 |       0
+     1 |     49 |       1
+     1 |     48 |       0
+(40 rows)
 </pre>
 
--# To use a learned LDA model for prediction (that is, to label new documents), use the following command:
+-# Use a learned LDA model for prediction (that is, to label new documents). 
+In this example, we use the same input table as we used to train, just for 
+demonstration purpose. Normally, the test document is a new one that 
+we want to predict on.
 <pre class="example">
-SELECT madlib.lda_predict( 'my_testing',
-                           'my_model',
-                           'my_pred'
+DROP TABLE IF EXISTS outdata_predict;
+SELECT madlib.lda_predict( 'documents_tf',          -- Document to predict
+                           'lda_model',             -- LDA model from training
+                           'outdata_predict'        -- Output table for predict results         
                          );
+SELECT * FROM outdata_predict;
 </pre>
-The test table (<em>my_testing</em>) is expected to be in the same form as the
-training table (<em>my_training</em>) and can be created with the same process.
-After a successful run of the lda_predict() function, the prediction results
-are generated and stored in <em>my_pred</em>. This table has the same
-schema as the <em>my_outdata</em> table generated by the lda_train() function.
+<pre class="result">
+-[ RECORD 1 ]----+------------------------------------------------------------------------------------------------------
+docid            | 0
+wordcount        | 22
+words            | {17,11,28,29,95,3,32,97,85,35,54,80,64,90,8,24,42,71,56,68}
+counts           | {1,1,1,1,1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,2}
+topic_count      | {1,3,16,1,1}
+topic_assignment | {2,2,1,0,2,2,2,3,2,2,2,2,2,2,4,2,2,2,2,2,1,1}
+-[ RECORD 2 ]----+------------------------------------------------------------------------------------------------------
+docid            | 1
+wordcount        | 37
+words            | {90,101,2,88,6,7,75,46,74,68,39,9,48,49,102,50,59,53,55,57,100,14,15,16,18,19,93,21,0,1}
+counts           | {5,1,1,1,1,1,1,1,1,2,1,1,1,1,1,3,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
+topic_count      | {0,1,11,6,19}
+topic_assignment | {4,4,4,4,4,4,4,4,4,2,4,2,2,1,3,2,2,4,4,4,3,3,3,4,3,3,2,4,4,2,2,4,2,4,2,4,2}
+-[ RECORD 3 ]----+------------------------------------------------------------------------------------------------------
+docid            | 2
+wordcount        | 36
+words            | {90,3,5,9,10,25,27,30,33,36,40,47,50,51,52,58,60,62,63,69,70,72,76,79,83,86,87,89,91,92,94,99,100}
+counts           | {1,1,1,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,3,1,1}
+topic_count      | {26,3,5,1,1}
+topic_assignment | {4,0,0,2,2,0,0,0,0,2,0,0,0,3,0,0,0,0,0,0,0,0,0,2,0,2,0,0,0,0,0,1,1,1,0,0}
+-[ RECORD 4 ]----+------------------------------------------------------------------------------------------------------
+docid            | 3
+wordcount        | 49
+words            | {41,38,3,77,78,94,37,81,82,19,84,34,96,13,31,98,90,51,26,61,23,22,50,65,66,67,45,44,68,4,12,43,20,73}
+counts           | {1,1,1,1,1,2,1,1,1,1,1,1,1,1,1,1,11,1,1,1,1,1,3,1,1,1,1,2,2,1,1,1,1,1}
+topic_count      | {0,28,0,4,17}
+topic_assignment | {1,1,4,1,1,1,1,1,1,4,1,1,1,3,1,1,1,4,4,4,4,4,4,4,4,4,4,4,4,1,1,1,4,3,3,3,1,1,4,4,1,1,1,1,1,1,1,1,1}
+</pre>
+The test table is expected to be in the same form as the
+training table and can be created with the same process.
+The LDA prediction results have the same
+format as the output table generated by the LDA training function.
 
--# Use the following command to compute the perplexity of the result.
+-# Review prediction using helper function.  (This is the same
+per-document word to topic mapping that we used on the learned model.)
 <pre class="example">
-SELECT madlib.lda_get_perplexity( 'my_model',
-                                  'my_pred'
+DROP TABLE IF EXISTS helper_output_table;
+SELECT madlib.lda_get_word_topic_mapping('outdata_predict',  -- Output table from prediction
+                                         'helper_output_table');
+SELECT * FROM helper_output_table ORDER BY docid LIMIT 40;
+</pre>
+<pre class="result">
+ docid | wordid | topicid 
+-------+--------+---------
+     0 |     54 |       4
+     0 |     42 |       1
+     0 |     35 |       4
+     0 |     32 |       4
+     0 |     29 |       4
+     0 |     28 |       1
+     0 |     24 |       4
+     0 |     17 |       1
+     0 |     11 |       4
+     0 |      8 |       4
+     0 |      3 |       0
+     0 |     97 |       4
+     0 |     95 |       1
+     0 |     90 |       2
+     0 |     85 |       4
+     0 |     80 |       0
+     0 |     71 |       0
+     0 |     68 |       0
+     0 |     64 |       4
+     0 |     64 |       1
+     0 |     56 |       4
+     1 |      2 |       4
+     1 |      1 |       4
+     1 |      0 |       2
+     1 |    102 |       4
+     1 |    101 |       4
+     1 |    100 |       4
+     1 |     93 |       4
+     1 |     90 |       2
+     1 |     90 |       0
+     1 |     88 |       2
+     1 |     75 |       2
+     1 |     74 |       0
+     1 |     68 |       0
+     1 |     59 |       4
+     1 |     57 |       2
+     1 |     55 |       2
+     1 |     53 |       1
+     1 |     50 |       0
+     1 |     49 |       2
+(40 rows)
+</pre>
+
+-# Call the perplexity function to see how well the model fits 
+the data. Perplexity computes word likelihoods averaged 
+over the test documents.
+<pre class="example">
+SELECT madlib.lda_get_perplexity( 'lda_model',        -- LDA model from training
+                                  'outdata_predict'   -- Prediction output
                                 );
+</pre>
+<pre class="result">
+ lda_get_perplexity 
++--------------------
+    79.481894411824
+(1 row)
 </pre>
 
 @anchor literature
